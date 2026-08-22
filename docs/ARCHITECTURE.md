@@ -2,7 +2,7 @@
 
 > 面向：维护这套 AI SOP 的人（架构演进、工具适配、问题排查）
 > 不面向：日常用 SOP 干活的开发者——见《AI SOP 使用指南》
-> 真源位置：`.ai-sop/`（Git submodule，远程 gameserver_sop_skill）
+> 真源位置：`.ai-sop/`（Git submodule，远程 agent-sop）
 
 ---
 
@@ -140,9 +140,9 @@ AI 编码工具百花齐放（Claude Code、Copilot、Cursor、Antigravity、Pi�
 **问题**：游戏代码是 SVN 团队共享正式版本控制；SOP 是个人持续优化的核心资产，要 Git 跟踪 + push 到私有远程。两者不能合并（SVN 是团队正式、Git 是个人资产），且 SOP 不能进 SVN（每人 SOP 不同，会污染团队仓库）。
 
 **为什么这么设计**：
-- 根目录：SVN 工作副本（游戏代码）+ 根 Git（跟踪 SOP 相关 + `.ai-workspace` + gitlink + lock）。
-- `.ai-sop`：Git submodule（远程 gameserver_sop_skill）。
-- 根 `.gitignore`：ignore 全部游戏代码，根 Git 只管 SOP。
+- 根目录：SVN 工作副本（业务代码）+ 根 Git（跟踪 SOP 相关 + `.ai-workspace` + gitlink + lock）。
+- `.ai-sop`：Git submodule（远程 agent-sop）。
+- 根 `.gitignore`：ignore 全部业务代码，根 Git 只管 SOP。
 - installer Git 模式用 submodule update，SVN 模式用独立 clone+rename（不创建 svn:externals，不 vendor 完整 SOP）。
 
 **为什么 SOP 不进 SVN**：每人 SOP 演进不同，进 SVN 会污染团队仓库；SVN 只版本化 lock + bootstrap（DC-012），安装出的 `.ai-sop` 是 detached 到 lock commit 的独立 Git checkout。
@@ -294,8 +294,8 @@ AI 编码工具百花齐放（Claude Code、Copilot、Cursor、Antigravity、Pi�
 
 ## 七、Git/SVN 拓扑
 
-- 根仓库：Git（本地，无 remote）+ SVN 工作副本（游戏代码正式版本控制）。
-- `.ai-sop`：Git submodule（远程 gameserver_sop_skill），根 Git 只跟踪 gitlink + lock。
+- 根仓库：Git（本地，无 remote）+ SVN 工作副本（业务代码正式版本控制）。
+- `.ai-sop`：Git submodule（远程 agent-sop），根 Git 只跟踪 gitlink + lock。
 - `.claude`/`.agents`/`.ai-workspace`：根 Git 普通目录。
 - `.gitignore`：根 Git 只管 SOP 相关，ignore 全部游戏代码。
 - 分发：fresh clone 经 installer `Action=Install` 复现全套 SOP（projection 自动生成）。

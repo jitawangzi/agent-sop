@@ -220,9 +220,9 @@ pwsh -NoProfile -File ./.ai-sop/scripts/workflow-owner.ps1 -Operation Transfer `
 
 ## 生产代码编辑 Guard
 
-PreToolUse hook 在每次文件编辑前运行 `guard-production-edit.ps1`（各 harness 共用：hook 命令统一指向 `./.ai-sop/scripts/hook-dispatcher.ps1`；Claude Code 经 `.claude/settings.json`，其它经 `.agents/hooks.json`/`.cursor/hooks.json`/`.github/hooks/ai-sop.json`）。编辑 `src\com\**`、`WebRoot\**`、`config\**` 前，**必须存在 ACTIVE 的 `SUPERPOWERS` owner**，否则被拒绝。`SERVER_NEW_SKIP_OWNER_GUARD=1` 仅对非功能型一次性小改生效；为绕过归属而设它是流程违规。guard 异常可手动关（`.ai-sop/.guard-disabled`）。**更推荐用一次性令牌**：写 `.ai-sop/.guard-token.json`（`{feature, reason, operator, expiresAt}`），guard 仅当 feature 匹配且未过期时放行，过期自动删除，防 `.guard-disabled` 被遗忘导致后续任务无防护。
+PreToolUse hook 在每次文件编辑前运行 `guard-production-edit.ps1`（各 harness 共用：hook 命令统一指向 `./.ai-sop/scripts/hook-dispatcher.ps1`；Claude Code 经 `.claude/settings.json`，其它经 `.agents/hooks.json`/`.cursor/hooks.json`/`.github/hooks/ai-sop.json`）。编辑 `src\com\**`、`WebRoot\**`、`config\**` 前，**必须存在 ACTIVE 的 `SUPERPOWERS` owner**，否则被拒绝。`AI_SOP_SKIP_OWNER_GUARD=1`（或旧版 `SERVER_NEW_SKIP_OWNER_GUARD=1`）仅对非功能型一次性小改生效；为绕过归属而设它是流程违规。guard 异常可手动关（`.ai-sop/.guard-disabled`）。**更推荐用一次性令牌**：写 `.ai-sop/.guard-token.json`（`{feature, reason, operator, expiresAt}`），guard 仅当 feature 匹配且未过期时放行，过期自动删除，防 `.guard-disabled` 被遗忘导致后续任务无防护。
 
-**Guard 绕过合规提醒**：若 AI 发现 `SERVER_NEW_SKIP_OWNER_GUARD=1` 开启但当前任务涉及复杂/多文件代码变更，必须在开始前 Warning 提醒用户：“当前开启了 Guard 绕过，此修改将不记录归属且跳过审查。请确认是否为临时小改；若非小改请关闭该变量并走正常归属流程。”AI 不得在复杂变更时默记配合用户违规而不提醒。
+**Guard 绕过合规提醒**：若 AI 发现 `AI_SOP_SKIP_OWNER_GUARD=1` 或 `SERVER_NEW_SKIP_OWNER_GUARD=1` 开启但当前任务涉及复杂/多文件代码变更，必须在开始前 Warning 提醒用户：“当前开启了 Guard 绕过，此修改将不记录归属且跳过审查。请确认是否为临时小改；若非小改请关闭该变量并走正常归属流程。”AI 不得在复杂变更时默记配合用户违规而不提醒。
 
 ## 跨工具交接状态（feature-state.json）
 

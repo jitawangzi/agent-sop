@@ -9,7 +9,7 @@
    ```text
    .ai-workspace/specs/features/<FeatureName>/
    ```
-3. 准备一个独立工作目录（worktree 或独立 SVN working copy），遵循 `.ai-workspace/workflows/parallel-development.md`。
+3. 准备一个独立工作目录（独立 SVN 工作副本或独立 Git 工作区），遵循 `.ai-workspace/workflows/parallel-development.md`。
 
 ## 验证项
 
@@ -28,7 +28,7 @@
 
 - [ ] **C1**：brainstorming 时 AI **每轮最多问 3 个聚焦问题**（每个聚焦单一决策点，允许用户一句话给齐；统一口径见 AGENTS.md「人工 review 阶段」），对有意义的备选给出 2-4 选项并推荐其一（做选择题而非填空题）。
 - [ ] **C2**：需求阶段产出 `01_server_rules.md`（含 `BR-*`/`EX-*`/`AC-*`），AI 自审后**等待你的最终确认**才继续。
-- [ ] **C3**：设计阶段产出 `06_design_contract.md`（含 `DC-*`/`DR-*`/`TW-*`），等待你的最终确认。需求与设计在**同一次** brainstorming 内完成（不分两次 skill 调用）。
+- [ ] **C3**：设计阶段产出 `06_design_contract.md`（含 `DC-*`/`DR-*`/`TW-*`），等待你的最终确认。需求与设计在**同一轮 `brainstorming` skill 调用中连续产出，但分两次独立呈递人工确认**（先确认 01 需求再确认 06 设计，不可合并确认）。
 - [ ] **C3a**：设计产出后、人工确认前，AI 调用 `design-reviewer` 做**机器审查**（宏观规范守门 + 设计完整性自检 + 已知缺陷模式对照），且是**闭环自审自修**——有 BLOCKER/MAJOR/MINOR 自动回 design-architect 修后重审，**不占你时间**；你只看到"已通过机器审查的方案"。若 AI 把未过审的方案直接交你确认，视为不合规。严重度术语统一为 BLOCKER/MAJOR/MINOR/INFO（与 AGENTS.md/adapter 一致，非 CRITICAL/HIGH/MEDIUM）。
 - [ ] **C4**：设计确认后，AI **自动连续**进入 writing-plans → subagent-driven-development + TDD → 覆盖校验 → 收尾审查 → 验证，**不**在中间增设批准检查点。**不**前置 QA 测试计划（TC 在 TDD 中产出）。
 
@@ -80,7 +80,7 @@
   pwsh -NoProfile -File .\.ai-workspace\scripts\feature-runtime.ps1 -Operation Allocate `
     -Feature "<FeatureName>" -WorkspacePath $PWD
   ```
-- [ ] **H2**：AI **未**使用 `superpowers:using-git-worktrees`（worktree 由 `feature-runtime.ps1` 管理）。
+- [ ] **H2**：AI **未**使用 `superpowers:using-git-worktrees`（代码隔离用独立 SVN 工作副本或 Git 分支，运行时隔离由 `feature-runtime.ps1` 管理）。
 
 ### I. 跨 harness 一致性（若用 Copilot/Antigravity 验证）
 

@@ -169,7 +169,7 @@ SVN 是团队源码真源与代码隔离手段（每功能一 SVN 分支，合�
 
 PreToolUse hook 在每次文件编辑前运行 `guard-production-edit.ps1`（各 harness 共用：hook 命令统一指向 `./.ai-sop/scripts/hook-dispatcher.ps1`；Claude Code 经 `.claude/settings.json`，其它经 `.agents/hooks.json`/`.cursor/hooks.json`/`.github/hooks/ai-sop.json`）。除非机器级注册表中存在 ACTIVE 的 `SUPERPOWERS` owner，否则拒绝编辑生产路径（`src\com\**`、`WebRoot\**`、`config\**`）。guard 异常时可手动关（`.ai-sop/.guard-disabled`）。
 
-`SERVER_NEW_SKIP_OWNER_GUARD=1` 仅作为非功能型一次性小改（临时 hot-fix、探索性 probe）的逃生口。为绕过某次功能运行的归属而设置它是流程违规。
+`AI_SOP_SKIP_OWNER_GUARD=1`（或旧版 `SERVER_NEW_SKIP_OWNER_GUARD=1`）仅作为非功能型一次性小改（临时 hot-fix、探索性 probe）的逃生口。为绕过某次功能运行的归属而设置它是流程违规。
 
 ## 归属完成
 

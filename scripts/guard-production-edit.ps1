@@ -30,8 +30,8 @@ function Test-AiSopGuardEscapeEnabled {
     param()
 
     # Guard manual switch. Three ways to disable the production-edit guard:
-    #   1. env SERVER_NEW_SKIP_OWNER_GUARD=1 (per-process; hook subprocesses
-    #      inherit it only if set at user level before Claude Code starts).
+    #   1. env AI_SOP_SKIP_OWNER_GUARD=1 (or legacy SERVER_NEW_SKIP_OWNER_GUARD=1)
+    #      (per-process; hook subprocesses inherit it only if set at user level before AI tool starts).
     #   2. switch file at the SOP root (reliable across hook subprocesses):
     #      create  .ai-sop/.guard-disabled   to disable guard
     #      remove  .ai-sop/.guard-disabled   to re-enable guard
@@ -42,33 +42,38 @@ function Test-AiSopGuardEscapeEnabled {
     # Env is authoritative: when set to "1" escape; when set to any other
     # explicit value (e.g. "0") do NOT escape (even if the switch file exists).
     # Only when env is unset/empty does the switch file / token get consulted.
-    if ([string]::IsNullOrEmpty($env:SERVER_NEW_SKIP_OWNER_GUARD)) {
-        $guardRoot = if (-not [string]::IsNullOrWhiteSpace($script:DispatcherClaudeRoot)) {
-            $script:DispatcherClaudeRoot
-        } else {
-            Split-Path -Parent $PSScriptRoot
-        }
-        $switchPath = Join-Path $guardRoot ".guard-disabled"
-        if (Test-Path -LiteralPath $switchPath) { return $true }
-        # One-time token: honored only if not expired (feature check is done
-        # by caller via the decision's owner context; here we only check expiry).
-        $tokenPath = Join-Path $guardRoot ".guard-token.json"
-        if (Test-Path -LiteralPath $tokenPath -PathType Leaf) {
-            try {
-                $token = Get-Content -LiteralPath $tokenPath -Raw | ConvertFrom-Json
-                $expires = [DateTimeOffset]::Parse([string]$token.expiresAt)
-                if ([DateTimeOffset]::UtcNow -lt $expires) {
-                    return $true
-                }
-                # Expired token: auto-delete to prevent stale bypass.
-                Remove-Item -LiteralPath $tokenPath -Force -ErrorAction SilentlyContinue
-            } catch {
-                # Corrupt token: ignore (fail-safe = guard stays on).
-            }
-        }
-        return $false
+    $envSkip = if (-not [string]::IsNullOrEmpty($env:AI_SOP_SKIP_OWNER_GUARD)) {
+        $env:AI_SOP_SKIP_OWNER_GUARD
+    } else {
+        $env:SERVER_NEW_SKIP_OWNER_GUARD
     }
-    return $env:SERVER_NEW_SKIP_OWNER_GUARD -ceq "1"
+    if ($envSkip -eq "1") { return $true }
+    if (-not [string]::IsNullOrEmpty($envSkip) -and $envSkip -ne "1") { return $false }
+
+    $guardRoot = if (-not [string]::IsNullOrWhiteSpace($script:DispatcherClaudeRoot)) {
+        $script:DispatcherClaudeRoot
+    } else {
+        Split-Path -Parent $PSScriptRoot
+    }
+    $switchPath = Join-Path $guardRoot ".guard-disabled"
+    if (Test-Path -LiteralPath $switchPath) { return $true }
+    # One-time token: honored only if not expired (feature check is done
+    # by caller via the decision's owner context; here we only check expiry).
+    $tokenPath = Join-Path $guardRoot ".guard-token.json"
+    if (Test-Path -LiteralPath $tokenPath -PathType Leaf) {
+        try {
+            $token = Get-Content -LiteralPath $tokenPath -Raw | ConvertFrom-Json
+            $expires = [DateTimeOffset]::Parse([string]$token.expiresAt)
+            if ([DateTimeOffset]::UtcNow -lt $expires) {
+                return $true
+            }
+            # Expired token: auto-delete to prevent stale bypass.
+            Remove-Item -LiteralPath $tokenPath -Force -ErrorAction SilentlyContinue
+        } catch {
+            # Corrupt token: ignore (fail-safe = guard stays on).
+        }
+    }
+    return $false
 }
 
 function New-AiSopGuardDecision {

@@ -16,10 +16,10 @@
 <p align="center">
   <a href="#-为什么需要-agent-sop">痛点背景</a> •
   <a href="#-核心原理深度剖析">底层原理</a> •
-  <a href="#-系统架构全景">系统架构</a> •
-  <a href="#-3-分钟快速上手">快速上手</a> •
+  <a href="#-与-superpowers-生态的深度融合与架构分工">Superpowers 融合</a> •
   <a href="#-专家-skill-矩阵">专家矩阵</a> •
   <a href="#-执行强度-t-档分流">T 档调度</a> •
+  <a href="#-3-分钟快速上手">快速上手</a> •
   <a href="#english-summary">English Summary</a>
 </p>
 
@@ -126,6 +126,42 @@ Agent-SOP 实现了一套**无中心依赖的文件级两阶段事务（2PC）�
   ```
 - 通过 `workflow-state.ps1 -Operation SyncCoverage` 自动生成机器可读的 `05_test_coverage.json` 覆盖矩阵。
 - 在交付前，机检引擎会逐条扫描 P0/P1 用例的 `setup`、`trigger`、`assertions` 映射。**只要有任何一条核心业务需求未被自动化测试断言覆盖，交付命令直接报 FAIL 阻断**。
+
+---
+
+## 🤝 与 Superpowers 生态的深度融合与架构分工
+
+在完整的 T3 研发流程中，**Agent-SOP 与业界知名的 [Superpowers](https://github.com/obra/superpowers) 形成了完美的“大脑与身体”互补关系**：
+
+```text
+┌────────────────────────────────────────────────────────────────────────┐
+│ 顶层认知编排器 (Cognitive Workflow Orchestrator): Superpowers          │
+│                                                                        │
+│  - superpowers:brainstorming           (多轮方案发散与反直觉探索)      │
+│  - superpowers:writing-plans           (可执行敏捷任务分解)            │
+│  - superpowers:subagent-driven-development (子智能体分发与自驱迭代)     │
+│  - superpowers:requesting-code-review  (最终收尾审查)                  │
+│  - superpowers:verification-before-completion (完工事实校验)           │
+└───────────────────────────────────┬────────────────────────────────────┘
+                                    │ 调度与驱动
+                                    ▼
+┌────────────────────────────────────────────────────────────────────────┐
+│ 运行时治理操作系统 (Runtime Governance & OS Layer): Agent-SOP          │
+│                                                                        │
+│  🛡️ OS 级 PreToolUse Hook 物理阻断 (未获锁严禁写盘)                     │
+│  🔐 需求与设计 SHA-256 密码学不可变门禁 (防 AI 偷改断言)                │
+│  👥 领域专家智能体 (design-reviewer / logic-auditor / 实现引擎)        │
+│  🔒 跨 IDE 两阶段事务文件锁与崩溃自愈 (Schema 1.1)                     │
+│  🚦 T1 / T2 / T3 / FastTrack 动态成本调度 (避免 Token 浪费)            │
+└────────────────────────────────────────────────────────────────────────┘
+```
+
+### 两者的角色与边界定义：
+1. **Superpowers 是“顶层大脑”**：负责任务的思考流与认知编排。它指导 AI 如何有条理地与人类沟通、如何分解 Plan、如何调度子 Agent。
+2. **Agent-SOP 是“骨骼与操作系统”**：负责底层的物理防护网与确定性基础设施。它将 Superpowers 的“纯提示词软约束”升级为“操作系统级硬门禁”，并为每个执行步骤提供本项目专属的领域专家（替换掉了通用的 code-reviewer）。
+3. **分层解耦与独立性**：
+   - **T3 重型功能**：深度结合 Superpowers 的思考编排能力 + Agent-SOP 的物理治理底座。
+   - **T2 快速修改 / 快通道**：轻量级修改**完全不依赖 Superpowers**，由 Agent-SOP 原生单命令秒级直达。
 
 ---
 

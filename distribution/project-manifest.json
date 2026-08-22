@@ -1,7 +1,7 @@
 {
   "schemaVersion": "1.0",
-  "sourceCommit": "d0d00fea47413f672a4d375fdb0c4783181ebe24",
-  "sourceUrl": "https://github.com/jitawangzi/gameserver_sop_skill.git",
+  "sourceCommit": "924e5ed6218d6e32d39893d395724578b8719c8f",
+  "sourceUrl": "https://github.com/jitawangzi/agent-sop.git",
   "toolPolicy": {
     "path": "config/hook-tool-policy.json",
     "blobSha256": "b163aa7bf5cc933544d9d7e873386c93be50ce26c7fe8dd58221ea34cda0e8b8"

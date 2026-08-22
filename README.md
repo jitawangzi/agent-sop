@@ -77,12 +77,23 @@ Avoids massive token waste for trivial changes:
 
 ### 1. Integration into Any Existing Project
 
-You can introduce Agent-SOP into any existing repository (Java, Go, C++, Python, Rust, Frontend, etc.) with a single command:
+To introduce Agent-SOP into any existing repository (Java, Go, C++, Python, Rust, Frontend, etc.):
 
+#### Option A: Git Submodule (Recommended for Git Repositories)
+```bash
+# In your project root:
+git submodule add https://github.com/jitawangzi/agent-sop.git .ai-sop
+pwsh -NoProfile -File ./.ai-sop/distribution/bootstrap/install-ai-sop.ps1 -Mode Auto -Action Install
+```
+
+#### Option B: Standalone Clone (For SVN or Non-Git Repositories)
 ```powershell
 # In your project root:
-pwsh -NoProfile -File ./tools/ai-sop/install-ai-sop.ps1 -Mode Auto -Action Install
+git clone https://github.com/jitawangzi/agent-sop.git .ai-sop
+pwsh -NoProfile -File ./.ai-sop/distribution/bootstrap/install-ai-sop.ps1 -Mode Auto -Action Install
 ```
+
+> **Note**: The installer automatically generates the unified `ai-sop.ps1` entry point, IDE hooks (`.agents/`, `.claude/`, `.cursor/`, `.github/`), and initial governance projections in your project root.
 
 ### 2. Environment Self-Check
 

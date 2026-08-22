@@ -38,7 +38,11 @@ param(
 
     [Parameter(Mandatory = $true)]
     [ValidatePattern("^[A-Za-z0-9._:-]+$")]
-    [string]$OwnerId
+    [string]$OwnerId,
+
+    [Parameter(Mandatory = $false)]
+    [ValidateSet("T1", "T2", "T3", "FAST_TRACK")]
+    [string]$Tier = "T2"
 )
 
 $ErrorActionPreference = "Stop"
@@ -1040,21 +1044,46 @@ Invoke-AiSopWorkflowTransaction `
 
 Write-OwnerMirror $ownerAfter
 
-# Auto-initialize feature-state.json projection on successful Claim if not present
+# Auto-initialize or sync feature-state.json projection on successful Claim
 if ($Operation -eq "Claim" -and -not [string]::IsNullOrWhiteSpace($ResolvedSpecDirectory)) {
     try {
         $featStateFile = Join-Path $ResolvedSpecDirectory "feature-state.json"
+        $effectiveTier = if (-not [string]::IsNullOrWhiteSpace($Tier)) { $Tier } else { "T2" }
+        $isoNow = $AcceptedAt.ToUniversalTime().ToString("o")
+        $utf8NoBomEnc = New-Object System.Text.UTF8Encoding($false)
         if (-not (Test-Path -LiteralPath $featStateFile -PathType Leaf)) {
             $initialState = [ordered]@{
                 schemaVersion = "1.0"
                 feature = $Feature
-                tier = "T3"
+                tier = $effectiveTier
                 phase = "CLAIMED"
-                ownerId = $OwnerId
-                claimedAt = $AcceptedAt.ToUniversalTime().ToString("o")
+                ownerSession = [ordered]@{
+                    agent = $Agent
+                    ownerId = $OwnerId
+                }
+                completedSteps = @("CLAIM")
+                nextAction = if ($effectiveTier -eq "T3") { "brainstorming / requirement draft" } else { "implementation" }
+                updatedAt = $isoNow
             }
             [System.IO.Directory]::CreateDirectory($ResolvedSpecDirectory) | Out-Null
-            $initialState | ConvertTo-Json -Depth 10 | Set-Content -LiteralPath $featStateFile -Encoding utf8
+            $jsonStr = $initialState | ConvertTo-Json -Depth 10
+            [System.IO.File]::WriteAllText($featStateFile, $jsonStr, $utf8NoBomEnc)
+        } else {
+            try {
+                $existingRaw = [System.IO.File]::ReadAllText($featStateFile)
+                $existingContent = $existingRaw | ConvertFrom-Json
+                $existingDict = [ordered]@{}
+                foreach ($p in $existingContent.psobject.Properties) {
+                    $existingDict[$p.Name] = $p.Value
+                }
+                $existingDict["ownerSession"] = [ordered]@{
+                    agent = $Agent
+                    ownerId = $OwnerId
+                }
+                $existingDict["updatedAt"] = $isoNow
+                $jsonStr = $existingDict | ConvertTo-Json -Depth 10
+                [System.IO.File]::WriteAllText($featStateFile, $jsonStr, $utf8NoBomEnc)
+            } catch { }
         }
     } catch { }
 }

@@ -142,7 +142,8 @@ function Invoke-Owner {
         [string]$Operation,
         [string]$Workflow,
         [string]$Agent,
-        [string]$OwnerId
+        [string]$OwnerId,
+        [string]$Tier = "T2"
     )
 
     return & $OwnerScript `
@@ -151,7 +152,8 @@ function Invoke-Owner {
         -Feature $Feature.Feature `
         -Workflow $Workflow `
         -Agent $Agent `
-        -OwnerId $OwnerId
+        -OwnerId $OwnerId `
+        -Tier $Tier
 }
 
 function Read-OwnerRecord {
@@ -1043,6 +1045,70 @@ try {
     Assert-Equal $reReleasedOwner.status "RELEASED" (
         "ForceRelease on re-claimed ACTIVE owner must succeed."
     )
+
+    # Test Claim automatic feature-state.json projection and Tier parameter
+    $tierTestFeature = New-TestFeature "OwnerTierTestFeature"
+    $tierTestSpec = $tierTestFeature.Spec
+    $tierSession = New-Session `
+        -Feature $tierTestFeature `
+        -Agent CLAUDE_CODE `
+        -NativeSessionId "native-tier-test-1"
+    New-Grant `
+        -Feature $tierTestFeature `
+        -Session $tierSession `
+        -Operation Claim `
+        -Agent CLAUDE_CODE `
+        -OwnerId "tier-test-owner-1" `
+        -Suffix "tier-default" | Out-Null
+    
+    # 1. Default Claim -> tier=T2, phase=CLAIMED, schema-valid
+    Invoke-Owner `
+        -Feature $tierTestFeature `
+        -Operation Claim `
+        -Workflow SUPERPOWERS `
+        -Agent CLAUDE_CODE `
+        -OwnerId "tier-test-owner-1" | Out-Null
+    
+    $featStatePath = Join-Path $tierTestSpec "feature-state.json"
+    Assert-True (Test-Path -LiteralPath $featStatePath) "Claim must write feature-state.json"
+    $fsContent = Get-Content -LiteralPath $featStatePath -Raw | ConvertFrom-Json
+    Assert-Equal $fsContent.tier "T2" "Default Claim must write tier=T2"
+    Assert-Equal $fsContent.phase "CLAIMED" "Claim must write phase=CLAIMED"
+    Assert-Equal $fsContent.ownerSession.ownerId "tier-test-owner-1" "Claim must write ownerSession.ownerId"
+    Assert-Equal $fsContent.ownerSession.agent "CLAUDE_CODE" "Claim must write ownerSession.agent"
+    Assert-True (-not [string]::IsNullOrWhiteSpace($fsContent.updatedAt)) "Claim must write updatedAt"
+    
+    # 2. Release & Re-claim with explicit -Tier T3 -> writes tier=T3
+    Invoke-Owner `
+        -Feature $tierTestFeature `
+        -Operation ForceRelease `
+        -Workflow SUPERPOWERS `
+        -Agent CLAUDE_CODE `
+        -OwnerId "tier-test-owner-1" | Out-Null
+    Remove-Item -LiteralPath $featStatePath -Force -ErrorAction SilentlyContinue
+    
+    $tierSession2 = New-Session `
+        -Feature $tierTestFeature `
+        -Agent CLAUDE_CODE `
+        -NativeSessionId "native-tier-test-2"
+    New-Grant `
+        -Feature $tierTestFeature `
+        -Session $tierSession2 `
+        -Operation Claim `
+        -Agent CLAUDE_CODE `
+        -OwnerId "tier-test-owner-2" `
+        -Suffix "tier-t3" | Out-Null
+    
+    Invoke-Owner `
+        -Feature $tierTestFeature `
+        -Operation Claim `
+        -Workflow SUPERPOWERS `
+        -Agent CLAUDE_CODE `
+        -OwnerId "tier-test-owner-2" `
+        -Tier "T3" | Out-Null
+        
+    $fsContent2 = Get-Content -LiteralPath $featStatePath -Raw | ConvertFrom-Json
+    Assert-Equal $fsContent2.tier "T3" "Explicit Claim with -Tier T3 must write tier=T3"
 
     Write-Output "All workflow owner tests passed."
 } finally {

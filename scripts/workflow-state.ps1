@@ -1103,11 +1103,7 @@ function Get-CoveragePlaceholderWarnings {
         $isHighPriority = ($prio -ieq "P0") -or ($prio -ieq "P1")
         $caseStatus = [string]$case.status
         if ($caseStatus -ieq "PLACEHOLDER") {
-            if ($isHighPriority) {
-                $errors.Add("ERROR: $caseId (priority=$prio) status is PLACEHOLDER — must be refined to PLANNED/IMPLEMENTED/VERIFIED")
-            } else {
-                $warnings.Add("WARN: $caseId (priority=$prio) status is PLACEHOLDER — refine before delivery")
-            }
+            $errors.Add("ERROR: $caseId (priority=$prio) status is PLACEHOLDER — must be refined to PLANNED/IMPLEMENTED/VERIFIED")
         }
         $placeholderHits = [System.Collections.Generic.List[string]]::new()
         $hasNonNaAssertion = $false
@@ -2119,7 +2115,7 @@ switch ($Operation) {
                     id = $tcId
                     status = "PLACEHOLDER"
                     title = [string]$meta.title
-                    priority = if ($meta.priority) { [string]$meta.priority } else { "P2" }
+                    priority = if ($meta.priority) { [string]$meta.priority } else { "P1" }
                     testTypes = @("FUNCTIONAL")
                     requirementIds = $reqIds
                     designIds = $desIds
@@ -2216,7 +2212,7 @@ switch ($Operation) {
             $covOk = Test-Path -LiteralPath $covPath -PathType Leaf
             $checks.Add("[$(if($covOk){'v'}else{'X'})] 测试覆盖矩阵存在")
         }
-        # 3. Compile (check candidate roots for build/ classes/ target/ bin/ dist artifacts).
+        # 3. Compile (check candidate roots for build/ classes/ target artifacts).
         $specParent2 = Split-Path -Parent (Split-Path -Parent $specFullPath)
         $specParent4 = Split-Path -Parent (Split-Path -Parent $specParent2)
         $candidateRoots = @($wsRoot, $specParent2, $specParent4) | Where-Object { -not [string]::IsNullOrWhiteSpace($_) }
@@ -2227,20 +2223,18 @@ switch ($Operation) {
                 (Test-Path -LiteralPath (Join-Path $r "build") -PathType Container) -or
                 (Test-Path -LiteralPath (Join-Path $r "classes") -PathType Container) -or
                 (Test-Path -LiteralPath (Join-Path $r "target/classes") -PathType Container) -or
-                (Test-Path -LiteralPath (Join-Path $r "bin") -PathType Container) -or
-                (Test-Path -LiteralPath (Join-Path $r "dist") -PathType Container) -or
                 (Test-Path -LiteralPath (Join-Path $r "WebRoot/WEB-INF/classes") -PathType Container)) {
                 $compileOk = $true
                 break
             }
         }
-        $checks.Add("[$(if($compileOk){'v'}else{'?'})] 编译产物存在(以构建命令执行结果为准)")
+        $checks.Add("[$(if($compileOk){'v'}else{'?'})] 编译产物存在(以构建/测试命令执行结果为准)")
         
         # 4. VCS delivery surface state (3-state detection).
         if (Test-Path -LiteralPath (Join-Path $wsRoot ".svn") -PathType Container) {
             $checks.Add("[?] VCS 交付状态: SVN 工作副本 (准备 svn commit)")
         } elseif (Test-Path -LiteralPath (Join-Path $wsRoot ".git") -PathType Container) {
-            $checks.Add("[v] VCS 交付状态: Git-only (支持本地/分支提交)")
+            $checks.Add("[?] VCS 交付状态: Git 仓库 (人工确认 git commit / status)")
         } else {
             $checks.Add("[?] VCS 交付状态: 通用工程目录")
         }
@@ -2288,8 +2282,6 @@ switch ($Operation) {
                 (Test-Path -LiteralPath (Join-Path $r "build") -PathType Container) -or
                 (Test-Path -LiteralPath (Join-Path $r "classes") -PathType Container) -or
                 (Test-Path -LiteralPath (Join-Path $r "target/classes") -PathType Container) -or
-                (Test-Path -LiteralPath (Join-Path $r "bin") -PathType Container) -or
-                (Test-Path -LiteralPath (Join-Path $r "dist") -PathType Container) -or
                 (Test-Path -LiteralPath (Join-Path $r "WebRoot/WEB-INF/classes") -PathType Container)) {
                 $compileOk = $true
                 break
@@ -2341,8 +2333,8 @@ switch ($Operation) {
             $failures.Add("tier unknown — feature-state.json missing or tier not set")
             $checks.Add("[X] tier 未知(feature-state.json 缺失或未设 tier)")
         }
-        $checks.Add("[$(if($compileOk){'v'}else{'?'})] 编译产物存在(以构建命令执行结果为准)")
-        if (-not $compileOk -and $tier -in @("T3", "T2")) { $failures.Add("compile verification failed — no build artifacts found") }
+        $checks.Add("[$(if($compileOk){'v'}else{'?'})] 编译产物存在(以构建/测试命令执行结果为准)")
+        if (-not $compileOk -and $tier -eq "T3") { $failures.Add("compile verification failed — no build artifacts found") }
         Write-Output "tier=$tier phase=$phase"
         foreach ($c in $checks) { Write-Output $c }
         if ($failures.Count -eq 0) {

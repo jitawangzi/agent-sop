@@ -67,7 +67,7 @@
 ```markdown
 ## 工作流归属与 T 档分级
 - T3 由 Superpowers 编排；T2/T1/快通道用原生单命令直达，不调用 Superpowers。
-- 档位优先级：用户显式档位 > 变更类默认 > 工具上限。
+- 实际执行档位：MIN(用户显式指定 || 变更类默认, 工具最高支持档位)。
 - T3 必调：brainstorming -> 01需求人工批准 -> design-reviewer(机器自审闭环<=2轮) -> 06设计人工批准 -> writing-plans -> SDD(TDD) -> logic-auditor/implementation-auditor -> requesting-code-review -> verification-before-completion。
 - 快通道：仅限纯配置数值或纯文档，跳过门禁，2项完成条件（编译+格式检查）。
 - 物理拦截：编辑生产代码前必须持有 ACTIVE 且 session-bound 的 Owner 锁，否则 OS Hook 强制退出 Exit 2。

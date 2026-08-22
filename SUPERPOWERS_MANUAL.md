@@ -43,7 +43,7 @@ flowchart TD
     G --> H{人工确认需求门禁}
     H -->|Approve| I[design-architect 产出 06_design_contract.md]
     I --> J[design-reviewer 机器闭环审查 最多2轮]
-    J -->|PASS| K{人工确认设计门禁}
+    J -->|PASS / PASS_WITH_WARNINGS| K{人工确认设计门禁}
     J -->|NEEDS_FIX| I
     K -->|Approve| L[Superpowers writing-plans 拆解任务]
     L --> M[subagent-driven-development + TDD]
@@ -57,7 +57,7 @@ flowchart TD
     T --> U[VCS 提交交付]
 ```
 
-需求与设计是两道独立门禁（先确认 01 再确认 06，禁止合并）；但 brainstorming 可连续产出 01→06 后分两次呈递确认，中间不停顿做设计。设计产出后由 `design-reviewer` 机器闭环自审自修（不占人工时间），通过后才交人工确认；不前置 QA 测试计划（TC 在 TDD 中产出，覆盖校验在实现后）；`implementation-auditor`/`logic-auditor` 是 subagent 内审执行单元，非实现后独立节点。复杂大功能交付后可**手动**触发全功能审计（见后文）。
+需求与设计是两道独立门禁（默认两道独立确认，仅当符合 T3 小改动合并呈递豁免时允许一次呈递写入两道 SHA）；brainstorming 可连续产出 01→06 后呈递确认。设计产出后由 `design-reviewer` 机器闭环自审自修（不占人工时间），通过后才交人工确认；不前置 QA 测试计划（TC 在 TDD 中产出，覆盖校验在实现后）；`implementation-auditor`/`logic-auditor` 是 subagent 内审执行单元，非实现后独立节点。复杂大功能交付后可**手动**触发全功能审计（见后文）。
 
 ### 执行强度档位（T 档）与提示词指定
 

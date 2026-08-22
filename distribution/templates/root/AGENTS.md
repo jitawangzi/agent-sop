@@ -22,7 +22,7 @@
 
 **design-reviewer 闭环熔断（防 Token 风暴）**：机器闭环**最多 2 轮**（审查→修正→重审）。第 2 轮后：若仅剩 `MINOR`/`INFO` 未决问题，自动豁免通过（状态 `PASS_WITH_WARNINGS`，记入报告）；若仍存在 `BLOCKER`/`MAJOR`，强制退出机器循环，呈递人工在批准阶段裁决。**阻断级（`BLOCKER`/`MAJOR`）可判 `NEEDS_FIX`**，触发闭环修复，计入 2 轮熔断；**建议级（`MINOR`/`INFO`）不得判 `NEEDS_FIX`**，记为 `PASS_WITH_WARNINGS` 不阻断，避免挑刺震荡。详见 `superpowers-adapter.md`。
 
-**需求与设计确认为两道独立门禁（禁止合并）**：`01_server_rules.md` 须**先**人工确认（调 `workflow-state.ps1 -Operation Approve -Gate requirement` 写入 APPROVED+SHA），确认后才进入设计阶段产 06。**不得把 01 和 06 一起写完再合并请用户确认**——需求方向错了，基于错需求做的设计会被设计细节带偏，掩盖需求本身的问题。
+**需求与设计确认为两道独立门禁（默认禁止合并）**：默认两道门禁独立确认（先人工确认 01 调 `workflow-state.ps1 -Operation Approve -Gate requirement`，再确认 06 调 `Approve -Gate design`）。仅当满足【T3 小改动合并呈递豁免】条件（用户显式要求且 DC≤3 且无存储迁移）时，允许在一次响应中同时呈递 01 与 06，用户单次确认后后台分别调用两次 Approve 写入门禁。除该豁免外，不得随意合并呈递。
 
 **人工确认必须写入门禁状态**：每次人工确认（需求/设计）后，**必须**调用 `workflow-state.ps1 -Operation Approve -Gate <requirement|design>` 写入 `APPROVED` 状态与 SHA-256。口头确认不等于门禁通过——后续 `ValidateTestCoverage` 会校验 APPROVED 状态，未写入会阻塞或被绕过。
 
@@ -168,7 +168,7 @@ AI 可在一次响应内同时呈递 `01_server_rules.md` 与 `06_design_contrac
 
 **审查必须独立上下文**：审查者（`design-reviewer`/`implementation-auditor`/`logic-auditor`/`requesting-code-review`）必须用独立 subagent 上下文，不能用同一会话自审（共享盲区）。**允许用宿主 subagent 机制加载本项目专家 Skill 提示词**（如 Copilot 的 `Task` 工具加载 `implementation-engine` 提示词）——禁的是“同上下文自审”，不是“用宿主 subagent 载入”。
 
-**审查铁律**：spec 合规审查 → 代码质量审查（顺序不可颠倒）→ 修复 → 重新审查 → 通过才标记完成。同文件修改绝不并行派多个实现者。绝不跳过审查（哪怕 1 行）。最终审查 `requesting-code-review` 独立于 subagent 内审，禁止跳过。
+**审查铁律（仅 T3 严格适用）**：spec 合规审查 → 代码质量审查（顺序不可颠倒）→ 修复 → 重新审查 → 通过才标记完成。同文件修改绝不并行派多个实现者。T3 绝不跳过独立审查（哪怕 1 行）。最终审查 `requesting-code-review` 独立于 subagent 内审，禁止跳过。T2 快速修改降为 AI 自审 + 编译/测试硬验证。
 
 **模型分级调度**：派发 subagent 时按角色复杂度选档（最强/标准/便宜），显式指定 model 不省略。`design-architect`/`design-reviewer`/`requesting-code-review`/`logic-auditor` 用最强档；一般实现/合规/`requirement-analyst` 用标准档；机械转录/单文件小修/配置改动用便宜档。修复循环 R4-5 升一档。详见 `.ai-sop/workflows/superpowers-adapter.md`。
 

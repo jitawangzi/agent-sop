@@ -156,14 +156,14 @@ foreach ($loc in $spLocations) {
 if ($superpowersFound) {
     Add-Check "Superpowers Suite" $true "Found (T3 enabled)"
 } else {
-    Add-Check "Superpowers Suite" $true "Not detected (T2/FastTrack works; T3 needs install per VERIFICATION.md)"
+    Add-Check "Superpowers Suite" $true "WARN: Not detected (T2/FastTrack works; T3 needs install per VERIFICATION.md)"
 }
 
 # 9. Lock file present
 $lockPath = Join-Path $WorkspaceRoot "tools/ai-sop/ai-sop.lock.json"
 Add-Check "Lock file" (Test-Path -LiteralPath $lockPath) $lockPath
 
-# 9. Harness capability (if script available)
+# 10. Harness capability (if script available)
 $capScript = Join-Path $SopRoot "scripts/harness-capability.ps1"
 $overridePath = Join-Path $SopRoot ".harness-capability-override.json"
 $hasOverride = Test-Path -LiteralPath $overridePath -PathType Leaf
@@ -185,7 +185,7 @@ if ($hasOverride) {
     Add-Check "Capability override" $true "local override file present — a STRICT harness may be downgraded on this machine; verify the override is intentional (gitignored, not shared)"
 }
 
-# 10. .ai-workspace/context/ exists + freshness check
+# 11. .ai-workspace/context/ exists + freshness check
 $contextDir = Join-Path $WorkspaceRoot ".ai-workspace/context"
 $contextExists = Test-Path -LiteralPath $contextDir
 Add-Check "Context dir" $contextExists $contextDir
@@ -213,13 +213,13 @@ if ($contextExists) {
     }
     # Freshness is advisory — stale/bad-date context is WARN not FAIL (never blocks install).
     # Only MISSING required files fail; stale files still pass with WARN detail.
-    Add-Check "Context freshness" $true $(if ($stale.Count -eq 0) { "all fresh" } else { $stale -join "; " })
+    Add-Check "Context freshness" $true $(if ($stale.Count -eq 0) { "all fresh" } else { "WARN: " + ($stale -join "; ") })
 }
 
 # Report
 $passCount = @($results | Where-Object { $_.Pass }).Count
 foreach ($r in $results) {
-    $mark = if ($r.Pass) { "✅" } else { "❌" }
+    $mark = if ($r.Pass -and $r.Detail -match "^WARN") { "⚠️" } elseif ($r.Pass) { "✅" } else { "❌" }
     Write-Host ("{0} {1,-22} {2}" -f $mark, $r.Name, $r.Detail)
 }
 Write-Host ""

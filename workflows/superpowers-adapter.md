@@ -117,7 +117,10 @@ Superpowers 控制器派发 subagent 时，应按角色复杂度选档，平衡�
 
 ## 执行强度分层
 
-档位优先级：**用户显式档位 > 变更类默认 > 工具上限**（与 AGENTS.md「执行强度分层」一致）。变更类默认：行为/契约/协议/存储结构变更、新玩法 = T3；已有行为的缺陷修复、单点逻辑调整 = T2；纯配置数值/纯文档 = 快通道。用户显式档位优先于变更类默认；BLOCKED 工具实际执行档位 = MIN(用户指定档位(默认=变更类默认), 工具最高支持档位)。
+**实际执行档位**由单条规则唯一确定：
+`实际执行档位 = MIN(用户显式指定 || 变更类默认, 当前工具最高支持档位)`
+
+变更类默认：行为/契约/协议/存储结构变更、新玩法 = T3；已有行为的缺陷修复、单点逻辑调整 = T2；纯配置数值/纯文档 = 快通道。BLOCKED 工具（最高 T2）在用户未表达流程意图时静默降为 T2，用户表达 T3 流程意图时触发 `[SOP 拦截]`。
 
 - **T3**（默认覆盖新功能/协议/存储/行为变更）：完整 Superpowers 流程（brainstorming → 需求确认 → design-reviewer → 设计确认 → writing-plans → subagent-driven-development + TDD → 审计 → requesting-code-review → verification-before-completion）。**只有 T3 需要 Superpowers 技能包**；T2/快通道/T1 不依赖。
 - **T2 快速**（用户显式"快速修改"/"简单需求直接实现"，或变更类默认=缺陷/单点时）：跳 brainstorming/需求设计门禁/design-reviewer/writing-plans，保留 Claim + 编译 + 验证 + 回归 + 文档待更新提醒（5 项）。

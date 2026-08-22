@@ -740,6 +740,8 @@ function Assert-NoRuntimeCoverageApprovalState {
 
         # VerifyCompletion hard-gate: with no feature-state.json, tier=unknown and the
         # gate must FAIL (non-zero) — AI cannot Complete on an un-tiered feature.
+        $featState = Join-Path $specDirectory "feature-state.json"
+        if (Test-Path -LiteralPath $featState) { Remove-Item -LiteralPath $featState -Force }
         $verifyNoState = & $ScriptPath -Operation VerifyCompletion -Path $approvalPath 2>&1
         $verifyNoStateOut = $verifyNoState | Out-String
         if ($LASTEXITCODE -eq 0) { throw "VerifyCompletion must fail (non-zero) when feature-state.json is missing. Output: $verifyNoStateOut" }
@@ -757,6 +759,19 @@ function Assert-NoRuntimeCoverageApprovalState {
         $verifyPassOut = $verifyPass | Out-String
         if ($LASTEXITCODE -ne 0) { throw "VerifyCompletion must pass (exit 0) when gates APPROVED + coverage VALID + phase DONE. Output: $verifyPassOut" }
         if ($verifyPassOut -notmatch "VERIFY_COMPLETION_PASS") { throw "VerifyCompletion must emit VERIFY_COMPLETION_PASS when all T3 conditions met. Output: $verifyPassOut" }
+
+        # Test VerifyCompletion on T2: passes even without build directory (non-blocking for T2)
+        $t2FeatState = Join-Path $specDirectory "feature-state.json"
+        [System.IO.File]::WriteAllText($t2FeatState, '{"feature":"' + $feature + '","tier":"T2","phase":"IN_PROGRESS"}', $Utf8NoBom)
+        if (Test-Path -LiteralPath $buildDir) { Remove-Item -LiteralPath $buildDir -Recurse -Force }
+        $verifyT2 = & $ScriptPath -Operation VerifyCompletion -Path $approvalPath 2>&1
+        $verifyT2Out = $verifyT2 | Out-String
+        if ($LASTEXITCODE -ne 0) { throw "VerifyCompletion must pass on T2 without compile dir. Output: $verifyT2Out" }
+        if ($verifyT2Out -notmatch "VERIFY_COMPLETION_PASS") { throw "VerifyCompletion must emit VERIFY_COMPLETION_PASS on T2. Output: $verifyT2Out" }
+
+        # Restore T3 state for subsequent tests
+        [System.IO.File]::WriteAllText($featState, '{"feature":"' + $feature + '","tier":"T3","phase":"DONE"}', $Utf8NoBom)
+        [System.IO.Directory]::CreateDirectory($buildDir) | Out-Null
 
         $originalRequirement = [System.IO.File]::ReadAllText($requirementPath)
         [System.IO.File]::AppendAllText($requirementPath, "`nChanged after approval.", $Utf8NoBom)
@@ -1910,6 +1925,27 @@ try {
         $cErr = if (Test-Path $completeRaceErr) { Get-Content $completeRaceErr -Raw } else { "" }
         throw "The guarded state mutation and subsequent completion must both succeed. StateExit=$($stateRaceProcess.ExitCode), CompleteExit=$($completeRaceProcess.ExitCode)`nStateOut:$sOut`nStateErr:$sErr`nCompOut:$cOut`nCompErr:$cErr"
     }
+
+    # Test SyncCoverage and Get-CoveragePlaceholderWarnings
+    $syncFeature = "SyncCoverageTestFeature"
+    $syncSpec = Join-Path $TestRoot "specs/features/$syncFeature"
+    [System.IO.Directory]::CreateDirectory($syncSpec) | Out-Null
+    $syncTestPlan = Join-Path $syncSpec "05_test_plan.md"
+    $testPlanText = @"
+# Test Plan
+<!-- meta: { "id": "TC01", "title": "Test Buy", "covers": ["BR01", "DC01"] } -->
+<!-- meta: { "id": "TC02", "title": "Test Limit", "covers": ["BR02", "DC02"], "priority": "P0" } -->
+"@
+    [System.IO.File]::WriteAllText($syncTestPlan, $testPlanText, $Utf8NoBom)
+    $syncCovPath = Join-Path $syncSpec "05_test_coverage.json"
+    & $ScriptPath -Operation SyncCoverage -Path $syncCovPath
+    if (-not (Test-Path -LiteralPath $syncCovPath)) { throw "SyncCoverage must generate 05_test_coverage.json" }
+    $covObj = Get-Content -LiteralPath $syncCovPath -Raw | ConvertFrom-Json
+    if ($covObj.cases.Count -ne 2) { throw "SyncCoverage must parse 2 cases, got $($covObj.cases.Count)" }
+    if ($covObj.cases[0].priority -ne "P1") { throw "Default case priority must be P1, got $($covObj.cases[0].priority)" }
+    if ($covObj.cases[0].status -ne "PLACEHOLDER") { throw "Synced case status must be PLACEHOLDER, got $($covObj.cases[0].status)" }
+    if ($covObj.cases[1].priority -ne "P0") { throw "Explicit case priority must be P0, got $($covObj.cases[1].priority)" }
+    if ($covObj.cases[1].status -ne "PLACEHOLDER") { throw "Explicit case status must be PLACEHOLDER, got $($covObj.cases[1].status)" }
 
     Write-Output "All workflow state tests passed."
 } finally {

@@ -143,9 +143,9 @@ Add-Check "Hook injected" $hookInjected ".agents/hooks.json or .claude/settings.
 $superpowersFound = $false
 $userProfile = [System.Environment]::GetFolderPath([System.Environment+SpecialFolder]::UserProfile)
 $spLocations = @(
-    Join-Path $userProfile ".gemini/config/plugins/superpowers",
-    Join-Path $userProfile ".claude/plugins/superpowers",
-    Join-Path $userProfile ".cursor/plugins/superpowers"
+    (Join-Path $userProfile ".gemini/config/plugins/superpowers"),
+    (Join-Path $userProfile ".claude/plugins/superpowers"),
+    (Join-Path $userProfile ".cursor/plugins/superpowers")
 )
 foreach ($loc in $spLocations) {
     if (Test-Path -LiteralPath $loc -PathType Container) {

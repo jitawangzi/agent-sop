@@ -49,25 +49,24 @@ if ($hasSvnWorkingCopy) {
     } catch { }
 }
 
-# 4. Project Toolchain Detection (dynamic)
+# 4. Project Toolchain Detection (dynamic & polyglot)
+$detectedToolchain = $false
+
 $isJavaProject = (Test-Path -LiteralPath (Join-Path $WorkspaceRoot "pom.xml")) -or 
                  (Test-Path -LiteralPath (Join-Path $WorkspaceRoot "build.gradle")) -or 
                  (Test-Path -LiteralPath (Join-Path $WorkspaceRoot "build.gradle.kts")) -or
                  (Test-Path -LiteralPath (Join-Path $WorkspaceRoot "gradlew.bat")) -or
                  (Test-Path -LiteralPath (Join-Path $WorkspaceRoot "gradlew"))
-$isGoProject = Test-Path -LiteralPath (Join-Path $WorkspaceRoot "go.mod")
-$isNodeProject = Test-Path -LiteralPath (Join-Path $WorkspaceRoot "package.json")
-$isPythonProject = (Test-Path -LiteralPath (Join-Path $WorkspaceRoot "pyproject.toml")) -or 
-                   (Test-Path -LiteralPath (Join-Path $WorkspaceRoot "requirements.txt"))
-$isRustProject = Test-Path -LiteralPath (Join-Path $WorkspaceRoot "Cargo.toml")
-
 if ($isJavaProject) {
+    $detectedToolchain = $true
     $javaHome = [string]$env:JAVA_HOME
     $javaOk = $false
     $javaDetail = "JAVA_HOME not set"
     if (-not [string]::IsNullOrWhiteSpace($javaHome) -and (Test-Path -LiteralPath $javaHome)) {
         try {
-            $javaOut = (& "$javaHome\bin\java" -version 2>&1) | Out-String
+            $javaBin = Join-Path (Join-Path $javaHome "bin") "java"
+            if (-not (Test-Path -LiteralPath $javaBin)) { $javaBin = Join-Path (Join-Path $javaHome "bin") "java.exe" }
+            $javaOut = (& $javaBin -version 2>&1) | Out-String
             $javaOk = $true
             $javaDetail = "Java runtime at $javaHome"
         } catch {
@@ -79,35 +78,54 @@ if ($isJavaProject) {
     $gradlew = Join-Path $WorkspaceRoot "gradlew.bat"
     if (-not (Test-Path -LiteralPath $gradlew)) { $gradlew = Join-Path $WorkspaceRoot "gradlew" }
     if (Test-Path -LiteralPath $gradlew) { Add-Check "Gradle wrapper" $true $gradlew }
-} elseif ($isGoProject) {
+}
+
+$isGoProject = Test-Path -LiteralPath (Join-Path $WorkspaceRoot "go.mod")
+if ($isGoProject) {
+    $detectedToolchain = $true
     try {
         $goVer = (go version 2>&1) | Out-String
         Add-Check "Go Toolchain" (-not [string]::IsNullOrWhiteSpace($goVer)) $goVer.Trim()
     } catch {
         Add-Check "Go Toolchain" $false "go CLI not found"
     }
-} elseif ($isNodeProject) {
+}
+
+$isNodeProject = Test-Path -LiteralPath (Join-Path $WorkspaceRoot "package.json")
+if ($isNodeProject) {
+    $detectedToolchain = $true
     try {
         $nodeVer = (node -v 2>&1) | Out-String
         Add-Check "Node.js" (-not [string]::IsNullOrWhiteSpace($nodeVer)) $nodeVer.Trim()
     } catch {
         Add-Check "Node.js" $false "node not found"
     }
-} elseif ($isPythonProject) {
+}
+
+$isPythonProject = (Test-Path -LiteralPath (Join-Path $WorkspaceRoot "pyproject.toml")) -or 
+                   (Test-Path -LiteralPath (Join-Path $WorkspaceRoot "requirements.txt"))
+if ($isPythonProject) {
+    $detectedToolchain = $true
     try {
         $pyVer = (python --version 2>&1) | Out-String
         Add-Check "Python" (-not [string]::IsNullOrWhiteSpace($pyVer)) $pyVer.Trim()
     } catch {
         Add-Check "Python" $false "python not found"
     }
-} elseif ($isRustProject) {
+}
+
+$isRustProject = Test-Path -LiteralPath (Join-Path $WorkspaceRoot "Cargo.toml")
+if ($isRustProject) {
+    $detectedToolchain = $true
     try {
         $cargoVer = (cargo --version 2>&1) | Out-String
         Add-Check "Rust/Cargo" (-not [string]::IsNullOrWhiteSpace($cargoVer)) $cargoVer.Trim()
     } catch {
         Add-Check "Rust/Cargo" $false "cargo not found"
     }
-} else {
+}
+
+if (-not $detectedToolchain) {
     Add-Check "Project Toolchain" $true "Generic Codebase"
 }
 

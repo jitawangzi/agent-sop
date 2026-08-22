@@ -108,7 +108,21 @@ $SchemaRoot = Join-Path $ClaudeRoot "schemas"
 $TransitionPath = Join-Path $ClaudeRoot "config\workflow-transitions.json"
 $TransitionSchemaPath = Join-Path $SchemaRoot "workflow-transitions.schema.json"
 $Utf8NoBom = [System.Text.UTF8Encoding]::new($false)
-$MutationDeadlineUtc = [DateTimeOffset]::UtcNow.AddMilliseconds(750)
+$mutationDeadlineMs = 750
+$deadlineEnv = if (-not [string]::IsNullOrWhiteSpace($env:AI_SOP_WORKFLOW_DEADLINE_MS)) {
+    $env:AI_SOP_WORKFLOW_DEADLINE_MS
+} elseif (-not [string]::IsNullOrWhiteSpace($env:SERVER_NEW_WORKFLOW_TRANSACTION_DEADLINE_MS)) {
+    $env:SERVER_NEW_WORKFLOW_TRANSACTION_DEADLINE_MS
+} else {
+    $null
+}
+if (-not [string]::IsNullOrWhiteSpace($deadlineEnv)) {
+    $parsedMs = 0
+    if ([int]::TryParse($deadlineEnv, [ref]$parsedMs) -and $parsedMs -gt 0) {
+        $mutationDeadlineMs = $parsedMs
+    }
+}
+$MutationDeadlineUtc = [DateTimeOffset]::UtcNow.AddMilliseconds($mutationDeadlineMs)
 . (Join-Path $PSScriptRoot "workflow-transaction.ps1")
 . (Join-Path $PSScriptRoot "workflow-session.ps1")
 

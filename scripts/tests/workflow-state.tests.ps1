@@ -1904,7 +1904,11 @@ try {
     $stateRaceProcess.WaitForExit()
     $completeRaceProcess.WaitForExit()
     if ($stateRaceProcess.ExitCode -ne 0 -or $completeRaceProcess.ExitCode -ne 0) {
-        throw "The guarded state mutation and subsequent completion must both succeed."
+        $sOut = if (Test-Path $stateRaceOut) { Get-Content $stateRaceOut -Raw } else { "" }
+        $sErr = if (Test-Path $stateRaceErr) { Get-Content $stateRaceErr -Raw } else { "" }
+        $cOut = if (Test-Path $completeRaceOut) { Get-Content $completeRaceOut -Raw } else { "" }
+        $cErr = if (Test-Path $completeRaceErr) { Get-Content $completeRaceErr -Raw } else { "" }
+        throw "The guarded state mutation and subsequent completion must both succeed. StateExit=$($stateRaceProcess.ExitCode), CompleteExit=$($completeRaceProcess.ExitCode)`nStateOut:$sOut`nStateErr:$sErr`nCompOut:$cOut`nCompErr:$cErr"
     }
 
     Write-Output "All workflow state tests passed."

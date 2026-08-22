@@ -156,6 +156,17 @@ function Get-AiSopWorkflowBaseAppDataRoot {
     return Join-Path $basePath "AIWorkflow"
 }
 
+function Get-AiSopWorkspaceScopeKey {
+    param([string]$WorkspacePath = (Get-Location).Path)
+    try {
+        $norm = [System.IO.Path]::GetFullPath($WorkspacePath).ToLowerInvariant()
+        $hash = [System.Security.Cryptography.SHA256]::HashData([System.Text.Encoding]::UTF8.GetBytes($norm))
+        return ([System.BitConverter]::ToString($hash) -replace "-", "").Substring(0, 12).ToLowerInvariant()
+    } catch {
+        return "default"
+    }
+}
+
 function Get-AiSopWorkflowTransactionRegistryRoot {
     param()
 
@@ -165,7 +176,8 @@ function Get-AiSopWorkflowTransactionRegistryRoot {
     if (-not [string]::IsNullOrWhiteSpace($env:SERVER_NEW_WORKFLOW_TRANSACTION_REGISTRY)) {
         return [System.IO.Path]::GetFullPath($env:SERVER_NEW_WORKFLOW_TRANSACTION_REGISTRY)
     }
-    return Join-Path (Get-AiSopWorkflowBaseAppDataRoot) "Transactions"
+    $scope = Get-AiSopWorkspaceScopeKey
+    return Join-Path (Get-AiSopWorkflowBaseAppDataRoot) "Transactions/$scope"
 }
 
 function Get-AiSopWorkflowSessionRegistryRoot {
@@ -177,7 +189,8 @@ function Get-AiSopWorkflowSessionRegistryRoot {
     if (-not [string]::IsNullOrWhiteSpace($env:SERVER_NEW_WORKFLOW_SESSION_REGISTRY)) {
         return [System.IO.Path]::GetFullPath($env:SERVER_NEW_WORKFLOW_SESSION_REGISTRY)
     }
-    return Join-Path (Get-AiSopWorkflowBaseAppDataRoot) "Sessions"
+    $scope = Get-AiSopWorkspaceScopeKey
+    return Join-Path (Get-AiSopWorkflowBaseAppDataRoot) "Sessions/$scope"
 }
 
 function Get-AiSopWorkflowCommandGrantRegistryRoot {
@@ -189,7 +202,8 @@ function Get-AiSopWorkflowCommandGrantRegistryRoot {
     if (-not [string]::IsNullOrWhiteSpace($env:SERVER_NEW_WORKFLOW_COMMAND_GRANT_REGISTRY)) {
         return [System.IO.Path]::GetFullPath($env:SERVER_NEW_WORKFLOW_COMMAND_GRANT_REGISTRY)
     }
-    return Join-Path (Get-AiSopWorkflowBaseAppDataRoot) "CommandGrants"
+    $scope = Get-AiSopWorkspaceScopeKey
+    return Join-Path (Get-AiSopWorkflowBaseAppDataRoot) "CommandGrants/$scope"
 }
 
 function Get-AiSopWorkflowOwnerRegistryRoot {
@@ -201,7 +215,8 @@ function Get-AiSopWorkflowOwnerRegistryRoot {
     if (-not [string]::IsNullOrWhiteSpace($env:SERVER_NEW_WORKFLOW_REGISTRY)) {
         return [System.IO.Path]::GetFullPath($env:SERVER_NEW_WORKFLOW_REGISTRY)
     }
-    return Join-Path (Get-AiSopWorkflowBaseAppDataRoot) "Owners"
+    $scope = Get-AiSopWorkspaceScopeKey
+    return Join-Path (Get-AiSopWorkflowBaseAppDataRoot) "Owners/$scope"
 }
 
 function Get-AiSopWorkflowSchemaPath {

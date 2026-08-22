@@ -124,7 +124,7 @@ function Test-AiSopGuardPathWithinRoot {
 function Get-AiSopProductionPatterns {
     param([string]$WorkspaceRoot)
 
-    $policyPath = Join-Path $WorkspaceRoot ".ai-sop\config\project-policy.json"
+    $policyPath = Join-Path $WorkspaceRoot ".ai-sop/config/project-policy.json"
     if (Test-Path -LiteralPath $policyPath -PathType Leaf) {
         try {
             $cfg = Get-Content -Raw -LiteralPath $policyPath | ConvertFrom-Json

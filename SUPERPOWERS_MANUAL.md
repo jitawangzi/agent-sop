@@ -92,7 +92,9 @@ pwsh -NoProfile -File .\.ai-sop\scripts\workflow-owner.ps1 -Operation Claim `
   -OwnerId "<superpowers-run-id>"
 ```
 
-`agent` 值取自实际工具，而非底层模型。注意 PI 因核心无 subagent，能力准入判定为 BLOCKED（只 T2，不能跑自动 T3 独立审查），其 Claim 经 `pi-adapter/bootstrap-pi-session.ps1` 注册 session。恢复任务或开始新的修改批次前用同一身份执行 `Validate`；功能成功交付后执行 `Complete`。失败或阻塞时不要 Complete，以便原会话恢复：
+`agent` 值取自实际工具，而非底层模型。注意 PI 因核心无 subagent，能力准入判定为 BLOCKED（只 T2，不能跑自动 T3 独立审查），其 Claim 经 `pi-adapter/bootstrap-pi-session.ps1` 注册 session。*注意：已有 01/06 规格产物的功能目录，后续修改均按 T3 门禁收尾（`VerifyCompletion` 自动升档校验）；若对已有功能进行 T2 快速热修，请开新 FeatureName（如 `HotfixShopLimit20260821`）。*
+
+恢复任务或开始新的修改批次前用同一身份执行 `Validate`；功能成功交付后执行 `Complete`。失败或阻塞时不要 Complete，以便原会话恢复：
 
 ```powershell
 pwsh -NoProfile -File .\.ai-sop\scripts\workflow-owner.ps1 -Operation Validate `

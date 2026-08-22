@@ -182,7 +182,7 @@ AI 可在一次响应内同时呈递 `01_server_rules.md` 与 `06_design_contrac
 
 功能开始时自动 Claim 归属，生成不可变 owner ID 持久化到 Superpowers ledger。各 harness 统一 `SUPERPOWERS` 归属（`-Workflow SUPERPOWERS` 是归属身份标识，**不等于依赖 Superpowers 技能包**——T2/快通道不依赖 Superpowers 技能，但仍用此归属身份），`agent` 字段区分实际工具：
 
-**FeatureName 命名规则**：用 PascalCase 英文（`[A-Z][A-Za-z0-9]+`，如 `ShopExchangeBuyLimit`、`DailySignInReward`）。从用户话术提取并回显：“将以 `<FeatureName>` 认领，不对请立刻改名”。目录不存在则建。T2 小改也需 feature 名（热修用 `HotfixShopLimit20260821`，无连字符）。
+**FeatureName 命名规则**：用 PascalCase 英文（`[A-Z][A-Za-z0-9]+`，如 `ShopExchangeBuyLimit`、`DailySignInReward`）。从用户话术提取并回显：“将以 `<FeatureName>` 认领，不对请立刻改名”。目录不存在则建。T2 小改也需 feature 名（热修用 `HotfixShopLimit20260821`，无连字符）。*注意：已有 01/06 规格产物的功能目录，后续修改均按 T3 门禁收尾；若需独立 T2 快速修改请开新 FeatureName。*
 
 ```powershell
 pwsh -NoProfile -File .\.ai-sop\scripts\workflow-owner.ps1 -Operation Claim `

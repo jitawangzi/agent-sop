@@ -2268,8 +2268,14 @@ switch ($Operation) {
         } else {
             $checks.Add("[?] VCS 交付状态: 通用工程目录")
         }
-        # 5. T2 doc reminder (AI self-reported).
-        if ($effectiveTier -eq "T2") { $checks.Add("[?] 文档待更新提醒(AI 自报)") }
+        # 5. T2 / T1 / FAST_TRACK checklist reminders (AI self-reported).
+        if ($effectiveTier -eq "T2") {
+            $checks.Add("[?] 文档待更新提醒(AI 自报)")
+        } elseif ($effectiveTier -eq "FAST_TRACK") {
+            $checks.Add("[?] 快通道: 纯数值/文档检查(AI 自报)")
+        } elseif ($effectiveTier -eq "T1") {
+            $checks.Add("[?] T1: 急速逃生口(AI 自报)")
+        }
         foreach ($c in $checks) { Write-Output $c }
         Write-Output "DIAGNOSTIC: [v]=pass, [X]=fail, [?]=needs human/AI verification. Machine-checked items only; AI must verify the rest per AGENTS.md done-definition table."
     }
@@ -2366,10 +2372,16 @@ switch ($Operation) {
             $phaseOk = (-not [string]::IsNullOrWhiteSpace($phase)) -and ($phase -ne "INIT") -and ($phase -ne "unknown") -and ($phase -ne "UNCLASSIFIED")
             if (-not $phaseOk) { $failures.Add("feature-state phase is initial/unknown ($phase)") }
             $checks.Add("[$(if($phaseOk){'v'}else{'X'})] feature-state 阶段非初始($phase)")
-        } elseif ($effectiveTier -eq "T2") {
-            # T2: compile artifact; Claim validity is workflow-owner.ps1 Validate's job
-            $checks.Add("[?] 归属 Validate(owner.ps1 -Operation Validate,另跑)")
-            $checks.Add("[?] 相关测试/回归(AI 据定向 JUnit 结果自报)")
+        } elseif ($effectiveTier -in @("T1", "T2", "FAST_TRACK")) {
+            # T1/T2/FAST_TRACK: compile artifact check is non-blocking (advisory); Claim validity is workflow-owner.ps1 Validate's job
+            if ($effectiveTier -eq "T2") {
+                $checks.Add("[?] 归属 Validate(owner.ps1 -Operation Validate,另跑)")
+                $checks.Add("[?] 相关测试/回归(AI 据定向 JUnit 结果自报)")
+            } elseif ($effectiveTier -eq "FAST_TRACK") {
+                $checks.Add("[?] 快通道: 纯数值/文档检查自报")
+            } elseif ($effectiveTier -eq "T1") {
+                $checks.Add("[?] T1: 急速逃生口(仅编译检查)")
+            }
         } else {
             $failures.Add("tier unknown — feature-state.json missing or tier not set")
             $checks.Add("[X] tier 未知(feature-state.json 缺失或未设 tier)")

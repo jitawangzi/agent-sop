@@ -152,10 +152,15 @@ function Complete-TestSuperpowersOwner {
         -AcceptedAt ([DateTimeOffset]::UtcNow) `
         -TransactionId "state-$Feature-$Agent-complete" |
         Out-Null
-    & $OwnerScriptPath -Operation Complete -SpecDirectory $SpecDirectory `
-        -Feature $Feature -Workflow SUPERPOWERS -Agent $Agent `
-        -OwnerId $OwnerId -SkipVerification |
-        Out-Null
+    try {
+        $env:AI_SOP_SKIP_COMPLETION_VERIFY = "1"
+        & $OwnerScriptPath -Operation Complete -SpecDirectory $SpecDirectory `
+            -Feature $Feature -Workflow SUPERPOWERS -Agent $Agent `
+            -OwnerId $OwnerId |
+            Out-Null
+    } finally {
+        Remove-Item Env:AI_SOP_SKIP_COMPLETION_VERIFY -ErrorAction SilentlyContinue
+    }
 }
 
 function Write-TestLegacyOwner {
@@ -771,6 +776,27 @@ function Assert-NoRuntimeCoverageApprovalState {
         $verifyT2Out = $verifyT2 | Out-String
         if ($LASTEXITCODE -ne 0) { throw "VerifyCompletion must pass on T2 without compile dir. Output: $verifyT2Out" }
         if ($verifyT2Out -notmatch "VERIFY_COMPLETION_PASS") { throw "VerifyCompletion must emit VERIFY_COMPLETION_PASS on T2. Output: $verifyT2Out" }
+
+        # Test VerifyCompletion on FAST_TRACK and T1: passes as non-blocking
+        $ftTestFeature = "VerifyFastTrackFeature"
+        $ftSpecDir = Join-Path $TestRoot "specs/features/$ftTestFeature"
+        [System.IO.Directory]::CreateDirectory($ftSpecDir) | Out-Null
+        $ftFeatState = Join-Path $ftSpecDir "feature-state.json"
+        [System.IO.File]::WriteAllText($ftFeatState, '{"schemaVersion":"1.0","feature":"' + $ftTestFeature + '","tier":"FAST_TRACK","phase":"IMPLEMENTING","updatedAt":"2026-08-23T00:00:00Z"}', $Utf8NoBom)
+        $verifyFt = & $ScriptPath -Operation VerifyCompletion -Path (Join-Path $ftSpecDir "workflow-state.json") 2>&1
+        $verifyFtOut = $verifyFt | Out-String
+        if ($LASTEXITCODE -ne 0) { throw "VerifyCompletion must pass on FAST_TRACK. Output: $verifyFtOut" }
+        if ($verifyFtOut -notmatch "VERIFY_COMPLETION_PASS") { throw "VerifyCompletion must emit VERIFY_COMPLETION_PASS on FAST_TRACK. Output: $verifyFtOut" }
+
+        $t1TestFeature = "VerifyT1Feature"
+        $t1SpecDir = Join-Path $TestRoot "specs/features/$t1TestFeature"
+        [System.IO.Directory]::CreateDirectory($t1SpecDir) | Out-Null
+        $t1FeatState = Join-Path $t1SpecDir "feature-state.json"
+        [System.IO.File]::WriteAllText($t1FeatState, '{"schemaVersion":"1.0","feature":"' + $t1TestFeature + '","tier":"T1","phase":"IMPLEMENTING","updatedAt":"2026-08-23T00:00:00Z"}', $Utf8NoBom)
+        $verifyT1 = & $ScriptPath -Operation VerifyCompletion -Path (Join-Path $t1SpecDir "workflow-state.json") 2>&1
+        $verifyT1Out = $verifyT1 | Out-String
+        if ($LASTEXITCODE -ne 0) { throw "VerifyCompletion must pass on T1. Output: $verifyT1Out" }
+        if ($verifyT1Out -notmatch "VERIFY_COMPLETION_PASS") { throw "VerifyCompletion must emit VERIFY_COMPLETION_PASS on T1. Output: $verifyT1Out" }
 
         # Test T3 auto-escalation: if 01_server_rules.md exists, VerifyCompletion treats it as T3 even if feature-state claims T2
         $t3EscalateFeature = "T3AutoEscalateFeature"

@@ -42,10 +42,7 @@ param(
 
     [Parameter(Mandatory = $false)]
     [ValidateSet("T1", "T2", "T3", "FAST_TRACK")]
-    [string]$Tier = "T2",
-
-    [Parameter(Mandatory = $false)]
-    [switch]$SkipVerification
+    [string]$Tier = "T2"
 )
 
 $ErrorActionPreference = "Stop"
@@ -930,14 +927,12 @@ switch ($Operation) {
             throw "WORKFLOW_OWNER_SESSION_MISMATCH"
         }
 
-        # Verify completion before releasing ownership
-        if (-not $SkipVerification) {
+        # Verify completion before releasing ownership (test teardowns use AI_SOP_SKIP_COMPLETION_VERIFY env)
+        $skipVerify = ($env:AI_SOP_SKIP_COMPLETION_VERIFY -eq "1" -or $env:AI_SOP_SKIP_COMPLETION_VERIFY -eq "true")
+        if (-not $skipVerify) {
             $stateScript = Join-Path $PSScriptRoot "workflow-state.ps1"
             if (Test-Path -LiteralPath $stateScript -PathType Leaf) {
-                $workflowStatePath = Join-Path $ResolvedSpecDirectory "workflow-state.json"
-                if (-not (Test-Path -LiteralPath $workflowStatePath -PathType Leaf)) {
-                    $workflowStatePath = Join-Path $ResolvedSpecDirectory "00_workflow_state.json"
-                }
+                $workflowStatePath = Join-Path $ResolvedSpecDirectory "00_workflow_state.json"
                 if (-not (Test-Path -LiteralPath $workflowStatePath -PathType Leaf)) {
                     $workflowStatePath = Join-Path $ResolvedSpecDirectory "workflow-state.json"
                 }

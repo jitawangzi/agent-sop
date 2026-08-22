@@ -1101,13 +1101,23 @@ function Get-CoveragePlaceholderWarnings {
         $caseId = [string]$case.id
         $prio = [string]$case.priority
         $isHighPriority = ($prio -ieq "P0") -or ($prio -ieq "P1")
+        $caseStatus = [string]$case.status
+        if ($caseStatus -ieq "PLACEHOLDER") {
+            if ($isHighPriority) {
+                $errors.Add("ERROR: $caseId (priority=$prio) status is PLACEHOLDER — must be refined to PLANNED/IMPLEMENTED/VERIFIED")
+            } else {
+                $warnings.Add("WARN: $caseId (priority=$prio) status is PLACEHOLDER — refine before delivery")
+            }
+        }
         $placeholderHits = [System.Collections.Generic.List[string]]::new()
+        $hasNonNaAssertion = $false
         if ($null -ne $case.assertions) {
             foreach ($cat in $case.assertions.PSObject.Properties) {
                 foreach ($entry in $cat.Value) {
                     $exp = [string]$entry.expected
                     $op = [string]$entry.operator
                     $tgt = [string]$entry.target
+                    if ($op -cne "N_A") { $hasNonNaAssertion = $true }
                     $isPlaceholder = ($exp -ieq "placeholder") -or ($op -ieq "N_A") -or ($tgt -ieq "see plan")
                     if ($isPlaceholder) {
                         $placeholderHits.Add("${cat.Name}.$($op)/$($exp)")
@@ -1123,18 +1133,23 @@ function Get-CoveragePlaceholderWarnings {
                 $warnings.Add("WARN: $caseId (priority=$prio) assertions still placeholder ($hitSummary) — refine setup/trigger/assertions before delivery")
             }
         }
+        if ($isHighPriority -and -not $hasNonNaAssertion) {
+            $errors.Add("ERROR: $caseId (priority=$prio) all assertions are N_A — high-priority cases must define at least one non-N_A assertion")
+        }
 
-        # automationCarrier validation. Carriers come in several shapes:
-        #   - "<path>#<method>"   e.g. src/test/.../XxxTest.java#testFoo (Java/JSP/ps1 with method anchor)
-        #   - "<path>"            a bare file path
-        #   - "JSP/Tomcat path-B (deferred: ...)" free-text disclosure (path-B pending live verify)
-        # We only hard-check path-shaped carriers (contain a slash/backslash AND a file
-        # extension). Free-text carriers are recorded as INFO (intentional disclosure),
-        # not blocked — path-B deferrals are legitimate incomplete items, not errors.
+        # automationCarrier validation.
         $carrier = [string]$case.automationCarrier
         $carrierTrim = $carrier.Trim()
-        if ([string]::IsNullOrWhiteSpace($carrierTrim) -or $carrierTrim -ieq "__TODO__" -or $carrierTrim -ieq "see plan") {
-            $warnings.Add("WARN: $caseId automationCarrier is placeholder ('$carrierTrim') — point it at the real test method/path before delivery")
+        if ([string]::IsNullOrWhiteSpace($carrierTrim) -or $carrierTrim -ieq "__TODO__" -or $carrierTrim -ieq "see plan" -or $carrierTrim -ieq "TODO") {
+            if ($isHighPriority) {
+                $errors.Add("ERROR: $caseId (priority=$prio) automationCarrier is placeholder ('$carrierTrim') — high-priority TC must point to test class/method or file")
+            } else {
+                $warnings.Add("WARN: $caseId automationCarrier is placeholder ('$carrierTrim') — point it at the real test method/path before delivery")
+            }
+        } elseif ($carrierTrim -in @("JUnit", "pytest", "go test", "cargo test", "npm test")) {
+            if ($isHighPriority) {
+                $errors.Add("ERROR: $caseId (priority=$prio) automationCarrier is too generic ('$carrierTrim') — specify exact test file or Class#method")
+            }
         } elseif ($carrierTrim -match '[/\\]\.[a-zA-Z0-9]+$' -or $carrierTrim -match '\.[a-zA-Z]{1,5}#') {
             # Looks like a file path (has separator + extension, or extension#method).
             $filePathPart = $carrierTrim
@@ -1146,9 +1161,6 @@ function Get-CoveragePlaceholderWarnings {
             if (-not (Test-Path -LiteralPath $resolved -PathType Leaf)) {
                 $errors.Add("ERROR: $caseId automationCarrier points to a missing file: $filePathPart — verify the test path")
             } elseif ($filePathPart -match '\.java$') {
-                # For .java carriers, require at least one @Test method (coarse "has a
-                # test carrier" check; precise TC↔method mapping is out of scope — the
-                # project uses comment-anchored DC ids, not @TestCase annotations).
                 $javaSrc = [System.IO.File]::ReadAllText($resolved)
                 if ($javaSrc -notmatch '@Test\b') {
                     $errors.Add("ERROR: $caseId automationCarrier .java has no @Test method: $filePathPart — carrier must be a real test")
@@ -2105,6 +2117,7 @@ switch ($Operation) {
                 if (-not $desIds) { $desIds = @("DC-PLACEHOLDER") }
                 $cases.Add([ordered]@{
                     id = $tcId
+                    status = "PLACEHOLDER"
                     title = [string]$meta.title
                     priority = if ($meta.priority) { [string]$meta.priority } else { "P2" }
                     testTypes = @("FUNCTIONAL")
@@ -2158,8 +2171,35 @@ switch ($Operation) {
         if (Test-Path -LiteralPath $featStatePath -PathType Leaf) {
             try { $fs = Get-Content -LiteralPath $featStatePath -Raw | ConvertFrom-Json; $tier = [string]$fs.tier; $phase = [string]$fs.phase } catch { }
         }
+        if ($tier -eq "unknown" -or [string]::IsNullOrWhiteSpace($tier)) {
+            if (Test-Path -LiteralPath $Path -PathType Leaf) {
+                $tier = "T3"
+                $phase = "IN_PROGRESS"
+            } else {
+                $tier = "T2"
+                $phase = "IN_PROGRESS"
+            }
+        }
         Write-Output "tier=$tier phase=$phase"
         $checks = [System.Collections.Generic.List[string]]::new()
+        
+        # Workspace root resolution (search upward for .ai-workspace, .git, or .svn)
+        $specFullPath = [System.IO.Path]::GetFullPath($specDir)
+        $curDir = $specFullPath
+        $wsRoot = $null
+        while (-not [string]::IsNullOrWhiteSpace($curDir)) {
+            if ((Test-Path -LiteralPath (Join-Path $curDir ".ai-workspace")) -or 
+                (Test-Path -LiteralPath (Join-Path $curDir ".git")) -or 
+                (Test-Path -LiteralPath (Join-Path $curDir ".svn"))) {
+                $wsRoot = $curDir
+                break
+            }
+            $parent = Split-Path -Parent $curDir
+            if ($parent -eq $curDir) { break }
+            $curDir = $parent
+        }
+        if ([string]::IsNullOrWhiteSpace($wsRoot)) { $wsRoot = (Get-Location).Path }
+
         # 1. Gate approval state (T3 only).
         if ($tier -eq "T3") {
             if (Test-Path -LiteralPath $Path -PathType Leaf) {
@@ -2176,34 +2216,40 @@ switch ($Operation) {
             $covOk = Test-Path -LiteralPath $covPath -PathType Leaf
             $checks.Add("[$(if($covOk){'v'}else{'X'})] 测试覆盖矩阵存在")
         }
-        # 3. Compile (check for build/ classes — heuristic, not definitive).
-        $specFullPath = [System.IO.Path]::GetFullPath($specDir)
-        $wsRoot = Split-Path -Parent (Split-Path -Parent (Split-Path -Parent (Split-Path -Parent $specFullPath)))
+        # 3. Compile (check candidate roots for build/ classes/ target/ bin/ dist artifacts).
         $specParent2 = Split-Path -Parent (Split-Path -Parent $specFullPath)
-        $compileOk = (Test-Path -LiteralPath (Join-Path $wsRoot "build") -PathType Container) -or
-                     (Test-Path -LiteralPath (Join-Path $wsRoot "classes") -PathType Container) -or
-                     (Test-Path -LiteralPath (Join-Path $wsRoot "WebRoot/WEB-INF/classes") -PathType Container) -or
-                     (Test-Path -LiteralPath (Join-Path $specParent2 "build") -PathType Container) -or
-                     (Test-Path -LiteralPath (Join-Path $specParent2 "classes") -PathType Container)
-        $checks.Add("[$(if($compileOk){'v'}else{'?'})] 编译产物存在(非权威,以 gradlew 为准)")
-        # 4. SVN delivery state (human-verified, not machine-checkable).
-        # Delivery = ready to svn commit; there are always uncommitted changes at this point,
-        # and parallel features' changes also pollute `svn status`. Machine cannot decide
-        # "ready to commit", so this is always [?] for human/AI confirmation.
-        $checks.Add("[?] SVN 交付状态(人工确认 svn commit)")
-        # 5. T2 doc reminder (AI self-reported, not machine-checkable).
+        $specParent4 = Split-Path -Parent (Split-Path -Parent $specParent2)
+        $candidateRoots = @($wsRoot, $specParent2, $specParent4) | Where-Object { -not [string]::IsNullOrWhiteSpace($_) }
+        $compileOk = $false
+        foreach ($r in $candidateRoots) {
+            if ((Test-Path -LiteralPath (Join-Path $r "build/classes") -PathType Container) -or
+                (Test-Path -LiteralPath (Join-Path $r "build/libs") -PathType Container) -or
+                (Test-Path -LiteralPath (Join-Path $r "build") -PathType Container) -or
+                (Test-Path -LiteralPath (Join-Path $r "classes") -PathType Container) -or
+                (Test-Path -LiteralPath (Join-Path $r "target/classes") -PathType Container) -or
+                (Test-Path -LiteralPath (Join-Path $r "bin") -PathType Container) -or
+                (Test-Path -LiteralPath (Join-Path $r "dist") -PathType Container) -or
+                (Test-Path -LiteralPath (Join-Path $r "WebRoot/WEB-INF/classes") -PathType Container)) {
+                $compileOk = $true
+                break
+            }
+        }
+        $checks.Add("[$(if($compileOk){'v'}else{'?'})] 编译产物存在(以构建命令执行结果为准)")
+        
+        # 4. VCS delivery surface state (3-state detection).
+        if (Test-Path -LiteralPath (Join-Path $wsRoot ".svn") -PathType Container) {
+            $checks.Add("[?] VCS 交付状态: SVN 工作副本 (准备 svn commit)")
+        } elseif (Test-Path -LiteralPath (Join-Path $wsRoot ".git") -PathType Container) {
+            $checks.Add("[v] VCS 交付状态: Git-only (支持本地/分支提交)")
+        } else {
+            $checks.Add("[?] VCS 交付状态: 通用工程目录")
+        }
+        # 5. T2 doc reminder (AI self-reported).
         if ($tier -eq "T2") { $checks.Add("[?] 文档待更新提醒(AI 自报)") }
         foreach ($c in $checks) { Write-Output $c }
         Write-Output "DIAGNOSTIC: [v]=pass, [X]=fail, [?]=needs human/AI verification. Machine-checked items only; AI must verify the rest per AGENTS.md done-definition table."
     }
     "VerifyCompletion" {
-        # Hard-gate completion verification. Unlike CheckCompletion (advisory ASCII),
-        # this returns a non-zero exit code when any blocking condition fails, so AI
-        # cannot claim Complete after skipping real verification (Token decay / fatigue
-        # hallucination guard). Run before workflow-owner.ps1 -Operation Complete.
-        # T3: gates APPROVED+SHA / coverage VALID (no placeholder/carrier errors) /
-        #     feature-state phase not initial / compile artifact.
-        # T2: compile artifact (Claim validity is owner.ps1 Validate's job).
         Assert-Argument -Name "Path" -Value $Path
         $specDir = Split-Path -Parent $Path
         $featStatePath = Join-Path $specDir "feature-state.json"
@@ -2214,14 +2260,41 @@ switch ($Operation) {
         }
         $failures = [System.Collections.Generic.List[string]]::new()
         $checks = [System.Collections.Generic.List[string]]::new()
+        
+        # Workspace root resolution
         $specFullPath = [System.IO.Path]::GetFullPath($specDir)
-        $wsRoot = Split-Path -Parent (Split-Path -Parent (Split-Path -Parent (Split-Path -Parent $specFullPath)))
+        $curDir = $specFullPath
+        $wsRoot = $null
+        while (-not [string]::IsNullOrWhiteSpace($curDir)) {
+            if ((Test-Path -LiteralPath (Join-Path $curDir ".ai-workspace")) -or 
+                (Test-Path -LiteralPath (Join-Path $curDir ".git")) -or 
+                (Test-Path -LiteralPath (Join-Path $curDir ".svn"))) {
+                $wsRoot = $curDir
+                break
+            }
+            $parent = Split-Path -Parent $curDir
+            if ($parent -eq $curDir) { break }
+            $curDir = $parent
+        }
+        if ([string]::IsNullOrWhiteSpace($wsRoot)) { $wsRoot = (Get-Location).Path }
+
         $specParent2 = Split-Path -Parent (Split-Path -Parent $specFullPath)
-        $compileOk = (Test-Path -LiteralPath (Join-Path $wsRoot "build") -PathType Container) -or
-                     (Test-Path -LiteralPath (Join-Path $wsRoot "classes") -PathType Container) -or
-                     (Test-Path -LiteralPath (Join-Path $wsRoot "WebRoot/WEB-INF/classes") -PathType Container) -or
-                     (Test-Path -LiteralPath (Join-Path $specParent2 "build") -PathType Container) -or
-                     (Test-Path -LiteralPath (Join-Path $specParent2 "classes") -PathType Container)
+        $specParent4 = Split-Path -Parent (Split-Path -Parent $specParent2)
+        $candidateRoots = @($wsRoot, $specParent2, $specParent4) | Where-Object { -not [string]::IsNullOrWhiteSpace($_) }
+        $compileOk = $false
+        foreach ($r in $candidateRoots) {
+            if ((Test-Path -LiteralPath (Join-Path $r "build/classes") -PathType Container) -or
+                (Test-Path -LiteralPath (Join-Path $r "build/libs") -PathType Container) -or
+                (Test-Path -LiteralPath (Join-Path $r "build") -PathType Container) -or
+                (Test-Path -LiteralPath (Join-Path $r "classes") -PathType Container) -or
+                (Test-Path -LiteralPath (Join-Path $r "target/classes") -PathType Container) -or
+                (Test-Path -LiteralPath (Join-Path $r "bin") -PathType Container) -or
+                (Test-Path -LiteralPath (Join-Path $r "dist") -PathType Container) -or
+                (Test-Path -LiteralPath (Join-Path $r "WebRoot/WEB-INF/classes") -PathType Container)) {
+                $compileOk = $true
+                break
+            }
+        }
         if ($tier -eq "T3") {
             if (Test-Path -LiteralPath $Path -PathType Leaf) {
                 $st = Get-Content -Raw -LiteralPath $Path | ConvertFrom-Json
@@ -2235,8 +2308,7 @@ switch ($Operation) {
                 $failures.Add("workflow-state.json missing")
                 $checks.Add("[X] 门禁状态文件缺失")
             }
-            # Coverage VALID (no placeholder/carrier errors). Reuse the same functions
-            # ValidateTestCoverage uses; a non-zero error count fails the gate.
+            # Coverage VALID (no placeholder/carrier errors).
             $covPath = Join-Path $specDir "05_test_coverage.json"
             $covOk = Test-Path -LiteralPath $covPath -PathType Leaf
             $checks.Add("[$(if($covOk){'v'}else{'X'})] 测试覆盖矩阵存在")
@@ -2263,16 +2335,14 @@ switch ($Operation) {
             $checks.Add("[$(if($phaseOk){'v'}else{'X'})] feature-state 阶段非初始($phase)")
         } elseif ($tier -eq "T2") {
             # T2: compile artifact; Claim validity is workflow-owner.ps1 Validate's job
-            # (run separately). Done-condition #1 (Claim) and #3/#4 (tests) are not
-            # machine-checkable here without a runtime; AI runs owner Validate + JUnit.
             $checks.Add("[?] 归属 Validate(owner.ps1 -Operation Validate,另跑)")
             $checks.Add("[?] 相关测试/回归(AI 据定向 JUnit 结果自报)")
         } else {
             $failures.Add("tier unknown — feature-state.json missing or tier not set")
             $checks.Add("[X] tier 未知(feature-state.json 缺失或未设 tier)")
         }
-        $checks.Add("[$(if($compileOk){'v'}else{'?'})] 编译产物存在(非权威,以 gradlew 为准)")
-        if (-not $compileOk -and $tier -eq "T3") { $failures.Add("compile artifact missing") }
+        $checks.Add("[$(if($compileOk){'v'}else{'?'})] 编译产物存在(以构建命令执行结果为准)")
+        if (-not $compileOk -and $tier -in @("T3", "T2")) { $failures.Add("compile verification failed — no build artifacts found") }
         Write-Output "tier=$tier phase=$phase"
         foreach ($c in $checks) { Write-Output $c }
         if ($failures.Count -eq 0) {

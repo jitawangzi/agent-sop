@@ -2,6 +2,13 @@
 
 本指南说明多个 harness（Claude Code / GitHub Copilot / Antigravity / Cursor / Pi）如何使用本项目的 AI SOP 完成游戏服务端开发。**T3 由 Superpowers 过程引擎编排；T2/T1/快通道用 AGENTS.md + 专家 Skills，不调用 Superpowers**。领域专家 Skill 被强制绑定调用；详见 `.ai-sop/workflows/superpowers-adapter.md`。各 harness 共享 `.ai-workspace/context/` 与规范化功能产物。各工具的能力差异（能跑 T3 还是只 T2）见 `.ai-sop/scripts/harness-capability.ps1` 的 STRICT/BLOCKED 判定。
 
+## 🧭 用户任务极简判定树
+
+- 🐛 **日常 Bug 修复 / 单点逻辑微调** $\rightarrow$ 说 `快速修改：...`（自动按 T2 单命令直达，不打断）
+- 📄 **纯数值微调 / 错别字润色** $\rightarrow$ 直接改（自动按快通道秒级生效）
+- ✨ **新玩法活动 / 协议变更 / 存储改动** $\rightarrow$ 描述功能目标（自动按 T3 展开，需需求+设计两道确认）
+- 📑 **超复杂策划案** $\rightarrow$ 选用 `requirement-analyst` 预处理提取 BR 条款
+
 ## 为什么不需要声明流程模式
 
 各 harness 统一以 Superpowers 为过程引擎（仅 T3）。用户只需描述任务，Superpowers 会自动选择对应的过程 Skill：
@@ -19,58 +26,35 @@
 
 主流程为 Superpowers 原生骨架；领域专家 Skill 作执行单元/校验组件，不作流程节点。
 
-```text
-claim feature ownership (SUPERPOWERS)
--> [快通道?] 纯配置 -> 直接实现+回归 / 纯文档 -> 文档检查停止
--> Superpowers brainstorming
-     （两次呈递：需求探索 -> 人工确认 01_server_rules.md
-       -> 续做设计 -> design-architect 产出 06_design_contract.md
-       -> design-reviewer 机器审查（闭环自审自修，不进人工门禁）
-       -> 人工确认 06_design_contract.md）
--> Superpowers writing-plans
--> Superpowers subagent-driven development + TDD
-     实现者 = implementation-engine；每 Task 内审 = implementation-auditor/logic-auditor
--> ValidateTestCoverage（覆盖校验，实现后）
--> Superpowers requesting-code-review（整体收尾）
--> Superpowers verification-before-completion
--> complete feature ownership
-```
-
-**流程全景图（Mermaid）**：
-
 ```mermaid
 flowchart TD
-    A[用户提需求] --> B{T 档判断}
-    B -->|快通道 纯配置/纯文档| C[直接实现+回归/文档检查]
-    B -->|T2 快速修改| D[Claim 归属+直接实现+验证]
-    B -->|T3 协议/存储/新玩法| E[Claim 归属]
-    E --> F[brainstorming 需求探索]
-    F --> G[人工确认 01_server_rules.md]
-    G --> H[设计 06_design_contract.md]
-    H --> I[design-reviewer 机器审查]
-    I --> J[人工确认 06_design_contract.md]
-    J --> K[writing-plans 拆任务]
-    K --> L[subagent-driven-development + TDD]
-    L --> M[ValidateTestCoverage]
-    M --> N[requesting-code-review 整体收尾]
-    N --> O[verification-before-completion]
-    B -->|T3 完整开发| E[Claim 归属]
-    E --> F[Superpowers brainstorming]
-    F -->|澄清需求 提问<=3个| G[产出 01_server_rules.md]
+    A[用户输入指令] --> B{自动判定 T 档}
+    
+    B -->|快通道: 纯配置/纯文档| C[直接修改 + 回归测试/文档检查]
+    
+    B -->|T2: 快速修复/单点逻辑| D[Claim 归属]
+    D --> D1[修改代码 + 项目编译]
+    D1 --> D2[定向单元测试验证]
+    D2 --> S[VerifyCompletion 硬门禁检验]
+    
+    B -->|T3: 协议/存储/完整新功能| E[Claim 归属]
+    E --> F[Superpowers brainstorming 澄清与探索]
+    F --> G[产出 01_server_rules.md 需求规则]
     G --> H{人工确认需求门禁}
-    H -->|确认 Approve| I[design-architect 产出 06_design_contract.md]
-    I --> J[design-reviewer 机器闭环审查]
-    J -->|PASS / PASS_WITH_WARNINGS| K{人工确认设计门禁}
-    J -->|NEEDS_FIX 最多2轮| I
-    K -->|确认 Approve| L[Superpowers writing-plans]
+    H -->|Approve| I[design-architect 产出 06_design_contract.md]
+    I --> J[design-reviewer 机器闭环审查 最多2轮]
+    J -->|PASS| K{人工确认设计门禁}
+    J -->|NEEDS_FIX| I
+    K -->|Approve| L[Superpowers writing-plans 拆解任务]
     L --> M[subagent-driven-development + TDD]
-    M --> N[每 Task 内审 implementation-auditor/logic-auditor]
+    M --> N[每 Task 双重内审 auditor 守门]
     N --> O[ValidateTestCoverage 覆盖校验]
-    O --> P[Superpowers requesting-code-review 收尾]
-    P --> Q[Superpowers verification-before-completion 验证]
-    Q --> R[VerifyCompletion 机器全绿硬门禁]
-    R --> S[Complete 归属释放]
-    S --> T[人工审核并在 SVN 工作副本中 svn commit 交付]
+    O --> P[Superpowers requesting-code-review 最终自审]
+    P --> Q[Superpowers verification-before-completion 全量验证]
+    Q --> S[VerifyCompletion 机器硬门禁]
+    
+    S --> T[workflow-owner.ps1 Complete 释放归属]
+    T --> U[VCS 提交交付]
 ```
 
 需求与设计是两道独立门禁（先确认 01 再确认 06，禁止合并）；但 brainstorming 可连续产出 01→06 后分两次呈递确认，中间不停顿做设计。设计产出后由 `design-reviewer` 机器闭环自审自修（不占人工时间），通过后才交人工确认；不前置 QA 测试计划（TC 在 TDD 中产出，覆盖校验在实现后）；`implementation-auditor`/`logic-auditor` 是 subagent 内审执行单元，非实现后独立节点。复杂大功能交付后可**手动**触发全功能审计（见后文）。

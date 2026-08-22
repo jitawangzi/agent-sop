@@ -1039,4 +1039,24 @@ Invoke-AiSopWorkflowTransaction `
     Out-Null
 
 Write-OwnerMirror $ownerAfter
+
+# Auto-initialize feature-state.json projection on successful Claim if not present
+if ($Operation -eq "Claim" -and -not [string]::IsNullOrWhiteSpace($ResolvedSpecDirectory)) {
+    try {
+        $featStateFile = Join-Path $ResolvedSpecDirectory "feature-state.json"
+        if (-not (Test-Path -LiteralPath $featStateFile -PathType Leaf)) {
+            $initialState = [ordered]@{
+                schemaVersion = "1.0"
+                feature = $Feature
+                tier = "T3"
+                phase = "CLAIMED"
+                ownerId = $OwnerId
+                claimedAt = $AcceptedAt.ToUniversalTime().ToString("o")
+            }
+            [System.IO.Directory]::CreateDirectory($ResolvedSpecDirectory) | Out-Null
+            $initialState | ConvertTo-Json -Depth 10 | Set-Content -LiteralPath $featStateFile -Encoding utf8
+        }
+    } catch { }
+}
+
 Write-Output $OwnerPath

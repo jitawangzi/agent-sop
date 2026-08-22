@@ -90,6 +90,14 @@
           "type": "string",
           "pattern": "^TC-[A-Z0-9][A-Z0-9_-]*$"
         },
+        "status": {
+          "enum": [
+            "PLACEHOLDER",
+            "PLANNED",
+            "IMPLEMENTED",
+            "VERIFIED"
+          ]
+        },
         "title": {
           "type": "string",
           "minLength": 1

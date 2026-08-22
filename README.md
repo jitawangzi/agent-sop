@@ -14,14 +14,25 @@
 </p>
 
 <p align="center">
+  <a href="#-极简使用导航先读这个">极简导航</a> •
   <a href="#-为什么需要-agent-sop">痛点背景</a> •
+  <a href="#-3-分钟快速上手">快速上手</a> •
   <a href="#-核心原理深度剖析">底层原理</a> •
   <a href="#-与-superpowers-生态的深度融合与架构分工">Superpowers 融合</a> •
-  <a href="#-专家-skill-矩阵">专家矩阵</a> •
   <a href="#-执行强度-t-档分流">T 档调度</a> •
-  <a href="#-3-分钟快速上手">快速上手</a> •
   <a href="#english-summary">English Summary</a>
 </p>
+
+---
+
+## 🧭 极简使用导航（先读这个）
+
+| 身份 / 场景 | 你只需要关注的内容 |
+|---|---|
+| 👤 **人类开发者（日常开发）** | 只需阅读下方的 [3 分钟快速上手](#-3-分钟快速上手)。日常 Bug 修复直接说 `快速修改：修复 X 的空指针`；新功能直接描述需求。不需要记复杂的命令或工单！ |
+| 🔄 **跨 IDE / 工具切换** | 在新 IDE（如从 Cursor 切到 Claude Code）直接说 `接着做 <Feature>` 或 `接管任务`，SOP 会自动完成会话绑定与租约交接。 |
+| 🤖 **AI 编码智能体 (Agent)** | 统一加载项目根目录下的 **`AGENTS.md`**（单一真源），严格执行 OS 物理拦截与门禁。 |
+| 🛠️ **框架维护与架构师** | 阅读 [底层原理剖析](#-核心原理深度剖析) 与 [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md)。 |
 
 ---
 
@@ -234,13 +245,25 @@ pwsh -NoProfile -File ./ai-sop.ps1 Doctor
 
 ### 3. 开始与 AI 结对编程
 
-直接在任何 AI 工具（Claude Code / Antigravity / Cursor / Copilot）中输入开发需求：
+#### 路径 1：日常快速修改（T2 模式，单命令直达，推荐首次上手 ⚡）
+
+直接在任何 AI 工具（Claude Code / Antigravity / Cursor / Copilot）中输入：
 
 ```text
-为商城系统增加每日限购逻辑，功能名称 ShopBuyLimit
+快速修改：修复 ShopManager 中的空指针异常
 ```
 
-Agent-SOP 将自动接管整个研发流程，自动认领归属、展开需求头脑风暴、生成设计契约、执行机器审查并引导你确认！
+> **执行效果**：AI 会在单次响应内自动串联 **【Claim 认领归属 → 修改代码 → 项目编译 → 定向测试验证 → 交付】**，无需人工进行繁琐的方案确认，3 分钟丝滑搞定！
+
+#### 路径 2：完整新功能开发（T3 模式，双门禁严密闭环 🛡️）
+
+当你需要开发新玩法、新协议或复杂模块时输入：
+
+```text
+实现新玩法活动：增加每日签到功能 DailySignIn
+```
+
+> **执行效果**：Agent-SOP 将自动接管整个研发流程，展开需求头脑风暴（产出 `01_server_rules.md` 待你确认）→ 架构设计并经 `design-reviewer` 机器审查（产出 `06_design_contract.md` 待你确认）→ 拆分任务并派发子智能体进行 TDD 编码与双重内审 → 全自动交付！
 
 ---
 

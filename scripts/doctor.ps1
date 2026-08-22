@@ -139,7 +139,27 @@ $claudeSettings = Join-Path $WorkspaceRoot ".claude/settings.json"
 $hookInjected = (Test-Path -LiteralPath $agentsHooks) -or (Test-Path -LiteralPath $claudeSettings)
 Add-Check "Hook injected" $hookInjected ".agents/hooks.json or .claude/settings.json"
 
-# 8. Lock file present
+# 8. Superpowers skill suite presence (enables full T3)
+$superpowersFound = $false
+$userProfile = [System.Environment]::GetFolderPath([System.Environment+SpecialFolder]::UserProfile)
+$spLocations = @(
+    Join-Path $userProfile ".gemini/config/plugins/superpowers",
+    Join-Path $userProfile ".claude/plugins/superpowers",
+    Join-Path $userProfile ".cursor/plugins/superpowers"
+)
+foreach ($loc in $spLocations) {
+    if (Test-Path -LiteralPath $loc -PathType Container) {
+        $superpowersFound = $true
+        break
+    }
+}
+if ($superpowersFound) {
+    Add-Check "Superpowers Suite" $true "Found (T3 enabled)"
+} else {
+    Add-Check "Superpowers Suite" $true "Not detected (T2/FastTrack works; T3 needs install per VERIFICATION.md)"
+}
+
+# 9. Lock file present
 $lockPath = Join-Path $WorkspaceRoot "tools/ai-sop/ai-sop.lock.json"
 Add-Check "Lock file" (Test-Path -LiteralPath $lockPath) $lockPath
 

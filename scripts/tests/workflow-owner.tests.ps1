@@ -20,6 +20,8 @@ $env:SERVER_NEW_WORKFLOW_REGISTRY = Join-Path $TestRoot "owners"
 $env:SERVER_NEW_WORKFLOW_SESSION_REGISTRY = Join-Path $TestRoot "sessions"
 $env:SERVER_NEW_WORKFLOW_COMMAND_GRANT_REGISTRY = Join-Path $TestRoot "grants"
 $env:SERVER_NEW_WORKFLOW_TRANSACTION_REGISTRY = Join-Path $TestRoot "transactions"
+$env:SERVER_NEW_WORKFLOW_OWNER_DEADLINE_MS = "10000"
+$env:SERVER_NEW_WORKFLOW_TRANSACTION_DEADLINE_MS = "10000"
 $Utf8NoBom = [System.Text.UTF8Encoding]::new($false)
 
 function Assert-True {
@@ -1109,6 +1111,41 @@ try {
         
     $fsContent2 = Get-Content -LiteralPath $featStatePath -Raw | ConvertFrom-Json
     Assert-Equal $fsContent2.tier "T3" "Explicit Claim with -Tier T3 must write tier=T3"
+
+    # 3. Test Complete with embedded VerifyCompletion
+    # For $tierTestFeature (tier=T3, but no gates approved): Complete must fail because VerifyCompletion fails
+    New-Grant `
+        -Feature $tierTestFeature `
+        -Session $tierSession2 `
+        -Operation Complete `
+        -Agent CLAUDE_CODE `
+        -OwnerId "tier-test-owner-2" `
+        -Suffix "complete-fail" | Out-Null
+    
+    Assert-Fails -Message "Complete must be rejected when VerifyCompletion fails on unapproved T3 feature." -Action {
+        Invoke-Owner `
+            -Feature $tierTestFeature `
+            -Operation Complete `
+            -Workflow SUPERPOWERS `
+            -Agent CLAUDE_CODE `
+            -OwnerId "tier-test-owner-2"
+    }
+
+    # Now change feature-state to T2 so VerifyCompletion passes
+    $fsContent2.tier = "T2"
+    $fsContent2.phase = "IMPLEMENTING"
+    [System.IO.File]::WriteAllText($featStatePath, ($fsContent2 | ConvertTo-Json -Depth 10), $Utf8NoBom)
+    
+    # Since the previous transaction aborted before commit, the original Complete grant is still active and can be consumed
+    Invoke-Owner `
+        -Feature $tierTestFeature `
+        -Operation Complete `
+        -Workflow SUPERPOWERS `
+        -Agent CLAUDE_CODE `
+        -OwnerId "tier-test-owner-2" | Out-Null
+        
+    $completedOwner = Read-OwnerRecord "OwnerTierTestFeature"
+    Assert-Equal $completedOwner.status "COMPLETE" "Complete must succeed once VerifyCompletion passes."
 
     Write-Output "All workflow owner tests passed."
 } finally {

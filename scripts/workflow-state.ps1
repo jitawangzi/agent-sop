@@ -1300,6 +1300,29 @@ function Approve-CanonicalArtifact {
     Write-Output $StatePath
 }
 
+function Sync-FeatureStateTierToT3 {
+    param([string]$StatePath)
+    try {
+        $specDir = Split-Path -Parent $StatePath
+        $featStateFile = Join-Path $specDir "feature-state.json"
+        if (Test-Path -LiteralPath $featStateFile -PathType Leaf) {
+            $fs = Get-Content -LiteralPath $featStateFile -Raw | ConvertFrom-Json
+            if ($fs.tier -ne "T3") {
+                $fsDict = [ordered]@{}
+                foreach ($p in $fs.psobject.Properties) {
+                    $fsDict[$p.Name] = $p.Value
+                }
+                $fsDict["tier"] = "T3"
+                $fsDict["updatedAt"] = [DateTimeOffset]::UtcNow.ToString("o")
+                $utf8NoBom = New-Object System.Text.UTF8Encoding($false)
+                [System.IO.File]::WriteAllText($featStateFile, ($fsDict | ConvertTo-Json -Depth 10), $utf8NoBom)
+            }
+        }
+    } catch {
+        Write-Warning "Failed to sync feature-state tier to T3: $_"
+    }
+}
+
 function Invoke-LegacyRuntimeApproval {
     param(
         [string]$StatePath,
@@ -1706,6 +1729,7 @@ switch ($Operation) {
                 }
             }
             Write-JsonAtomic -FilePath $Path -Value $state -SchemaPath (Join-Path $SchemaRoot "workflow-state.schema.json")
+            Sync-FeatureStateTierToT3 -StatePath $Path
             Write-Output $Path
         }
     }
@@ -1727,11 +1751,13 @@ switch ($Operation) {
             }
             Invoke-WithFileLock -StatePath $Path -Action {
                 Approve-CanonicalArtifact -StatePath $Path -GateName $Gate -Approver $ApprovedBy
+                Sync-FeatureStateTierToT3 -StatePath $Path
             }
         } else {
             Assert-Argument -Name "RuntimePath" -Value $RuntimePath
             Invoke-LegacyRuntimeApproval -StatePath $Path -RuntimeStatePath $RuntimePath `
                 -GateName $Gate -Approver $ApprovedBy
+            Sync-FeatureStateTierToT3 -StatePath $Path
         }
     }
     "ResetApproval" {
@@ -2154,11 +2180,12 @@ switch ($Operation) {
         }
         $json = $coverage | ConvertTo-Json -Depth 10
         [System.IO.File]::WriteAllText($Path, $json, $Utf8NoBom)
+        Sync-FeatureStateTierToT3 -StatePath $Path
         Write-Output "Synced $Path ($($cases.Count) test cases from 05_test_plan.md)"
     }
     "CheckCompletion" {
         # Machine-checkable completion conditions per tier. Outputs ASCII checklist.
-        # Reads tier from feature-state.json; checks gate SHA, coverage, svn status.
+        # Reads tier from feature-state.json; auto-escalates to T3 if approval state or spec artifacts exist.
         Assert-Argument -Name "Path" -Value $Path
         $specDir = Split-Path -Parent $Path
         $featStatePath = Join-Path $specDir "feature-state.json"
@@ -2167,16 +2194,19 @@ switch ($Operation) {
         if (Test-Path -LiteralPath $featStatePath -PathType Leaf) {
             try { $fs = Get-Content -LiteralPath $featStatePath -Raw | ConvertFrom-Json; $tier = [string]$fs.tier; $phase = [string]$fs.phase } catch { }
         }
-        if ($tier -eq "unknown" -or [string]::IsNullOrWhiteSpace($tier)) {
-            if (Test-Path -LiteralPath $Path -PathType Leaf) {
-                $tier = "T3"
-                $phase = "IN_PROGRESS"
-            } else {
-                $tier = "T2"
-                $phase = "IN_PROGRESS"
-            }
+        $hasWorkflowState = (Test-Path -LiteralPath $Path -PathType Leaf) -or (Test-Path -LiteralPath (Join-Path $specDir "workflow-state.json") -PathType Leaf) -or (Test-Path -LiteralPath (Join-Path $specDir "00_workflow_state.json") -PathType Leaf)
+        $hasSpecArtifacts = (Test-Path -LiteralPath (Join-Path $specDir "01_server_rules.md") -PathType Leaf) -or (Test-Path -LiteralPath (Join-Path $specDir "06_design_contract.md") -PathType Leaf) -or (Test-Path -LiteralPath (Join-Path $specDir "05_test_plan.md") -PathType Leaf)
+        
+        $effectiveTier = $tier
+        if ($hasWorkflowState -or $hasSpecArtifacts -or $tier -eq "T3") {
+            $effectiveTier = "T3"
+            if ($phase -eq "unknown" -or [string]::IsNullOrWhiteSpace($phase)) { $phase = "IN_PROGRESS" }
+        } elseif ($tier -in @("T1", "T2", "FAST_TRACK")) {
+            $effectiveTier = $tier
+        } else {
+            $effectiveTier = "unknown"
         }
-        Write-Output "tier=$tier phase=$phase"
+        Write-Output "tier=$effectiveTier phase=$phase"
         $checks = [System.Collections.Generic.List[string]]::new()
         
         # Workspace root resolution (search upward for .ai-workspace, .git, or .svn)
@@ -2197,7 +2227,7 @@ switch ($Operation) {
         if ([string]::IsNullOrWhiteSpace($wsRoot)) { $wsRoot = (Get-Location).Path }
 
         # 1. Gate approval state (T3 only).
-        if ($tier -eq "T3") {
+        if ($effectiveTier -eq "T3") {
             if (Test-Path -LiteralPath $Path -PathType Leaf) {
                 $st = Get-Content -Raw -LiteralPath $Path | ConvertFrom-Json
                 $reqOk = ($st.requirement.status -eq "APPROVED")
@@ -2239,7 +2269,7 @@ switch ($Operation) {
             $checks.Add("[?] VCS 交付状态: 通用工程目录")
         }
         # 5. T2 doc reminder (AI self-reported).
-        if ($tier -eq "T2") { $checks.Add("[?] 文档待更新提醒(AI 自报)") }
+        if ($effectiveTier -eq "T2") { $checks.Add("[?] 文档待更新提醒(AI 自报)") }
         foreach ($c in $checks) { Write-Output $c }
         Write-Output "DIAGNOSTIC: [v]=pass, [X]=fail, [?]=needs human/AI verification. Machine-checked items only; AI must verify the rest per AGENTS.md done-definition table."
     }
@@ -2251,6 +2281,17 @@ switch ($Operation) {
         $phase = "unknown"
         if (Test-Path -LiteralPath $featStatePath -PathType Leaf) {
             try { $fs = Get-Content -LiteralPath $featStatePath -Raw | ConvertFrom-Json; $tier = [string]$fs.tier; $phase = [string]$fs.phase } catch { }
+        }
+        $hasWorkflowState = (Test-Path -LiteralPath $Path -PathType Leaf) -or (Test-Path -LiteralPath (Join-Path $specDir "workflow-state.json") -PathType Leaf) -or (Test-Path -LiteralPath (Join-Path $specDir "00_workflow_state.json") -PathType Leaf)
+        $hasSpecArtifacts = (Test-Path -LiteralPath (Join-Path $specDir "01_server_rules.md") -PathType Leaf) -or (Test-Path -LiteralPath (Join-Path $specDir "06_design_contract.md") -PathType Leaf) -or (Test-Path -LiteralPath (Join-Path $specDir "05_test_plan.md") -PathType Leaf)
+        
+        $effectiveTier = $tier
+        if ($hasWorkflowState -or $hasSpecArtifacts -or $tier -eq "T3") {
+            $effectiveTier = "T3"
+        } elseif ($tier -in @("T1", "T2", "FAST_TRACK")) {
+            $effectiveTier = $tier
+        } else {
+            $effectiveTier = "unknown"
         }
         $failures = [System.Collections.Generic.List[string]]::new()
         $checks = [System.Collections.Generic.List[string]]::new()
@@ -2287,7 +2328,7 @@ switch ($Operation) {
                 break
             }
         }
-        if ($tier -eq "T3") {
+        if ($effectiveTier -eq "T3") {
             if (Test-Path -LiteralPath $Path -PathType Leaf) {
                 $st = Get-Content -Raw -LiteralPath $Path | ConvertFrom-Json
                 $reqOk = ([string]$st.requirement.status -eq "APPROVED")
@@ -2325,7 +2366,7 @@ switch ($Operation) {
             $phaseOk = (-not [string]::IsNullOrWhiteSpace($phase)) -and ($phase -ne "INIT") -and ($phase -ne "unknown") -and ($phase -ne "UNCLASSIFIED")
             if (-not $phaseOk) { $failures.Add("feature-state phase is initial/unknown ($phase)") }
             $checks.Add("[$(if($phaseOk){'v'}else{'X'})] feature-state 阶段非初始($phase)")
-        } elseif ($tier -eq "T2") {
+        } elseif ($effectiveTier -eq "T2") {
             # T2: compile artifact; Claim validity is workflow-owner.ps1 Validate's job
             $checks.Add("[?] 归属 Validate(owner.ps1 -Operation Validate,另跑)")
             $checks.Add("[?] 相关测试/回归(AI 据定向 JUnit 结果自报)")
@@ -2334,8 +2375,8 @@ switch ($Operation) {
             $checks.Add("[X] tier 未知(feature-state.json 缺失或未设 tier)")
         }
         $checks.Add("[$(if($compileOk){'v'}else{'?'})] 编译产物存在(以构建/测试命令执行结果为准)")
-        if (-not $compileOk -and $tier -eq "T3") { $failures.Add("compile verification failed — no build artifacts found") }
-        Write-Output "tier=$tier phase=$phase"
+        if (-not $compileOk -and $effectiveTier -eq "T3") { $failures.Add("compile verification failed — no build artifacts found") }
+        Write-Output "tier=$effectiveTier phase=$phase"
         foreach ($c in $checks) { Write-Output $c }
         if ($failures.Count -eq 0) {
             Write-Output "VERIFY_COMPLETION_PASS"

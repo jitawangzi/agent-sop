@@ -42,7 +42,10 @@ param(
 
     [Parameter(Mandatory = $false)]
     [ValidateSet("T1", "T2", "T3", "FAST_TRACK")]
-    [string]$Tier = "T2"
+    [string]$Tier = "T2",
+
+    [Parameter(Mandatory = $false)]
+    [switch]$SkipVerification
 )
 
 $ErrorActionPreference = "Stop"
@@ -58,10 +61,8 @@ $MirrorPath = Join-Path $ResolvedSpecDirectory ".workflow-owner.json"
 $RegistryRoot = Get-AiSopWorkflowOwnerRegistryRoot
 $OwnerPath = Join-Path $RegistryRoot ($Feature.ToLowerInvariant() + ".json")
 $AcceptedAt = [DateTimeOffset]::UtcNow
-# Production budget is 750ms. Strong-kill recovery tests spawn this script as a
-# cold subprocess under CPU contention; the pause-point marker must be written
-# before the deadline, so the deadline is overridable for those tests only.
-$ownerDeadlineMs = 750
+# Production budget default is 3000ms (supports subprocess verification and cross-platform IO).
+$ownerDeadlineMs = 3000
 $ownerDeadlineEnv = [string]$env:SERVER_NEW_WORKFLOW_OWNER_DEADLINE_MS
 if (
     -not [string]::IsNullOrWhiteSpace($ownerDeadlineEnv) -and
@@ -928,6 +929,26 @@ switch ($Operation) {
         ) {
             throw "WORKFLOW_OWNER_SESSION_MISMATCH"
         }
+
+        # Verify completion before releasing ownership
+        if (-not $SkipVerification) {
+            $stateScript = Join-Path $PSScriptRoot "workflow-state.ps1"
+            if (Test-Path -LiteralPath $stateScript -PathType Leaf) {
+                $workflowStatePath = Join-Path $ResolvedSpecDirectory "workflow-state.json"
+                if (-not (Test-Path -LiteralPath $workflowStatePath -PathType Leaf)) {
+                    $workflowStatePath = Join-Path $ResolvedSpecDirectory "00_workflow_state.json"
+                }
+                if (-not (Test-Path -LiteralPath $workflowStatePath -PathType Leaf)) {
+                    $workflowStatePath = Join-Path $ResolvedSpecDirectory "workflow-state.json"
+                }
+                $verifyOutput = & $stateScript -Operation VerifyCompletion -Path $workflowStatePath 2>&1
+                if ($LASTEXITCODE -ne 0) {
+                    $verifyMsg = ($verifyOutput | Out-String).Trim()
+                    throw "WORKFLOW_COMPLETION_VERIFICATION_FAILED: Cannot Complete owner lock because VerifyCompletion failed.`n$verifyMsg"
+                }
+            }
+        }
+
         $sessionAfter = Copy-WorkflowRecord $session.Record
         Clear-SessionBoundTuple `
             -Session $sessionAfter `
@@ -1027,6 +1048,7 @@ foreach ($transition in @(
 
 $transactionOperation = switch ($Operation) {
     "Claim" { "CLAIM" }
+    "Validate" { "VALIDATE" }
     "BindSession" { "BIND_SESSION" }
     "RebindSession" { "REBIND_SESSION" }
     "Complete" { "COMPLETE" }
@@ -1076,6 +1098,9 @@ if ($Operation -eq "Claim" -and -not [string]::IsNullOrWhiteSpace($ResolvedSpecD
                 foreach ($p in $existingContent.psobject.Properties) {
                     $existingDict[$p.Name] = $p.Value
                 }
+                if ($PSBoundParameters.ContainsKey("Tier") -and -not [string]::IsNullOrWhiteSpace($Tier)) {
+                    $existingDict["tier"] = $Tier
+                }
                 $existingDict["ownerSession"] = [ordered]@{
                     agent = $Agent
                     ownerId = $OwnerId
@@ -1083,9 +1108,13 @@ if ($Operation -eq "Claim" -and -not [string]::IsNullOrWhiteSpace($ResolvedSpecD
                 $existingDict["updatedAt"] = $isoNow
                 $jsonStr = $existingDict | ConvertTo-Json -Depth 10
                 [System.IO.File]::WriteAllText($featStateFile, $jsonStr, $utf8NoBomEnc)
-            } catch { }
+            } catch {
+                Write-Warning "Failed to update existing feature-state.json: $_"
+            }
         }
-    } catch { }
+    } catch {
+        Write-Warning "Failed to sync feature-state.json: $_"
+    }
 }
 
 Write-Output $OwnerPath

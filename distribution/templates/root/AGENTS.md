@@ -62,7 +62,7 @@
 
   **T2 执行路径（豁免 + 单命令直达）**：T2 跳过 writing-plans，故不调用 `subagent-driven-development`。T2 下**单命令直达**：用户下达 T2 指令后，AI 在单次响应内自动串联【Claim 归属 → 代码修改 → 编译 → 相关测试 → 交付完成】。**编译/测试可能超单轮超时**，允许一次进度回复（“编译中，下一轮继续”），不要求全部单 turn 完成；硬节点保留。最终 `requesting-code-review` 降为 AI 自审 + 附编译/验证证据。T2 保留归属 Claim、编译、验证、回归四个硬节点。
 - **T1（用户显式"急速修改"，极少用）**：仅限极端场景。跳过全部流程节点，仅保留编译通过 + guard 逃生口。AI 须先提醒 T1 风险，用户确认后执行。
-- **快通道（AI 自动识别）**：纯配置数值变更（`CONFIG_VALUE_CHANGE`）或纯文档变更（`DOC_ONLY`）自动走**快通道**（跳门禁，完成条件 2 项：编译通过 + 纯数值/文档检查；**非 T2**，T2 是 5 项）。其余按变更类默认（见档位优先级）。
+- **快通道（AI 自动识别）**：纯配置数值变更（`CONFIG_VALUE_CHANGE`）或纯文档变更（`DOC_ONLY`）自动走**快通道**（跳门禁，完成条件 2 项：编译通过 + 纯数值/文档检查；**非 T2**，T2 是 5 项）。其余按上方实际执行档位公式确定。
 
 **快通道边界（硬约束）**：快通道**仅限 `config/**` 等目录下的纯数据文件**（CSV/配置表数值）。**涉及生产代码（如 `src/**`、`pkg/**`、`internal/**`、`app/**` 等）任何修改**（哪怕 1 行）不得走快通道，至少 T2（认领归属+编译+测试）。改关键枚举值/协议字段名/存储结构不是纯配置，须走 T3。
 
@@ -189,8 +189,10 @@ pwsh -NoProfile -File .\.ai-sop\scripts\workflow-owner.ps1 -Operation Claim `
   -SpecDirectory ".ai-workspace\specs\features\<FeatureName>" `
   -Feature "<FeatureName>" -Workflow SUPERPOWERS `
   -Agent "<CLAUDE_CODE|COPILOT|ANTIGRAVITY|CURSOR|PI>" `
-  -OwnerId "<superpowers-run-id>"
+  -OwnerId "<superpowers-run-id>" `
+  -Tier "<T2|T3>"
 ```
+*注：`-Tier` 可选 `T1`/`T2`/`T3`/`FAST_TRACK`（默认 `T2`；新功能/复杂变更走 T3 流程时须显式传 `-Tier T3`）。*
 
 `agent` 值取自实际工具而非底层模型。若另一活动流程或 session 拥有该功能，**停止而不是编辑它**。任何修改规范功能产物或生产代码的操作都需要归属；只读审计豁免。验证与完成用同一 owner ID。恢复前、每个修改批次前用 `Validate`：
 
@@ -258,7 +260,7 @@ pwsh -NoProfile -File .\.ai-sop\scripts\workflow-state.ps1 -Operation ValidateTe
 
 完成条件**按档位分**（`workflow-state.ps1 -Operation Status` 显示当前 tier + 门禁 SHA；`workflow-state.ps1 -Operation CheckCompletion -Path .../00_workflow_state.json` 输出机检 ASCII checklist（门禁 SHA/coverage/编译产物/SVN status）。**机检项 [v]=pass/[X]=fail，人工项 [?]=需 AI 验证**。AI 据下表 + CheckCompletion 结果逐项检查并报告）：
 
-**Complete 前硬门禁（VerifyCompletion）**：`workflow-owner.ps1 -Operation Complete` 释放归属锁前，AI **必须**先跑 `workflow-state.ps1 -Operation VerifyCompletion -Path .../00_workflow_state.json` 并确认 exit 0（输出 `VERIFY_COMPLETION_PASS`）。CheckCompletion 是 advisory（人看），VerifyCompletion 是它的硬执行版（返回非零 exit code 阻断 Complete）：T3 校验门禁 APPROVED+SHA / coverage 无占位与 carrier 错误（复用 ValidateTestCoverage 的占位/carrier 校验）/ feature-state 阶段非初始 / 编译产物；T2 校验编译产物（归属 Validate 与定向测试另跑）。非 exit 0 不得 Complete——这是防止 Token 衰减/指令疲劳下 AI 幻觉自判全 PASS 放水的机器硬门禁。
+**Complete 前硬门禁（VerifyCompletion 内嵌执行）**：`workflow-owner.ps1 -Operation Complete` 内部已嵌入 `VerifyCompletion` 硬门禁检验。在释放归属锁前，脚本会自动在后台先调用 `VerifyCompletion`：T3 严格校验门禁 APPROVED+SHA / coverage 无占位与 carrier 错误 / feature-state 阶段非初始 / 编译产物；T2 校验编译产物。**若 VerifyCompletion 检验未通过（非 0），Complete 会直接抛出错误并拒绝释放归属锁**。AI 亦可事先调用 `workflow-state.ps1 -Operation VerifyCompletion -Path .../00_workflow_state.json` 提前确认是否达到完成标准。
 
 **T3（6 项全过）**：
 

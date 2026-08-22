@@ -154,7 +154,7 @@ function Complete-TestSuperpowersOwner {
         Out-Null
     & $OwnerScriptPath -Operation Complete -SpecDirectory $SpecDirectory `
         -Feature $Feature -Workflow SUPERPOWERS -Agent $Agent `
-        -OwnerId $OwnerId |
+        -OwnerId $OwnerId -SkipVerification |
         Out-Null
 }
 
@@ -761,16 +761,31 @@ function Assert-NoRuntimeCoverageApprovalState {
         if ($verifyPassOut -notmatch "VERIFY_COMPLETION_PASS") { throw "VerifyCompletion must emit VERIFY_COMPLETION_PASS when all T3 conditions met. Output: $verifyPassOut" }
 
         # Test VerifyCompletion on T2: passes even without build directory (non-blocking for T2)
-        $t2FeatState = Join-Path $specDirectory "feature-state.json"
-        [System.IO.File]::WriteAllText($t2FeatState, '{"feature":"' + $feature + '","tier":"T2","phase":"IN_PROGRESS"}', $Utf8NoBom)
-        if (Test-Path -LiteralPath $buildDir) { Remove-Item -LiteralPath $buildDir -Recurse -Force }
-        $verifyT2 = & $ScriptPath -Operation VerifyCompletion -Path $approvalPath 2>&1
+        $t2TestFeature = "VerifyT2StandaloneFeature"
+        $t2SpecDir = Join-Path $TestRoot "specs/features/$t2TestFeature"
+        [System.IO.Directory]::CreateDirectory($t2SpecDir) | Out-Null
+        $t2FeatState = Join-Path $t2SpecDir "feature-state.json"
+        [System.IO.File]::WriteAllText($t2FeatState, '{"schemaVersion":"1.0","feature":"' + $t2TestFeature + '","tier":"T2","phase":"IMPLEMENTING","updatedAt":"2026-08-23T00:00:00Z"}', $Utf8NoBom)
+        $t2DummyPath = Join-Path $t2SpecDir "workflow-state.json"
+        $verifyT2 = & $ScriptPath -Operation VerifyCompletion -Path $t2DummyPath 2>&1
         $verifyT2Out = $verifyT2 | Out-String
         if ($LASTEXITCODE -ne 0) { throw "VerifyCompletion must pass on T2 without compile dir. Output: $verifyT2Out" }
         if ($verifyT2Out -notmatch "VERIFY_COMPLETION_PASS") { throw "VerifyCompletion must emit VERIFY_COMPLETION_PASS on T2. Output: $verifyT2Out" }
 
+        # Test T3 auto-escalation: if 01_server_rules.md exists, VerifyCompletion treats it as T3 even if feature-state claims T2
+        $t3EscalateFeature = "T3AutoEscalateFeature"
+        $t3EscalateSpec = Join-Path $TestRoot "specs/features/$t3EscalateFeature"
+        [System.IO.Directory]::CreateDirectory($t3EscalateSpec) | Out-Null
+        [System.IO.File]::WriteAllText((Join-Path $t3EscalateSpec "01_server_rules.md"), "# Rules", $Utf8NoBom)
+        $t3EscalateFeatState = Join-Path $t3EscalateSpec "feature-state.json"
+        [System.IO.File]::WriteAllText($t3EscalateFeatState, '{"schemaVersion":"1.0","feature":"' + $t3EscalateFeature + '","tier":"T2","phase":"IMPLEMENTING","updatedAt":"2026-08-23T00:00:00Z"}', $Utf8NoBom)
+        $t3EscalateVerify = & $ScriptPath -Operation VerifyCompletion -Path (Join-Path $t3EscalateSpec "workflow-state.json") 2>&1
+        $t3EscalateVerifyOut = $t3EscalateVerify | Out-String
+        if ($LASTEXITCODE -eq 0) { throw "VerifyCompletion must auto-escalate to T3 and fail when 01_server_rules.md exists but gates missing. Output: $t3EscalateVerifyOut" }
+        if ($t3EscalateVerifyOut -notmatch "VERIFY_COMPLETION_FAIL") { throw "VerifyCompletion must emit VERIFY_COMPLETION_FAIL on auto-escalated T3. Output: $t3EscalateVerifyOut" }
+
         # Restore T3 state for subsequent tests
-        [System.IO.File]::WriteAllText($featState, '{"feature":"' + $feature + '","tier":"T3","phase":"DONE"}', $Utf8NoBom)
+        [System.IO.File]::WriteAllText($featState, '{"schemaVersion":"1.0","feature":"' + $feature + '","tier":"T3","phase":"DONE","updatedAt":"2026-08-23T00:00:00Z"}', $Utf8NoBom)
         [System.IO.Directory]::CreateDirectory($buildDir) | Out-Null
 
         $originalRequirement = [System.IO.File]::ReadAllText($requirementPath)

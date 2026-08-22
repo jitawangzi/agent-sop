@@ -217,12 +217,21 @@ if ($contextExists) {
 }
 
 # Report
-$passCount = @($results | Where-Object { $_.Pass }).Count
+$warnCount = @($results | Where-Object { $_.Pass -and $_.Detail -match "^WARN" }).Count
+$failCount = @($results | Where-Object { -not $_.Pass }).Count
+$cleanPassCount = @($results | Where-Object { $_.Pass -and -not ($_.Detail -match "^WARN") }).Count
 foreach ($r in $results) {
     $mark = if ($r.Pass -and $r.Detail -match "^WARN") { "⚠️" } elseif ($r.Pass) { "✅" } else { "❌" }
     Write-Host ("{0} {1,-22} {2}" -f $mark, $r.Name, $r.Detail)
 }
 Write-Host ""
-$color = if ($passCount -eq $results.Count) { "Green" } else { "Yellow" }
-Write-Host ("{0}/{1} checks passed" -f $passCount, $results.Count) -ForegroundColor $color
-if ($passCount -eq $results.Count) { exit 0 } else { exit 1 }
+if ($failCount -gt 0) {
+    Write-Host ("{0}/{1} checks passed ({2} failed, {3} warnings)" -f ($cleanPassCount + $warnCount), $results.Count, $failCount, $warnCount) -ForegroundColor Red
+    exit 1
+} elseif ($warnCount -gt 0) {
+    Write-Host ("{0}/{1} checks passed ({2} passed, {3} warnings)" -f ($cleanPassCount + $warnCount), $results.Count, $cleanPassCount, $warnCount) -ForegroundColor Yellow
+    exit 0
+} else {
+    Write-Host ("{0}/{1} checks passed (all clean)" -f $cleanPassCount, $results.Count) -ForegroundColor Green
+    exit 0
+}

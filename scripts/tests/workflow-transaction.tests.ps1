@@ -291,6 +291,18 @@ function New-RealOperationState {
     [System.IO.Directory]::CreateDirectory(
         (Join-Path $workspace ".ai-sop\scripts")
     ) | Out-Null
+    $featStatePath = Join-Path $spec "feature-state.json"
+    Write-State $featStatePath ([ordered]@{
+        schemaVersion = "1.0"
+        feature = $feature
+        tier = "T2"
+        phase = "IMPLEMENTING"
+        ownerSession = [ordered]@{
+            agent = "CURSOR"
+            ownerId = $ownerId
+        }
+        updatedAt = [DateTimeOffset]::UtcNow.ToString("o")
+    })
     $now = [DateTimeOffset]::UtcNow
     $newSession = Invoke-AiSopWorkflowSession `
         -Operation Register `

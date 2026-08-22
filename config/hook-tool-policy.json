@@ -1,0 +1,578 @@
+{
+  "schemaVersion": "1.0",
+  "unknownClass": "UNKNOWN",
+  "tools": [
+    {
+      "match": {
+        "kind": "EXACT",
+        "value": "Read"
+      },
+      "nativeShapes": [
+        "CLAUDE_PRE_TOOL_USE",
+        "COPILOT_CLAUDE_COMPAT",
+        "CURSOR_PRE_TOOL_USE"
+      ],
+      "canonicalName": "READ",
+      "toolClass": "SAFE_NON_EDIT",
+      "argumentProfile": "READ",
+      "targetExtractor": "NONE"
+    },
+    {
+      "match": {
+        "kind": "EXACT",
+        "value": "ReadFile"
+      },
+      "nativeShapes": [
+        "CURSOR_PRE_TOOL_USE"
+      ],
+      "canonicalName": "READ",
+      "toolClass": "SAFE_NON_EDIT",
+      "argumentProfile": "READ",
+      "targetExtractor": "NONE"
+    },
+    {
+      "match": {
+        "kind": "EXACT",
+        "value": "view"
+      },
+      "nativeShapes": [
+        "COPILOT_GITHUB_NATIVE"
+      ],
+      "canonicalName": "READ",
+      "toolClass": "SAFE_NON_EDIT",
+      "argumentProfile": "READ",
+      "targetExtractor": "NONE"
+    },
+    {
+      "match": {
+        "kind": "EXACT",
+        "value": "read_file"
+      },
+      "nativeShapes": [
+        "ANTIGRAVITY"
+      ],
+      "canonicalName": "READ",
+      "toolClass": "SAFE_NON_EDIT",
+      "argumentProfile": "READ",
+      "targetExtractor": "NONE"
+    },
+    {
+      "match": {
+        "kind": "EXACT",
+        "value": "Glob"
+      },
+      "nativeShapes": [
+        "CLAUDE_PRE_TOOL_USE",
+        "COPILOT_CLAUDE_COMPAT",
+        "CURSOR_PRE_TOOL_USE"
+      ],
+      "canonicalName": "GLOB",
+      "toolClass": "SAFE_NON_EDIT",
+      "argumentProfile": "GLOB",
+      "targetExtractor": "NONE"
+    },
+    {
+      "match": {
+        "kind": "EXACT",
+        "value": "glob"
+      },
+      "nativeShapes": [
+        "COPILOT_GITHUB_NATIVE"
+      ],
+      "canonicalName": "GLOB",
+      "toolClass": "SAFE_NON_EDIT",
+      "argumentProfile": "GLOB",
+      "targetExtractor": "NONE"
+    },
+    {
+      "match": {
+        "kind": "EXACT",
+        "value": "find_by_name"
+      },
+      "nativeShapes": [
+        "ANTIGRAVITY"
+      ],
+      "canonicalName": "GLOB",
+      "toolClass": "SAFE_NON_EDIT",
+      "argumentProfile": "GLOB",
+      "targetExtractor": "NONE"
+    },
+    {
+      "match": {
+        "kind": "EXACT",
+        "value": "Grep"
+      },
+      "nativeShapes": [
+        "CLAUDE_PRE_TOOL_USE",
+        "COPILOT_CLAUDE_COMPAT",
+        "CURSOR_PRE_TOOL_USE"
+      ],
+      "canonicalName": "SEARCH",
+      "toolClass": "SAFE_NON_EDIT",
+      "argumentProfile": "SEARCH",
+      "targetExtractor": "NONE"
+    },
+    {
+      "match": {
+        "kind": "EXACT",
+        "value": "Search"
+      },
+      "nativeShapes": [
+        "CURSOR_PRE_TOOL_USE"
+      ],
+      "canonicalName": "SEARCH",
+      "toolClass": "SAFE_NON_EDIT",
+      "argumentProfile": "SEARCH",
+      "targetExtractor": "NONE"
+    },
+    {
+      "match": {
+        "kind": "EXACT",
+        "value": "rg"
+      },
+      "nativeShapes": [
+        "COPILOT_GITHUB_NATIVE",
+        "CURSOR_PRE_TOOL_USE"
+      ],
+      "canonicalName": "SEARCH",
+      "toolClass": "SAFE_NON_EDIT",
+      "argumentProfile": "SEARCH",
+      "targetExtractor": "NONE"
+    },
+    {
+      "match": {
+        "kind": "EXACT",
+        "value": "grep"
+      },
+      "nativeShapes": [
+        "COPILOT_GITHUB_NATIVE"
+      ],
+      "canonicalName": "SEARCH",
+      "toolClass": "SAFE_NON_EDIT",
+      "argumentProfile": "SEARCH",
+      "targetExtractor": "NONE"
+    },
+    {
+      "match": {
+        "kind": "EXACT",
+        "value": "grep_search"
+      },
+      "nativeShapes": [
+        "ANTIGRAVITY"
+      ],
+      "canonicalName": "SEARCH",
+      "toolClass": "SAFE_NON_EDIT",
+      "argumentProfile": "SEARCH",
+      "targetExtractor": "NONE"
+    },
+    {
+      "match": {
+        "kind": "EXACT",
+        "value": "Edit"
+      },
+      "nativeShapes": [
+        "CLAUDE_PRE_TOOL_USE",
+        "COPILOT_CLAUDE_COMPAT",
+        "CURSOR_PRE_TOOL_USE"
+      ],
+      "canonicalName": "EDIT",
+      "toolClass": "FILE_EDIT",
+      "argumentProfile": "EDIT",
+      "targetExtractor": "SINGLE_PATH"
+    },
+    {
+      "match": {
+        "kind": "EXACT",
+        "value": "edit"
+      },
+      "nativeShapes": [
+        "COPILOT_GITHUB_NATIVE"
+      ],
+      "canonicalName": "EDIT",
+      "toolClass": "FILE_EDIT",
+      "argumentProfile": "EDIT",
+      "targetExtractor": "SINGLE_PATH"
+    },
+    {
+      "match": {
+        "kind": "EXACT",
+        "value": "Write"
+      },
+      "nativeShapes": [
+        "CLAUDE_PRE_TOOL_USE",
+        "COPILOT_CLAUDE_COMPAT",
+        "CURSOR_PRE_TOOL_USE"
+      ],
+      "canonicalName": "WRITE",
+      "toolClass": "FILE_EDIT",
+      "argumentProfile": "WRITE",
+      "targetExtractor": "SINGLE_PATH"
+    },
+    {
+      "match": {
+        "kind": "EXACT",
+        "value": "Create"
+      },
+      "nativeShapes": [
+        "CLAUDE_PRE_TOOL_USE",
+        "COPILOT_CLAUDE_COMPAT",
+        "CURSOR_PRE_TOOL_USE"
+      ],
+      "canonicalName": "WRITE",
+      "toolClass": "FILE_EDIT",
+      "argumentProfile": "WRITE",
+      "targetExtractor": "SINGLE_PATH"
+    },
+    {
+      "match": {
+        "kind": "EXACT",
+        "value": "create"
+      },
+      "nativeShapes": [
+        "COPILOT_GITHUB_NATIVE"
+      ],
+      "canonicalName": "WRITE",
+      "toolClass": "FILE_EDIT",
+      "argumentProfile": "WRITE",
+      "targetExtractor": "SINGLE_PATH"
+    },
+    {
+      "match": {
+        "kind": "EXACT",
+        "value": "MultiEdit"
+      },
+      "nativeShapes": [
+        "CLAUDE_PRE_TOOL_USE",
+        "COPILOT_CLAUDE_COMPAT",
+        "CURSOR_PRE_TOOL_USE"
+      ],
+      "canonicalName": "MULTI_EDIT",
+      "toolClass": "FILE_EDIT",
+      "argumentProfile": "MULTI_EDIT",
+      "targetExtractor": "MULTI_EDIT"
+    },
+    {
+      "match": {
+        "kind": "EXACT",
+        "value": "NotebookEdit"
+      },
+      "nativeShapes": [
+        "CLAUDE_PRE_TOOL_USE",
+        "COPILOT_CLAUDE_COMPAT",
+        "CURSOR_PRE_TOOL_USE"
+      ],
+      "canonicalName": "NOTEBOOK_EDIT",
+      "toolClass": "FILE_EDIT",
+      "argumentProfile": "NOTEBOOK_EDIT",
+      "targetExtractor": "SINGLE_PATH"
+    },
+    {
+      "match": {
+        "kind": "EXACT",
+        "value": "EditNotebook"
+      },
+      "nativeShapes": [
+        "CURSOR_PRE_TOOL_USE"
+      ],
+      "canonicalName": "NOTEBOOK_EDIT",
+      "toolClass": "FILE_EDIT",
+      "argumentProfile": "CURSOR_EDIT_NOTEBOOK",
+      "targetExtractor": "SINGLE_PATH"
+    },
+    {
+      "match": {
+        "kind": "EXACT",
+        "value": "ApplyPatch"
+      },
+      "nativeShapes": [
+        "CLAUDE_PRE_TOOL_USE",
+        "COPILOT_CLAUDE_COMPAT",
+        "CURSOR_PRE_TOOL_USE"
+      ],
+      "canonicalName": "APPLY_PATCH",
+      "toolClass": "FILE_EDIT",
+      "argumentProfile": "APPLY_PATCH",
+      "targetExtractor": "APPLY_PATCH"
+    },
+    {
+      "match": {
+        "kind": "EXACT",
+        "value": "apply_patch"
+      },
+      "nativeShapes": [
+        "COPILOT_GITHUB_NATIVE"
+      ],
+      "canonicalName": "APPLY_PATCH",
+      "toolClass": "FILE_EDIT",
+      "argumentProfile": "APPLY_PATCH",
+      "targetExtractor": "APPLY_PATCH"
+    },
+    {
+      "match": {
+        "kind": "EXACT",
+        "value": "Delete"
+      },
+      "nativeShapes": [
+        "CLAUDE_PRE_TOOL_USE",
+        "COPILOT_CLAUDE_COMPAT",
+        "CURSOR_PRE_TOOL_USE"
+      ],
+      "canonicalName": "DELETE",
+      "toolClass": "FILE_EDIT",
+      "argumentProfile": "DELETE",
+      "targetExtractor": "DELETE"
+    },
+    {
+      "match": {
+        "kind": "EXACT",
+        "value": "delete"
+      },
+      "nativeShapes": [
+        "COPILOT_GITHUB_NATIVE"
+      ],
+      "canonicalName": "DELETE",
+      "toolClass": "FILE_EDIT",
+      "argumentProfile": "DELETE",
+      "targetExtractor": "DELETE"
+    },
+    {
+      "match": {
+        "kind": "EXACT",
+        "value": "str_replace_editor"
+      },
+      "nativeShapes": [
+        "COPILOT_GITHUB_NATIVE",
+        "CURSOR_PRE_TOOL_USE"
+      ],
+      "canonicalName": "STR_REPLACE_EDITOR",
+      "toolClass": "FILE_EDIT",
+      "argumentProfile": "STR_REPLACE_EDITOR",
+      "targetExtractor": "STR_REPLACE_EDITOR"
+    },
+    {
+      "match": {
+        "kind": "EXACT",
+        "value": "write_to_file"
+      },
+      "nativeShapes": [
+        "ANTIGRAVITY"
+      ],
+      "canonicalName": "WRITE",
+      "toolClass": "FILE_EDIT",
+      "argumentProfile": "WRITE",
+      "targetExtractor": "SINGLE_PATH"
+    },
+    {
+      "match": {
+        "kind": "EXACT",
+        "value": "replace_file_content"
+      },
+      "nativeShapes": [
+        "ANTIGRAVITY"
+      ],
+      "canonicalName": "EDIT",
+      "toolClass": "FILE_EDIT",
+      "argumentProfile": "EDIT",
+      "targetExtractor": "SINGLE_PATH"
+    },
+    {
+      "match": {
+        "kind": "EXACT",
+        "value": "multi_replace_file_content"
+      },
+      "nativeShapes": [
+        "ANTIGRAVITY"
+      ],
+      "canonicalName": "MULTI_EDIT",
+      "toolClass": "FILE_EDIT",
+      "argumentProfile": "MULTI_REPLACE",
+      "targetExtractor": "MULTI_REPLACE"
+    },
+    {
+      "match": {
+        "kind": "EXACT",
+        "value": "edit_file"
+      },
+      "nativeShapes": [
+        "ANTIGRAVITY"
+      ],
+      "canonicalName": "EDIT",
+      "toolClass": "FILE_EDIT",
+      "argumentProfile": "EDIT",
+      "targetExtractor": "SINGLE_PATH"
+    },
+    {
+      "match": {
+        "kind": "EXACT",
+        "value": "Bash"
+      },
+      "nativeShapes": [
+        "CLAUDE_PRE_TOOL_USE",
+        "COPILOT_CLAUDE_COMPAT",
+        "CURSOR_PRE_TOOL_USE"
+      ],
+      "canonicalName": "SHELL",
+      "toolClass": "OWNER_REQUIRED",
+      "argumentProfile": "ANY_OBJECT",
+      "targetExtractor": "NONE"
+    },
+    {
+      "match": {
+        "kind": "EXACT",
+        "value": "Shell"
+      },
+      "nativeShapes": [
+        "CLAUDE_PRE_TOOL_USE",
+        "COPILOT_CLAUDE_COMPAT",
+        "CURSOR_PRE_TOOL_USE",
+        "ANTIGRAVITY"
+      ],
+      "canonicalName": "SHELL",
+      "toolClass": "OWNER_REQUIRED",
+      "argumentProfile": "ANY_OBJECT",
+      "targetExtractor": "NONE"
+    },
+    {
+      "match": {
+        "kind": "EXACT",
+        "value": "PowerShell"
+      },
+      "nativeShapes": [
+        "CLAUDE_PRE_TOOL_USE",
+        "COPILOT_CLAUDE_COMPAT",
+        "CURSOR_PRE_TOOL_USE"
+      ],
+      "canonicalName": "SHELL",
+      "toolClass": "OWNER_REQUIRED",
+      "argumentProfile": "ANY_OBJECT",
+      "targetExtractor": "NONE"
+    },
+    {
+      "match": {
+        "kind": "EXACT",
+        "value": "bash"
+      },
+      "nativeShapes": [
+        "COPILOT_GITHUB_NATIVE"
+      ],
+      "canonicalName": "SHELL",
+      "toolClass": "OWNER_REQUIRED",
+      "argumentProfile": "ANY_OBJECT",
+      "targetExtractor": "NONE"
+    },
+    {
+      "match": {
+        "kind": "EXACT",
+        "value": "powershell"
+      },
+      "nativeShapes": [
+        "COPILOT_GITHUB_NATIVE"
+      ],
+      "canonicalName": "SHELL",
+      "toolClass": "OWNER_REQUIRED",
+      "argumentProfile": "ANY_OBJECT",
+      "targetExtractor": "NONE"
+    },
+    {
+      "match": {
+        "kind": "EXACT",
+        "value": "run_command"
+      },
+      "nativeShapes": [
+        "COPILOT_GITHUB_NATIVE",
+        "CURSOR_PRE_TOOL_USE",
+        "ANTIGRAVITY"
+      ],
+      "canonicalName": "SHELL",
+      "toolClass": "OWNER_REQUIRED",
+      "argumentProfile": "ANY_OBJECT",
+      "targetExtractor": "NONE"
+    },
+    {
+      "match": {
+        "kind": "EXACT",
+        "value": "CallMcpTool"
+      },
+      "nativeShapes": [
+        "CURSOR_PRE_TOOL_USE"
+      ],
+      "canonicalName": "MCP_EXECUTION",
+      "toolClass": "OWNER_REQUIRED",
+      "argumentProfile": "ANY_OBJECT",
+      "targetExtractor": "NONE"
+    },
+    {
+      "match": {
+        "kind": "EXACT",
+        "value": "mcp"
+      },
+      "nativeShapes": [
+        "COPILOT_GITHUB_NATIVE",
+        "ANTIGRAVITY"
+      ],
+      "canonicalName": "MCP_EXECUTION",
+      "toolClass": "OWNER_REQUIRED",
+      "argumentProfile": "ANY_OBJECT",
+      "targetExtractor": "NONE"
+    },
+    {
+      "match": {
+        "kind": "PREFIX",
+        "value": "mcp__"
+      },
+      "nativeShapes": [
+        "CLAUDE_PRE_TOOL_USE",
+        "COPILOT_CLAUDE_COMPAT",
+        "CURSOR_PRE_TOOL_USE"
+      ],
+      "canonicalName": "MCP_EXECUTION",
+      "toolClass": "OWNER_REQUIRED",
+      "argumentProfile": "ANY_OBJECT",
+      "targetExtractor": "NONE"
+    },
+    {
+      "match": {
+        "kind": "EXACT",
+        "value": "Agent"
+      },
+      "nativeShapes": [
+        "CLAUDE_PRE_TOOL_USE",
+        "COPILOT_CLAUDE_COMPAT",
+        "CURSOR_PRE_TOOL_USE"
+      ],
+      "canonicalName": "GENERAL_PROCESS",
+      "toolClass": "OWNER_REQUIRED",
+      "argumentProfile": "ANY_OBJECT",
+      "targetExtractor": "NONE"
+    },
+    {
+      "match": {
+        "kind": "EXACT",
+        "value": "Task"
+      },
+      "nativeShapes": [
+        "CLAUDE_PRE_TOOL_USE",
+        "COPILOT_CLAUDE_COMPAT",
+        "CURSOR_PRE_TOOL_USE"
+      ],
+      "canonicalName": "GENERAL_PROCESS",
+      "toolClass": "OWNER_REQUIRED",
+      "argumentProfile": "ANY_OBJECT",
+      "targetExtractor": "NONE"
+    },
+    {
+      "match": {
+        "kind": "EXACT",
+        "value": "general_process"
+      },
+      "nativeShapes": [
+        "COPILOT_GITHUB_NATIVE",
+        "ANTIGRAVITY"
+      ],
+      "canonicalName": "GENERAL_PROCESS",
+      "toolClass": "OWNER_REQUIRED",
+      "argumentProfile": "ANY_OBJECT",
+      "targetExtractor": "NONE"
+    }
+  ]
+}

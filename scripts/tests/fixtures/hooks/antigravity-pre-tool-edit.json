@@ -1,0 +1,18 @@
+{
+  "conversationId": "antigravity-session-001",
+  "workspacePaths": [
+    "__WORKSPACE__"
+  ],
+  "transcriptPath": "__WORKSPACE__\\.gemini\\antigravity-cli\\transcript.jsonl",
+  "artifactDirectoryPath": "__WORKSPACE__\\.gemini\\antigravity-cli\\artifacts",
+  "modelName": "auto",
+  "stepIdx": 1,
+  "toolCall": {
+    "name": "edit_file",
+    "args": {
+      "file_path": "__WORKSPACE__\\.claude\\antigravity-scratch.txt",
+      "old_string": "before",
+      "new_string": "after"
+    }
+  }
+}

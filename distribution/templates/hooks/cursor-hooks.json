@@ -1,0 +1,30 @@
+{
+  "version": 1,
+  "hooks": {
+    "sessionStart": [
+      {
+        "type": "command",
+        "command": "cmd /c \"if not exist \".\\.cursor\\hook-wrapper.ps1\" (echo {\\\"decision\\\":\\\"ALLOW\\\",\\\"reasonCode\\\":\\\"SOP_DEGRADED_MISSING_WRAPPER\\\"}) else (pwsh -NoProfile -File .\\.cursor\\hook-wrapper.ps1 -EventHint SESSION_START)\"",
+        "timeout": 10,
+        "failClosed": false
+      }
+    ],
+    "sessionEnd": [
+      {
+        "type": "command",
+        "command": "cmd /c \"if not exist \".\\.cursor\\hook-wrapper.ps1\" (echo {\\\"decision\\\":\\\"ALLOW\\\",\\\"reasonCode\\\":\\\"SOP_DEGRADED_MISSING_WRAPPER\\\"}) else (pwsh -NoProfile -File .\\.cursor\\hook-wrapper.ps1 -EventHint SESSION_END)\"",
+        "timeout": 10,
+        "failClosed": false
+      }
+    ],
+    "preToolUse": [
+      {
+        "type": "command",
+        "command": "cmd /c \"if not exist \".\\.cursor\\hook-wrapper.ps1\" (echo {\\\"decision\\\":\\\"ALLOW\\\",\\\"reasonCode\\\":\\\"SOP_DEGRADED_MISSING_WRAPPER\\\"}) else (pwsh -NoProfile -File .\\.cursor\\hook-wrapper.ps1 -EventHint PRE_TOOL_USE)\"",
+        "matcher": ".*",
+        "timeout": 10,
+        "failClosed": false
+      }
+    ]
+  }
+}

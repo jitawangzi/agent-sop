@@ -1,0 +1,9 @@
+{
+  "sessionId": "copilot-session-001",
+  "timestamp": 1786953603000,
+  "cwd": "__WORKSPACE__",
+  "toolName": "powershell",
+  "toolArgs": {
+    "command": "Get-Location"
+  }
+}

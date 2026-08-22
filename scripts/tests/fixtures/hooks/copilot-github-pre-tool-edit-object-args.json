@@ -1,0 +1,11 @@
+{
+  "sessionId": "copilot-session-001",
+  "timestamp": 1786953602000,
+  "cwd": "__WORKSPACE__",
+  "toolName": "edit",
+  "toolArgs": {
+    "file_path": "__WORKSPACE__\\.claude\\copilot-scratch.txt",
+    "old_string": "before",
+    "new_string": "after"
+  }
+}

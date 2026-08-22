@@ -1,0 +1,42 @@
+[
+  {
+    "schemaVersion": "1.0",
+    "grantId": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+    "status": "ISSUED",
+    "sessionKey": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "sessionEpochId": "fixture-epoch-001",
+    "agent": "CURSOR",
+    "workspacePath": "C:\\fixture\\workspace",
+    "operation": "Claim",
+    "feature": "FixtureFeature",
+    "specDirectory": "C:\\fixture\\workspace\\.claude\\specs\\features\\FixtureFeature",
+    "workflow": "SUPERPOWERS",
+    "ownerId": "fixture-owner-0001",
+    "intentSha256": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+    "dedupKey": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+    "issuedAt": "2026-08-17T12:00:00.0000000Z",
+    "expiresAt": "2026-08-17T12:00:10.0000000Z",
+    "consumedAt": "",
+    "transactionId": "issue-claim-001"
+  },
+  {
+    "schemaVersion": "1.0",
+    "grantId": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+    "status": "ISSUED",
+    "sessionKey": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+    "sessionEpochId": "fixture-epoch-002",
+    "agent": "CURSOR",
+    "workspacePath": "C:\\fixture\\workspace",
+    "operation": "Claim",
+    "feature": "FixtureFeature",
+    "specDirectory": "C:\\fixture\\workspace\\.claude\\specs\\features\\FixtureFeature",
+    "workflow": "SUPERPOWERS",
+    "ownerId": "fixture-owner-0001",
+    "intentSha256": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+    "dedupKey": "0000000000000000000000000000000000000000000000000000000000000000",
+    "issuedAt": "2026-08-17T12:00:01.0000000Z",
+    "expiresAt": "2026-08-17T12:00:11.0000000Z",
+    "consumedAt": "",
+    "transactionId": "issue-claim-002"
+  }
+]

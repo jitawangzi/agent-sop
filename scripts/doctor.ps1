@@ -1,0 +1,142 @@
+#requires -Version 7.0
+
+# AI SOP environment self-check ("doctor").
+# Run after install-ai-sop.ps1 to verify the local environment is ready:
+#   pwsh -NoProfile -File ./.ai-sop/scripts/doctor.ps1
+# Checks: PowerShell version, Git, SVN, JDK 8, Gradle wrapper, hook injection,
+# submodule init, current harness capability. Exits 0 if all pass, 1 if any fail.
+
+[CmdletBinding()]
+param()
+
+$ErrorActionPreference = "Stop"
+$SopRoot = Split-Path -Parent $PSScriptRoot
+$WorkspaceRoot = Split-Path -Parent $SopRoot
+
+$results = [System.Collections.Generic.List[pscustomobject]]::new()
+function Add-Check {
+    param([string]$Name, [bool]$Pass, [string]$Detail)
+    $results.Add([pscustomobject]@{ Name = $Name; Pass = $Pass; Detail = $Detail })
+}
+
+# 1. PowerShell version (requires 7.0+)
+$psVer = $PSVersionTable.PSVersion.ToString()
+Add-Check "PowerShell 7+" ($PSVersionTable.PSVersion.Major -ge 7) $psVer
+
+# 2. Git available
+try {
+    $gitVer = (git --version 2>&1) | Out-String
+    Add-Check "Git CLI" $true $gitVer.Trim()
+} catch {
+    Add-Check "Git CLI" $false "not found"
+}
+
+# 3. SVN available
+try {
+    $svnVer = (svn --version --quiet 2>&1) | Out-String
+    Add-Check "SVN CLI" (-not [string]::IsNullOrWhiteSpace($svnVer)) $svnVer.Trim()
+} catch {
+    Add-Check "SVN CLI" $false "not found"
+}
+
+# 4. JDK 8 (check JAVA_HOME + java -version)
+$javaHome = [string]$env:JAVA_HOME
+$javaOk = $false
+$javaDetail = "JAVA_HOME not set"
+if (-not [string]::IsNullOrWhiteSpace($javaHome) -and (Test-Path -LiteralPath $javaHome)) {
+    try {
+        $javaOut = (& "$javaHome\bin\java" -version 2>&1) | Out-String
+        if ($javaOut -match "1\.8") {
+            $javaOk = $true
+            $javaDetail = "JDK 1.8 at $javaHome"
+        } else {
+            $javaDetail = "JAVA_HOME set but not JDK 8: $javaOut".Trim()
+        }
+    } catch {
+        $javaDetail = "JAVA_HOME set but java not runnable: $_"
+    }
+}
+Add-Check "JDK 8" $javaOk $javaDetail
+
+# 5. Gradle wrapper
+$gradlew = Join-Path $WorkspaceRoot "gradlew.bat"
+if (-not (Test-Path -LiteralPath $gradlew)) { $gradlew = Join-Path $WorkspaceRoot "gradlew" }
+Add-Check "Gradle wrapper" (Test-Path -LiteralPath $gradlew) $gradlew
+
+# 6. .ai-sop submodule initialized (hook-dispatcher.ps1 exists)
+$dispatcher = Join-Path $SopRoot "scripts/hook-dispatcher.ps1"
+Add-Check "Submodule init" (Test-Path -LiteralPath $dispatcher -PathType Leaf) $dispatcher
+
+# 7. Hook injection status (check generated projection files exist)
+$agentsHooks = Join-Path $WorkspaceRoot ".agents/hooks.json"
+$claudeSettings = Join-Path $WorkspaceRoot ".claude/settings.json"
+$hookInjected = (Test-Path -LiteralPath $agentsHooks) -or (Test-Path -LiteralPath $claudeSettings)
+Add-Check "Hook injected" $hookInjected ".agents/hooks.json or .claude/settings.json"
+
+# 8. Lock file present
+$lockPath = Join-Path $WorkspaceRoot "tools/ai-sop/ai-sop.lock.json"
+Add-Check "Lock file" (Test-Path -LiteralPath $lockPath) $lockPath
+
+# 9. Harness capability (if script available)
+$capScript = Join-Path $SopRoot "scripts/harness-capability.ps1"
+$overridePath = Join-Path $SopRoot ".harness-capability-override.json"
+$hasOverride = Test-Path -LiteralPath $overridePath -PathType Leaf
+if (Test-Path -LiteralPath $capScript) {
+    try {
+        $cap = & $capScript -All 2>&1 | Out-String
+        $summary = $cap.Trim().Substring(0, [Math]::Min(120, $cap.Trim().Length))
+        if ($hasOverride) {
+            $summary += " | LOCAL OVERRIDE in .harness-capability-override.json — decisions reflect per-machine downgrade(s), not the static table default"
+        }
+        Add-Check "Harness capability" $true $summary
+    } catch {
+        Add-Check "Harness capability" $false "probe failed: $_"
+    }
+} else {
+    Add-Check "Harness capability" $false "harness-capability.ps1 not found"
+}
+if ($hasOverride) {
+    Add-Check "Capability override" $true "local override file present — a STRICT harness may be downgraded on this machine; verify the override is intentional (gitignored, not shared)"
+}
+
+# 10. .ai-workspace/context/ exists + freshness check
+$contextDir = Join-Path $WorkspaceRoot ".ai-workspace/context"
+$contextExists = Test-Path -LiteralPath $contextDir
+Add-Check "Context dir" $contextExists $contextDir
+if ($contextExists) {
+    # Check required context files for freshness (context-meta header)
+    $required = @("project-summary.md", "coding-style.md", "business-logic-pattern.md", "project-tooling.md")
+    $stale = @()
+    foreach ($cf in $required) {
+        $cfPath = Join-Path $contextDir $cf
+        if (Test-Path -LiteralPath $cfPath -PathType Leaf) {
+            $firstLine = Get-Content -LiteralPath $cfPath -TotalCount 1 -ErrorAction SilentlyContinue
+            if ($firstLine -match "expiresAt:\s*(\d{4}-\d{2})") {
+                try {
+                    $expiresStr = $Matches[1] + "-01"
+                    $expires = [datetime]::ParseExact($expiresStr, "yyyy-MM-dd", $null)
+                    $expiresEnd = $expires.AddMonths(1)
+                    if ([datetime]::UtcNow -gt $expiresEnd) {
+                        $stale += "$cf (expired $($Matches[1]) — WARN, not fatal)"
+                    }
+                } catch {
+                    $stale += "$cf (bad date format — WARN, not fatal)"
+                }
+            }
+        }
+    }
+    # Freshness is advisory — stale/bad-date context is WARN not FAIL (never blocks install).
+    # Only MISSING required files fail; stale files still pass with WARN detail.
+    Add-Check "Context freshness" $true $(if ($stale.Count -eq 0) { "all fresh" } else { $stale -join "; " })
+}
+
+# Report
+$passCount = @($results | Where-Object { $_.Pass }).Count
+foreach ($r in $results) {
+    $mark = if ($r.Pass) { "✅" } else { "❌" }
+    Write-Host ("{0} {1,-22} {2}" -f $mark, $r.Name, $r.Detail)
+}
+Write-Host ""
+$color = if ($passCount -eq $results.Count) { "Green" } else { "Yellow" }
+Write-Host ("{0}/{1} checks passed" -f $passCount, $results.Count) -ForegroundColor $color
+if ($passCount -eq $results.Count) { exit 0 } else { exit 1 }

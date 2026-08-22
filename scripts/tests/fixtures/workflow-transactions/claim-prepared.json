@@ -1,0 +1,30 @@
+{
+  "schemaVersion": "1.0",
+  "transactionId": "fixture-claim-prepared",
+  "operation": "CLAIM",
+  "phase": "PREPARED",
+  "feature": "FixtureFeature",
+  "ownerPath": "C:\\fixture\\owners\\fixturefeature.json",
+  "sessionKeys": [
+    "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+  ],
+  "targets": [
+    {
+      "path": "C:\\fixture\\owners\\fixturefeature.json",
+      "kind": "OWNER",
+      "schemaId": "OWNER",
+      "before": {
+        "exists": false,
+        "sha256": "",
+        "canonicalJsonBase64": ""
+      },
+      "after": {
+        "exists": true,
+        "sha256": "2853e0a0dad46c62a4727583d9b0dd61ca272ada0c6c275bb5db4a67e92d1d5c",
+        "canonicalJsonBase64": "eyJhZ2VudCI6IkNVUlNPUiIsImNvbXBsZXRlZEF0IjoiIiwiZmVhdHVyZSI6IkZpeHR1cmVGZWF0dXJlIiwibGFzdFRyYW5zYWN0aW9uSWQiOiJmaXh0dXJlLWNsYWltLXByZXBhcmVkIiwib3duZXJJZCI6ImZpeHR1cmUtb3duZXItMDAwMSIsInNjaGVtYVZlcnNpb24iOiIxLjEiLCJzZXNzaW9uQmluZGluZyI6eyJib3VuZEF0IjoiMjAyNi0wOC0xN1QxMjowMDowMC4wMDAwMDAwWiIsInNlc3Npb25FcG9jaElkIjoiZml4dHVyZS1lcG9jaC0wMDEiLCJzZXNzaW9uS2V5IjoiYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYSJ9LCJzcGVjRGlyZWN0b3J5IjoiQzpcXGZpeHR1cmVcXHdvcmtzcGFjZVxcLmNsYXVkZVxcc3BlY3NcXGZlYXR1cmVzXFxGaXh0dXJlRmVhdHVyZSIsInN0YXJ0ZWRBdCI6IjIwMjYtMDgtMTdUMTI6MDA6MDAuMDAwMDAwMFoiLCJzdGF0dXMiOiJBQ1RJVkUiLCJ3b3JrZmxvdyI6IlNVUEVSUE9XRVJTIiwid29ya3NwYWNlUGF0aCI6IkM6XFxmaXh0dXJlXFx3b3Jrc3BhY2UifQ=="
+      }
+    }
+  ],
+  "createdAt": "2026-08-17T12:00:00.0000000Z",
+  "committedAt": ""
+}

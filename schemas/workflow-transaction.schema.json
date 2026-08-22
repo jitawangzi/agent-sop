@@ -1,0 +1,221 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "workflow-transaction.schema.json",
+  "title": "AI SOP Workflow Transaction",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schemaVersion",
+    "transactionId",
+    "operation",
+    "phase",
+    "feature",
+    "ownerPath",
+    "sessionKeys",
+    "targets",
+    "createdAt",
+    "committedAt"
+  ],
+  "properties": {
+    "schemaVersion": {
+      "const": "1.0"
+    },
+    "transactionId": {
+      "$ref": "#/$defs/id"
+    },
+    "operation": {
+      "enum": [
+        "CLAIM",
+        "BIND_SESSION",
+        "REBIND_SESSION",
+        "VALIDATE",
+        "COMPLETE",
+        "TRANSFER"
+      ]
+    },
+    "phase": {
+      "enum": [
+        "PREPARED",
+        "COMMITTED"
+      ]
+    },
+    "feature": {
+      "$ref": "#/$defs/feature"
+    },
+    "ownerPath": {
+      "type": "string",
+      "minLength": 1
+    },
+    "sessionKeys": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/sha256"
+      },
+      "uniqueItems": true
+    },
+    "targets": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "$ref": "#/$defs/target"
+      }
+    },
+    "createdAt": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "committedAt": {
+      "$ref": "#/$defs/optionalDateTime"
+    }
+  },
+  "allOf": [
+    {
+      "if": {
+        "properties": {
+          "phase": {
+            "const": "PREPARED"
+          }
+        },
+        "required": [
+          "phase"
+        ]
+      },
+      "then": {
+        "properties": {
+          "committedAt": {
+            "const": ""
+          }
+        }
+      },
+      "else": {
+        "properties": {
+          "committedAt": {
+            "type": "string",
+            "format": "date-time"
+          }
+        }
+      }
+    }
+  ],
+  "$defs": {
+    "id": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9._:-]+$"
+    },
+    "feature": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9](?:[A-Za-z0-9._-]*[A-Za-z0-9_-])?$"
+    },
+    "sha256": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$"
+    },
+    "optionalSha256": {
+      "type": "string",
+      "pattern": "^(?:[0-9a-f]{64})?$"
+    },
+    "optionalDateTime": {
+      "anyOf": [
+        {
+          "const": ""
+        },
+        {
+          "type": "string",
+          "format": "date-time"
+        }
+      ]
+    },
+    "snapshot": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "exists",
+        "sha256",
+        "canonicalJsonBase64"
+      ],
+      "properties": {
+        "exists": {
+          "type": "boolean"
+        },
+        "sha256": {
+          "$ref": "#/$defs/optionalSha256"
+        },
+        "canonicalJsonBase64": {
+          "type": "string",
+          "pattern": "^(?:[A-Za-z0-9+/]+={0,2})?$"
+        }
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "exists": {
+                "const": false
+              }
+            },
+            "required": [
+              "exists"
+            ]
+          },
+          "then": {
+            "properties": {
+              "sha256": {
+                "const": ""
+              },
+              "canonicalJsonBase64": {
+                "const": ""
+              }
+            }
+          },
+          "else": {
+            "properties": {
+              "sha256": {
+                "$ref": "#/$defs/sha256"
+              },
+              "canonicalJsonBase64": {
+                "minLength": 4
+              }
+            }
+          }
+        }
+      ]
+    },
+    "target": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "path",
+        "kind",
+        "schemaId",
+        "before",
+        "after"
+      ],
+      "properties": {
+        "path": {
+          "type": "string",
+          "minLength": 1
+        },
+        "kind": {
+          "enum": [
+            "SESSION",
+            "OWNER",
+            "COMMAND_GRANT"
+          ]
+        },
+        "schemaId": {
+          "enum": [
+            "SESSION",
+            "OWNER",
+            "COMMAND_GRANT"
+          ]
+        },
+        "before": {
+          "$ref": "#/$defs/snapshot"
+        },
+        "after": {
+          "$ref": "#/$defs/snapshot"
+        }
+      }
+    }
+  }
+}

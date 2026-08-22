@@ -1,0 +1,13 @@
+{
+  "conversationId": "antigravity-session-001",
+  "workspacePaths": [
+    "__WORKSPACE__"
+  ],
+  "fullyIdle": true,
+  "transcriptPath": "__WORKSPACE__\\.gemini\\antigravity-cli\\transcript.jsonl",
+  "artifactDirectoryPath": "__WORKSPACE__\\.gemini\\antigravity-cli\\artifacts",
+  "modelName": "auto",
+  "executionNum": 1,
+  "terminationReason": "model_stop",
+  "error": ""
+}

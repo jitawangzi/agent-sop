@@ -1,0 +1,8 @@
+{
+  "session_id": "claude-session-001",
+  "transcript_path": "__TRANSCRIPT__",
+  "cwd": "__WORKSPACE__",
+  "hook_event_name": "SessionStart",
+  "source": "startup",
+  "model": "claude-sonnet-5"
+}

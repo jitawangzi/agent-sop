@@ -1,0 +1,10 @@
+{
+  "session_id": "claude-session-001",
+  "cwd": "__WORKSPACE__",
+  "hook_event_name": "PreToolUse",
+  "tool_name": "ApplyPatch",
+  "tool_input": {
+    "patch": "*** Begin Patch\n*** Add File: .claude/generated-one.txt\n+one\n*** Update File: .claude/generated-two.txt\n@@\n-old\n+new\n*** End Patch\n"
+  },
+  "tool_use_id": "toolu_claude_patch_001"
+}

@@ -1,0 +1,126 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "hook-dedup.schema.json",
+  "title": "AI SOP Hook Dedup Record",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schemaVersion",
+    "dedupKey",
+    "agent",
+    "event",
+    "sessionKey",
+    "normalizedTimestampEpochMs",
+    "toolClass",
+    "canonicalSemanticArgsSha256",
+    "canonicalTargetsSha256",
+    "decision",
+    "reasonCode",
+    "authorizationSnapshotSha256",
+    "sideEffectId",
+    "state",
+    "sideEffectsApplied",
+    "bootstrapGrantId",
+    "intentSha256",
+    "createdAt",
+    "expiresAt"
+  ],
+  "properties": {
+    "schemaVersion": {
+      "const": "1.0"
+    },
+    "dedupKey": {
+      "$ref": "#/$defs/sha256"
+    },
+    "agent": {
+      "enum": [
+        "CLAUDE_CODE",
+        "COPILOT",
+        "CURSOR",
+        "ANTIGRAVITY",
+        "PI"
+      ]
+    },
+    "event": {
+      "enum": [
+        "SESSION_START",
+        "PRE_INVOCATION",
+        "PRE_TOOL_USE",
+        "SESSION_END",
+        "STOP"
+      ]
+    },
+    "sessionKey": {
+      "$ref": "#/$defs/sha256"
+    },
+    "normalizedTimestampEpochMs": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "toolClass": {
+      "enum": [
+        "SAFE_NON_EDIT",
+        "FILE_EDIT",
+        "OWNER_REQUIRED",
+        "UNKNOWN"
+      ]
+    },
+    "canonicalSemanticArgsSha256": {
+      "$ref": "#/$defs/sha256"
+    },
+    "canonicalTargetsSha256": {
+      "$ref": "#/$defs/sha256"
+    },
+    "decision": {
+      "enum": [
+        "ALLOW",
+        "DENY"
+      ]
+    },
+    "reasonCode": {
+      "type": "string",
+      "pattern": "^[A-Z][A-Z0-9_]*$"
+    },
+    "authorizationSnapshotSha256": {
+      "$ref": "#/$defs/optionalSha256"
+    },
+    "sideEffectId": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9._:-]+$"
+    },
+    "state": {
+      "enum": [
+        "PREPARED",
+        "APPLIED"
+      ]
+    },
+    "sideEffectsApplied": {
+      "type": "boolean"
+    },
+    "bootstrapGrantId": {
+      "type": "string",
+      "pattern": "^(?:[A-Za-z0-9._:-]+)?$"
+    },
+    "intentSha256": {
+      "$ref": "#/$defs/optionalSha256"
+    },
+    "createdAt": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "expiresAt": {
+      "type": "string",
+      "format": "date-time"
+    }
+  },
+  "$defs": {
+    "sha256": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$"
+    },
+    "optionalSha256": {
+      "type": "string",
+      "pattern": "^(?:[0-9a-f]{64})?$"
+    }
+  }
+}

@@ -1,0 +1,7 @@
+{
+  "session_id": "cursor-session-001",
+  "reason": "completed",
+  "duration_ms": 45000,
+  "is_background_agent": false,
+  "final_status": "completed"
+}

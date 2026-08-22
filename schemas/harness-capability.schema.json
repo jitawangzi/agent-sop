@@ -1,0 +1,105 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "harness-capability.schema.json",
+  "title": "AI SOP Harness Capability",
+  "description": "Per-harness runtime capability declaration + admission decision (DC-001/002). STRICT = can run T3 (auto implement + independent review); BLOCKED = T2 only. Unknown capabilities default BLOCKED, never silently degrade.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schemaVersion",
+    "generatedAt",
+    "releaseDecision",
+    "harnesses"
+  ],
+  "properties": {
+    "schemaVersion": { "const": "1.0" },
+    "generatedAt": {
+      "type": "string",
+      "pattern": "^([0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(\\.[0-9]+)?(Z|[+-][0-9]{2}:[0-9]{2}))?$"
+    },
+    "releaseDecision": {
+      "enum": ["STRICT", "BLOCKED", "MIXED"]
+    },
+    "harnesses": {
+      "type": "array",
+      "minItems": 1,
+      "items": { "$ref": "#/$defs/harness" }
+    }
+  },
+  "$defs": {
+    "agent": {
+      "enum": ["CLAUDE_CODE", "COPILOT", "ANTIGRAVITY", "CURSOR", "PI"]
+    },
+    "runtime": {
+      "enum": ["CLI", "APP", "SDK_LOCAL", "CLOUD"]
+    },
+    "decision": {
+      "enum": ["STRICT", "BLOCKED"]
+    },
+    "capabilities": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "skillDiscovery",
+        "subagent",
+        "blockingHook",
+        "workspace",
+        "pauseResume",
+        "evidence"
+      ],
+      "properties": {
+        "skillDiscovery": { "type": "boolean" },
+        "subagent": { "type": "boolean" },
+        "blockingHook": { "type": "boolean" },
+        "workspace": { "type": "boolean" },
+        "pauseResume": { "type": "boolean" },
+        "evidence": { "type": "boolean" }
+      }
+    },
+    "evidence": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "skillPath": { "type": "string" },
+        "hookConfig": { "type": "string" },
+        "sessionMechanism": { "type": "string" },
+        "subagentMechanism": { "type": "string" },
+        "note": { "type": "string" }
+      }
+    },
+    "harness": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "agent",
+        "runtime",
+        "productVersion",
+        "os",
+        "pwshVersion",
+        "capabilities",
+        "decision",
+        "decisionReason",
+        "evidence",
+        "probedAt"
+      ],
+      "properties": {
+        "agent": { "$ref": "#/$defs/agent" },
+        "runtime": { "$ref": "#/$defs/runtime" },
+        "productVersion": { "type": "string" },
+        "os": { "type": "string" },
+        "pwshVersion": { "type": "string" },
+        "capabilities": { "$ref": "#/$defs/capabilities" },
+        "decision": { "$ref": "#/$defs/decision" },
+        "decisionReason": {
+          "type": "string",
+          "description": "BLOCKED: lists missing critical capabilities; STRICT: empty or 'all critical capabilities satisfied'."
+        },
+        "evidence": { "$ref": "#/$defs/evidence" },
+        "probedAt": {
+          "type": "string",
+          "pattern": "^([0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(\\.[0-9]+)?(Z|[+-][0-9]{2}:[0-9]{2}))?$"
+        }
+      }
+    }
+  }
+}

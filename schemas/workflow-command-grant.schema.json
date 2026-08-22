@@ -1,0 +1,301 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "workflow-command-grant.schema.json",
+  "title": "AI SOP Workflow Command Grant Registry Record",
+  "oneOf": [
+    {
+      "$ref": "#/$defs/grantRecord"
+    },
+    {
+      "$ref": "#/$defs/intentIndex"
+    },
+    {
+      "$ref": "#/$defs/sessionIndex"
+    }
+  ],
+  "$defs": {
+    "grantRecord": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "schemaVersion",
+        "grantId",
+        "status",
+        "sessionKey",
+        "sessionEpochId",
+        "agent",
+        "workspacePath",
+        "operation",
+        "feature",
+        "specDirectory",
+        "workflow",
+        "ownerId",
+        "intentSha256",
+        "dedupKey",
+        "issuedAt",
+        "expiresAt",
+        "consumedAt",
+        "transactionId"
+      ],
+      "properties": {
+        "schemaVersion": {
+          "enum": [
+            "1.0",
+            "1.1"
+          ]
+        },
+        "grantId": {
+          "$ref": "#/$defs/sha256"
+        },
+        "status": {
+          "enum": [
+            "ISSUED",
+            "CONSUMED",
+            "EXPIRED"
+          ]
+        },
+        "sessionKey": {
+          "$ref": "#/$defs/sha256"
+        },
+        "sessionEpochId": {
+          "$ref": "#/$defs/id"
+        },
+        "agent": {
+          "$ref": "#/$defs/agent"
+        },
+        "workspacePath": {
+          "type": "string",
+          "minLength": 1
+        },
+        "operation": {
+          "$ref": "#/$defs/operation"
+        },
+        "feature": {
+          "$ref": "#/$defs/feature"
+        },
+        "specDirectory": {
+          "type": "string",
+          "minLength": 1
+        },
+        "workflow": {
+          "const": "SUPERPOWERS"
+        },
+        "ownerId": {
+          "$ref": "#/$defs/id"
+        },
+        "intentSha256": {
+          "$ref": "#/$defs/sha256"
+        },
+        "dedupKey": {
+          "$ref": "#/$defs/sha256"
+        },
+        "issuedAt": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "expiresAt": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "consumedAt": {
+          "$ref": "#/$defs/optionalDateTime"
+        },
+        "issuedTransactionId": {
+          "$ref": "#/$defs/id"
+        },
+        "consumedTransactionId": {
+          "type": "string",
+          "pattern": "^(?:|[A-Za-z0-9._:-]+)$"
+        },
+        "transactionId": {
+          "$ref": "#/$defs/id"
+        }
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "schemaVersion": {
+                "const": "1.1"
+              }
+            },
+            "required": [
+              "schemaVersion"
+            ]
+          },
+          "then": {
+            "required": [
+              "issuedTransactionId",
+              "consumedTransactionId"
+            ]
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "status": {
+                "const": "CONSUMED"
+              }
+            },
+            "required": [
+              "status"
+            ]
+          },
+          "then": {
+            "properties": {
+              "consumedAt": {
+                "type": "string",
+                "format": "date-time"
+              }
+            }
+          },
+          "else": {
+            "properties": {
+              "consumedAt": {
+                "const": ""
+              }
+            }
+          }
+        }
+      ]
+    },
+    "intentIndex": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "schemaVersion",
+        "indexKind",
+        "intentSha256",
+        "entries"
+      ],
+      "properties": {
+        "schemaVersion": {
+          "const": "1.0"
+        },
+        "indexKind": {
+          "const": "INTENT"
+        },
+        "intentSha256": {
+          "$ref": "#/$defs/sha256"
+        },
+        "entries": {
+          "$ref": "#/$defs/indexEntries"
+        }
+      }
+    },
+    "sessionIndex": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "schemaVersion",
+        "indexKind",
+        "sessionKey",
+        "sessionEpochId",
+        "entries"
+      ],
+      "properties": {
+        "schemaVersion": {
+          "const": "1.0"
+        },
+        "indexKind": {
+          "const": "SESSION"
+        },
+        "sessionKey": {
+          "$ref": "#/$defs/sha256"
+        },
+        "sessionEpochId": {
+          "$ref": "#/$defs/id"
+        },
+        "entries": {
+          "$ref": "#/$defs/indexEntries"
+        }
+      }
+    },
+    "indexEntries": {
+      "type": "array",
+      "uniqueItems": true,
+      "items": {
+        "$ref": "#/$defs/indexEntry"
+      }
+    },
+    "indexEntry": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "grantId",
+        "intentSha256",
+        "sessionKey",
+        "sessionEpochId",
+        "operation",
+        "expiresAt",
+        "active"
+      ],
+      "properties": {
+        "grantId": {
+          "$ref": "#/$defs/sha256"
+        },
+        "intentSha256": {
+          "$ref": "#/$defs/sha256"
+        },
+        "sessionKey": {
+          "$ref": "#/$defs/sha256"
+        },
+        "sessionEpochId": {
+          "$ref": "#/$defs/id"
+        },
+        "operation": {
+          "$ref": "#/$defs/operation"
+        },
+        "expiresAt": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "active": {
+          "type": "boolean"
+        }
+      }
+    },
+    "agent": {
+      "enum": [
+        "CLAUDE_CODE",
+        "COPILOT",
+        "ANTIGRAVITY",
+        "CURSOR",
+        "PI"
+      ]
+    },
+    "operation": {
+      "enum": [
+        "Claim",
+        "BindSession",
+        "RebindSession",
+        "Validate",
+        "Complete",
+        "Transfer"
+      ]
+    },
+    "feature": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9](?:[A-Za-z0-9._-]*[A-Za-z0-9_-])?$"
+    },
+    "id": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9._:-]+$"
+    },
+    "sha256": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$"
+    },
+    "optionalDateTime": {
+      "anyOf": [
+        {
+          "const": ""
+        },
+        {
+          "type": "string",
+          "format": "date-time"
+        }
+      ]
+    }
+  }
+}

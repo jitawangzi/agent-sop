@@ -1,0 +1,130 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "hook-event.schema.json",
+  "title": "Normalized AI SOP Hook Event",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "agent",
+    "nativeShape",
+    "event",
+    "nativeSessionId",
+    "generationId",
+    "workspacePath",
+    "workspaceRoots",
+    "cwd",
+    "normalizedTimestampEpochMs",
+    "timestampSource",
+    "toolName",
+    "toolClass",
+    "targetPaths",
+    "canonicalSemanticArgsSha256",
+    "canonicalTargetsSha256",
+    "rawPayloadSha256",
+    "dedupKey"
+  ],
+  "properties": {
+    "agent": {
+      "enum": [
+        "CLAUDE_CODE",
+        "COPILOT",
+        "CURSOR",
+        "ANTIGRAVITY",
+        "PI"
+      ]
+    },
+    "nativeShape": {
+      "enum": [
+        "CLAUDE_SESSION_START",
+        "CLAUDE_SESSION_END",
+        "CLAUDE_PRE_TOOL_USE",
+        "COPILOT_CLAUDE_COMPAT",
+        "COPILOT_GITHUB_NATIVE",
+        "CURSOR_SESSION_START",
+        "CURSOR_SESSION_END",
+        "CURSOR_PRE_TOOL_USE",
+        "ANTIGRAVITY"
+      ]
+    },
+    "event": {
+      "enum": [
+        "SESSION_START",
+        "PRE_INVOCATION",
+        "PRE_TOOL_USE",
+        "SESSION_END",
+        "STOP"
+      ]
+    },
+    "nativeSessionId": {
+      "type": "string",
+      "minLength": 1
+    },
+    "generationId": {
+      "type": "string"
+    },
+    "workspacePath": {
+      "type": "string",
+      "minLength": 1
+    },
+    "workspaceRoots": {
+      "type": "array",
+      "minItems": 1,
+      "uniqueItems": true,
+      "items": {
+        "type": "string",
+        "minLength": 1
+      }
+    },
+    "cwd": {
+      "type": "string",
+      "minLength": 1
+    },
+    "normalizedTimestampEpochMs": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "timestampSource": {
+      "enum": [
+        "NATIVE",
+        "CORRELATED_ACCEPTED_AT"
+      ]
+    },
+    "toolName": {
+      "type": "string"
+    },
+    "toolClass": {
+      "enum": [
+        "SAFE_NON_EDIT",
+        "FILE_EDIT",
+        "OWNER_REQUIRED",
+        "UNKNOWN"
+      ]
+    },
+    "targetPaths": {
+      "type": "array",
+      "uniqueItems": true,
+      "items": {
+        "type": "string",
+        "minLength": 1
+      }
+    },
+    "canonicalSemanticArgsSha256": {
+      "$ref": "#/$defs/sha256"
+    },
+    "canonicalTargetsSha256": {
+      "$ref": "#/$defs/sha256"
+    },
+    "rawPayloadSha256": {
+      "$ref": "#/$defs/sha256"
+    },
+    "dedupKey": {
+      "$ref": "#/$defs/sha256"
+    }
+  },
+  "$defs": {
+    "sha256": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$"
+    }
+  }
+}

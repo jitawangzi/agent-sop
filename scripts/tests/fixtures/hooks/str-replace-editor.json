@@ -1,0 +1,12 @@
+{
+  "sessionId": "copilot-session-001",
+  "timestamp": 1786953604000,
+  "cwd": "__WORKSPACE__",
+  "toolName": "str_replace_editor",
+  "toolArgs": {
+    "command": "str_replace",
+    "path": "__WORKSPACE__\\.claude\\replace-target.txt",
+    "old_str": "before",
+    "new_str": "after"
+  }
+}

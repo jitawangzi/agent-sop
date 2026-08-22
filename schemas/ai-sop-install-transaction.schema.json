@@ -1,0 +1,132 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "ai-sop-install-transaction.schema.json",
+  "title": "AI SOP Install Transaction Journal",
+  "description": "Persistent journal for the installer (DC-017/DC-018). Phases are exactly PREPARED|COMMITTED. Each item records before/after hashes and backup for submodule/SVN-directory/projection/junction replacements. Strong-kill recovery converges to all-before or all-after.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schemaVersion",
+    "transactionId",
+    "mode",
+    "action",
+    "workspaceRoot",
+    "sourceUrl",
+    "sourceCommit",
+    "phase",
+    "createdAt",
+    "items"
+  ],
+  "properties": {
+    "schemaVersion": {
+      "const": "1.0"
+    },
+    "transactionId": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9._:-]+$"
+    },
+    "mode": {
+      "enum": [
+        "Auto",
+        "Git",
+        "Svn"
+      ]
+    },
+    "action": {
+      "enum": [
+        "Install",
+        "Verify"
+      ]
+    },
+    "workspaceRoot": {
+      "type": "string",
+      "minLength": 1
+    },
+    "sourceUrl": {
+      "type": "string",
+      "minLength": 1
+    },
+    "sourceCommit": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{40}$"
+    },
+    "phase": {
+      "enum": [
+        "PREPARED",
+        "COMMITTED"
+      ]
+    },
+    "createdAt": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "committedAt": {
+      "type": "string",
+      "description": "Empty until COMMITTED; set to the final verify timestamp.",
+      "pattern": "^([0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(\\.[0-9]+)?(Z|[+-][0-9]{2}:[0-9]{2}))?$"
+    },
+    "finalStateSha256": {
+      "type": "string",
+      "description": "Empty until the final local Verify succeeds; then the SHA-256 of the canonical final-state summary, recorded in commit.marker.",
+      "pattern": "^([0-9a-f]{64})?$"
+    },
+    "items": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "$ref": "#/$defs/item"
+      }
+    }
+  },
+  "$defs": {
+    "sha256": {
+      "type": "string",
+      "description": "Either a 64-hex content SHA-256 or a 40-hex git commit SHA (for submodule/svn-directory items), or empty when the item is new.",
+      "pattern": "^([0-9a-f]{40}|[0-9a-f]{64})?$"
+    },
+    "kind": {
+      "enum": [
+        "submodule",
+        "svn-directory",
+        "projection",
+        "junction"
+      ]
+    },
+    "item": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "kind",
+        "targetPath",
+        "beforeSha256",
+        "afterSha256",
+        "backupPath",
+        "applied"
+      ],
+      "properties": {
+        "kind": {
+          "$ref": "#/$defs/kind"
+        },
+        "targetPath": {
+          "type": "string",
+          "minLength": 1
+        },
+        "beforeSha256": {
+          "$ref": "#/$defs/sha256"
+        },
+        "afterSha256": {
+          "$ref": "#/$defs/sha256"
+        },
+        "backupPath": {
+          "type": "string",
+          "description": "Relative path to the backup inside the transaction directory; empty only when beforeSha256 is empty (new item).",
+          "pattern": "^([A-Za-z0-9._/\\-]*)?$"
+        },
+        "applied": {
+          "type": "boolean",
+          "description": "True once the after-state replacement has been written. Recovery uses this plus the hashes to decide rollback vs roll-forward."
+        }
+      }
+    }
+  }
+}

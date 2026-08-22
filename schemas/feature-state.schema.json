@@ -1,0 +1,74 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://ai-sop/feature-state.schema.json",
+  "title": "Feature State (Cross-Tool Handoff)",
+  "description": "Lightweight runtime progress record so a feature can resume in a different AI tool without chat history. Complements 00_workflow_state.json (which holds gate approval state) with execution progress: current tier/phase, completed steps, next action, latest verification.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schemaVersion",
+    "feature",
+    "tier",
+    "phase",
+    "updatedAt"
+  ],
+  "properties": {
+    "schemaVersion": { "const": "1.0" },
+    "feature": {
+      "type": "string",
+      "minLength": 1,
+      "pattern": "^[A-Za-z0-9](?:[A-Za-z0-9._-]*[A-Za-z0-9_-])?$"
+    },
+    "tier": {
+      "enum": ["T1", "T2", "T3", "FAST_TRACK"]
+    },
+    "phase": {
+      "enum": [
+        "INTENT",
+        "CLAIMED",
+        "REQUIREMENT_DRAFT",
+        "REQUIREMENT_APPROVED",
+        "DESIGN_DRAFT",
+        "DESIGN_REVIEWED",
+        "DESIGN_APPROVED",
+        "PLANNING",
+        "IMPLEMENTING",
+        "AUDITED",
+        "QA_VERIFIED",
+        "READY_TO_DELIVER",
+        "DELIVERED",
+        "BLOCKED"
+      ]
+    },
+    "ownerSession": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "agent": { "enum": ["CLAUDE_CODE", "COPILOT", "ANTIGRAVITY", "CURSOR", "PI", ""] },
+        "ownerId": { "type": "string" }
+      }
+    },
+    "completedSteps": {
+      "type": "array",
+      "items": { "type": "string", "minLength": 1 }
+    },
+    "nextAction": {
+      "type": "string",
+      "description": "Human-readable hint for what to do next (e.g. 'approve design', 'run tests')"
+    },
+    "lastVerification": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "result": { "enum": ["PASS", "FAIL", "SKIPPED", ""] },
+        "command": { "type": "string" },
+        "at": { "type": "string" }
+      }
+    },
+    "updatedAt": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "notes": { "type": "string" }
+  }
+}

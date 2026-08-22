@@ -1,0 +1,65 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "workflow-transitions.schema.json",
+  "title": "Workflow Legal Transitions",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schemaVersion",
+    "transitions"
+  ],
+  "properties": {
+    "schemaVersion": {
+      "const": "1.0"
+    },
+    "transitions": {
+      "type": "object",
+      "required": [
+        "INIT",
+        "CLASSIFY",
+        "REQUIREMENT_DRAFT",
+        "WAIT_REQUIREMENT_APPROVAL",
+        "DESIGN_DRAFT",
+        "WAIT_DESIGN_APPROVAL",
+        "BUG_TRIAGE",
+        "QA_PLAN",
+        "TEST_PLAN_AUDIT",
+        "IMPLEMENTATION",
+        "IMPLEMENTATION_AUDIT",
+        "LOGIC_AUDIT",
+        "QA_VERIFY",
+        "DONE"
+      ],
+      "propertyNames": {
+        "$ref": "#/$defs/phase"
+      },
+      "additionalProperties": {
+        "type": "array",
+        "items": {
+          "$ref": "#/$defs/phase"
+        },
+        "uniqueItems": true
+      }
+    }
+  },
+  "$defs": {
+    "phase": {
+      "enum": [
+        "INIT",
+        "CLASSIFY",
+        "REQUIREMENT_DRAFT",
+        "WAIT_REQUIREMENT_APPROVAL",
+        "DESIGN_DRAFT",
+        "WAIT_DESIGN_APPROVAL",
+        "BUG_TRIAGE",
+        "QA_PLAN",
+        "TEST_PLAN_AUDIT",
+        "IMPLEMENTATION",
+        "IMPLEMENTATION_AUDIT",
+        "LOGIC_AUDIT",
+        "QA_VERIFY",
+        "DONE"
+      ]
+    }
+  }
+}

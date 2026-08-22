@@ -1,0 +1,133 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "ai-sop-project-manifest.schema.json",
+  "title": "AI SOP Project Manifest",
+  "description": "Declares the complete distributable projection set, tool policy reference, and certification reference for the external SOP. Source hashes use Git blob bytes (git cat-file blob <commit>:<path>); target hashes use deterministic UTF-8 no BOM + LF bytes (DC-004/DC-006).",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schemaVersion",
+    "sourceCommit",
+    "sourceUrl",
+    "toolPolicy",
+    "certification",
+    "projections"
+  ],
+  "properties": {
+    "schemaVersion": {
+      "const": "1.0"
+    },
+    "sourceCommit": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{40}$"
+    },
+    "sourceUrl": {
+      "type": "string",
+      "minLength": 1
+    },
+    "toolPolicy": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "path",
+        "blobSha256"
+      ],
+      "properties": {
+        "path": {
+          "type": "string",
+          "pattern": "^config/hook-tool-policy\\.json$"
+        },
+        "blobSha256": {
+          "$ref": "#/$defs/sha256"
+        }
+      }
+    },
+    "certification": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "path",
+        "blobSha256"
+      ],
+      "properties": {
+        "path": {
+          "type": "string",
+          "pattern": "^distribution/harness-certification\\.json$"
+        },
+        "blobSha256": {
+          "$ref": "#/$defs/sha256"
+        }
+      }
+    },
+    "projections": {
+      "type": "array",
+      "minItems": 1,
+      "uniqueItems": true,
+      "items": {
+        "$ref": "#/$defs/projection"
+      }
+    }
+  },
+  "$defs": {
+    "sha256": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$"
+    },
+    "relativePath": {
+      "type": "string",
+      "minLength": 1,
+      "pattern": "^[A-Za-z0-9._][A-Za-z0-9._/\\-]*$"
+    },
+    "encoding": {
+      "const": "utf8-no-bom"
+    },
+    "lineEnding": {
+      "const": "lf"
+    },
+    "projection": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "source",
+        "target",
+        "sourceBlobSha256",
+        "targetSha256",
+        "legacySha256",
+        "encoding",
+        "lineEnding"
+      ],
+      "properties": {
+        "source": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Path within the external SOP repo, relative to its root."
+        },
+        "target": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Path within the game project root, relative to its root. Must not be absolute or contain '..'.",
+          "pattern": "^(?!\\.\\.)([A-Za-z0-9._][A-Za-z0-9._/\\-]*)$"
+        },
+        "sourceBlobSha256": {
+          "$ref": "#/$defs/sha256",
+          "description": "SHA-256 of git cat-file blob <sourceCommit>:<source>."
+        },
+        "targetSha256": {
+          "$ref": "#/$defs/sha256",
+          "description": "SHA-256 of the deterministic UTF-8 no BOM + LF rendered target bytes."
+        },
+        "legacySha256": {
+          "type": "string",
+          "description": "SHA-256 of the pre-existing root file this projection replaces, or empty string when the projection is a new file. Only expected or approved-legacy hashes may be replaced (DC-006).",
+          "pattern": "^([0-9a-f]{64})?$"
+        },
+        "encoding": {
+          "$ref": "#/$defs/encoding"
+        },
+        "lineEnding": {
+          "$ref": "#/$defs/lineEnding"
+        }
+      }
+    }
+  }
+}

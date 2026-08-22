@@ -1,0 +1,30 @@
+{
+  "version": 1,
+  "hooks": {
+    "sessionStart": [
+      {
+        "type": "command",
+        "powershell": "pwsh -NoProfile -Command \"if (-not (Test-Path -LiteralPath '.\\.github\\hook-wrapper.ps1' -PathType Leaf)) { Write-Output '{\\\"decision\\\":\\\"ALLOW\\\",\\\"reasonCode\\\":\\\"SOP_DEGRADED_MISSING_WRAPPER\\\"}'; exit 0 }; & '.\\.github\\hook-wrapper.ps1' -EventHint SESSION_START\"",
+        "cwd": ".",
+        "timeoutSec": 10
+      }
+    ],
+    "sessionEnd": [
+      {
+        "type": "command",
+        "powershell": "pwsh -NoProfile -Command \"if (-not (Test-Path -LiteralPath '.\\.github\\hook-wrapper.ps1' -PathType Leaf)) { Write-Output '{\\\"decision\\\":\\\"ALLOW\\\",\\\"reasonCode\\\":\\\"SOP_DEGRADED_MISSING_WRAPPER\\\"}'; exit 0 }; & '.\\.github\\hook-wrapper.ps1' -EventHint SESSION_END\"",
+        "cwd": ".",
+        "timeoutSec": 10
+      }
+    ],
+    "preToolUse": [
+      {
+        "type": "command",
+        "powershell": "pwsh -NoProfile -Command \"if (-not (Test-Path -LiteralPath '.\\.github\\hook-wrapper.ps1' -PathType Leaf)) { Write-Output '{\\\"decision\\\":\\\"ALLOW\\\",\\\"reasonCode\\\":\\\"SOP_DEGRADED_MISSING_WRAPPER\\\"}'; exit 0 }; & '.\\.github\\hook-wrapper.ps1' -EventHint PRE_TOOL_USE\"",
+        "cwd": ".",
+        "matcher": ".*",
+        "timeoutSec": 10
+      }
+    ]
+  }
+}

@@ -1,0 +1,248 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "workflow-owner.schema.json",
+  "title": "Feature Workflow Owner",
+  "oneOf": [
+    {
+      "$ref": "#/$defs/legacyOwner"
+    },
+    {
+      "$ref": "#/$defs/sessionBoundOwner"
+    }
+  ],
+  "$defs": {
+    "feature": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9](?:[A-Za-z0-9._-]*[A-Za-z0-9_-])?$"
+    },
+    "id": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9._:-]+$"
+    },
+    "sha256": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$"
+    },
+    "statusRules": {
+      "if": {
+        "properties": {
+          "status": {
+            "const": "ACTIVE"
+          }
+        },
+        "required": [
+          "status"
+        ]
+      },
+      "then": {
+        "properties": {
+          "completedAt": {
+            "const": ""
+          }
+        }
+      },
+      "else": {
+        "properties": {
+          "completedAt": {
+            "type": "string",
+            "format": "date-time"
+          }
+        }
+      }
+    },
+    "legacyOwner": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "schemaVersion",
+        "feature",
+        "workflow",
+        "agent",
+        "ownerId",
+        "specDirectory",
+        "status",
+        "startedAt",
+        "completedAt"
+      ],
+      "properties": {
+        "schemaVersion": {
+          "const": "1.0"
+        },
+        "feature": {
+          "$ref": "#/$defs/feature"
+        },
+        "workflow": {
+          "enum": [
+            "CUSTOM_SKILLS",
+            "SUPERPOWERS"
+          ]
+        },
+        "agent": {
+          "enum": [
+            "CLAUDE_CODE",
+            "COPILOT",
+            "ANTIGRAVITY",
+            "CURSOR",
+            "GEMINI",
+            "PI"
+          ]
+        },
+        "ownerId": {
+          "$ref": "#/$defs/id"
+        },
+        "specDirectory": {
+          "type": "string",
+          "minLength": 1
+        },
+        "status": {
+          "enum": [
+            "ACTIVE",
+            "COMPLETE",
+            "RELEASED"
+          ]
+        },
+        "startedAt": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "completedAt": {
+          "type": "string"
+        }
+      },
+      "allOf": [
+        {
+          "$ref": "#/$defs/statusRules"
+        },
+        {
+          "if": {
+            "properties": {
+              "workflow": {
+                "const": "CUSTOM_SKILLS"
+              }
+            },
+            "required": [
+              "workflow"
+            ]
+          },
+          "then": {
+            "properties": {
+              "agent": {
+                "enum": [
+                  "COPILOT",
+                  "ANTIGRAVITY",
+                  "GEMINI"
+                ]
+              }
+            }
+          },
+          "else": {
+            "properties": {
+              "agent": {
+                "enum": [
+                  "CLAUDE_CODE",
+                  "COPILOT",
+                  "ANTIGRAVITY",
+                  "CURSOR",
+                  "GEMINI",
+                  "PI"
+                ]
+              }
+            }
+          }
+        }
+      ]
+    },
+    "sessionBoundOwner": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "schemaVersion",
+        "feature",
+        "workflow",
+        "agent",
+        "ownerId",
+        "specDirectory",
+        "workspacePath",
+        "status",
+        "startedAt",
+        "completedAt",
+        "sessionBinding",
+        "lastTransactionId"
+      ],
+      "properties": {
+        "schemaVersion": {
+          "const": "1.1"
+        },
+        "feature": {
+          "$ref": "#/$defs/feature"
+        },
+        "workflow": {
+          "const": "SUPERPOWERS"
+        },
+        "agent": {
+          "enum": [
+            "CLAUDE_CODE",
+            "COPILOT",
+            "ANTIGRAVITY",
+            "CURSOR",
+            "PI"
+          ]
+        },
+        "ownerId": {
+          "$ref": "#/$defs/id"
+        },
+        "specDirectory": {
+          "type": "string",
+          "minLength": 1
+        },
+        "workspacePath": {
+          "type": "string",
+          "minLength": 1
+        },
+        "status": {
+          "enum": [
+            "ACTIVE",
+            "COMPLETE",
+            "RELEASED"
+          ]
+        },
+        "startedAt": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "completedAt": {
+          "type": "string"
+        },
+        "sessionBinding": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "sessionKey",
+            "sessionEpochId",
+            "boundAt"
+          ],
+          "properties": {
+            "sessionKey": {
+              "$ref": "#/$defs/sha256"
+            },
+            "sessionEpochId": {
+              "$ref": "#/$defs/id"
+            },
+            "boundAt": {
+              "type": "string",
+              "format": "date-time"
+            }
+          }
+        },
+        "lastTransactionId": {
+          "$ref": "#/$defs/id"
+        }
+      },
+      "allOf": [
+        {
+          "$ref": "#/$defs/statusRules"
+        }
+      ]
+    }
+  }
+}

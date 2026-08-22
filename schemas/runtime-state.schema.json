@@ -1,0 +1,423 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "runtime-state.schema.json",
+  "title": "Workflow Runtime Delivery State",
+  "description": "Persistent execution state for a complete workflow run.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schemaVersion",
+    "runId",
+    "feature",
+    "specDirectory",
+    "contractMode",
+    "taskType",
+    "phase",
+    "status",
+    "attempts",
+    "scope",
+    "testMode",
+    "auditFixPolicy",
+    "auditStages",
+    "auditStageIndex",
+    "lastResult",
+    "lastHandoffSequence",
+    "testCoverageSha256",
+    "failureAttempts",
+    "blockReason",
+    "nextPhase",
+    "updatedAt"
+  ],
+  "properties": {
+    "schemaVersion": {
+      "const": "1.0"
+    },
+    "runId": {
+      "type": "string",
+      "minLength": 1
+    },
+    "feature": {
+      "type": "string",
+      "minLength": 1
+    },
+    "specDirectory": {
+      "type": "string",
+      "minLength": 1
+    },
+    "contractMode": {
+      "enum": [
+        "FEATURE",
+        "NONE"
+      ]
+    },
+    "taskType": {
+      "enum": [
+        "UNCLASSIFIED",
+        "NEW_FEATURE",
+        "BUSINESS_CHANGE",
+        "TECH_CONTRACT_CHANGE",
+        "IMPLEMENTATION_FIX",
+        "BUG_TRIAGE",
+        "CONFIG_VALUE_CHANGE",
+        "AUDIT_ONLY",
+        "DOC_ONLY"
+      ]
+    },
+    "phase": {
+      "$ref": "#/$defs/phase"
+    },
+    "status": {
+      "enum": [
+        "RUNNING",
+        "WAIT_HUMAN",
+        "BLOCKED",
+        "DONE"
+      ]
+    },
+    "attempts": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "implementation",
+        "audit",
+        "qa"
+      ],
+      "properties": {
+        "implementation": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "audit": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "qa": {
+          "type": "integer",
+          "minimum": 0
+        }
+      }
+    },
+    "scope": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "files",
+        "methods",
+        "baseline"
+      ],
+      "properties": {
+        "files": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          },
+          "uniqueItems": true
+        },
+        "methods": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          },
+          "uniqueItems": true
+        },
+        "baseline": {
+          "type": "string"
+        }
+      }
+    },
+    "testMode": {
+      "type": "string",
+      "minLength": 1
+    },
+    "auditFixPolicy": {
+      "enum": [
+        "NONE",
+        "REPORT_ONLY",
+        "AUTO_REPAIR"
+      ]
+    },
+    "auditStages": {
+      "type": "array",
+      "items": {
+        "enum": [
+          "IMPLEMENTATION_AUDIT",
+          "LOGIC_AUDIT"
+        ]
+      },
+      "uniqueItems": true
+    },
+    "auditStageIndex": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "lastResult": {
+      "type": "string"
+    },
+    "lastHandoffSequence": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "testCoverageSha256": {
+      "oneOf": [
+        {
+          "const": ""
+        },
+        {
+          "type": "string",
+          "pattern": "^[a-fA-F0-9]{64}$"
+        }
+      ]
+    },
+    "failureAttempts": {
+      "type": "object",
+      "propertyNames": {
+        "pattern": "^[A-Za-z0-9._:-]+$"
+      },
+      "additionalProperties": {
+        "type": "integer",
+        "minimum": 1,
+        "maximum": 3
+      }
+    },
+    "blockReason": {
+      "type": "string"
+    },
+    "nextPhase": {
+      "$ref": "#/$defs/phase"
+    },
+    "updatedAt": {
+      "type": "string",
+      "format": "date-time"
+    }
+  },
+  "$defs": {
+    "phase": {
+      "enum": [
+        "INIT",
+        "CLASSIFY",
+        "REQUIREMENT_DRAFT",
+        "WAIT_REQUIREMENT_APPROVAL",
+        "DESIGN_DRAFT",
+        "WAIT_DESIGN_APPROVAL",
+        "BUG_TRIAGE",
+        "QA_PLAN",
+        "TEST_PLAN_AUDIT",
+        "IMPLEMENTATION",
+        "IMPLEMENTATION_AUDIT",
+        "LOGIC_AUDIT",
+        "QA_VERIFY",
+        "DONE"
+      ]
+    }
+  },
+  "allOf": [
+    {
+      "if": {
+        "properties": {
+          "taskType": {
+            "const": "AUDIT_ONLY"
+          }
+        },
+        "required": [
+          "taskType"
+        ]
+      },
+      "then": {
+        "properties": {
+          "auditFixPolicy": {
+            "enum": [
+              "REPORT_ONLY",
+              "AUTO_REPAIR"
+            ]
+          },
+          "auditStages": {
+            "minItems": 1
+          }
+        }
+      },
+      "else": {
+        "properties": {
+          "auditFixPolicy": {
+            "const": "NONE"
+          },
+          "auditStages": {
+            "maxItems": 0
+          },
+          "auditStageIndex": {
+            "const": 0
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "status": {
+            "const": "RUNNING"
+          }
+        },
+        "required": [
+          "status"
+        ]
+      },
+      "then": {
+        "properties": {
+          "phase": {
+            "not": {
+              "enum": [
+                "WAIT_REQUIREMENT_APPROVAL",
+                "WAIT_DESIGN_APPROVAL",
+                "DONE"
+              ]
+            }
+          },
+          "blockReason": {
+            "const": ""
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "status": {
+            "const": "WAIT_HUMAN"
+          }
+        },
+        "required": [
+          "status"
+        ]
+      },
+      "then": {
+        "properties": {
+          "phase": {
+            "enum": [
+              "WAIT_REQUIREMENT_APPROVAL",
+              "WAIT_DESIGN_APPROVAL"
+            ]
+          },
+          "blockReason": {
+            "minLength": 1
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "phase": {
+            "const": "WAIT_REQUIREMENT_APPROVAL"
+          }
+        },
+        "required": [
+          "phase"
+        ]
+      },
+      "then": {
+        "properties": {
+          "status": {
+            "const": "WAIT_HUMAN"
+          },
+          "nextPhase": {
+            "const": "DESIGN_DRAFT"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "phase": {
+            "const": "WAIT_DESIGN_APPROVAL"
+          }
+        },
+        "required": [
+          "phase"
+        ]
+      },
+      "then": {
+        "properties": {
+          "status": {
+            "const": "WAIT_HUMAN"
+          },
+          "nextPhase": {
+            "const": "QA_PLAN"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "status": {
+            "const": "BLOCKED"
+          }
+        },
+        "required": [
+          "status"
+        ]
+      },
+      "then": {
+        "properties": {
+          "phase": {
+            "not": {
+              "const": "DONE"
+            }
+          },
+          "blockReason": {
+            "minLength": 1
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "status": {
+            "const": "DONE"
+          }
+        },
+        "required": [
+          "status"
+        ]
+      },
+      "then": {
+        "properties": {
+          "phase": {
+            "const": "DONE"
+          },
+          "nextPhase": {
+            "const": "DONE"
+          },
+          "blockReason": {
+            "const": ""
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "phase": {
+            "const": "DONE"
+          }
+        },
+        "required": [
+          "phase"
+        ]
+      },
+      "then": {
+        "properties": {
+          "status": {
+            "const": "DONE"
+          },
+          "nextPhase": {
+            "const": "DONE"
+          }
+        }
+      }
+    }
+  ]
+}

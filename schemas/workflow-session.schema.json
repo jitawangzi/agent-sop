@@ -1,0 +1,219 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "workflow-session.schema.json",
+  "title": "AI SOP Workflow Session",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schemaVersion",
+    "sessionKey",
+    "sessionEpochId",
+    "agent",
+    "nativeSessionIdSha256",
+    "workspacePath",
+    "lifecycleProof",
+    "lifecycleNativeSessionIdSha256",
+    "status",
+    "firstSeenAt",
+    "lastSeenAt",
+    "stateChangedAt",
+    "expiresAt",
+    "endedAt",
+    "lastGrantId",
+    "lastGrantIntentSha256",
+    "boundFeature",
+    "boundWorkflow",
+    "boundOwnerId",
+    "boundSessionEpochId",
+    "lastTransactionId"
+  ],
+  "properties": {
+    "schemaVersion": {
+      "const": "1.0"
+    },
+    "sessionKey": {
+      "$ref": "#/$defs/sha256"
+    },
+    "sessionEpochId": {
+      "$ref": "#/$defs/id"
+    },
+    "agent": {
+      "$ref": "#/$defs/agent"
+    },
+    "nativeSessionIdSha256": {
+      "$ref": "#/$defs/sha256"
+    },
+    "workspacePath": {
+      "type": "string",
+      "minLength": 1
+    },
+    "lifecycleProof": {
+      "enum": [
+        "PENDING",
+        "CONFIRMED"
+      ]
+    },
+    "lifecycleNativeSessionIdSha256": {
+      "$ref": "#/$defs/sha256"
+    },
+    "status": {
+      "enum": [
+        "ACTIVE",
+        "IDLE",
+        "ENDED"
+      ]
+    },
+    "firstSeenAt": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "lastSeenAt": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "stateChangedAt": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "expiresAt": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "endedAt": {
+      "$ref": "#/$defs/optionalDateTime"
+    },
+    "lastGrantId": {
+      "$ref": "#/$defs/optionalSha256"
+    },
+    "lastGrantIntentSha256": {
+      "$ref": "#/$defs/optionalSha256"
+    },
+    "boundFeature": {
+      "$ref": "#/$defs/optionalFeature"
+    },
+    "boundWorkflow": {
+      "enum": [
+        "",
+        "SUPERPOWERS"
+      ]
+    },
+    "boundOwnerId": {
+      "$ref": "#/$defs/optionalId"
+    },
+    "boundSessionEpochId": {
+      "$ref": "#/$defs/optionalId"
+    },
+    "lastTransactionId": {
+      "$ref": "#/$defs/optionalId"
+    }
+  },
+  "allOf": [
+    {
+      "if": {
+        "properties": {
+          "status": {
+            "const": "ENDED"
+          }
+        },
+        "required": [
+          "status"
+        ]
+      },
+      "then": {
+        "properties": {
+          "endedAt": {
+            "type": "string",
+            "format": "date-time"
+          }
+        }
+      },
+      "else": {
+        "properties": {
+          "endedAt": {
+            "const": ""
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "boundFeature": {
+            "minLength": 1
+          }
+        },
+        "required": [
+          "boundFeature"
+        ]
+      },
+      "then": {
+        "properties": {
+          "boundWorkflow": {
+            "const": "SUPERPOWERS"
+          },
+          "boundOwnerId": {
+            "$ref": "#/$defs/id"
+          },
+          "boundSessionEpochId": {
+            "$ref": "#/$defs/id"
+          }
+        }
+      },
+      "else": {
+        "properties": {
+          "boundWorkflow": {
+            "const": ""
+          },
+          "boundOwnerId": {
+            "const": ""
+          },
+          "boundSessionEpochId": {
+            "const": ""
+          }
+        }
+      }
+    }
+  ],
+  "$defs": {
+    "agent": {
+      "enum": [
+        "CLAUDE_CODE",
+        "COPILOT",
+        "ANTIGRAVITY",
+        "CURSOR",
+        "PI"
+      ]
+    },
+    "sha256": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$"
+    },
+    "optionalSha256": {
+      "type": "string",
+      "pattern": "^(?:[0-9a-f]{64})?$"
+    },
+    "id": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9._:-]+$"
+    },
+    "optionalId": {
+      "type": "string",
+      "pattern": "^(?:[A-Za-z0-9._:-]+)?$"
+    },
+    "optionalFeature": {
+      "type": "string",
+      "pattern": "^(?:[A-Za-z0-9](?:[A-Za-z0-9._-]*[A-Za-z0-9_-])?)?$"
+    },
+    "optionalDateTime": {
+      "anyOf": [
+        {
+          "const": ""
+        },
+        {
+          "type": "string",
+          "format": "date-time"
+        }
+      ]
+    }
+  }
+}

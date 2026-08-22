@@ -1,0 +1,316 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "skill-handoff.schema.json",
+  "title": "Workflow Skill Handoff",
+  "description": "Machine-readable handoff returned by every workflow skill.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schemaVersion",
+    "runId",
+    "sequence",
+    "status",
+    "result",
+    "recommendedPhase",
+    "artifacts",
+    "scope",
+    "retryFrom",
+    "failureKey",
+    "blockReason",
+    "evidence"
+  ],
+  "properties": {
+    "schemaVersion": {
+      "const": "1.0"
+    },
+    "runId": {
+      "type": "string",
+      "minLength": 1
+    },
+    "sequence": {
+      "type": "integer",
+      "minimum": 1
+    },
+    "status": {
+      "enum": [
+        "PASS",
+        "FAIL",
+        "FINDINGS",
+        "WAIT_HUMAN",
+        "BLOCKED"
+      ]
+    },
+    "result": {
+      "type": "string",
+      "minLength": 1
+    },
+    "recommendedPhase": {
+      "$ref": "#/$defs/phase"
+    },
+    "artifacts": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "minLength": 1
+      },
+      "uniqueItems": true
+    },
+    "scope": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "files",
+        "methods",
+        "baseline"
+      ],
+      "properties": {
+        "files": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          },
+          "uniqueItems": true
+        },
+        "methods": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          },
+          "uniqueItems": true
+        },
+        "baseline": {
+          "type": "string"
+        }
+      }
+    },
+    "retryFrom": {
+      "oneOf": [
+        {
+          "const": ""
+        },
+        {
+          "$ref": "#/$defs/phase"
+        }
+      ]
+    },
+    "failureKey": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9._:-]*$"
+    },
+    "blockReason": {
+      "type": "string"
+    },
+    "evidence": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "minLength": 1
+      }
+    }
+  },
+  "$defs": {
+    "phase": {
+      "enum": [
+        "INIT",
+        "CLASSIFY",
+        "REQUIREMENT_DRAFT",
+        "WAIT_REQUIREMENT_APPROVAL",
+        "DESIGN_DRAFT",
+        "WAIT_DESIGN_APPROVAL",
+        "BUG_TRIAGE",
+        "QA_PLAN",
+        "TEST_PLAN_AUDIT",
+        "IMPLEMENTATION",
+        "IMPLEMENTATION_AUDIT",
+        "LOGIC_AUDIT",
+        "QA_VERIFY",
+        "DONE"
+      ]
+    }
+  },
+  "allOf": [
+    {
+      "if": {
+        "properties": {
+          "status": {
+            "const": "FINDINGS"
+          }
+        },
+        "required": [
+          "status"
+        ]
+      },
+      "then": {
+        "properties": {
+          "recommendedPhase": {
+            "enum": [
+              "IMPLEMENTATION_AUDIT",
+              "LOGIC_AUDIT",
+              "DONE"
+            ]
+          },
+          "retryFrom": {
+            "const": ""
+          },
+          "blockReason": {
+            "const": ""
+          },
+          "evidence": {
+            "minItems": 1
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "status": {
+            "const": "PASS"
+          }
+        },
+        "required": [
+          "status"
+        ]
+      },
+      "then": {
+        "properties": {
+          "recommendedPhase": {
+            "not": {
+              "enum": [
+                "WAIT_REQUIREMENT_APPROVAL",
+                "WAIT_DESIGN_APPROVAL"
+              ]
+            }
+          },
+          "retryFrom": {
+            "const": ""
+          },
+          "blockReason": {
+            "const": ""
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "status": {
+            "const": "FAIL"
+          }
+        },
+        "required": [
+          "status"
+        ]
+      },
+      "then": {
+        "properties": {
+          "recommendedPhase": {
+            "enum": [
+              "REQUIREMENT_DRAFT",
+              "DESIGN_DRAFT",
+              "QA_PLAN",
+              "IMPLEMENTATION",
+              "QA_VERIFY"
+            ]
+          },
+          "retryFrom": {
+            "not": {
+              "const": ""
+            }
+          },
+          "failureKey": {
+            "minLength": 1
+          },
+          "evidence": {
+            "minItems": 1
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "status": {
+            "const": "WAIT_HUMAN"
+          }
+        },
+        "required": [
+          "status"
+        ]
+      },
+      "then": {
+        "properties": {
+          "recommendedPhase": {
+            "enum": [
+              "WAIT_REQUIREMENT_APPROVAL",
+              "WAIT_DESIGN_APPROVAL"
+            ]
+          },
+          "retryFrom": {
+            "const": ""
+          },
+          "failureKey": {
+            "const": ""
+          },
+          "blockReason": {
+            "minLength": 1
+          },
+          "evidence": {
+            "minItems": 1
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "status": {
+            "const": "BLOCKED"
+          }
+        },
+        "required": [
+          "status"
+        ]
+      },
+      "then": {
+        "properties": {
+          "recommendedPhase": {
+            "$ref": "#/$defs/phase"
+          },
+          "retryFrom": {
+            "const": ""
+          },
+          "blockReason": {
+            "minLength": 1
+          },
+          "evidence": {
+            "minItems": 1
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "status": {
+            "not": {
+              "const": "FAIL"
+            }
+          }
+        },
+        "required": [
+          "status"
+        ]
+      },
+      "then": {
+        "properties": {
+          "failureKey": {
+            "const": ""
+          }
+        }
+      }
+    }
+  ]
+}

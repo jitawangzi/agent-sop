@@ -1,0 +1,14 @@
+{
+  "hook_event_name": "PreToolUse",
+  "session_id": "pascal-hybrid-session-001",
+  "timestamp": "2026-08-17T08:00:05.000Z",
+  "cwd": "__WORKSPACE__",
+  "permission_mode": "default",
+  "tool_name": "Edit",
+  "tool_input": {
+    "file_path": "__WORKSPACE__\\.claude\\pascal-hybrid.txt",
+    "old_string": "before",
+    "new_string": "after"
+  },
+  "tool_use_id": "toolu_pascal_hybrid_001"
+}

@@ -1,0 +1,12 @@
+{
+  "hook_event_name": "PreToolUse",
+  "session_id": "copilot-session-001",
+  "timestamp": "2026-08-17T08:00:02.000Z",
+  "cwd": "__WORKSPACE__",
+  "tool_name": "Edit",
+  "tool_input": {
+    "file_path": "__WORKSPACE__\\.claude\\copilot-scratch.txt",
+    "old_string": "before",
+    "new_string": "after"
+  }
+}

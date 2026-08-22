@@ -1,0 +1,8 @@
+{
+  "hook_event_name": "SessionStart",
+  "session_id": "copilot-session-001",
+  "timestamp": "2026-08-17T08:00:00.000Z",
+  "cwd": "__WORKSPACE__",
+  "source": "startup",
+  "initial_prompt": "Inspect the certified hook fixture."
+}

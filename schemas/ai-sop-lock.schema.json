@@ -1,0 +1,100 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "ai-sop-lock.schema.json",
+  "title": "AI SOP Root Lock",
+  "description": "Version lock kept in the game project root (tools/ai-sop/ai-sop.lock.json). The commit must be a 40-char lowercase SHA already available on the canonical remote (DC-003). All hashes are Git blob bytes (DC-004). No branch/tag/latest allowed.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schemaVersion",
+    "sourceUrl",
+    "commit",
+    "manifest",
+    "core",
+    "bootstrap",
+    "certification"
+  ],
+  "properties": {
+    "schemaVersion": {
+      "const": "1.0"
+    },
+    "sourceUrl": {
+      "type": "string",
+      "minLength": 1
+    },
+    "commit": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{40}$"
+    },
+    "manifest": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "path",
+        "blobSha256"
+      ],
+      "properties": {
+        "path": {
+          "const": "distribution/project-manifest.json"
+        },
+        "blobSha256": {
+          "$ref": "#/$defs/sha256"
+        }
+      }
+    },
+    "core": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "path",
+        "blobSha256"
+      ],
+      "properties": {
+        "path": {
+          "const": "distribution/install-ai-sop-core.ps1"
+        },
+        "blobSha256": {
+          "$ref": "#/$defs/sha256"
+        }
+      }
+    },
+    "bootstrap": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "path",
+        "blobSha256"
+      ],
+      "properties": {
+        "path": {
+          "const": "distribution/bootstrap/install-ai-sop.ps1"
+        },
+        "blobSha256": {
+          "$ref": "#/$defs/sha256"
+        }
+      }
+    },
+    "certification": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "path",
+        "blobSha256"
+      ],
+      "properties": {
+        "path": {
+          "const": "distribution/harness-certification.json"
+        },
+        "blobSha256": {
+          "$ref": "#/$defs/sha256"
+        }
+      }
+    }
+  },
+  "$defs": {
+    "sha256": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$"
+    }
+  }
+}

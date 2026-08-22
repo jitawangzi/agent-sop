@@ -1,0 +1,27 @@
+# Canonical line endings for the external SOP repository (DC-005).
+# Git blob bytes are the source of truth for manifest hashes (DC-004);
+# forcing LF keeps rendered/target hashes deterministic regardless of
+# core.autocrlf settings on Windows or Linux checkouts.
+* text=auto eol=lf
+
+# Explicit LF for source-of-truth text formats.
+*.ps1   text eol=lf
+*.psm1  text eol=lf
+*.json  text eol=lf
+*.md    text eol=lf
+*.yaml  text eol=lf
+*.yml   text eol=lf
+
+# Submodule metadata must be LF.
+.gitmodules text eol=lf
+
+# Generated projection hashes assume UTF-8 no BOM + LF; keep them LF.
+*.cmd   text eol=crlf
+
+# Binary assets are never text-normalized.
+*.png   binary
+*.jpg   binary
+*.jpeg  binary
+*.gif   binary
+*.ico   binary
+*.pdf   binary

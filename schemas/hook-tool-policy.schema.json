@@ -1,0 +1,204 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "hook-tool-policy.schema.json",
+  "title": "AI SOP Hook Tool Policy",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schemaVersion",
+    "unknownClass",
+    "tools"
+  ],
+  "properties": {
+    "schemaVersion": {
+      "const": "1.0"
+    },
+    "unknownClass": {
+      "const": "UNKNOWN"
+    },
+    "tools": {
+      "type": "array",
+      "minItems": 1,
+      "uniqueItems": true,
+      "items": {
+        "$ref": "#/$defs/tool"
+      }
+    }
+  },
+  "$defs": {
+    "nativeShape": {
+      "enum": [
+        "CLAUDE_PRE_TOOL_USE",
+        "COPILOT_CLAUDE_COMPAT",
+        "COPILOT_GITHUB_NATIVE",
+        "CURSOR_PRE_TOOL_USE",
+        "ANTIGRAVITY"
+      ]
+    },
+    "tool": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "match",
+        "nativeShapes",
+        "canonicalName",
+        "toolClass",
+        "argumentProfile",
+        "targetExtractor"
+      ],
+      "properties": {
+        "match": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "kind",
+            "value"
+          ],
+          "properties": {
+            "kind": {
+              "enum": [
+                "EXACT",
+                "PREFIX"
+              ]
+            },
+            "value": {
+              "type": "string",
+              "minLength": 1
+            }
+          }
+        },
+        "nativeShapes": {
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": {
+            "$ref": "#/$defs/nativeShape"
+          }
+        },
+        "canonicalName": {
+          "type": "string",
+          "pattern": "^[A-Z][A-Z0-9_]*$"
+        },
+        "toolClass": {
+          "enum": [
+            "SAFE_NON_EDIT",
+            "FILE_EDIT",
+            "OWNER_REQUIRED"
+          ]
+        },
+        "argumentProfile": {
+          "enum": [
+            "READ",
+            "GLOB",
+            "SEARCH",
+            "ANY_OBJECT",
+            "EDIT",
+            "WRITE",
+            "MULTI_EDIT",
+            "NOTEBOOK_EDIT",
+            "CURSOR_EDIT_NOTEBOOK",
+            "APPLY_PATCH",
+            "DELETE",
+            "STR_REPLACE_EDITOR",
+            "MULTI_REPLACE"
+          ]
+        },
+        "targetExtractor": {
+          "enum": [
+            "NONE",
+            "SINGLE_PATH",
+            "MULTI_EDIT",
+            "APPLY_PATCH",
+            "DELETE",
+            "STR_REPLACE_EDITOR",
+            "MULTI_REPLACE"
+          ]
+        }
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "toolClass": {
+                "const": "SAFE_NON_EDIT"
+              }
+            },
+            "required": [
+              "toolClass"
+            ]
+          },
+          "then": {
+            "properties": {
+              "argumentProfile": {
+                "enum": [
+                  "READ",
+                  "GLOB",
+                  "SEARCH"
+                ]
+              },
+              "targetExtractor": {
+                "const": "NONE"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "toolClass": {
+                "const": "OWNER_REQUIRED"
+              }
+            },
+            "required": [
+              "toolClass"
+            ]
+          },
+          "then": {
+            "properties": {
+              "argumentProfile": {
+                "const": "ANY_OBJECT"
+              },
+              "targetExtractor": {
+                "const": "NONE"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "toolClass": {
+                "const": "FILE_EDIT"
+              }
+            },
+            "required": [
+              "toolClass"
+            ]
+          },
+          "then": {
+            "properties": {
+              "argumentProfile": {
+                "enum": [
+                  "EDIT",
+                  "WRITE",
+                  "MULTI_EDIT",
+                  "NOTEBOOK_EDIT",
+                  "CURSOR_EDIT_NOTEBOOK",
+                  "APPLY_PATCH",
+                  "DELETE",
+                  "STR_REPLACE_EDITOR",
+                  "MULTI_REPLACE"
+                ]
+              },
+              "targetExtractor": {
+                "not": {
+                  "const": "NONE"
+                }
+              }
+            }
+          }
+        }
+      ]
+    }
+  }
+}

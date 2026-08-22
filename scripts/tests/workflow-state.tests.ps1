@@ -1,0 +1,1923 @@
+[CmdletBinding()]
+param()
+
+$ErrorActionPreference = "Stop"
+
+$ScriptPath = Join-Path (Split-Path -Parent $PSScriptRoot) "workflow-state.ps1"
+$OwnerScriptPath = Join-Path (Split-Path -Parent $PSScriptRoot) "workflow-owner.ps1"
+$SessionScriptPath = Join-Path (Split-Path -Parent $PSScriptRoot) "workflow-session.ps1"
+$GrantScriptPath = Join-Path (Split-Path -Parent $PSScriptRoot) "workflow-command-grant.ps1"
+$TestRoot = Join-Path ([System.IO.Path]::GetTempPath()) ("workflow-state-tests-" + [guid]::NewGuid().ToString("N"))
+$FeatureRoot = Join-Path $TestRoot ".ai-workspace\specs\features\Example"
+$ApprovalPath = Join-Path $FeatureRoot "00_workflow_state.json"
+$RuntimePath = Join-Path $TestRoot "runtime.json"
+$HandoffPath = Join-Path $TestRoot "handoff.json"
+$RequirementPath = Join-Path $FeatureRoot "01_server_rules.md"
+$DesignPath = Join-Path $FeatureRoot "06_design_contract.md"
+$TestPlanPath = Join-Path $FeatureRoot "05_test_plan.md"
+$CoveragePath = Join-Path $FeatureRoot "05_test_coverage.json"
+$Utf8NoBom = [System.Text.UTF8Encoding]::new($false)
+$env:SERVER_NEW_WORKFLOW_REGISTRY = Join-Path $TestRoot "owner-registry"
+$env:SERVER_NEW_WORKFLOW_SESSION_REGISTRY = Join-Path $TestRoot "session-registry"
+$env:SERVER_NEW_WORKFLOW_COMMAND_GRANT_REGISTRY = Join-Path $TestRoot "grant-registry"
+$env:SERVER_NEW_WORKFLOW_TRANSACTION_REGISTRY = Join-Path $TestRoot "transaction-registry"
+$env:SERVER_NEW_WORKFLOW_OWNER_WORKFLOW = "CUSTOM_SKILLS"
+$env:SERVER_NEW_WORKFLOW_OWNER_AGENT = "COPILOT"
+$env:SERVER_NEW_WORKFLOW_OWNER_ID = "feature-run"
+. $SessionScriptPath
+. $GrantScriptPath
+
+function Get-TestArtifactHash {
+    # Mirror of Get-AiSopArtifactHash in workflow-state.ps1: normalize CRLF->LF,
+    # strip trailing whitespace per line, ensure single final newline.
+    # JSON files keep raw-byte hashing.
+    param([string]$Path)
+    $ext = [System.IO.Path]::GetExtension($Path)
+    if ($ext -ieq ".json") {
+        return (Get-TestArtifactHash -Path $Path)
+    }
+    $raw = [System.IO.File]::ReadAllText($Path)
+    $normalized = $raw -replace "`r`n", "`n"
+    $normalized = $normalized -replace "`r", "`n"
+    $normalized = $normalized -replace "[ \t]+`n", "`n"
+    $normalized = $normalized.TrimEnd() + "`n"
+    $enc = [System.Text.UTF8Encoding]::new($false)
+    $bytes = $enc.GetBytes($normalized)
+    return (Get-FileHash -InputStream ([System.IO.MemoryStream]::new($bytes)) -Algorithm SHA256).Hash.ToLowerInvariant()
+}
+
+function Write-TestJson {
+    param(
+        [string]$Path,
+        [object]$Value
+    )
+
+    [System.IO.File]::WriteAllText(
+        $Path,
+        ($Value | ConvertTo-Json -Depth 20) + [Environment]::NewLine,
+        $Utf8NoBom
+    )
+}
+
+function New-TestOwnerCommand {
+    param(
+        [string]$Operation,
+        [string]$Feature,
+        [string]$Agent,
+        [string]$OwnerId
+    )
+
+    return (
+        "pwsh -NoProfile -File '.\.ai-sop\scripts\workflow-owner.ps1' " +
+        "-Operation '$Operation' " +
+        "-SpecDirectory '.ai-workspace\specs\features\$Feature' " +
+        "-Feature '$Feature' -Workflow 'SUPERPOWERS' " +
+        "-Agent '$Agent' -OwnerId '$OwnerId'"
+    )
+}
+
+function New-TestSuperpowersOwner {
+    param(
+        [string]$Feature,
+        [string]$SpecDirectory,
+        [string]$Agent,
+        [string]$OwnerId
+    )
+
+    $workspace = Split-Path -Parent (
+        Split-Path -Parent (
+            Split-Path -Parent (
+                Split-Path -Parent $SpecDirectory
+            )
+        )
+    )
+    [System.IO.Directory]::CreateDirectory(
+        (Join-Path $workspace ".ai-sop\scripts")
+    ) | Out-Null
+    $sessionAcceptedAt = [DateTimeOffset]::UtcNow
+    $session = Invoke-AiSopWorkflowSession `
+        -Operation Register `
+        -Agent $Agent `
+        -NativeSessionId "workflow-state-$Feature-$Agent" `
+        -WorkspacePath $workspace `
+        -LifecycleProof CONFIRMED `
+        -AcceptedAt $sessionAcceptedAt
+    if (
+        [string]$session.Record.stateChangedAt -cne
+        $sessionAcceptedAt.ToUniversalTime().ToString("o")
+    ) {
+        throw "Workflow-state session fixture did not initialize stateChangedAt."
+    }
+    Invoke-AiSopWorkflowCommandGrant `
+        -Operation Issue `
+        -CommandText (New-TestOwnerCommand `
+            -Operation Claim `
+            -Feature $Feature `
+            -Agent $Agent `
+            -OwnerId $OwnerId) `
+        -SessionKey $session.Record.sessionKey `
+        -SessionEpochId $session.Record.sessionEpochId `
+        -DedupKey (Get-AiSopWorkflowSha256 "state-$Feature-$Agent-claim") `
+        -AcceptedAt ([DateTimeOffset]::UtcNow) `
+        -TransactionId "state-$Feature-$Agent-claim" |
+        Out-Null
+    & $OwnerScriptPath -Operation Claim -SpecDirectory $SpecDirectory `
+        -Feature $Feature -Workflow SUPERPOWERS -Agent $Agent `
+        -OwnerId $OwnerId |
+        Out-Null
+    return $session
+}
+
+function Complete-TestSuperpowersOwner {
+    param(
+        [string]$Feature,
+        [string]$SpecDirectory,
+        [string]$Agent,
+        [string]$OwnerId,
+        [object]$Session
+    )
+
+    $currentSession = Get-AiSopWorkflowSession `
+        -SessionKey $Session.Record.sessionKey
+    Invoke-AiSopWorkflowCommandGrant `
+        -Operation Issue `
+        -CommandText (New-TestOwnerCommand `
+            -Operation Complete `
+            -Feature $Feature `
+            -Agent $Agent `
+            -OwnerId $OwnerId) `
+        -SessionKey $currentSession.Record.sessionKey `
+        -SessionEpochId $currentSession.Record.sessionEpochId `
+        -DedupKey (Get-AiSopWorkflowSha256 "state-$Feature-$Agent-complete") `
+        -AcceptedAt ([DateTimeOffset]::UtcNow) `
+        -TransactionId "state-$Feature-$Agent-complete" |
+        Out-Null
+    & $OwnerScriptPath -Operation Complete -SpecDirectory $SpecDirectory `
+        -Feature $Feature -Workflow SUPERPOWERS -Agent $Agent `
+        -OwnerId $OwnerId |
+        Out-Null
+}
+
+function Write-TestLegacyOwner {
+    param(
+        [string]$Feature,
+        [string]$SpecDirectory,
+        [string]$Workflow,
+        [string]$Agent,
+        [string]$OwnerId
+    )
+
+    [System.IO.Directory]::CreateDirectory($SpecDirectory) | Out-Null
+    [System.IO.Directory]::CreateDirectory($env:SERVER_NEW_WORKFLOW_REGISTRY) |
+        Out-Null
+    Write-TestJson `
+        -Path (Join-Path $env:SERVER_NEW_WORKFLOW_REGISTRY (
+            $Feature.ToLowerInvariant() + ".json"
+        )) `
+        -Value ([ordered]@{
+            schemaVersion = "1.0"
+            feature = $Feature
+            workflow = $Workflow
+            agent = $Agent
+            ownerId = $OwnerId
+            specDirectory = [System.IO.Path]::GetFullPath($SpecDirectory)
+            status = "ACTIVE"
+            startedAt = [DateTimeOffset]::UtcNow.AddMinutes(-1).ToString("o")
+            completedAt = ""
+        })
+}
+
+function Assert-Fails {
+    param(
+        [scriptblock]$Action,
+        [string]$Message
+    )
+
+    $failed = $false
+    try {
+        & $Action | Out-Null
+    } catch {
+        $failed = $true
+    }
+    if (-not $failed) {
+        throw "Expected failure: $Message"
+    }
+}
+
+function Assert-FailsWithMessageAndState {
+    param(
+        [scriptblock]$Action,
+        [string]$ExpectedMessage,
+        [string]$StatePath,
+        [string]$Message,
+        [string[]]$AbsentPaths = @()
+    )
+
+    $beforeState = [System.IO.File]::ReadAllText($StatePath)
+    $failed = $false
+    try {
+        & $Action | Out-Null
+    } catch {
+        $failed = $true
+        if (-not $_.Exception.Message.Contains($ExpectedMessage, [System.StringComparison]::Ordinal)) {
+            throw "Expected error containing '$ExpectedMessage' for '$Message', actual: $($_.Exception.Message)"
+        }
+    }
+    if (-not $failed) {
+        throw "Expected failure: $Message"
+    }
+
+    $afterState = [System.IO.File]::ReadAllText($StatePath)
+    if ($afterState -cne $beforeState) {
+        throw "Failure changed approval state: $Message"
+    }
+    foreach ($absentPath in $AbsentPaths) {
+        if (Test-Path -LiteralPath $absentPath) {
+            throw "Failure created an unexpected side-effect file '$absentPath': $Message"
+        }
+    }
+}
+
+function Assert-ApprovalGateFields {
+    param(
+        [string]$StatePath,
+        [ValidateSet("requirement", "design")]
+        [string]$GateName,
+        [string]$Status,
+        [string]$Sha256,
+        [object]$ApprovedAt,
+        [string]$ApprovedBy
+    )
+
+    $state = Get-Content -LiteralPath $StatePath -Raw | ConvertFrom-Json
+    $gate = $state.$GateName
+    if (
+        $gate.status -cne $Status -or
+        $gate.sha256 -cne $Sha256 -or
+        $gate.approvedAt -cne $ApprovedAt -or
+        $gate.approvedBy -cne $ApprovedBy
+    ) {
+        throw (
+            "Unexpected $GateName approval fields. " +
+            "Expected=[$Status,$Sha256,$ApprovedAt,$ApprovedBy]; " +
+            "Actual=[$($gate.status),$($gate.sha256),$($gate.approvedAt),$($gate.approvedBy)]"
+        )
+    }
+}
+
+function Assert-SuperpowersMutationAccepted {
+    param(
+        [string]$Agent
+    )
+
+    $feature = "Mutation" + ($Agent -replace "_", "")
+    $specDirectory = Join-Path $TestRoot ".ai-workspace\specs\features\$feature"
+    $approvalPath = Join-Path $specDirectory "00_workflow_state.json"
+    $ownerId = "mutation-$($Agent.ToLowerInvariant())"
+    $session = New-TestSuperpowersOwner `
+        -Feature $feature `
+        -SpecDirectory $specDirectory `
+        -Agent $Agent `
+        -OwnerId $ownerId
+    try {
+        & $ScriptPath -Operation InitApproval -Path $approvalPath -Feature $feature `
+            -OwnerWorkflow SUPERPOWERS -OwnerAgent $Agent -OwnerId $ownerId | Out-Null
+        & $ScriptPath -Operation ValidateApproval -Path $approvalPath | Out-Null
+    } finally {
+        Complete-TestSuperpowersOwner `
+            -Feature $feature `
+            -SpecDirectory $specDirectory `
+            -Agent $Agent `
+            -OwnerId $ownerId `
+            -Session $session
+    }
+}
+
+function Assert-NoRuntimeApprovalAccepted {
+    param(
+        [string]$Agent
+    )
+
+    $feature = "NoRuntimeApproval" + ($Agent -replace "_", "")
+    $specDirectory = Join-Path $TestRoot ".ai-workspace\specs\features\$feature"
+    $approvalPath = Join-Path $specDirectory "00_workflow_state.json"
+    $requirementPath = Join-Path $specDirectory "01_server_rules.md"
+    $designPath = Join-Path $specDirectory "06_design_contract.md"
+    $runtimePath = Join-Path $specDirectory "00_runtime.json"
+    $handoffPath = Join-Path $specDirectory "handoff.json"
+    $ownerId = "approval-$($Agent.ToLowerInvariant())"
+    $session = New-TestSuperpowersOwner `
+        -Feature $feature `
+        -SpecDirectory $specDirectory `
+        -Agent $Agent `
+        -OwnerId $ownerId
+    try {
+        [System.IO.File]::WriteAllText($requirementPath, "# Rules`n- BR-APPROVAL requirement", $Utf8NoBom)
+        [System.IO.File]::WriteAllText($designPath, "# Design`n- DC-APPROVAL design", $Utf8NoBom)
+        & $ScriptPath -Operation InitApproval -Path $approvalPath -Feature $feature `
+            -OwnerWorkflow SUPERPOWERS -OwnerAgent $Agent -OwnerId $ownerId | Out-Null
+
+        Assert-FailsWithMessageAndState `
+            -ExpectedMessage "Requirement approval is required before design approval." `
+            -StatePath $approvalPath `
+            -AbsentPaths @($runtimePath, $handoffPath) `
+            -Message "Design approval requires an approved requirement for $Agent." `
+            -Action {
+            & $ScriptPath -Operation Approve -Path $approvalPath `
+                -Gate design -ApprovedBy "human:test" `
+                -OwnerWorkflow SUPERPOWERS -OwnerAgent $Agent -OwnerId $ownerId
+        }
+        Assert-FailsWithMessageAndState `
+            -ExpectedMessage "JSON file does not exist: $runtimePath" `
+            -StatePath $approvalPath `
+            -AbsentPaths @($runtimePath, $handoffPath) `
+            -Message "An explicit bad RuntimePath cannot fall back to stateless approval for $Agent." `
+            -Action {
+            & $ScriptPath -Operation Approve -Path $approvalPath -RuntimePath $runtimePath `
+                -Gate requirement -ApprovedBy "human:test" `
+                -OwnerWorkflow SUPERPOWERS -OwnerAgent $Agent -OwnerId $ownerId
+        }
+        foreach ($invalidRuntime in @(
+            [pscustomobject]@{ name = "null"; value = $null },
+            [pscustomobject]@{ name = "empty"; value = "" },
+            [pscustomobject]@{ name = "whitespace"; value = "   " }
+        )) {
+            Assert-FailsWithMessageAndState `
+                -ExpectedMessage "Missing required argument: -RuntimePath" `
+                -StatePath $approvalPath `
+                -AbsentPaths @($runtimePath, $handoffPath) `
+                -Message "Explicit $($invalidRuntime.name) RuntimePath must retain legacy failure semantics for $Agent." `
+                -Action {
+                & $ScriptPath -Operation Approve -Path $approvalPath -RuntimePath $invalidRuntime.value `
+                    -Gate requirement -ApprovedBy "human:test" `
+                    -OwnerWorkflow SUPERPOWERS -OwnerAgent $Agent -OwnerId $ownerId
+            }
+            Assert-ApprovalGateFields -StatePath $approvalPath -GateName requirement `
+                -Status DRAFT -Sha256 "" -ApprovedAt "" -ApprovedBy ""
+            Assert-ApprovalGateFields -StatePath $approvalPath -GateName design `
+                -Status DRAFT -Sha256 "" -ApprovedAt "" -ApprovedBy ""
+        }
+        Assert-FailsWithMessageAndState `
+            -ExpectedMessage "Workflow owner identity does not match the active claim." `
+            -StatePath $approvalPath `
+            -AbsentPaths @($runtimePath, $handoffPath) `
+            -Message "No-runtime approval requires the exact owner tuple for $Agent." `
+            -Action {
+            & $ScriptPath -Operation Approve -Path $approvalPath `
+                -Gate requirement -ApprovedBy "human:test" `
+                -OwnerWorkflow SUPERPOWERS -OwnerAgent $Agent -OwnerId "$ownerId-wrong"
+        }
+
+        & $ScriptPath -Operation Approve -Path $approvalPath `
+            -Gate requirement -ApprovedBy "human:test" `
+            -OwnerWorkflow SUPERPOWERS -OwnerAgent $Agent -OwnerId $ownerId | Out-Null
+        $approval = Get-Content -LiteralPath $approvalPath -Raw | ConvertFrom-Json
+        $requirementHash = (Get-TestArtifactHash -Path $requirementPath)
+        if (
+            $approval.requirement.status -ne "APPROVED" -or
+            $approval.requirement.sha256 -ne $requirementHash
+        ) {
+            throw "No-runtime requirement approval did not record the current artifact hash for $Agent."
+        }
+        $approvedRequirementState = Get-Content -LiteralPath $approvalPath -Raw | ConvertFrom-Json
+        $originalRequirement = [System.IO.File]::ReadAllText($requirementPath)
+        [System.IO.File]::AppendAllText($requirementPath, "`nChanged after requirement approval.", $Utf8NoBom)
+        Assert-FailsWithMessageAndState `
+            -ExpectedMessage "Approved requirement artifact hash does not match:" `
+            -StatePath $approvalPath `
+            -AbsentPaths @($runtimePath, $handoffPath) `
+            -Message "Requirement artifact drift must block no-runtime design approval for $Agent." `
+            -Action {
+            & $ScriptPath -Operation Approve -Path $approvalPath `
+                -Gate design -ApprovedBy "human:test" `
+                -OwnerWorkflow SUPERPOWERS -OwnerAgent $Agent -OwnerId $ownerId
+        }
+        [System.IO.File]::WriteAllText($requirementPath, $originalRequirement, $Utf8NoBom)
+        Assert-ApprovalGateFields -StatePath $approvalPath -GateName requirement `
+            -Status APPROVED `
+            -Sha256 $approvedRequirementState.requirement.sha256 `
+            -ApprovedAt $approvedRequirementState.requirement.approvedAt `
+            -ApprovedBy $approvedRequirementState.requirement.approvedBy
+        Assert-ApprovalGateFields -StatePath $approvalPath -GateName design `
+            -Status DRAFT -Sha256 "" -ApprovedAt "" -ApprovedBy ""
+        if (
+            (Test-Path -LiteralPath $runtimePath) -or
+            (Test-Path -LiteralPath $handoffPath)
+        ) {
+            throw "No-runtime requirement approval created a runtime or Handoff file for $Agent."
+        }
+
+        & $ScriptPath -Operation Approve -Path $approvalPath `
+            -Gate design -ApprovedBy "human:test" `
+            -OwnerWorkflow SUPERPOWERS -OwnerAgent $Agent -OwnerId $ownerId | Out-Null
+        $approval = Get-Content -LiteralPath $approvalPath -Raw | ConvertFrom-Json
+        $designHash = (Get-TestArtifactHash -Path $designPath)
+        if (
+            $approval.design.status -ne "APPROVED" -or
+            $approval.design.sha256 -ne $designHash
+        ) {
+            throw "No-runtime design approval did not record the current artifact hash for $Agent."
+        }
+        if (
+            (Test-Path -LiteralPath $runtimePath) -or
+            (Test-Path -LiteralPath $handoffPath)
+        ) {
+            throw "No-runtime design approval created a runtime or Handoff file for $Agent."
+        }
+
+        $fullyApproved = Get-Content -LiteralPath $approvalPath -Raw | ConvertFrom-Json
+        & $ScriptPath -Operation ResetApproval -Path $approvalPath -Gate design `
+            -OwnerWorkflow SUPERPOWERS -OwnerAgent $Agent -OwnerId $ownerId | Out-Null
+        Assert-ApprovalGateFields -StatePath $approvalPath -GateName requirement `
+            -Status APPROVED `
+            -Sha256 $fullyApproved.requirement.sha256 `
+            -ApprovedAt $fullyApproved.requirement.approvedAt `
+            -ApprovedBy $fullyApproved.requirement.approvedBy
+        Assert-ApprovalGateFields -StatePath $approvalPath -GateName design `
+            -Status DRAFT -Sha256 "" -ApprovedAt "" -ApprovedBy ""
+
+        & $ScriptPath -Operation Approve -Path $approvalPath `
+            -Gate design -ApprovedBy "human:test" `
+            -OwnerWorkflow SUPERPOWERS -OwnerAgent $Agent -OwnerId $ownerId | Out-Null
+        & $ScriptPath -Operation ResetApproval -Path $approvalPath -Gate requirement `
+            -OwnerWorkflow SUPERPOWERS -OwnerAgent $Agent -OwnerId $ownerId | Out-Null
+        Assert-ApprovalGateFields -StatePath $approvalPath -GateName requirement `
+            -Status DRAFT -Sha256 "" -ApprovedAt "" -ApprovedBy ""
+        Assert-ApprovalGateFields -StatePath $approvalPath -GateName design `
+            -Status DRAFT -Sha256 "" -ApprovedAt "" -ApprovedBy ""
+    } finally {
+        Complete-TestSuperpowersOwner `
+            -Feature $feature `
+            -SpecDirectory $specDirectory `
+            -Agent $Agent `
+            -OwnerId $ownerId `
+            -Session $session
+    }
+}
+
+function Assert-CustomSkillsNoRuntimeApprovalRejected {
+    $feature = "NoRuntimeCustomSkills"
+    $specDirectory = Join-Path $TestRoot ".ai-workspace\specs\features\$feature"
+    $approvalPath = Join-Path $specDirectory "00_workflow_state.json"
+    $ownerId = "approval-custom-skills"
+    Write-TestLegacyOwner `
+        -Feature $feature `
+        -SpecDirectory $specDirectory `
+        -Workflow CUSTOM_SKILLS `
+        -Agent COPILOT `
+        -OwnerId $ownerId
+    try {
+        [System.IO.File]::WriteAllText(
+            (Join-Path $specDirectory "01_server_rules.md"),
+            "# Rules`n- BR-APPROVAL requirement",
+            $Utf8NoBom
+        )
+        [System.IO.File]::WriteAllText(
+            (Join-Path $specDirectory "06_design_contract.md"),
+            "# Design`n- DC-APPROVAL design",
+            $Utf8NoBom
+        )
+        & $ScriptPath -Operation InitApproval -Path $approvalPath -Feature $feature `
+            -OwnerWorkflow CUSTOM_SKILLS -OwnerAgent COPILOT -OwnerId $ownerId | Out-Null
+        Assert-FailsWithMessageAndState `
+            -ExpectedMessage "Approve without -RuntimePath requires SUPERPOWERS ownership." `
+            -StatePath $approvalPath `
+            -Message "CUSTOM_SKILLS cannot approve without a legacy runtime." `
+            -Action {
+            & $ScriptPath -Operation Approve -Path $approvalPath `
+                -Gate requirement -ApprovedBy "human:test" `
+                -OwnerWorkflow CUSTOM_SKILLS -OwnerAgent COPILOT -OwnerId $ownerId
+        }
+        Assert-ApprovalGateFields -StatePath $approvalPath -GateName requirement `
+            -Status DRAFT -Sha256 "" -ApprovedAt "" -ApprovedBy ""
+        Assert-ApprovalGateFields -StatePath $approvalPath -GateName design `
+            -Status DRAFT -Sha256 "" -ApprovedAt "" -ApprovedBy ""
+    } finally {
+        & $OwnerScriptPath -Operation Complete -SpecDirectory $specDirectory `
+            -Feature $feature -Workflow CUSTOM_SKILLS -Agent COPILOT `
+            -OwnerId $ownerId | Out-Null
+    }
+}
+
+function New-Handoff {
+    param(
+        [string]$RunId,
+        [string]$Status,
+        [string]$Result,
+        [string]$RecommendedPhase,
+        [string]$RetryFrom = "",
+        [string]$FailureKey = "",
+        [string]$BlockReason = "",
+        [string[]]$Evidence = @()
+    )
+
+    if ($Status -eq "FAIL" -and [string]::IsNullOrWhiteSpace($FailureKey)) {
+        $FailureKey = $Result
+    }
+    return [ordered]@{
+        schemaVersion = "1.0"
+        runId = $RunId
+        sequence = 0
+        status = $Status
+        result = $Result
+        recommendedPhase = $RecommendedPhase
+        artifacts = @()
+        scope = [ordered]@{
+            files = @("Example.java")
+            methods = @("Example#run")
+            baseline = "WORKING"
+        }
+        retryFrom = $RetryFrom
+        failureKey = $FailureKey
+        blockReason = $BlockReason
+        evidence = @($Evidence)
+    }
+}
+
+function Set-TestHandoffSequence {
+    param(
+        [string]$Runtime,
+        [object]$Handoff
+    )
+
+    $state = Get-Content -LiteralPath $Runtime -Raw | ConvertFrom-Json
+    $Handoff.sequence = [int]$state.lastHandoffSequence + 1
+}
+
+function Apply-TestHandoff {
+    param(
+        [string]$Runtime,
+        [object]$Handoff
+    )
+
+    Set-TestHandoffSequence -Runtime $Runtime -Handoff $Handoff
+    Write-TestJson -Path $HandoffPath -Value $Handoff
+    & $ScriptPath -Operation ApplyHandoff -Path $HandoffPath -RuntimePath $Runtime | Out-Null
+}
+
+function Write-TestCoverage {
+    param(
+        [string[]]$RequirementIds = @("BR-CORE", "EX-DENIED", "AC-RESULT"),
+        [string[]]$DesignIds = @("DC-PROTOCOL", "DR-COMPAT", "TW-FIXTURE"),
+        [object]$Assertion = $null,
+        [string]$AutomationCarrier = "src/test/ExampleFeatureTest.java",
+        [string]$RequirementHash = ""
+    )
+
+    if ($null -eq $Assertion) {
+        $Assertion = [ordered]@{
+            target = "response.code"
+            operator = "EQ"
+            expected = 0
+        }
+    }
+    if ([string]::IsNullOrWhiteSpace($RequirementHash)) {
+        $RequirementHash = (Get-TestArtifactHash -Path $RequirementPath)
+    }
+    $coverage = [ordered]@{
+        schemaVersion = "1.0"
+        feature = "Example"
+        requirementArtifact = "01_server_rules.md"
+        requirementSha256 = $RequirementHash
+        designArtifact = "06_design_contract.md"
+        designSha256 = (Get-TestArtifactHash -Path $DesignPath)
+        testPlanArtifact = "05_test_plan.md"
+        testPlanSha256 = (Get-TestArtifactHash -Path $TestPlanPath)
+        cases = @(
+            [ordered]@{
+                id = "TC-CORE"
+                title = "Core business flow"
+                priority = "P0"
+                testTypes = @("FUNCTIONAL", "NEGATIVE", "BOUNDARY")
+                requirementIds = @($RequirementIds)
+                designIds = @($DesignIds)
+                setup = @("Create an isolated test player.")
+                trigger = @("Send the formal feature protocol.")
+                assertions = [ordered]@{
+                    protocol = @($Assertion)
+                    serverState = @(
+                        [ordered]@{
+                            target = "player.progress"
+                            operator = "EQ"
+                            expected = 1
+                        }
+                    )
+                    sideEffects = @(
+                        [ordered]@{
+                            target = "reward.count"
+                            operator = "INCREASES_BY"
+                            expected = 1
+                        }
+                    )
+                    regression = @(
+                        [ordered]@{
+                            target = "legacy.flag"
+                            operator = "UNCHANGED"
+                            expected = $false
+                        }
+                    )
+                }
+                cleanup = @("Delete the isolated test player.")
+                automationCarrier = $AutomationCarrier
+            }
+        )
+        riskExemptions = @()
+    }
+    Write-TestJson -Path $CoveragePath -Value $coverage
+}
+
+function Write-NoRuntimeCoverageFixture {
+    param(
+        [string]$Feature,
+        [string]$SpecDirectory
+    )
+
+    $requirementPath = Join-Path $SpecDirectory "01_server_rules.md"
+    $designPath = Join-Path $SpecDirectory "06_design_contract.md"
+    $testPlanPath = Join-Path $SpecDirectory "05_test_plan.md"
+    $coveragePath = Join-Path $SpecDirectory "05_test_coverage.json"
+    $coverage = [ordered]@{
+        schemaVersion = "1.0"
+        feature = $Feature
+        requirementArtifact = "01_server_rules.md"
+        requirementSha256 = (Get-TestArtifactHash -Path $requirementPath)
+        designArtifact = "06_design_contract.md"
+        designSha256 = (Get-TestArtifactHash -Path $designPath)
+        testPlanArtifact = "05_test_plan.md"
+        testPlanSha256 = (Get-TestArtifactHash -Path $testPlanPath)
+        cases = @(
+            [ordered]@{
+                id = "TC-COVERAGE"
+                title = "Approval state gates no-runtime coverage validation"
+                priority = "P0"
+                testTypes = @("FUNCTIONAL", "NEGATIVE")
+                requirementIds = @("BR-COVERAGE")
+                designIds = @("DC-COVERAGE")
+                setup = @("Create canonical approval and coverage artifacts.")
+                trigger = @("Validate coverage without a legacy runtime.")
+                assertions = [ordered]@{
+                    protocol = @(
+                        [ordered]@{
+                            target = "validation.result"
+                            operator = "EQ"
+                            expected = "VALID"
+                        }
+                    )
+                    serverState = @(
+                        [ordered]@{
+                            target = "approval.requirement.status"
+                            operator = "EQ"
+                            expected = "APPROVED"
+                        }
+                    )
+                    sideEffects = @(
+                        [ordered]@{
+                            target = "approval.design.status"
+                            operator = "EQ"
+                            expected = "APPROVED"
+                        }
+                    )
+                    regression = @(
+                        [ordered]@{
+                            target = "coverage.approvalBypass"
+                            operator = "EQ"
+                            expected = $false
+                        }
+                    )
+                }
+                cleanup = @("Delete the isolated fixture directory.")
+                automationCarrier = ".ai-sop/scripts/tests/workflow-state.tests.ps1"
+            }
+        )
+        riskExemptions = @()
+    }
+    Write-TestJson -Path $coveragePath -Value $coverage
+}
+
+function Assert-NoRuntimeCoverageApprovalState {
+    $feature = "NoRuntimeCoverage"
+    $specDirectory = Join-Path $TestRoot ".ai-workspace\specs\features\$feature"
+    $approvalPath = Join-Path $specDirectory "00_workflow_state.json"
+    $requirementPath = Join-Path $specDirectory "01_server_rules.md"
+    $designPath = Join-Path $specDirectory "06_design_contract.md"
+    $testPlanPath = Join-Path $specDirectory "05_test_plan.md"
+    $coveragePath = Join-Path $specDirectory "05_test_coverage.json"
+    $ownerId = "coverage-cursor"
+    $session = New-TestSuperpowersOwner `
+        -Feature $feature `
+        -SpecDirectory $specDirectory `
+        -Agent CURSOR `
+        -OwnerId $ownerId
+    try {
+        [System.IO.File]::WriteAllText($requirementPath, "# Rules`n- BR-COVERAGE approval gate", $Utf8NoBom)
+        [System.IO.File]::WriteAllText($designPath, "# Design`n- DC-COVERAGE approval gate", $Utf8NoBom)
+        [System.IO.File]::WriteAllText($testPlanPath, "# Test Plan`n## TC-COVERAGE Approval gate", $Utf8NoBom)
+        Write-NoRuntimeCoverageFixture -Feature $feature -SpecDirectory $specDirectory
+        & $ScriptPath -Operation InitApproval -Path $approvalPath -Feature $feature `
+            -OwnerWorkflow SUPERPOWERS -OwnerAgent CURSOR -OwnerId $ownerId | Out-Null
+
+        Assert-FailsWithMessageAndState `
+            -ExpectedMessage "Requirement approval is required before validating test coverage." `
+            -StatePath $approvalPath `
+            -Message "Requirement DRAFT must block no-runtime coverage validation." `
+            -Action {
+            & $ScriptPath -Operation ValidateTestCoverage -Path $coveragePath
+        }
+        & $ScriptPath -Operation Approve -Path $approvalPath `
+            -Gate requirement -ApprovedBy "human:test" `
+            -OwnerWorkflow SUPERPOWERS -OwnerAgent CURSOR -OwnerId $ownerId | Out-Null
+        Assert-FailsWithMessageAndState `
+            -ExpectedMessage "Design approval is required before validating test coverage." `
+            -StatePath $approvalPath `
+            -Message "Design DRAFT must block no-runtime coverage validation." `
+            -Action {
+            & $ScriptPath -Operation ValidateTestCoverage -Path $coveragePath
+        }
+        & $ScriptPath -Operation Approve -Path $approvalPath `
+            -Gate design -ApprovedBy "human:test" `
+            -OwnerWorkflow SUPERPOWERS -OwnerAgent CURSOR -OwnerId $ownerId | Out-Null
+        & $ScriptPath -Operation ValidateTestCoverage -Path $coveragePath | Out-Null
+
+        # VerifyCompletion hard-gate: with no feature-state.json, tier=unknown and the
+        # gate must FAIL (non-zero) — AI cannot Complete on an un-tiered feature.
+        $verifyNoState = & $ScriptPath -Operation VerifyCompletion -Path $approvalPath 2>&1
+        $verifyNoStateOut = $verifyNoState | Out-String
+        if ($LASTEXITCODE -eq 0) { throw "VerifyCompletion must fail (non-zero) when feature-state.json is missing. Output: $verifyNoStateOut" }
+        if ($verifyNoStateOut -notmatch "VERIFY_COMPLETION_FAIL") { throw "VerifyCompletion must emit VERIFY_COMPLETION_FAIL on missing feature-state. Output: $verifyNoStateOut" }
+
+        # Now write a T3 feature-state.json with a terminal phase + a compile artifact
+        # dir so VerifyCompletion can reach PASS. The coverage fixture above is VALID
+        # (real carrier + real assertions), gates are APPROVED — so with feature-state
+        # tier=T3 phase=DONE and a build/ dir, the gate should PASS (exit 0).
+        $featState = Join-Path $specDirectory "feature-state.json"
+        [System.IO.File]::WriteAllText($featState, '{"feature":"' + $feature + '","tier":"T3","phase":"DONE"}', $Utf8NoBom)
+        $buildDir = Join-Path (Split-Path -Parent (Split-Path -Parent $specDirectory)) "build"
+        [System.IO.Directory]::CreateDirectory($buildDir) | Out-Null
+        $verifyPass = & $ScriptPath -Operation VerifyCompletion -Path $approvalPath 2>&1
+        $verifyPassOut = $verifyPass | Out-String
+        if ($LASTEXITCODE -ne 0) { throw "VerifyCompletion must pass (exit 0) when gates APPROVED + coverage VALID + phase DONE. Output: $verifyPassOut" }
+        if ($verifyPassOut -notmatch "VERIFY_COMPLETION_PASS") { throw "VerifyCompletion must emit VERIFY_COMPLETION_PASS when all T3 conditions met. Output: $verifyPassOut" }
+
+        $originalRequirement = [System.IO.File]::ReadAllText($requirementPath)
+        [System.IO.File]::AppendAllText($requirementPath, "`nChanged after approval.", $Utf8NoBom)
+        Assert-FailsWithMessageAndState `
+            -ExpectedMessage "Approved requirement artifact hash does not match:" `
+            -StatePath $approvalPath `
+            -Message "An approved artifact change must block no-runtime coverage validation." `
+            -Action {
+            & $ScriptPath -Operation ValidateTestCoverage -Path $coveragePath
+        }
+        Write-NoRuntimeCoverageFixture -Feature $feature -SpecDirectory $specDirectory
+        Assert-FailsWithMessageAndState `
+            -ExpectedMessage "Approved requirement artifact hash does not match:" `
+            -StatePath $approvalPath `
+            -Message "Updating coverage hashes cannot hide a stale approval hash." `
+            -Action {
+            & $ScriptPath -Operation ValidateTestCoverage -Path $coveragePath
+        }
+        [System.IO.File]::WriteAllText($requirementPath, $originalRequirement, $Utf8NoBom)
+    } finally {
+        Complete-TestSuperpowersOwner `
+            -Feature $feature `
+            -SpecDirectory $specDirectory `
+            -Agent CURSOR `
+            -OwnerId $ownerId `
+            -Session $session
+    }
+}
+
+function Assert-CurrentP0LegacyBootstrap {
+    $feature = "AiSopPortabilityP0"
+    $ownerId = "cursor-p0-7bb519c61ff3"
+    $specDirectory = Join-Path $TestRoot ".ai-workspace\specs\features\$feature"
+    $approvalPath = Join-Path $specDirectory "00_workflow_state.json"
+    $runtimePath = Join-Path $specDirectory "00_runtime.json"
+    $handoffPath = Join-Path $specDirectory "p0-design-handoff.json"
+    $requirementPath = Join-Path $specDirectory "01_server_rules.md"
+    $designPath = Join-Path $specDirectory "06_design_contract.md"
+    Write-TestLegacyOwner `
+        -Feature $feature `
+        -SpecDirectory $specDirectory `
+        -Workflow SUPERPOWERS `
+        -Agent CURSOR `
+        -OwnerId $ownerId
+    try {
+        [System.IO.File]::WriteAllText(
+            $requirementPath,
+            "# Rules`n- BR-P0-BOOTSTRAP approved requirement",
+            $Utf8NoBom
+        )
+        [System.IO.File]::WriteAllText(
+            $designPath,
+            "# Design`n- DC-P0-BOOTSTRAP pending design",
+            $Utf8NoBom
+        )
+        & $ScriptPath -Operation InitApproval -Path $approvalPath -Feature $feature `
+            -OwnerWorkflow SUPERPOWERS -OwnerAgent CURSOR -OwnerId $ownerId | Out-Null
+        & $ScriptPath -Operation Approve -Path $approvalPath `
+            -Gate requirement -ApprovedBy "human:test" `
+            -OwnerWorkflow SUPERPOWERS -OwnerAgent CURSOR -OwnerId $ownerId | Out-Null
+        & $ScriptPath -Operation InitRuntime -Path $runtimePath -Feature $feature `
+            -SpecDirectory $specDirectory -TaskType TECH_CONTRACT_CHANGE `
+            -RunId $ownerId -OwnerWorkflow SUPERPOWERS -OwnerAgent CURSOR `
+            -OwnerId $ownerId | Out-Null
+        & $ScriptPath -Operation TransitionRuntime -Path $runtimePath `
+            -ToPhase DESIGN_DRAFT -OwnerWorkflow SUPERPOWERS `
+            -OwnerAgent CURSOR -OwnerId $ownerId | Out-Null
+
+        $designDraftRuntime = Get-Content -LiteralPath $runtimePath -Raw | ConvertFrom-Json
+        if (
+            $designDraftRuntime.phase -cne "DESIGN_DRAFT" -or
+            $designDraftRuntime.status -cne "RUNNING" -or
+            $designDraftRuntime.runId -cne $ownerId
+        ) {
+            throw "The isolated P0 bootstrap did not enter DESIGN_DRAFT with the current runId."
+        }
+
+        $handoff = New-Handoff -RunId $ownerId -Status WAIT_HUMAN `
+            -Result DESIGN_DRAFT_READY -RecommendedPhase WAIT_DESIGN_APPROVAL `
+            -BlockReason "Waiting for P0 design approval." -Evidence @("06_design_contract.md")
+        Set-TestHandoffSequence -Runtime $runtimePath -Handoff $handoff
+        Write-TestJson -Path $handoffPath -Value $handoff
+        & $ScriptPath -Operation ApplyHandoff -Path $handoffPath -RuntimePath $runtimePath `
+            -OwnerWorkflow SUPERPOWERS -OwnerAgent CURSOR -OwnerId $ownerId | Out-Null
+
+        $waitingRuntime = Get-Content -LiteralPath $runtimePath -Raw | ConvertFrom-Json
+        if (
+            $waitingRuntime.phase -cne "WAIT_DESIGN_APPROVAL" -or
+            $waitingRuntime.status -cne "WAIT_HUMAN"
+        ) {
+            throw "The isolated P0 bootstrap did not reach WAIT_DESIGN_APPROVAL/WAIT_HUMAN."
+        }
+
+        & $ScriptPath -Operation Approve -Path $approvalPath -RuntimePath $runtimePath `
+            -Gate design -ApprovedBy "human:test" `
+            -OwnerWorkflow SUPERPOWERS -OwnerAgent CURSOR -OwnerId $ownerId | Out-Null
+        $approval = Get-Content -LiteralPath $approvalPath -Raw | ConvertFrom-Json
+        $designHash = (Get-TestArtifactHash -Path $designPath)
+        if (
+            $approval.requirement.status -cne "APPROVED" -or
+            $approval.design.status -cne "APPROVED" -or
+            $approval.design.sha256 -cne $designHash
+        ) {
+            throw "The isolated P0 legacy design approval did not record the current design SHA."
+        }
+    } finally {
+        & $OwnerScriptPath -Operation Complete -SpecDirectory $specDirectory `
+            -Feature $feature -Workflow SUPERPOWERS -Agent CURSOR `
+            -OwnerId $ownerId | Out-Null
+    }
+}
+
+function Assert-InactiveOwner11MutationRejected {
+    $feature = "InactiveOwner11"
+    $specDirectory = Join-Path $TestRoot ".ai-workspace\specs\features\$feature"
+    $approvalPath = Join-Path $specDirectory "00_workflow_state.json"
+    $ownerId = "inactive-owner-11"
+    $session = New-TestSuperpowersOwner `
+        -Feature $feature `
+        -SpecDirectory $specDirectory `
+        -Agent CURSOR `
+        -OwnerId $ownerId
+    $sessionPath = Get-AiSopWorkflowSessionPath $session.Record.sessionKey
+    $expired = Get-Content -LiteralPath $sessionPath -Raw |
+        ConvertFrom-Json -AsHashtable -DateKind String
+    $expired.expiresAt = [DateTimeOffset]::UtcNow.AddMilliseconds(-1).ToString("o")
+    Write-TestJson -Path $sessionPath -Value $expired
+    Assert-Fails -Message "Expired Owner 1.1 session authorized workflow mutation." -Action {
+        & $ScriptPath -Operation InitApproval -Path $approvalPath -Feature $feature `
+            -OwnerWorkflow SUPERPOWERS -OwnerAgent CURSOR -OwnerId $ownerId
+    }
+    if (Test-Path -LiteralPath $approvalPath) {
+        throw "Rejected Owner 1.1 mutation created approval state."
+    }
+}
+
+function Assert-LegacyOwnerIdentityCaseSensitive {
+    $caseOnlyAccepted = [System.Collections.Generic.List[string]]::new()
+    foreach ($identityCase in @(
+        [pscustomobject]@{
+            Name = "Feature"
+            FeatureArgument = "legacycasefeature"
+            WorkflowArgument = "CUSTOM_SKILLS"
+            AgentArgument = "COPILOT"
+            OwnerIdArgument = "CaseSensitiveOwner"
+        },
+        [pscustomobject]@{
+            Name = "Workflow"
+            FeatureArgument = "LegacyCaseWorkflow"
+            WorkflowArgument = "custom_skills"
+            AgentArgument = "COPILOT"
+            OwnerIdArgument = "CaseSensitiveOwner"
+        },
+        [pscustomobject]@{
+            Name = "Agent"
+            FeatureArgument = "LegacyCaseAgent"
+            WorkflowArgument = "CUSTOM_SKILLS"
+            AgentArgument = "copilot"
+            OwnerIdArgument = "CaseSensitiveOwner"
+        },
+        [pscustomobject]@{
+            Name = "OwnerId"
+            FeatureArgument = "LegacyCaseOwnerId"
+            WorkflowArgument = "CUSTOM_SKILLS"
+            AgentArgument = "COPILOT"
+            OwnerIdArgument = "casesensitiveowner"
+        }
+    )) {
+        $storedFeature = "LegacyCase$($identityCase.Name)"
+        $specDirectory = Join-Path $TestRoot (
+            ".ai-workspace\specs\features\$storedFeature"
+        )
+        $approvalPath = Join-Path $specDirectory "00_workflow_state.json"
+        Write-TestLegacyOwner `
+            -Feature $storedFeature `
+            -SpecDirectory $specDirectory `
+            -Workflow CUSTOM_SKILLS `
+            -Agent COPILOT `
+            -OwnerId "CaseSensitiveOwner"
+
+        & $ScriptPath -Operation InitApproval -Path $approvalPath `
+            -Feature $storedFeature `
+            -OwnerWorkflow CUSTOM_SKILLS `
+            -OwnerAgent COPILOT `
+            -OwnerId "CaseSensitiveOwner" |
+            Out-Null
+        & $ScriptPath -Operation ValidateApproval -Path $approvalPath |
+            Out-Null
+        [System.IO.File]::Delete($approvalPath)
+
+        try {
+            & $ScriptPath -Operation InitApproval -Path $approvalPath `
+                -Feature $identityCase.FeatureArgument `
+                -OwnerWorkflow $identityCase.WorkflowArgument `
+                -OwnerAgent $identityCase.AgentArgument `
+                -OwnerId $identityCase.OwnerIdArgument |
+                Out-Null
+            $caseOnlyAccepted.Add($identityCase.Name)
+        } catch {
+            if (
+                -not $_.Exception.Message.Contains(
+                    "Workflow owner identity does not match the active claim.",
+                    [System.StringComparison]::Ordinal
+                )
+            ) {
+                throw
+            }
+        } finally {
+            if (Test-Path -LiteralPath $approvalPath) {
+                [System.IO.File]::Delete($approvalPath)
+            }
+        }
+    }
+    if ($caseOnlyAccepted.Count -ne 0) {
+        throw (
+            "Legacy Owner 1.0 accepted case-only identity mismatches: " +
+            ($caseOnlyAccepted -join ", ")
+        )
+    }
+}
+
+function Write-ExampleApprovedStateFixture {
+    $approvedAt = [DateTimeOffset]::UtcNow.ToString("o")
+    Write-TestJson -Path $ApprovalPath -Value ([ordered]@{
+        schemaVersion = "1.0"
+        feature = "Example"
+        requirement = [ordered]@{
+            artifact = "01_server_rules.md"
+            status = "APPROVED"
+            sha256 = (Get-TestArtifactHash -Path $RequirementPath)
+            approvedAt = $approvedAt
+            approvedBy = "human:test"
+        }
+        design = [ordered]@{
+            artifact = "06_design_contract.md"
+            status = "APPROVED"
+            sha256 = (Get-TestArtifactHash -Path $DesignPath)
+            approvedAt = $approvedAt
+            approvedBy = "human:test"
+        }
+    })
+}
+
+function Assert-ReadEntrypointsRecoverTransactions {
+    param(
+        [string]$ApprovalStatePath,
+        [string]$RuntimeStatePath,
+        [string]$CoverageStatePath
+    )
+
+    & $ScriptPath -Operation ValidateApproval -Path $ApprovalStatePath |
+        Out-Null
+    & $ScriptPath -Operation ValidateRuntime -Path $RuntimeStatePath |
+        Out-Null
+    & $ScriptPath -Operation ValidateTestCoverage -Path $CoverageStatePath `
+        -RuntimePath $RuntimeStatePath |
+        Out-Null
+
+    $corruptJournalPath = Join-Path (
+        $env:SERVER_NEW_WORKFLOW_TRANSACTION_REGISTRY
+    ) "read-corrupt.json"
+    [System.IO.File]::WriteAllText(
+        $corruptJournalPath,
+        "{corrupt-transaction",
+        $Utf8NoBom
+    )
+    Assert-Fails -Message (
+        "ValidateApproval read authoritative state before corrupt recovery."
+    ) -Action {
+        & $ScriptPath -Operation ValidateApproval -Path $ApprovalStatePath
+    }
+    [System.IO.File]::Delete($corruptJournalPath)
+
+    $indeterminateTargetPath = Join-Path $TestRoot "read-indeterminate-owner.json"
+    $currentOwner = Get-Content -LiteralPath (
+        Join-Path $env:SERVER_NEW_WORKFLOW_REGISTRY "example.json"
+    ) -Raw | ConvertFrom-Json -AsHashtable -DateKind String
+    $afterOwner = $currentOwner |
+        ConvertTo-Json -Depth 30 |
+        ConvertFrom-Json -AsHashtable -DateKind String
+    $afterOwner.ownerId = "read-recovery-after"
+    $afterJson = ConvertTo-AiSopWorkflowCanonicalJson $afterOwner
+    $currentJson = ConvertTo-AiSopWorkflowCanonicalJson $currentOwner
+    [System.IO.File]::WriteAllText(
+        $indeterminateTargetPath,
+        $currentJson,
+        $Utf8NoBom
+    )
+    $indeterminateJournalPath = Join-Path (
+        $env:SERVER_NEW_WORKFLOW_TRANSACTION_REGISTRY
+    ) "read-indeterminate.json"
+    Write-AiSopWorkflowTransactionJournal `
+        -JournalPath $indeterminateJournalPath `
+        -Journal ([ordered]@{
+            schemaVersion = "1.0"
+            transactionId = "read-indeterminate"
+            operation = "CLAIM"
+            phase = "PREPARED"
+            feature = "Example"
+            ownerPath = $indeterminateTargetPath
+            sessionKeys = @()
+            targets = @(
+                [ordered]@{
+                    path = $indeterminateTargetPath
+                    kind = "OWNER"
+                    schemaId = "OWNER"
+                    before = New-AiSopWorkflowSnapshot -Exists $false
+                    after = New-AiSopWorkflowSnapshot `
+                        -Exists $true `
+                        -CanonicalJson $afterJson
+                }
+            )
+            createdAt = [DateTimeOffset]::UtcNow.ToString("o")
+            committedAt = ""
+        })
+    Assert-Fails -Message (
+        "ValidateRuntime read authoritative state after indeterminate recovery."
+    ) -Action {
+        & $ScriptPath -Operation ValidateRuntime -Path $RuntimeStatePath
+    }
+    [System.IO.File]::Delete($indeterminateJournalPath)
+    [System.IO.File]::Delete($indeterminateTargetPath)
+
+    $timeoutJournalPath = Join-Path (
+        $env:SERVER_NEW_WORKFLOW_TRANSACTION_REGISTRY
+    ) "read-timeout.json"
+    [System.IO.File]::WriteAllText(
+        $timeoutJournalPath,
+        "{blocked-before-read",
+        $Utf8NoBom
+    )
+    $timeoutLockPath = "$timeoutJournalPath.recovery.lock"
+    $timeoutLock = [System.IO.File]::Open(
+        $timeoutLockPath,
+        [System.IO.FileMode]::OpenOrCreate,
+        [System.IO.FileAccess]::ReadWrite,
+        [System.IO.FileShare]::None
+    )
+    try {
+        Assert-Fails -Message (
+            "ValidateTestCoverage read authoritative state after recovery timeout."
+        ) -Action {
+            & $ScriptPath -Operation ValidateTestCoverage `
+                -Path $CoverageStatePath `
+                -RuntimePath $RuntimeStatePath
+        }
+    } finally {
+        $timeoutLock.Dispose()
+        [System.IO.File]::Delete($timeoutLockPath)
+        [System.IO.File]::Delete($timeoutJournalPath)
+    }
+}
+
+try {
+    [System.IO.Directory]::CreateDirectory($FeatureRoot) | Out-Null
+    # 从当前非 Claude harness 开始, 直接回归已复现的跨 harness mutation 拒绝.
+    foreach ($mutationAgent in @("COPILOT", "ANTIGRAVITY", "CLAUDE_CODE", "CURSOR")) {
+        Assert-SuperpowersMutationAccepted -Agent $mutationAgent
+    }
+    foreach ($approvalAgent in @("CLAUDE_CODE", "COPILOT", "ANTIGRAVITY", "CURSOR")) {
+        Assert-NoRuntimeApprovalAccepted -Agent $approvalAgent
+    }
+    Assert-CustomSkillsNoRuntimeApprovalRejected
+    Assert-NoRuntimeCoverageApprovalState
+    Assert-CurrentP0LegacyBootstrap
+    Assert-InactiveOwner11MutationRejected
+    Assert-LegacyOwnerIdentityCaseSensitive
+
+    Write-TestLegacyOwner `
+        -Feature "Example" `
+        -SpecDirectory $FeatureRoot `
+        -Workflow CUSTOM_SKILLS `
+        -Agent COPILOT `
+        -OwnerId "feature-run"
+    [System.IO.Directory]::CreateDirectory(
+        $env:SERVER_NEW_WORKFLOW_TRANSACTION_REGISTRY
+    ) | Out-Null
+    $corruptRecoveryPath = Join-Path (
+        $env:SERVER_NEW_WORKFLOW_TRANSACTION_REGISTRY
+    ) "must-recover-first.json"
+    [System.IO.File]::WriteAllText(
+        $corruptRecoveryPath,
+        "{corrupt-transaction",
+        $Utf8NoBom
+    )
+    Assert-Fails -Message "Mutation did not recover workflow transactions first." -Action {
+        & $ScriptPath -Operation InitApproval -Path $ApprovalPath -Feature "Example"
+    }
+    if (Test-Path -LiteralPath $ApprovalPath) {
+        throw "Recovery failure allowed workflow-state mutation side effects."
+    }
+    [System.IO.File]::Delete($corruptRecoveryPath)
+    $ownerRegistryPath = Join-Path $env:SERVER_NEW_WORKFLOW_REGISTRY "example.json"
+    $validOwnerJson = [System.IO.File]::ReadAllText($ownerRegistryPath)
+    $wrongWorkspaceOwner = $validOwnerJson | ConvertFrom-Json
+    $wrongWorkspaceOwner.specDirectory = Join-Path (
+        $TestRoot
+    ) "other\.ai-workspace\specs\features\Example"
+    Write-TestJson -Path $ownerRegistryPath -Value $wrongWorkspaceOwner
+    Assert-Fails -Message "Workflow state mutations require the owner worktree." -Action {
+        & $ScriptPath -Operation InitApproval -Path $ApprovalPath -Feature "Example"
+    }
+    [System.IO.File]::WriteAllText($ownerRegistryPath, $validOwnerJson, $Utf8NoBom)
+    [System.IO.File]::WriteAllText(
+        $RequirementPath,
+        "# Rules`n- BR-CORE core flow`n- EX-DENIED denied branch`n- AC-RESULT exact result`n`nExample `BR-INLINE` only.`n> - EX-QUOTE example only`n`n```text`nBR-FAKE example only`n```n<!-- EX-COMMENT example only -->",
+        $Utf8NoBom
+    )
+    [System.IO.File]::WriteAllText(
+        $DesignPath,
+        "# Design`n- DC-PROTOCOL protocol contract`n- DR-COMPAT compatibility risk`n- TW-FIXTURE test fixture",
+        $Utf8NoBom
+    )
+    [System.IO.File]::WriteAllText($TestPlanPath, "# Test Plan`n## TC-CORE Core flow", $Utf8NoBom)
+    Write-ExampleApprovedStateFixture
+    Write-TestCoverage
+
+    & $ScriptPath -Operation ValidateTestCoverage -Path $CoveragePath | Out-Null
+    Write-TestCoverage -RequirementIds @("BR-CORE")
+    Assert-Fails -Message "Every requirement clause must be covered." -Action {
+        & $ScriptPath -Operation ValidateTestCoverage -Path $CoveragePath
+    }
+    Write-TestCoverage -RequirementHash ("0" * 64)
+    Assert-Fails -Message "Artifact hashes must match the coverage contract." -Action {
+        & $ScriptPath -Operation ValidateTestCoverage -Path $CoveragePath
+    }
+    [System.IO.File]::WriteAllText($TestPlanPath, "# Test Plan`n## TC-OTHER Other flow", $Utf8NoBom)
+    Write-TestCoverage
+    Assert-Fails -Message "Markdown and coverage case IDs must match." -Action {
+        & $ScriptPath -Operation ValidateTestCoverage -Path $CoveragePath
+    }
+    [System.IO.File]::WriteAllText($TestPlanPath, "# Test Plan`n## TC-CORE Core flow", $Utf8NoBom)
+    Write-TestCoverage -Assertion "response is correct"
+    Assert-Fails -Message "Vague assertions without measurable values must be rejected." -Action {
+        & $ScriptPath -Operation ValidateTestCoverage -Path $CoveragePath
+    }
+    Write-TestCoverage -Assertion "protocol succeeds"
+    Assert-Fails -Message "Assertions require positive measurable evidence, not only a vague-term blacklist." -Action {
+        & $ScriptPath -Operation ValidateTestCoverage -Path $CoveragePath
+    }
+    Write-TestCoverage
+    $emptyAssertionCoverage = Get-Content -LiteralPath $CoveragePath -Raw | ConvertFrom-Json
+    $emptyAssertionCoverage.cases[0].assertions.protocol = @()
+    Write-TestJson -Path $CoveragePath -Value $emptyAssertionCoverage
+    Assert-Fails -Message "Every assertion layer requires a structured assertion or explicit N_A reason." -Action {
+        & $ScriptPath -Operation ValidateTestCoverage -Path $CoveragePath
+    }
+    Write-TestCoverage -AutomationCarrier ""
+    Assert-Fails -Message "P0 and P1 cases require an automation carrier." -Action {
+        & $ScriptPath -Operation ValidateTestCoverage -Path $CoveragePath
+    }
+    Write-TestCoverage
+    $externalArtifactCoverage = Get-Content -LiteralPath $CoveragePath -Raw | ConvertFrom-Json
+    $externalArtifactCoverage.requirementArtifact = (Join-Path $TestRoot "outside-rules.md")
+    Write-TestJson -Path $CoveragePath -Value $externalArtifactCoverage
+    Assert-Fails -Message "Canonical coverage paths are required without a custom runtime." -Action {
+        & $ScriptPath -Operation ValidateTestCoverage -Path $CoveragePath
+    }
+    Write-TestCoverage
+    $absoluteCanonicalCoverage = Get-Content -LiteralPath $CoveragePath -Raw | ConvertFrom-Json
+    $absoluteCanonicalCoverage.requirementArtifact = $RequirementPath
+    Write-TestJson -Path $CoveragePath -Value $absoluteCanonicalCoverage
+    Assert-Fails -Message "Coverage artifact fields cannot use absolute canonical paths." -Action {
+        & $ScriptPath -Operation ValidateTestCoverage -Path $CoveragePath
+    }
+    Write-TestCoverage
+    $traversalCoverage = Get-Content -LiteralPath $CoveragePath -Raw | ConvertFrom-Json
+    $traversalCoverage.requirementArtifact = "subdir\..\01_server_rules.md"
+    Write-TestJson -Path $CoveragePath -Value $traversalCoverage
+    Assert-Fails -Message "Coverage artifact fields cannot normalize through traversal segments." -Action {
+        & $ScriptPath -Operation ValidateTestCoverage -Path $CoveragePath
+    }
+    Write-TestCoverage
+
+    & $ScriptPath -Operation ValidateTransitions | Out-Null
+    Remove-Item -LiteralPath $ApprovalPath -Force
+    & $ScriptPath -Operation InitApproval -Path $ApprovalPath -Feature "Example" | Out-Null
+    & $ScriptPath -Operation ValidateApproval -Path $ApprovalPath | Out-Null
+
+    $externalApproval = Get-Content -LiteralPath $ApprovalPath -Raw | ConvertFrom-Json
+    $externalApproval.requirement.artifact = (Join-Path $TestRoot "outside-rules.md")
+    Write-TestJson -Path $ApprovalPath -Value $externalApproval
+    Assert-Fails -Message "Requirement approval artifacts must remain canonical." -Action {
+        & $ScriptPath -Operation ValidateApproval -Path $ApprovalPath
+    }
+    $externalApproval.requirement.artifact = "01_server_rules.md"
+    Write-TestJson -Path $ApprovalPath -Value $externalApproval
+
+    $env:SERVER_NEW_WORKFLOW_OWNER_ID = "other-run"
+    Assert-Fails -Message "Runtime mutations require the active workflow owner identity." -Action {
+        & $ScriptPath -Operation ResetApproval -Path $ApprovalPath -Gate design
+    }
+    $env:SERVER_NEW_WORKFLOW_OWNER_ID = "feature-run"
+
+    $techRuntimePath = Join-Path $TestRoot "tech-runtime.json"
+    & $ScriptPath -Operation InitRuntime -Path $techRuntimePath -Feature "Example" `
+        -SpecDirectory $FeatureRoot -TaskType TECH_CONTRACT_CHANGE -RunId "tech-run" | Out-Null
+    Assert-Fails -Message "Technical contract changes require approved requirements." -Action {
+        & $ScriptPath -Operation TransitionRuntime -Path $techRuntimePath -ToPhase DESIGN_DRAFT
+    }
+
+    $fixRuntimePath = Join-Path $TestRoot "fix-runtime.json"
+    & $ScriptPath -Operation InitRuntime -Path $fixRuntimePath -Feature "Example" `
+        -SpecDirectory $FeatureRoot -TaskType IMPLEMENTATION_FIX -RunId "fix-run" | Out-Null
+    Assert-Fails -Message "Implementation fixes require approved requirement and design contracts." -Action {
+        & $ScriptPath -Operation TransitionRuntime -Path $fixRuntimePath -ToPhase QA_PLAN
+    }
+
+    & $ScriptPath -Operation InitRuntime -Path $RuntimePath -Feature "Example" `
+        -SpecDirectory $FeatureRoot -TaskType NEW_FEATURE -RunId "feature-run" | Out-Null
+
+    Assert-Fails -Message "NEW_FEATURE cannot bypass requirement and design gates." -Action {
+        & $ScriptPath -Operation TransitionRuntime -Path $RuntimePath -ToPhase IMPLEMENTATION
+    }
+    & $ScriptPath -Operation TransitionRuntime -Path $RuntimePath -ToPhase REQUIREMENT_DRAFT | Out-Null
+
+    Assert-Fails -Message "Active phases cannot advance without applying a handoff." -Action {
+        & $ScriptPath -Operation TransitionRuntime -Path $RuntimePath -ToPhase WAIT_REQUIREMENT_APPROVAL
+    }
+
+    Apply-TestHandoff -Runtime $RuntimePath -Handoff (
+        New-Handoff -RunId "feature-run" -Status WAIT_HUMAN `
+            -Result REQUIREMENT_DRAFT_READY -RecommendedPhase WAIT_REQUIREMENT_APPROVAL `
+            -BlockReason "Waiting for requirement approval." -Evidence @("01_server_rules.md")
+    )
+
+    Assert-Fails -Message "Design cannot be approved at the requirement gate." -Action {
+        & $ScriptPath -Operation Approve -Path $ApprovalPath -RuntimePath $RuntimePath `
+            -Gate design -ApprovedBy "human:test"
+    }
+    & $ScriptPath -Operation Approve -Path $ApprovalPath -RuntimePath $RuntimePath `
+        -Gate requirement -ApprovedBy "human:test" | Out-Null
+    & $ScriptPath -Operation TransitionRuntime -Path $RuntimePath -ToPhase DESIGN_DRAFT | Out-Null
+
+    Apply-TestHandoff -Runtime $RuntimePath -Handoff (
+        New-Handoff -RunId "feature-run" -Status WAIT_HUMAN `
+            -Result DESIGN_DRAFT_READY -RecommendedPhase WAIT_DESIGN_APPROVAL `
+            -BlockReason "Waiting for design approval." -Evidence @("06_design_contract.md")
+    )
+
+    Assert-Fails -Message "QA plan requires approved design." -Action {
+        & $ScriptPath -Operation TransitionRuntime -Path $RuntimePath -ToPhase QA_PLAN
+    }
+    & $ScriptPath -Operation Approve -Path $ApprovalPath -RuntimePath $RuntimePath `
+        -Gate design -ApprovedBy "human:test" | Out-Null
+    & $ScriptPath -Operation TransitionRuntime -Path $RuntimePath -ToPhase QA_PLAN | Out-Null
+
+    Write-TestCoverage -RequirementIds @("BR-CORE", "AC-RESULT")
+    $unapprovedExemptionCoverage = Get-Content -LiteralPath $CoveragePath -Raw | ConvertFrom-Json
+    $unapprovedExemptionCoverage.riskExemptions = @(
+        [ordered]@{
+            clauseId = "EX-DENIED"
+            reason = "Difficult to automate."
+            approvedBy = "human:test"
+        }
+    )
+    Write-TestJson -Path $CoveragePath -Value $unapprovedExemptionCoverage
+    $unapprovedExemptionHandoff = New-Handoff -RunId "feature-run" -Status PASS `
+        -Result TEST_PLAN_READY -RecommendedPhase TEST_PLAN_AUDIT
+    Set-TestHandoffSequence -Runtime $RuntimePath -Handoff $unapprovedExemptionHandoff
+    Write-TestJson -Path $HandoffPath -Value $unapprovedExemptionHandoff
+    Assert-Fails -Message "QA cannot invent coverage exemptions after source approval." -Action {
+        & $ScriptPath -Operation ApplyHandoff -Path $HandoffPath -RuntimePath $RuntimePath
+    }
+
+    $ExternalPlanPath = Join-Path $TestRoot "outside-test-plan.md"
+    [System.IO.File]::WriteAllText($ExternalPlanPath, "# Test Plan`n## TC-CORE Core flow", $Utf8NoBom)
+    Write-TestCoverage
+    $externalCoverage = Get-Content -LiteralPath $CoveragePath -Raw | ConvertFrom-Json
+    $externalCoverage.testPlanArtifact = $ExternalPlanPath
+    $externalCoverage.testPlanSha256 = (Get-TestArtifactHash -Path $ExternalPlanPath)
+    Write-TestJson -Path $CoveragePath -Value $externalCoverage
+    $externalPlanHandoff = New-Handoff -RunId "feature-run" -Status PASS `
+        -Result TEST_PLAN_READY -RecommendedPhase TEST_PLAN_AUDIT
+    Set-TestHandoffSequence -Runtime $RuntimePath -Handoff $externalPlanHandoff
+    Write-TestJson -Path $HandoffPath -Value $externalPlanHandoff
+    Assert-Fails -Message "The workflow must reject test plans outside the specification directory." -Action {
+        & $ScriptPath -Operation ApplyHandoff -Path $HandoffPath -RuntimePath $RuntimePath
+    }
+
+    Write-TestCoverage -RequirementHash ("0" * 64)
+    $invalidCoverageHandoff = New-Handoff -RunId "feature-run" -Status PASS `
+        -Result TEST_PLAN_READY -RecommendedPhase TEST_PLAN_AUDIT
+    Set-TestHandoffSequence -Runtime $RuntimePath -Handoff $invalidCoverageHandoff
+    Write-TestJson -Path $HandoffPath -Value $invalidCoverageHandoff
+    Assert-Fails -Message "Invalid coverage cannot advance QA planning." -Action {
+        & $ScriptPath -Operation ApplyHandoff -Path $HandoffPath -RuntimePath $RuntimePath
+    }
+    $unchangedQaPlan = Get-Content -LiteralPath $RuntimePath -Raw | ConvertFrom-Json
+    if ($unchangedQaPlan.phase -ne "QA_PLAN" -or $unchangedQaPlan.lastHandoffSequence -ne 2) {
+        throw "Failed coverage validation must leave runtime state unchanged."
+    }
+    Write-TestCoverage
+    Apply-TestHandoff -Runtime $RuntimePath -Handoff (
+        New-Handoff -RunId "feature-run" -Status PASS `
+            -Result TEST_PLAN_READY -RecommendedPhase TEST_PLAN_AUDIT
+    )
+    $failedAuditToImplementation = New-Handoff -RunId "feature-run" -Status FAIL `
+        -Result TEST_PLAN_GAPS -RecommendedPhase IMPLEMENTATION `
+        -RetryFrom IMPLEMENTATION -Evidence @("Coverage audit failed.")
+    Set-TestHandoffSequence -Runtime $RuntimePath -Handoff $failedAuditToImplementation
+    Write-TestJson -Path $HandoffPath -Value $failedAuditToImplementation
+    Assert-Fails -Message "A failed test-plan audit cannot enter implementation." -Action {
+        & $ScriptPath -Operation ApplyHandoff -Path $HandoffPath -RuntimePath $RuntimePath
+    }
+    Apply-TestHandoff -Runtime $RuntimePath -Handoff (
+        New-Handoff -RunId "feature-run" -Status FAIL `
+            -Result TEST_PLAN_GAPS -RecommendedPhase QA_PLAN `
+            -RetryFrom QA_PLAN -Evidence @("TC-CORE misses a state transition.")
+    )
+    Apply-TestHandoff -Runtime $RuntimePath -Handoff (
+        New-Handoff -RunId "feature-run" -Status PASS `
+            -Result TEST_PLAN_READY -RecommendedPhase TEST_PLAN_AUDIT
+    )
+    Apply-TestHandoff -Runtime $RuntimePath -Handoff (
+        New-Handoff -RunId "feature-run" -Status PASS `
+            -Result TEST_PLAN_AUDIT_PASSED -RecommendedPhase IMPLEMENTATION
+    )
+    Apply-TestHandoff -Runtime $RuntimePath -Handoff (
+        New-Handoff -RunId "feature-run" -Status PASS `
+            -Result IMPLEMENTATION_COMPILED -RecommendedPhase IMPLEMENTATION_AUDIT
+    )
+    Assert-ReadEntrypointsRecoverTransactions `
+        -ApprovalStatePath $ApprovalPath `
+        -RuntimeStatePath $RuntimePath `
+        -CoverageStatePath $CoveragePath
+
+    $failureHandoff = New-Handoff -RunId "feature-run" -Status FAIL `
+        -Result IMPLEMENTATION_FAILURE -RecommendedPhase IMPLEMENTATION `
+        -RetryFrom IMPLEMENTATION -Evidence @("Audit failure.")
+    Set-TestHandoffSequence -Runtime $RuntimePath -Handoff $failureHandoff
+    Write-TestJson -Path $HandoffPath -Value $failureHandoff
+    & $ScriptPath -Operation ValidateHandoff -Path $HandoffPath -RuntimePath $RuntimePath | Out-Null
+    Assert-Fails -Message "A validated failure handoff cannot be ignored." -Action {
+        & $ScriptPath -Operation TransitionRuntime -Path $RuntimePath -ToPhase QA_VERIFY
+    }
+    & $ScriptPath -Operation ApplyHandoff -Path $HandoffPath -RuntimePath $RuntimePath | Out-Null
+    Assert-Fails -Message "The same handoff cannot be applied twice." -Action {
+        & $ScriptPath -Operation ApplyHandoff -Path $HandoffPath -RuntimePath $RuntimePath
+    }
+
+    $invalidBlocked = New-Handoff -RunId "feature-run" -Status BLOCKED `
+        -Result ENVIRONMENT_BLOCKED -RecommendedPhase QA_VERIFY `
+        -BlockReason "Environment unavailable." -Evidence @("Connection failed.")
+    Set-TestHandoffSequence -Runtime $RuntimePath -Handoff $invalidBlocked
+    Write-TestJson -Path $HandoffPath -Value $invalidBlocked
+    Assert-Fails -Message "BLOCKED handoff must preserve the current phase." -Action {
+        & $ScriptPath -Operation ApplyHandoff -Path $HandoffPath -RuntimePath $RuntimePath
+    }
+    Assert-Fails -Message "BLOCKED cannot tunnel to another resume phase." -Action {
+        & $ScriptPath -Operation TransitionRuntime -Path $RuntimePath -ToPhase IMPLEMENTATION `
+            -RuntimeStatus BLOCKED -NextPhase QA_VERIFY -BlockReason "Environment unavailable."
+    }
+
+    Apply-TestHandoff -Runtime $RuntimePath -Handoff (
+        New-Handoff -RunId "feature-run" -Status BLOCKED `
+            -Result ENVIRONMENT_BLOCKED -RecommendedPhase IMPLEMENTATION `
+            -BlockReason "Environment unavailable." -Evidence @("Connection failed.")
+    )
+    $blocked = Get-Content -LiteralPath $RuntimePath -Raw | ConvertFrom-Json
+    if ($blocked.phase -ne "IMPLEMENTATION" -or $blocked.status -ne "BLOCKED") {
+        throw "BLOCKED must be represented as a runtime status on the current phase."
+    }
+    & $ScriptPath -Operation TransitionRuntime -Path $RuntimePath -ToPhase IMPLEMENTATION | Out-Null
+
+    $reportRuntimePath = Join-Path $TestRoot "report-runtime.json"
+    Assert-Fails -Message "Audit stage order must follow the legal transition graph." -Action {
+        & $ScriptPath -Operation InitRuntime -Path (Join-Path $TestRoot "invalid-audit-runtime.json") `
+            -Feature "Example" -SpecDirectory $FeatureRoot -TaskType AUDIT_ONLY `
+            -RunId "invalid-audit-run" -AuditFixPolicy REPORT_ONLY `
+            -StandaloneStages LOGIC_AUDIT,IMPLEMENTATION_AUDIT
+    }
+    & $ScriptPath -Operation InitRuntime -Path $reportRuntimePath -Feature "Example" `
+        -SpecDirectory $FeatureRoot -TaskType AUDIT_ONLY -RunId "report-run" `
+        -AuditFixPolicy REPORT_ONLY -StandaloneStages IMPLEMENTATION_AUDIT,LOGIC_AUDIT | Out-Null
+    & $ScriptPath -Operation TransitionRuntime -Path $reportRuntimePath `
+        -ToPhase IMPLEMENTATION_AUDIT | Out-Null
+
+    $reportFailure = New-Handoff -RunId "report-run" -Status FAIL `
+        -Result IMPLEMENTATION_FAILURE -RecommendedPhase IMPLEMENTATION `
+        -RetryFrom IMPLEMENTATION -Evidence @("Finding.")
+    Set-TestHandoffSequence -Runtime $reportRuntimePath -Handoff $reportFailure
+    Write-TestJson -Path $HandoffPath -Value $reportFailure
+    Assert-Fails -Message "REPORT_ONLY audits must not route into repair." -Action {
+        & $ScriptPath -Operation ApplyHandoff -Path $HandoffPath -RuntimePath $reportRuntimePath
+    }
+
+    Apply-TestHandoff -Runtime $reportRuntimePath -Handoff (
+        New-Handoff -RunId "report-run" -Status FINDINGS `
+            -Result AUDIT_FINDINGS -RecommendedPhase LOGIC_AUDIT -Evidence @("Finding.")
+    )
+    Apply-TestHandoff -Runtime $reportRuntimePath -Handoff (
+        New-Handoff -RunId "report-run" -Status PASS `
+            -Result PASS -RecommendedPhase DONE
+    )
+    $reportRuntime = Get-Content -LiteralPath $reportRuntimePath -Raw | ConvertFrom-Json
+    if ($reportRuntime.status -ne "DONE" -or $reportRuntime.auditStageIndex -ne 2) {
+        throw "REPORT_ONLY audit did not complete its requested stage sequence."
+    }
+
+    $standaloneAuditRuntimePath = Join-Path $TestRoot "standalone-audit-runtime.json"
+    $savedOwnerId = $env:SERVER_NEW_WORKFLOW_OWNER_ID
+    $env:SERVER_NEW_WORKFLOW_OWNER_ID = ""
+    & $ScriptPath -Operation InitRuntime -Path $standaloneAuditRuntimePath -Feature "StandaloneClassAudit" `
+        -SpecDirectory $TestRoot -TaskType AUDIT_ONLY -RunId "standalone-audit-run" `
+        -AuditFixPolicy REPORT_ONLY -StandaloneStages IMPLEMENTATION_AUDIT | Out-Null
+    & $ScriptPath -Operation TransitionRuntime -Path $standaloneAuditRuntimePath `
+        -ToPhase IMPLEMENTATION_AUDIT | Out-Null
+    Apply-TestHandoff -Runtime $standaloneAuditRuntimePath -Handoff (
+        New-Handoff -RunId "standalone-audit-run" -Status PASS `
+            -Result PASS -RecommendedPhase DONE
+    )
+    $env:SERVER_NEW_WORKFLOW_OWNER_ID = $savedOwnerId
+
+    $repairRuntimePath = Join-Path $TestRoot "repair-runtime.json"
+    & $ScriptPath -Operation InitRuntime -Path $repairRuntimePath -Feature "Example" `
+        -SpecDirectory $FeatureRoot -TaskType AUDIT_ONLY -RunId "repair-run" `
+        -AuditFixPolicy AUTO_REPAIR -StandaloneStages IMPLEMENTATION_AUDIT,LOGIC_AUDIT | Out-Null
+    & $ScriptPath -Operation TransitionRuntime -Path $repairRuntimePath `
+        -ToPhase IMPLEMENTATION_AUDIT | Out-Null
+    $invalidAuditFailure = New-Handoff -RunId "repair-run" -Status FAIL `
+        -Result IMPLEMENTATION_FAILURE -RecommendedPhase QA_VERIFY `
+        -RetryFrom QA_VERIFY -Evidence @("Audit failure.")
+    Set-TestHandoffSequence -Runtime $repairRuntimePath -Handoff $invalidAuditFailure
+    Write-TestJson -Path $HandoffPath -Value $invalidAuditFailure
+    Assert-Fails -Message "Failed audits cannot advance to QA." -Action {
+        & $ScriptPath -Operation ApplyHandoff -Path $HandoffPath -RuntimePath $repairRuntimePath
+    }
+    Apply-TestHandoff -Runtime $repairRuntimePath -Handoff (
+        New-Handoff -RunId "repair-run" -Status PASS `
+            -Result PASS -RecommendedPhase LOGIC_AUDIT
+    )
+    Apply-TestHandoff -Runtime $repairRuntimePath -Handoff (
+        New-Handoff -RunId "repair-run" -Status FAIL `
+            -Result LOGIC_FAILURE -RecommendedPhase IMPLEMENTATION `
+            -RetryFrom IMPLEMENTATION -Evidence @("Logic failure.")
+    )
+    $repairRuntime = Get-Content -LiteralPath $repairRuntimePath -Raw | ConvertFrom-Json
+    if ($repairRuntime.phase -ne "IMPLEMENTATION" -or $repairRuntime.auditStageIndex -ne 0) {
+        throw "AUTO_REPAIR audit did not return to implementation and reset its audit sequence."
+    }
+    Apply-TestHandoff -Runtime $repairRuntimePath -Handoff (
+        New-Handoff -RunId "repair-run" -Status PASS `
+            -Result IMPLEMENTATION_COMPILED -RecommendedPhase IMPLEMENTATION_AUDIT
+    )
+    Apply-TestHandoff -Runtime $repairRuntimePath -Handoff (
+        New-Handoff -RunId "repair-run" -Status PASS `
+            -Result PASS -RecommendedPhase LOGIC_AUDIT
+    )
+    Apply-TestHandoff -Runtime $repairRuntimePath -Handoff (
+        New-Handoff -RunId "repair-run" -Status PASS `
+            -Result PASS -RecommendedPhase QA_VERIFY
+    )
+    Apply-TestHandoff -Runtime $repairRuntimePath -Handoff (
+        New-Handoff -RunId "repair-run" -Status FAIL `
+            -Result IMPLEMENTATION_FAILURE -RecommendedPhase IMPLEMENTATION `
+            -RetryFrom IMPLEMENTATION -Evidence @("QA failure.")
+    )
+    $repairRuntime = Get-Content -LiteralPath $repairRuntimePath -Raw | ConvertFrom-Json
+    if ($repairRuntime.auditStageIndex -ne 0) {
+        throw "QA failure did not reset the AUTO_REPAIR audit sequence."
+    }
+
+    $logicOnlyRuntimePath = Join-Path $TestRoot "logic-only-runtime.json"
+    & $ScriptPath -Operation InitRuntime -Path $logicOnlyRuntimePath -Feature "Example" `
+        -SpecDirectory $FeatureRoot -TaskType AUDIT_ONLY -RunId "logic-only-run" `
+        -AuditFixPolicy AUTO_REPAIR -StandaloneStages LOGIC_AUDIT | Out-Null
+    & $ScriptPath -Operation TransitionRuntime -Path $logicOnlyRuntimePath -ToPhase LOGIC_AUDIT | Out-Null
+    Apply-TestHandoff -Runtime $logicOnlyRuntimePath -Handoff (
+        New-Handoff -RunId "logic-only-run" -Status FAIL `
+            -Result LOGIC_FAILURE -RecommendedPhase IMPLEMENTATION `
+            -RetryFrom IMPLEMENTATION -Evidence @("Logic failure.")
+    )
+    Apply-TestHandoff -Runtime $logicOnlyRuntimePath -Handoff (
+        New-Handoff -RunId "logic-only-run" -Status PASS `
+            -Result IMPLEMENTATION_COMPILED -RecommendedPhase IMPLEMENTATION_AUDIT
+    )
+    $logicOnlySkip = New-Handoff -RunId "logic-only-run" -Status PASS `
+        -Result PASS -RecommendedPhase QA_VERIFY
+    Set-TestHandoffSequence -Runtime $logicOnlyRuntimePath -Handoff $logicOnlySkip
+    Write-TestJson -Path $HandoffPath -Value $logicOnlySkip
+    Assert-Fails -Message "Logic-only AUTO_REPAIR must re-run the requested logic audit." -Action {
+        & $ScriptPath -Operation ApplyHandoff -Path $HandoffPath -RuntimePath $logicOnlyRuntimePath
+    }
+    Apply-TestHandoff -Runtime $logicOnlyRuntimePath -Handoff (
+        New-Handoff -RunId "logic-only-run" -Status PASS `
+            -Result PASS -RecommendedPhase LOGIC_AUDIT
+    )
+
+    $configRuntimePath = Join-Path $TestRoot "config-runtime.json"
+    & $ScriptPath -Operation InitRuntime -Path $configRuntimePath -Feature "Example" `
+        -SpecDirectory $FeatureRoot -TaskType CONFIG_VALUE_CHANGE -RunId "config-run" | Out-Null
+    & $ScriptPath -Operation TransitionRuntime -Path $configRuntimePath -ToPhase QA_PLAN | Out-Null
+    Apply-TestHandoff -Runtime $configRuntimePath -Handoff (
+        New-Handoff -RunId "config-run" -Status PASS `
+            -Result TEST_PLAN_READY -RecommendedPhase TEST_PLAN_AUDIT
+    )
+    Apply-TestHandoff -Runtime $configRuntimePath -Handoff (
+        New-Handoff -RunId "config-run" -Status PASS `
+            -Result TEST_PLAN_AUDIT_PASSED -RecommendedPhase IMPLEMENTATION
+    )
+    Apply-TestHandoff -Runtime $configRuntimePath -Handoff (
+        New-Handoff -RunId "config-run" -Status PASS `
+            -Result CONFIG_APPLIED -RecommendedPhase IMPLEMENTATION_AUDIT
+    )
+
+    $configReclassRuntimePath = Join-Path $TestRoot "config-reclass-runtime.json"
+    & $ScriptPath -Operation InitRuntime -Path $configReclassRuntimePath -Feature "Example" `
+        -SpecDirectory $FeatureRoot -TaskType CONFIG_VALUE_CHANGE -RunId "config-reclass-run" | Out-Null
+    & $ScriptPath -Operation TransitionRuntime -Path $configReclassRuntimePath -ToPhase QA_PLAN | Out-Null
+    Apply-TestHandoff -Runtime $configReclassRuntimePath -Handoff (
+        New-Handoff -RunId "config-reclass-run" -Status PASS `
+            -Result TEST_PLAN_READY -RecommendedPhase TEST_PLAN_AUDIT
+    )
+    Apply-TestHandoff -Runtime $configReclassRuntimePath -Handoff (
+        New-Handoff -RunId "config-reclass-run" -Status PASS `
+            -Result TEST_PLAN_AUDIT_PASSED -RecommendedPhase IMPLEMENTATION
+    )
+    Apply-TestHandoff -Runtime $configReclassRuntimePath -Handoff (
+        New-Handoff -RunId "config-reclass-run" -Status FAIL `
+            -Result TECH_CONTRACT_CHANGE -RecommendedPhase DESIGN_DRAFT `
+            -RetryFrom DESIGN_DRAFT -Evidence @("Configuration structure change required.")
+    )
+    $configReclassRuntime = Get-Content -LiteralPath $configReclassRuntimePath -Raw | ConvertFrom-Json
+    if ($configReclassRuntime.taskType -ne "TECH_CONTRACT_CHANGE") {
+        throw "Configuration structural change did not persist its reclassified task type."
+    }
+
+    $classifiedRuntimePath = Join-Path $TestRoot "classified-runtime.json"
+    & $ScriptPath -Operation InitRuntime -Path $classifiedRuntimePath -Feature "Example" `
+        -SpecDirectory $FeatureRoot -TaskType UNCLASSIFIED -RunId "classify-run" | Out-Null
+    & $ScriptPath -Operation TransitionRuntime -Path $classifiedRuntimePath -ToPhase CLASSIFY | Out-Null
+    Apply-TestHandoff -Runtime $classifiedRuntimePath -Handoff (
+        New-Handoff -RunId "classify-run" -Status BLOCKED `
+            -Result ENVIRONMENT_BLOCKED -RecommendedPhase CLASSIFY `
+            -BlockReason "Source unavailable." -Evidence @("Source unavailable.")
+    )
+    $blockedClassification = Get-Content -LiteralPath $classifiedRuntimePath -Raw | ConvertFrom-Json
+    if ($blockedClassification.taskType -ne "UNCLASSIFIED") {
+        throw "Blocked classification must not resolve a task type."
+    }
+    & $ScriptPath -Operation TransitionRuntime -Path $classifiedRuntimePath -ToPhase CLASSIFY | Out-Null
+    Apply-TestHandoff -Runtime $classifiedRuntimePath -Handoff (
+        New-Handoff -RunId "classify-run" -Status PASS `
+            -Result CONFIG_VALUE_CHANGE -RecommendedPhase QA_PLAN
+    )
+    $classifiedRuntime = Get-Content -LiteralPath $classifiedRuntimePath -Raw | ConvertFrom-Json
+    if ($classifiedRuntime.taskType -ne "CONFIG_VALUE_CHANGE") {
+        throw "Classification handoff did not persist the resolved task type."
+    }
+
+    $replayRuntimePath = Join-Path $TestRoot "replay-runtime.json"
+    & $ScriptPath -Operation InitRuntime -Path $replayRuntimePath -Feature "Example" `
+        -SpecDirectory $FeatureRoot -TaskType IMPLEMENTATION_FIX -RunId "replay-run" | Out-Null
+    & $ScriptPath -Operation TransitionRuntime -Path $replayRuntimePath -ToPhase QA_PLAN | Out-Null
+    Apply-TestHandoff -Runtime $replayRuntimePath -Handoff (
+        New-Handoff -RunId "replay-run" -Status PASS `
+            -Result TEST_PLAN_READY -RecommendedPhase TEST_PLAN_AUDIT
+    )
+    Apply-TestHandoff -Runtime $replayRuntimePath -Handoff (
+        New-Handoff -RunId "replay-run" -Status PASS `
+            -Result TEST_PLAN_AUDIT_PASSED -RecommendedPhase IMPLEMENTATION
+    )
+    Apply-TestHandoff -Runtime $replayRuntimePath -Handoff (
+        New-Handoff -RunId "replay-run" -Status PASS `
+            -Result IMPLEMENTATION_COMPILED -RecommendedPhase IMPLEMENTATION_AUDIT
+    )
+    Apply-TestHandoff -Runtime $replayRuntimePath -Handoff (
+        New-Handoff -RunId "replay-run" -Status PASS `
+            -Result PASS -RecommendedPhase QA_VERIFY
+    )
+    $invalidBusinessEntryRoute = New-Handoff -RunId "replay-run" -Status PASS `
+        -Result BUSINESS_TEST_ENTRY_CHANGED -RecommendedPhase DONE
+    Set-TestHandoffSequence -Runtime $replayRuntimePath -Handoff $invalidBusinessEntryRoute
+    Write-TestJson -Path $HandoffPath -Value $invalidBusinessEntryRoute
+    Assert-Fails -Message "Business test entry changes must be re-audited before completion." -Action {
+        & $ScriptPath -Operation ApplyHandoff -Path $HandoffPath -RuntimePath $replayRuntimePath
+    }
+    $firstSelfLoop = New-Handoff -RunId "replay-run" -Status PASS `
+        -Result ISOLATED_TEST_FIXED -RecommendedPhase QA_VERIFY
+    Apply-TestHandoff -Runtime $replayRuntimePath -Handoff $firstSelfLoop
+    Apply-TestHandoff -Runtime $replayRuntimePath -Handoff (
+        New-Handoff -RunId "replay-run" -Status PASS `
+            -Result ASSERTION_UPDATED -RecommendedPhase QA_VERIFY
+    )
+    Write-TestJson -Path $HandoffPath -Value $firstSelfLoop
+    Assert-Fails -Message "Previously consumed handoffs cannot be replayed after later handoffs." -Action {
+        & $ScriptPath -Operation ApplyHandoff -Path $HandoffPath -RuntimePath $replayRuntimePath
+    }
+
+    $attemptRuntimePath = Join-Path $TestRoot "attempt-runtime.json"
+    & $ScriptPath -Operation InitRuntime -Path $attemptRuntimePath -Feature "Example" `
+        -SpecDirectory $FeatureRoot -TaskType IMPLEMENTATION_FIX -RunId "attempt-run" | Out-Null
+    & $ScriptPath -Operation TransitionRuntime -Path $attemptRuntimePath -ToPhase QA_PLAN | Out-Null
+    Apply-TestHandoff -Runtime $attemptRuntimePath -Handoff (
+        New-Handoff -RunId "attempt-run" -Status PASS `
+            -Result TEST_PLAN_READY -RecommendedPhase TEST_PLAN_AUDIT
+    )
+    Apply-TestHandoff -Runtime $attemptRuntimePath -Handoff (
+        New-Handoff -RunId "attempt-run" -Status PASS `
+            -Result TEST_PLAN_AUDIT_PASSED -RecommendedPhase IMPLEMENTATION
+    )
+    for ($attempt = 1; $attempt -le 3; $attempt++) {
+        Apply-TestHandoff -Runtime $attemptRuntimePath -Handoff (
+            New-Handoff -RunId "attempt-run" -Status FAIL `
+                -Result IMPLEMENTATION_FAILURE -RecommendedPhase IMPLEMENTATION `
+                -RetryFrom IMPLEMENTATION -Evidence @("Implementation attempt $attempt failed.")
+        )
+    }
+    $attemptState = Get-Content -LiteralPath $attemptRuntimePath -Raw | ConvertFrom-Json
+    if ($attemptState.attempts.implementation -ne 3) {
+        throw "Failed implementation handoffs must atomically increment the attempt counter."
+    }
+    $excessAttempt = New-Handoff -RunId "attempt-run" -Status FAIL `
+        -Result IMPLEMENTATION_FAILURE -RecommendedPhase IMPLEMENTATION `
+        -RetryFrom IMPLEMENTATION -Evidence @("Fourth implementation attempt failed.")
+    Set-TestHandoffSequence -Runtime $attemptRuntimePath -Handoff $excessAttempt
+    Write-TestJson -Path $HandoffPath -Value $excessAttempt
+    Assert-Fails -Message "The fourth failed attempt must be rejected by the persisted loop guard." -Action {
+        & $ScriptPath -Operation ApplyHandoff -Path $HandoffPath -RuntimePath $attemptRuntimePath
+    }
+    Apply-TestHandoff -Runtime $attemptRuntimePath -Handoff (
+        New-Handoff -RunId "attempt-run" -Status FAIL `
+            -Result IMPLEMENTATION_FAILURE -RecommendedPhase IMPLEMENTATION `
+            -RetryFrom IMPLEMENTATION -FailureKey "different-root-cause" `
+            -Evidence @("A distinct implementation failure was discovered.")
+    )
+    $attemptState = Get-Content -LiteralPath $attemptRuntimePath -Raw | ConvertFrom-Json
+    if (
+        $attemptState.attempts.implementation -ne 4 -or
+        $attemptState.failureAttempts.IMPLEMENTATION_FAILURE -ne 3 -or
+        $attemptState.failureAttempts."different-root-cause" -ne 1
+    ) {
+        throw "A distinct root cause must start a new three-attempt window."
+    }
+    $repeatedOriginalRoot = New-Handoff -RunId "attempt-run" -Status FAIL `
+        -Result IMPLEMENTATION_FAILURE -RecommendedPhase IMPLEMENTATION `
+        -RetryFrom IMPLEMENTATION -Evidence @("The original root cause recurred.")
+    Set-TestHandoffSequence -Runtime $attemptRuntimePath -Handoff $repeatedOriginalRoot
+    Write-TestJson -Path $HandoffPath -Value $repeatedOriginalRoot
+    Assert-Fails -Message "Interleaving another root cause must not reset the original retry window." -Action {
+        & $ScriptPath -Operation ApplyHandoff -Path $HandoffPath -RuntimePath $attemptRuntimePath
+    }
+
+    $bugFixRuntimePath = Join-Path $TestRoot "bug-fix-runtime.json"
+    & $ScriptPath -Operation InitRuntime -Path $bugFixRuntimePath -Feature "Example" `
+        -SpecDirectory $FeatureRoot -TaskType BUG_TRIAGE -RunId "bug-fix-run" | Out-Null
+    & $ScriptPath -Operation TransitionRuntime -Path $bugFixRuntimePath -ToPhase BUG_TRIAGE | Out-Null
+    Apply-TestHandoff -Runtime $bugFixRuntimePath -Handoff (
+        New-Handoff -RunId "bug-fix-run" -Status PASS `
+            -Result IMPL_FAILURE -RecommendedPhase QA_PLAN
+    )
+    Apply-TestHandoff -Runtime $bugFixRuntimePath -Handoff (
+        New-Handoff -RunId "bug-fix-run" -Status PASS `
+            -Result TEST_PLAN_READY -RecommendedPhase TEST_PLAN_AUDIT
+    )
+    Apply-TestHandoff -Runtime $bugFixRuntimePath -Handoff (
+        New-Handoff -RunId "bug-fix-run" -Status PASS `
+            -Result TEST_PLAN_AUDIT_PASSED -RecommendedPhase IMPLEMENTATION
+    )
+    Apply-TestHandoff -Runtime $bugFixRuntimePath -Handoff (
+        New-Handoff -RunId "bug-fix-run" -Status PASS `
+            -Result IMPLEMENTATION_COMPILED -RecommendedPhase IMPLEMENTATION_AUDIT
+    )
+    Apply-TestHandoff -Runtime $bugFixRuntimePath -Handoff (
+        New-Handoff -RunId "bug-fix-run" -Status PASS `
+            -Result PASS -RecommendedPhase QA_VERIFY
+    )
+
+    $originalTestPlan = [System.IO.File]::ReadAllText($TestPlanPath)
+    $originalCoverage = [System.IO.File]::ReadAllBytes($CoveragePath)
+    [System.IO.File]::AppendAllText($TestPlanPath, "`nUnreviewed execution detail changed.", $Utf8NoBom)
+    Write-TestCoverage
+    $changedCoverageHandoff = New-Handoff -RunId "replay-run" -Status PASS `
+        -Result QA_PASSED -RecommendedPhase DONE
+    Set-TestHandoffSequence -Runtime $replayRuntimePath -Handoff $changedCoverageHandoff
+    Write-TestJson -Path $HandoffPath -Value $changedCoverageHandoff
+    Assert-Fails -Message "Coverage changes after TEST_PLAN_AUDIT must return to QA planning." -Action {
+        & $ScriptPath -Operation ApplyHandoff -Path $HandoffPath -RuntimePath $replayRuntimePath
+    }
+    $changedBugCoverageHandoff = New-Handoff -RunId "bug-fix-run" -Status PASS `
+        -Result QA_PASSED -RecommendedPhase DONE
+    Set-TestHandoffSequence -Runtime $bugFixRuntimePath -Handoff $changedBugCoverageHandoff
+    Write-TestJson -Path $HandoffPath -Value $changedBugCoverageHandoff
+    Assert-Fails -Message "Implementation-defect bug flows must retain durable audited coverage." -Action {
+        & $ScriptPath -Operation ApplyHandoff -Path $HandoffPath -RuntimePath $bugFixRuntimePath
+    }
+    [System.IO.File]::WriteAllText($TestPlanPath, $originalTestPlan, $Utf8NoBom)
+    [System.IO.File]::WriteAllBytes($CoveragePath, $originalCoverage)
+
+    # UpdateHash: cosmetic fix without invalidating approval (avoids avalanche reset).
+    # At this point requirement is APPROVED. Apply a cosmetic change and update hash only.
+    $beforeUpdate = Get-Content -LiteralPath $ApprovalPath -Raw | ConvertFrom-Json
+    $requirementArtifact = Join-Path $FeatureRoot "01_server_rules.md"
+    [System.IO.File]::AppendAllText($requirementArtifact, "`n<!-- typo fix -->", $Utf8NoBom)
+    Assert-Fails -Message "Changed approved artifact must invalidate approval before UpdateHash." -Action {
+        & $ScriptPath -Operation ValidateApproval -Path $ApprovalPath
+    }
+    & $ScriptPath -Operation UpdateHash -Path $ApprovalPath -Gate requirement | Out-Null
+    $afterUpdate = Get-Content -LiteralPath $ApprovalPath -Raw | ConvertFrom-Json
+    if ($afterUpdate.requirement.status -ne "APPROVED") {
+        throw "UpdateHash must preserve APPROVED status; got '$($afterUpdate.requirement.status)'."
+    }
+    if ($afterUpdate.requirement.sha256 -eq $beforeUpdate.requirement.sha256) {
+        throw "UpdateHash must refresh sha256 after a cosmetic change."
+    }
+    if (
+        $afterUpdate.requirement.approvedAt -cne $beforeUpdate.requirement.approvedAt -or
+        $afterUpdate.requirement.approvedBy -cne $beforeUpdate.requirement.approvedBy
+    ) {
+        throw "UpdateHash must not alter approvedAt/approvedBy."
+    }
+    & $ScriptPath -Operation ValidateApproval -Path $ApprovalPath | Out-Null
+    # UpdateHash on a DRAFT gate must fail. Design is still APPROVED here; reset it to test.
+    & $ScriptPath -Operation ResetApproval -Path $ApprovalPath -Gate design | Out-Null
+    Assert-Fails -Message "UpdateHash must reject DRAFT gates." -Action {
+        & $ScriptPath -Operation UpdateHash -Path $ApprovalPath -Gate design
+    }
+
+    # Status: read-only diagnostic, reports gate status + hash match.
+    $statusOutput = & $ScriptPath -Operation Status -Path $ApprovalPath 2>&1 |
+        Out-String
+    if ($statusOutput -notmatch "gate=requirement status=APPROVED") {
+        throw "Status must report requirement gate as APPROVED. Output: $statusOutput"
+    }
+    if ($statusOutput -notmatch "gate=design status=DRAFT") {
+        throw "Status must report design gate as DRAFT (we reset it above). Output: $statusOutput"
+    }
+    # Status on a nonexistent state file must not throw.
+    $missingStatus = & $ScriptPath -Operation Status -Path (Join-Path $TestRoot "nope.json") 2>&1 |
+        Out-String
+    if ($missingStatus -notmatch "NO_STATE") {
+        throw "Status on missing file must report NO_STATE. Output: $missingStatus"
+    }
+
+    [System.IO.File]::AppendAllText((Join-Path $FeatureRoot "01_server_rules.md"), "-changed", $Utf8NoBom)
+    Assert-Fails -Message "Changed approved artifact must invalidate approval." -Action {
+        & $ScriptPath -Operation ValidateApproval -Path $ApprovalPath
+    }
+    & $ScriptPath -Operation ResetApproval -Path $ApprovalPath -Gate requirement | Out-Null
+    & $ScriptPath -Operation ValidateApproval -Path $ApprovalPath | Out-Null
+
+    $doneHandoff = New-Handoff -RunId "replay-run" -Status PASS `
+        -Result QA_PASSED -RecommendedPhase DONE
+    Set-TestHandoffSequence -Runtime $replayRuntimePath -Handoff $doneHandoff
+    Write-TestJson -Path $HandoffPath -Value $doneHandoff
+    Assert-Fails -Message "Revoked approvals must prevent delivery completion." -Action {
+        & $ScriptPath -Operation ApplyHandoff -Path $HandoffPath -RuntimePath $replayRuntimePath
+    }
+
+    $bugRuntimePath = Join-Path $TestRoot "bug-runtime.json"
+    & $ScriptPath -Operation InitRuntime -Path $bugRuntimePath -Feature "Example" `
+        -SpecDirectory $FeatureRoot -TaskType BUG_TRIAGE -RunId "bug-run" | Out-Null
+    & $ScriptPath -Operation TransitionRuntime -Path $bugRuntimePath -ToPhase BUG_TRIAGE | Out-Null
+    $contradictoryBugResult = New-Handoff -RunId "bug-run" -Status PASS `
+        -Result IMPLEMENTATION_FAILURE -RecommendedPhase DONE
+    Set-TestHandoffSequence -Runtime $bugRuntimePath -Handoff $contradictoryBugResult
+    Write-TestJson -Path $HandoffPath -Value $contradictoryBugResult
+    Assert-Fails -Message "Bug triage result semantics must match the selected route." -Action {
+        & $ScriptPath -Operation ApplyHandoff -Path $HandoffPath -RuntimePath $bugRuntimePath
+    }
+    Apply-TestHandoff -Runtime $bugRuntimePath -Handoff (
+        New-Handoff -RunId "bug-run" -Status PASS `
+            -Result INVALID -RecommendedPhase DONE
+    )
+
+    $approvalLockPath = $ApprovalPath + ".lock"
+    $heldApprovalLock = [System.IO.File]::Open(
+        $approvalLockPath,
+        [System.IO.FileMode]::OpenOrCreate,
+        [System.IO.FileAccess]::ReadWrite,
+        [System.IO.FileShare]::None
+    )
+    try {
+        $stateRaceOut = Join-Path $TestRoot "state-race.out"
+        $stateRaceErr = Join-Path $TestRoot "state-race.err"
+        $stateRaceProcess = Start-Process -FilePath (Get-Process -Id $PID).Path `
+            -WindowStyle Hidden `
+            -ArgumentList @(
+                "-NoProfile",
+                "-File",
+                $ScriptPath,
+                "-Operation",
+                "ResetApproval",
+                "-Path",
+                $ApprovalPath,
+                "-Gate",
+                "design",
+                "-OwnerWorkflow",
+                "CUSTOM_SKILLS",
+                "-OwnerAgent",
+                "COPILOT",
+                "-OwnerId",
+                "feature-run"
+            ) `
+            -RedirectStandardOutput $stateRaceOut `
+            -RedirectStandardError $stateRaceErr `
+            -PassThru
+
+        $ownerLockPath = Join-Path $env:SERVER_NEW_WORKFLOW_REGISTRY "example.json.lock"
+        $ownerLockObserved = $false
+        for ($attempt = 0; $attempt -lt 50; $attempt++) {
+            if (Test-Path -LiteralPath $ownerLockPath) {
+                $ownerLockObserved = $true
+                break
+            }
+            Start-Sleep -Milliseconds 100
+        }
+        if (-not $ownerLockObserved) {
+            throw "State mutation did not acquire the owner lock before its state lock."
+        }
+
+        $completeRaceOut = Join-Path $TestRoot "complete-race.out"
+        $completeRaceErr = Join-Path $TestRoot "complete-race.err"
+        $completeRaceProcess = Start-Process -FilePath (Get-Process -Id $PID).Path `
+            -WindowStyle Hidden `
+            -ArgumentList @(
+                "-NoProfile",
+                "-File",
+                $OwnerScriptPath,
+                "-Operation",
+                "Complete",
+                "-SpecDirectory",
+                $FeatureRoot,
+                "-Feature",
+                "Example",
+                "-Workflow",
+                "CUSTOM_SKILLS",
+                "-Agent",
+                "COPILOT",
+                "-OwnerId",
+                "feature-run"
+            ) `
+            -RedirectStandardOutput $completeRaceOut `
+            -RedirectStandardError $completeRaceErr `
+            -PassThru
+        Start-Sleep -Milliseconds 300
+        if ($completeRaceProcess.HasExited) {
+            throw "Ownership completed while a guarded state mutation was still pending."
+        }
+    } finally {
+        $heldApprovalLock.Dispose()
+        Remove-Item -LiteralPath $approvalLockPath -Force -ErrorAction SilentlyContinue
+    }
+    $stateRaceProcess.WaitForExit()
+    $completeRaceProcess.WaitForExit()
+    if ($stateRaceProcess.ExitCode -ne 0 -or $completeRaceProcess.ExitCode -ne 0) {
+        throw "The guarded state mutation and subsequent completion must both succeed."
+    }
+
+    Write-Output "All workflow state tests passed."
+} finally {
+    foreach ($name in @(
+        "SERVER_NEW_WORKFLOW_REGISTRY",
+        "SERVER_NEW_WORKFLOW_SESSION_REGISTRY",
+        "SERVER_NEW_WORKFLOW_COMMAND_GRANT_REGISTRY",
+        "SERVER_NEW_WORKFLOW_TRANSACTION_REGISTRY"
+    )) {
+        Remove-Item "Env:$name" -ErrorAction SilentlyContinue
+    }
+    if (Test-Path -LiteralPath $TestRoot) {
+        [System.IO.Directory]::Delete($TestRoot, $true)
+    }
+}

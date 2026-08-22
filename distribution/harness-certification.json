@@ -1,0 +1,7 @@
+{
+  "schemaVersion": "1.0",
+  "generatedAt": "",
+  "releaseDecision": "BLOCKED",
+  "harnesses": [],
+  "note": "Placeholder certification. Full harness certification (Task 6) pending: requires live per-harness version capture, allow/deny/timeout evidence and sanitized transcripts. No PASS synthesized."
+}

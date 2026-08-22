@@ -1,0 +1,45 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(pwsh -NoProfile -File ./.ai-sop/scripts/*)"
+    ]
+  },
+  "hooks": {
+    "SessionStart": [
+      {
+        "matcher": "*",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "pwsh -NoProfile -File ./.ai-sop/scripts/hook-dispatcher.ps1 -EventHint SESSION_START",
+            "timeout": 5
+          }
+        ]
+      }
+    ],
+    "SessionEnd": [
+      {
+        "matcher": "*",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "pwsh -NoProfile -File ./.ai-sop/scripts/hook-dispatcher.ps1 -EventHint SESSION_END",
+            "timeout": 5
+          }
+        ]
+      }
+    ],
+    "PreToolUse": [
+      {
+        "matcher": "*",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "pwsh -NoProfile -File ./.ai-sop/scripts/hook-dispatcher.ps1 -EventHint PRE_TOOL_USE",
+            "timeout": 10
+          }
+        ]
+      }
+    ]
+  }
+}

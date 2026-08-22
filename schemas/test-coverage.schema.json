@@ -1,0 +1,313 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "test-coverage.schema.json",
+  "title": "Feature Test Coverage Contract",
+  "description": "Machine-readable traceability between approved clauses and executable test cases.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schemaVersion",
+    "feature",
+    "requirementArtifact",
+    "requirementSha256",
+    "designArtifact",
+    "designSha256",
+    "testPlanArtifact",
+    "testPlanSha256",
+    "cases",
+    "riskExemptions"
+  ],
+  "properties": {
+    "schemaVersion": {
+      "const": "1.0"
+    },
+    "feature": {
+      "type": "string",
+      "minLength": 1
+    },
+    "requirementArtifact": {
+      "type": "string",
+      "minLength": 1
+    },
+    "requirementSha256": {
+      "$ref": "#/$defs/sha256"
+    },
+    "designArtifact": {
+      "type": "string",
+      "minLength": 1
+    },
+    "designSha256": {
+      "$ref": "#/$defs/sha256"
+    },
+    "testPlanArtifact": {
+      "type": "string",
+      "minLength": 1
+    },
+    "testPlanSha256": {
+      "$ref": "#/$defs/sha256"
+    },
+    "cases": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "$ref": "#/$defs/testCase"
+      }
+    },
+    "riskExemptions": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/riskExemption"
+      }
+    }
+  },
+  "$defs": {
+    "sha256": {
+      "type": "string",
+      "pattern": "^[a-fA-F0-9]{64}$"
+    },
+    "clauseId": {
+      "type": "string",
+      "pattern": "^(BR|EX|AC|DC|DR|TW)-[A-Z0-9][A-Z0-9_-]*$"
+    },
+    "testCase": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "title",
+        "priority",
+        "testTypes",
+        "requirementIds",
+        "designIds",
+        "setup",
+        "trigger",
+        "assertions",
+        "cleanup",
+        "automationCarrier"
+      ],
+      "properties": {
+        "id": {
+          "type": "string",
+          "pattern": "^TC-[A-Z0-9][A-Z0-9_-]*$"
+        },
+        "title": {
+          "type": "string",
+          "minLength": 1
+        },
+        "priority": {
+          "enum": [
+            "P0",
+            "P1",
+            "P2",
+            "P3"
+          ]
+        },
+        "testTypes": {
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": {
+            "enum": [
+              "FUNCTIONAL",
+              "NEGATIVE",
+              "BOUNDARY",
+              "STATE_TRANSITION",
+              "INTEGRATION",
+              "COMPATIBILITY",
+              "IDEMPOTENCY",
+              "CONCURRENCY",
+              "RECOVERY",
+              "PERFORMANCE",
+              "SECURITY"
+            ]
+          }
+        },
+        "requirementIds": {
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": {
+            "type": "string",
+            "pattern": "^(BR|EX|AC)-[A-Z0-9][A-Z0-9_-]*$"
+          }
+        },
+        "designIds": {
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": {
+            "type": "string",
+            "pattern": "^(DC|DR|TW)-[A-Z0-9][A-Z0-9_-]*$"
+          }
+        },
+        "setup": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "trigger": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "assertions": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "protocol",
+            "serverState",
+            "sideEffects",
+            "regression"
+          ],
+          "properties": {
+            "protocol": {
+              "$ref": "#/$defs/assertionList"
+            },
+            "serverState": {
+              "$ref": "#/$defs/assertionList"
+            },
+            "sideEffects": {
+              "$ref": "#/$defs/assertionList"
+            },
+            "regression": {
+              "$ref": "#/$defs/assertionList"
+            }
+          }
+        },
+        "cleanup": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "automationCarrier": {
+          "type": "string"
+        }
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "priority": {
+                "enum": [
+                  "P0",
+                  "P1"
+                ]
+              }
+            },
+            "required": [
+              "priority"
+            ]
+          },
+          "then": {
+            "properties": {
+              "automationCarrier": {
+                "minLength": 1
+              }
+            }
+          }
+        }
+      ]
+    },
+    "assertionList": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "$ref": "#/$defs/assertion"
+      }
+    },
+    "assertion": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "target",
+        "operator",
+        "expected"
+      ],
+      "properties": {
+        "target": {
+          "type": "string",
+          "minLength": 1
+        },
+        "operator": {
+          "enum": [
+            "EQ",
+            "NE",
+            "LT",
+            "LTE",
+            "GT",
+            "GTE",
+            "CONTAINS",
+            "NOT_CONTAINS",
+            "EMPTY",
+            "NOT_EMPTY",
+            "UNCHANGED",
+            "INCREASES_BY",
+            "DECREASES_BY",
+            "N_A"
+          ]
+        },
+        "expected": {
+          "type": [
+            "string",
+            "number",
+            "boolean",
+            "null"
+          ]
+        }
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "operator": {
+                "const": "N_A"
+              }
+            },
+            "required": [
+              "operator"
+            ]
+          },
+          "then": {
+            "properties": {
+              "expected": {
+                "type": "string",
+                "minLength": 5
+              }
+            }
+          }
+        }
+      ]
+    },
+    "riskExemption": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "clauseId",
+        "reason",
+        "approvedBy"
+      ],
+      "properties": {
+        "clauseId": {
+          "$ref": "#/$defs/clauseId"
+        },
+        "reason": {
+          "type": "string",
+          "minLength": 1
+        },
+        "approvedBy": {
+          "type": "string",
+          "minLength": 1
+        }
+      }
+    }
+  }
+}

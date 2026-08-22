@@ -1,0 +1,132 @@
+{
+  "schemaVersion": "1.0",
+  "generatedAt": "2026-08-21T06:11:38.5475765+00:00",
+  "releaseDecision": "MIXED",
+  "harnesses": [
+    {
+      "agent": "CLAUDE_CODE",
+      "runtime": "CLI",
+      "productVersion": "unknown",
+      "os": "",
+      "pwshVersion": "",
+      "capabilities": {
+        "skillDiscovery": true,
+        "subagent": true,
+        "blockingHook": true,
+        "workspace": true,
+        "pauseResume": true,
+        "evidence": true
+      },
+      "decision": "STRICT",
+      "decisionReason": "all critical capabilities satisfied",
+      "evidence": {
+        "skillPath": ".claude/skills",
+        "hookConfig": ".claude/settings.json PreToolUse",
+        "sessionMechanism": "native session_id",
+        "subagentMechanism": "native subagent_type",
+        "note": ""
+      },
+      "probedAt": "2026-08-21T06:11:38.4983637+00:00"
+    },
+    {
+      "agent": "COPILOT",
+      "runtime": "CLI",
+      "productVersion": "unknown",
+      "os": "",
+      "pwshVersion": "",
+      "capabilities": {
+        "skillDiscovery": true,
+        "subagent": true,
+        "blockingHook": true,
+        "workspace": true,
+        "pauseResume": false,
+        "evidence": true
+      },
+      "decision": "STRICT",
+      "decisionReason": "all critical capabilities satisfied",
+      "evidence": {
+        "skillPath": ".agents/skills",
+        "hookConfig": ".github/hooks + .claude/hooks",
+        "sessionMechanism": "sessionId",
+        "subagentMechanism": "native",
+        "note": "pauseResume pending live confirmation (P3); subagent+evidence confirmed for T3 review"
+      },
+      "probedAt": "2026-08-21T06:11:38.5198445+00:00"
+    },
+    {
+      "agent": "ANTIGRAVITY",
+      "runtime": "CLI",
+      "productVersion": "unknown",
+      "os": "",
+      "pwshVersion": "",
+      "capabilities": {
+        "skillDiscovery": true,
+        "subagent": true,
+        "blockingHook": true,
+        "workspace": true,
+        "pauseResume": false,
+        "evidence": true
+      },
+      "decision": "STRICT",
+      "decisionReason": "all critical capabilities satisfied",
+      "evidence": {
+        "skillPath": ".agents/skills",
+        "hookConfig": ".agents/hooks.json",
+        "sessionMechanism": "native",
+        "subagentMechanism": "invoke_subagent (native)",
+        "note": "pauseResume pending live confirmation (P3); subagent+evidence confirmed for T3 review"
+      },
+      "probedAt": "2026-08-21T06:11:38.5204497+00:00"
+    },
+    {
+      "agent": "CURSOR",
+      "runtime": "CLI",
+      "productVersion": "unknown",
+      "os": "",
+      "pwshVersion": "",
+      "capabilities": {
+        "skillDiscovery": true,
+        "subagent": true,
+        "blockingHook": true,
+        "workspace": true,
+        "pauseResume": true,
+        "evidence": true
+      },
+      "decision": "STRICT",
+      "decisionReason": "all critical capabilities satisfied",
+      "evidence": {
+        "skillPath": ".cursor/skills, .agents/skills",
+        "hookConfig": ".cursor/hooks.json failClosed",
+        "sessionMechanism": "conversation_id",
+        "subagentMechanism": "native",
+        "note": ""
+      },
+      "probedAt": "2026-08-21T06:11:38.5208978+00:00"
+    },
+    {
+      "agent": "PI",
+      "runtime": "CLI",
+      "productVersion": "unknown",
+      "os": "",
+      "pwshVersion": "",
+      "capabilities": {
+        "skillDiscovery": true,
+        "subagent": false,
+        "blockingHook": true,
+        "workspace": true,
+        "pauseResume": true,
+        "evidence": false
+      },
+      "decision": "BLOCKED",
+      "decisionReason": "missing critical: subagent, evidence",
+      "evidence": {
+        "skillPath": ".agents/skills, .pi/skills",
+        "hookConfig": "tool_call extension block",
+        "sessionMechanism": "session_start/session_before_switch",
+        "subagentMechanism": "none (core)",
+        "note": "No native subagent: independent review (T3) not available; T2 only"
+      },
+      "probedAt": "2026-08-21T06:11:38.5213552+00:00"
+    }
+  ]
+}

@@ -1,0 +1,86 @@
+{
+  "schemaVersion": "1.0",
+  "transitions": {
+    "INIT": [
+      "CLASSIFY",
+      "REQUIREMENT_DRAFT",
+      "DESIGN_DRAFT",
+      "BUG_TRIAGE",
+      "QA_PLAN",
+      "IMPLEMENTATION_AUDIT",
+      "LOGIC_AUDIT",
+      "DONE"
+    ],
+    "CLASSIFY": [
+      "REQUIREMENT_DRAFT",
+      "DESIGN_DRAFT",
+      "BUG_TRIAGE",
+      "QA_PLAN",
+      "DONE"
+    ],
+    "REQUIREMENT_DRAFT": [
+      "WAIT_REQUIREMENT_APPROVAL"
+    ],
+    "WAIT_REQUIREMENT_APPROVAL": [
+      "DESIGN_DRAFT"
+    ],
+    "DESIGN_DRAFT": [
+      "WAIT_DESIGN_APPROVAL",
+      "REQUIREMENT_DRAFT"
+    ],
+    "WAIT_DESIGN_APPROVAL": [
+      "QA_PLAN"
+    ],
+    "BUG_TRIAGE": [
+      "REQUIREMENT_DRAFT",
+      "DESIGN_DRAFT",
+      "QA_PLAN",
+      "DONE"
+    ],
+    "QA_PLAN": [
+      "REQUIREMENT_DRAFT",
+      "DESIGN_DRAFT",
+      "TEST_PLAN_AUDIT"
+    ],
+    "TEST_PLAN_AUDIT": [
+      "REQUIREMENT_DRAFT",
+      "DESIGN_DRAFT",
+      "QA_PLAN",
+      "IMPLEMENTATION"
+    ],
+    "IMPLEMENTATION": [
+      "REQUIREMENT_DRAFT",
+      "DESIGN_DRAFT",
+      "QA_PLAN",
+      "IMPLEMENTATION",
+      "IMPLEMENTATION_AUDIT"
+    ],
+    "IMPLEMENTATION_AUDIT": [
+      "REQUIREMENT_DRAFT",
+      "DESIGN_DRAFT",
+      "QA_PLAN",
+      "IMPLEMENTATION",
+      "LOGIC_AUDIT",
+      "QA_VERIFY",
+      "DONE"
+    ],
+    "LOGIC_AUDIT": [
+      "REQUIREMENT_DRAFT",
+      "DESIGN_DRAFT",
+      "QA_PLAN",
+      "IMPLEMENTATION",
+      "QA_VERIFY",
+      "DONE"
+    ],
+    "QA_VERIFY": [
+      "REQUIREMENT_DRAFT",
+      "DESIGN_DRAFT",
+      "QA_PLAN",
+      "IMPLEMENTATION",
+      "IMPLEMENTATION_AUDIT",
+      "QA_VERIFY",
+      "DONE"
+    ],
+    "DONE": []
+  }
+}

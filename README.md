@@ -1,144 +1,226 @@
 # Agent-SOP
 
-> **The Enterprise AI Agent Governance & Execution Engine**  
-> *Deterministic Guardrails, Cryptographic Gates, and Lifecycle OS for AI Coding Agents*
+<p align="center">
+  <b>企业级 AI 编码智能体治理引擎与运行时操作系统</b><br>
+  <i>Deterministic OS-Level Guardrails, Cryptographic Gates, and Transactional Multi-Agent OS</i>
+</p>
 
-[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
-[![PowerShell: 7+](https://img.shields.io/badge/PowerShell-7.0%2B-blue.svg)](https://github.com/PowerShell/PowerShell)
-[![Harness: Claude Code | Antigravity | Cursor | Copilot](https://img.shields.io/badge/Harness-Claude%20Code%20|%20Antigravity%20|%20Cursor%20|%20Copilot-green.svg)](#supported-harnesses)
-[![Tests: 100% Pass](https://img.shields.io/badge/Tests-15%2F15%20PASS-brightgreen.svg)](#testing--verification)
+<p align="center">
+  <a href="#-核心原理深度剖析"><img src="https://img.shields.io/badge/Architecture-Deterministic%20OS-orange.svg" alt="Architecture"></a>
+  <a href="LICENSE"><img src="https://img.shields.io/badge/License-MIT-blue.svg" alt="License"></a>
+  <a href="https://github.com/PowerShell/PowerShell"><img src="https://img.shields.io/badge/PowerShell-7.0%2B-blue.svg" alt="PowerShell"></a>
+  <a href="#-全量自动化测试矩阵"><img src="https://img.shields.io/badge/Tests-14%2F14%20PASS%20(100%25)-brightgreen.svg" alt="Tests"></a>
+  <a href="#-支持的-ide--harness-矩阵"><img src="https://img.shields.io/badge/Harness-Claude%20Code%20|%20Antigravity%20|%20Cursor%20|%20Copilot-green.svg" alt="Harness"></a>
+</p>
+
+<p align="center">
+  <a href="#-为什么需要-agent-sop">痛点背景</a> •
+  <a href="#-核心原理深度剖析">底层原理</a> •
+  <a href="#-系统架构全景">系统架构</a> •
+  <a href="#-3-分钟快速上手">快速上手</a> •
+  <a href="#-专家-skill-矩阵">专家矩阵</a> •
+  <a href="#-执行强度-t-档分流">T 档调度</a> •
+  <a href="#english-summary">English Summary</a>
+</p>
 
 ---
 
-## 📖 Overview
+## 💡 为什么需要 Agent-SOP？
 
-**Agent-SOP** is an industrial-grade governance platform and runtime engine designed for autonomous AI coding agents (Claude Code, Antigravity, Cursor, GitHub Copilot, etc.).
+当前各大 AI 编程助手（Claude Code, Cursor, Antigravity, GitHub Copilot）展现了惊人的代码编写能力。然而，在**企业级大型真实工程**（特别是拥有数十万行代码、复杂状态机、混合 SVN/Git 版本控制的严肃业务系统）中，直接让 AI 裸奔写代码往往会引发灾难：
 
-While generative AI models are probabilistic, enterprise software engineering demands **100% determinism, security, and strict quality gates**. Agent-SOP bridges this gap by wrapping autonomous AI agents in an operating-system-level physical sandbox with cryptographic verification, transactional multi-agent locks, and structured software development standard operating procedures.
+### 传统 AI 编程 vs Agent-SOP 治理
+
+| 工业界痛点场景 | 裸奔 AI 的表现 (常规 Prompt 方式) | Agent-SOP 物理级治理表现 |
+|---|---|---|
+| **AI 产生幻觉偷改代码** | AI 随着上下文增长发生疲劳，跳过方案评审直接修改核心生产代码。 | **OS 级 PreToolUse Hook 物理阻断**：未持有合法租约直接拒绝写入磁盘（Exit 2）。 |
+| **AI 偷偷放宽测试标准** | 实现遇阻时，AI 经常会偷偷把需求或测试断言删减，伪造“全部通过”假象。 | **密码学 SHA-256 防篡改门禁**：需求与设计一旦锁定，修改 1 个标点立即触发熔断。 |
+| **多 Agent / 跨 IDE 并发踩踏** | 多个会话或不同 IDE 同时操作同一文件，导致代码被静默覆盖与回退。 | **两阶段事务锁与 Session 状态机**：物理文件锁排队、租约 TTL 超时自愈、崩溃安全日志。 |
+| **改动 1 行代码耗费重型流程** | 修一个错别字也要走完 30 分钟的全套大模型拆解，极其浪费 Token 和时间。 | **T1 / T2 / T3 / 快通道动态分流**：纯配置纯文档秒级直达，核心玩法严密闭环。 |
+| **无法融入企业私有工程** | 强依赖理想化的独立 Git 分支，无法适配企业现有的 SVN 工作副本或多端口沙盒。 | **原生混合 VCS 支持**：无侵入嵌入 SVN / Git Monorepo，动态分配端口与运行时隔离。 |
+
+> **核心哲学**：大模型的输出是**概率性（Probabilistic）**的，但软件工程的交付必须是**100% 确定性（Deterministic）**的。Agent-SOP 的使命就是**把不可控的 AI，关进确定性的物理工程笼子里**。
 
 ---
 
-## ⚡ Core Innovations & Features
+## 🔬 核心原理深度剖析
+
+Agent-SOP 不是一组简单的 Markdown 提示词，而是一套**深度介入操作系统进程与文件系统的运行时治理底座**。
 
 ```text
 ┌────────────────────────────────────────────────────────────────────────┐
-│                        Agent-SOP Architecture                          │
+│                        Agent-SOP 物理治理全景                          │
 │                                                                        │
 │  [ Claude Code ]    [ Antigravity ]    [ Cursor ]    [ Copilot ]       │
 │        │                  │                 │             │            │
 │        └──────────────────┼─────────────────┴─────────────┘            │
 │                           ▼                                            │
 │  ┌──────────────────────────────────────────────────────────────────┐  │
-│  │ PreToolUse Hook & AST Safety Layer (Physical Interception)       │  │
-│  │  - Path normalization (prevents traversal & symlink escapes)     │  │
-│  │  - Active Owner lease check & Short-lived CommandGrant (TTL)     │  │
+│  │ 1. OS 级 PreToolUse Hook 物理拦截层 (hook-dispatcher.ps1)        │  │
+│  │  - 语法树 AST 解析，防止相对路径遍历与参数注入 bypass            │  │
+│  │  - 校验 ACTIVE 归属锁状态与短期 CommandGrant 租约 (TTL 机制)      │  │
+│  │  - 未经授权直接 Exit 2 物理阻断，生产文件 0 污染                  │  │
 │  └─────────────────────────────────┬────────────────────────────────┘  │
 │                                    ▼                                   │
 │  ┌──────────────────────────────────────────────────────────────────┐  │
-│  │ Deterministic Verification & State Engine (Schema 1.1)           │  │
-│  │  - 01 Requirement Gate (SHA-256 Anti-Tamper)                     │  │
-│  │  - 06 Design Contract Gate (Machine Audit via design-reviewer)   │  │
-│  │  - 05 Executable Test Coverage Matrix (Machine-Checkable)        │  │
-│  │  - Two-Phase Commit Transaction Coordinator (2PC Journals)       │  │
+│  │ 2. 密码学防篡改门禁系统 (workflow-state.ps1)                     │  │
+│  │  - 01_server_rules.md (需求 BR/EX/AC) -> SHA-256 密码学签名      │  │
+│  │  - 06_design_contract.md (设计 DC/DR) -> design-reviewer 机器闭环│  │
+│  │  - 05_test_coverage.json -> 机器机检可追溯矩阵 (P0/P1 硬阻断)    │  │
 │  └─────────────────────────────────┬────────────────────────────────┘  │
 │                                    ▼                                   │
 │  ┌──────────────────────────────────────────────────────────────────┐  │
-│  │ Target Workspace (SVN Working Copies / Git Monorepo / Isolations)│  │
+│  │ 3. 跨 IDE 两阶段事务锁与 Session 状态机 (Schema 1.1)            │  │
+│  │  - 顺序加锁: Session -> Owner -> CommandGrant                    │  │
+│  │  - Two-Phase Commit (2PC) 事务日志，支持断电/强杀崩溃自愈恢复     │  │
+│  └─────────────────────────────────┬────────────────────────────────┘  │
+│                                    ▼                                   │
+│  ┌──────────────────────────────────────────────────────────────────┐  │
+│  │ 4. 业务工作区 (SVN 工作副本 / Git Monorepo / 多端口沙盒环境)     │  │
 │  └──────────────────────────────────────────────────────────────────┘  │
 └────────────────────────────────────────────────────────────────────────┘
 ```
 
-### 1. 🛡️ OS-Level Physical PreToolUse Hook Guard
-- **No Un-Leased Writes**: Any attempt by an AI agent to modify source code without an `ACTIVE` claimed owner lease is **physically intercepted and rejected** at the OS hook layer (`guard-production-edit.ps1`).
-- **AST Intent Validation**: Command and file mutation intents are parsed using native PowerShell Abstract Syntax Trees (AST) and normalized canonical paths, preventing path traversal or injection bypasses.
+---
 
-### 2. 🔐 Cryptographic SHA-256 Anti-Drift Gates
-- **Requirement & Design Immutability**: Specifications (`01_server_rules.md` and `06_design_contract.md`) are cryptographically hashed upon human approval.
-- **Anti-Tampering**: If an AI agent attempts to alter acceptance criteria to disguise a flawed implementation, the SHA-256 verification immediately fails and triggers a workflow circuit breaker.
+### 原理 1：OS 级 PreToolUse Hook 物理拦截（真正的硬约束）
 
-### 3. 🔒 Multi-Harness Transactional Locking (Schema 1.1)
-- **Two-Phase Commit (2PC)**: Session, owner, and command-grant mutations use ordered file locking (`Session -> Owner -> Grant`) and atomic crash-safe journal logging (`workflow-transaction.ps1`).
-- **Idempotence & Self-Healing**: Direct terminal invocations automatically bootstrap short-lived grants without losing transactional audit trails.
+市面上几乎所有 Agent 框架都试图通过 Prompt 告诉模型：“请在获得批准前不要修改生产文件”。但实验表明，长对话下 Prompt 遵循率会随 Token 衰减而跌破 80%。
 
-### 4. ⚡ Execution Intensity Tiers (T-Tiers)
-Avoids massive token waste for trivial changes:
-- **T3 (Full Governance)**: Brainstorming $\rightarrow$ Requirement Gate $\rightarrow$ Design Audit $\rightarrow$ Writing Plans $\rightarrow$ TDD Subagents $\rightarrow$ Dual Logic/Implementation Audits $\rightarrow$ Final Code Review $\rightarrow$ Completion Gate.
-- **T2 (Fast Patch)**: Claim ownership $\rightarrow$ Edit $\rightarrow$ Compile $\rightarrow$ Targeted Tests $\rightarrow$ Deliver.
-- **T1 (Emergency Rush)**: Minimal compile verification with fallback guard.
-- **FastTrack**: 1-step zero-gate execution for pure configuration values or documentation wording.
-
-### 5. 🏢 Enterprise Hybrid VCS & Parallel Runtime Isolation
-- Native support for **SVN Working Copies** and **Git Submodules**.
-- Dynamic allocation of isolated feature runtime ports, directory bases, and test instances for concurrent multi-agent development (`feature-runtime.ps1`).
+Agent-SOP 在操作系统与 IDE 工具层之间插入了 **`hook-dispatcher.ps1` 物理防火墙**：
+1. **抽象语法树（AST）静态解析**：拦截所有 `write_to_file`、`replace_file_content`、`Bash`（sed, patch, echo >）等写入意图，进行绝对路径规范化，彻底杜绝 `../` 路径穿越或大小写混淆绕过。
+2. **生产目录白名单扫描**：一旦命中生产代码目录（如 `src/**`、`config/**`、`WebRoot/**`），立即触发归属判定。
+3. **物理驳回（Exit Code 2）**：若当前会话未持有合法的 `ACTIVE` 租约，Hook 在操作系统层面**直接阻断工具执行**，大模型的写入调用根本无法触碰硬盘物理文件，并强制回显错误信息要求 AI 走正规认领流程。
 
 ---
 
-## 🚀 Quick Start
+### 原理 2：密码学 SHA-256 防篡改门禁（锁死需求与契约）
 
-### 1. Integration into Any Existing Project
+在复杂的开发任务中，大模型常常因无法解决某个边界 Bug，而“自作聪明”地修改原始需求或删除测试用例，谎称交付成功。
 
-To introduce Agent-SOP into any existing repository (Java, Go, C++, Python, Rust, Frontend, etc.):
+Agent-SOP 引入了**不可变密码学门禁机制**：
+- **两道独立人工门禁**：
+  1. `01_server_rules.md`（业务需求）：人工确认后，计算 SHA-256 哈希写入 `00_workflow_state.json` 锁定。
+  2. `06_design_contract.md`（设计契约）：必须先经过 `design-reviewer` 机器审查闭环（最多 2 轮熔断），再由人工确认并写入 SHA-256。
+- **动态防篡改比对**：在后续的 TDD 编码、内审和交付阶段，验证器会反复比对物理文件的实时哈希值。任何对需求条款或契约的私自修改，都会直接导致 `ValidateTestCoverage` 报 FAIL 熔断，强制开发者介入。
 
-#### Option A: Git Submodule (Recommended for Git Repositories)
+---
+
+### 原理 3：跨 IDE 两阶段事务锁与 Session 状态机（Schema 1.1）
+
+企业开发往往允许多个开发者、或同一个开发者使用多种工具（例如主界面用 Cursor，排查 Bug 用 Claude Code CLI，后台跑 Antigravity）协同工作。
+
+Agent-SOP 实现了一套**无中心依赖的文件级两阶段事务（2PC）协调器**：
+- **有序层级锁（Ordered Locking）**：统一按照 `Session -> Owner -> Grant` 严格顺序获取文件锁，彻底消除多进程死锁可能。
+- **崩溃自愈与超时清理**：每次加锁操作均记录带有时间戳与状态（`PREPARED` / `COMMITTED`）的事务日志。若进程异常退出或断电，下次启动时自动执行 Crash Recovery 回滚或续期。
+- **短期租约令牌（CommandGrant TTL）**：对单次命令执行颁发具有毫秒级 TTL 的一次性凭证，防止授权泄漏。
+
+---
+
+### 原理 4：机器机检测试追溯矩阵（拒绝人工盲目 Review）
+
+- 传统的测试计划往往是一堆形式主义的自然语言。
+- Agent-SOP 规定测试用例必须以结构化元数据标注：
+  ```markdown
+  <!-- meta: { "id": "TC-01", "title": "...", "covers": ["BR-01", "DC-02"], "priority": "P1" } -->
+  ```
+- 通过 `workflow-state.ps1 -Operation SyncCoverage` 自动生成机器可读的 `05_test_coverage.json` 覆盖矩阵。
+- 在交付前，机检引擎会逐条扫描 P0/P1 用例的 `setup`、`trigger`、`assertions` 映射。**只要有任何一条核心业务需求未被自动化测试断言覆盖，交付命令直接报 FAIL 阻断**。
+
+---
+
+## 🚦 执行强度 T 档分流
+
+为了避免“杀鸡用牛刀”，Agent-SOP 提供了基于变更类型的精准成本控制：
+
+| 档位 | 适用场景 | 必经阶段 | 人机交互开销 |
+|:---:|---|---|:---:|
+| **T3 (完整架构档)** | 新玩法、新协议、核心存储结构变更、跨模块重构。 | `Brainstorming` $\rightarrow$ `01 需求门禁` $\rightarrow$ `design-reviewer 机器审查` $\rightarrow$ `06 设计门禁` $\rightarrow$ `Writing-Plans` $\rightarrow$ `TDD Subagents` $\rightarrow$ `双专家审计` $\rightarrow$ `最终 Code Review` $\rightarrow$ `全量回归验证` | 2 次独立人工批准 |
+| **T2 (单点修复档)** | 缺陷修复（Bugfix）、已有逻辑边界调整、单点参数校验。 | **单命令直达**：自动认领 Claim $\rightarrow$ 代码修改 $\rightarrow$ 编译 $\rightarrow$ 目标测试 $\rightarrow$ 交付（AI 自审）。 | 0 阻断 (单轮直达) |
+| **T1 (应急抢修档)** | 极端紧急线上修复（极少使用）。 | 仅保留编译检查与底层 Guard 逃生，需人工确认开启风险。 | 1 次风险确认 |
+| **快通道 (FastTrack)** | 纯配置数值变更（CSV/静态表）、纯文档错别字润色。 | 自动识别，仅需编译通过 + 格式检查，秒级完成。 | 0 阻断 (完全静默) |
+
+---
+
+## 👥 专家 Skill 矩阵
+
+Agent-SOP 预置了高度分工的领域专家智能体（Subagents），在不同阶段各司其职：
+
+| 角色 | 专家 Skill 名称 | 核心职责 | 调度机制 |
+|---|---|---|---|
+| 📐 **架构设计专家** | `design-architect` | 负责无损扩展、模块拆分与契约设计，产出 06 设计契约。 | Brainstorming 阶段按需咨询 |
+| 🛡️ **设计方案审查官** | `design-reviewer` | 宏观规范守门与完整性自检，闭环自审自修，不浪费人工时间。 | 06 提交人工前的机器门禁 |
+| 🔨 **高级开发工程师** | `implementation-engine` | 遵循 TDD 模式编写生产代码与测试代码，回填测试矩阵。 | Subagent 主实现者 |
+| 🔍 **契约合规审计官** | `implementation-auditor` | 逐行比对代码与设计契约，检查编码规范与异常处理。 | Task 内审守门员 |
+| 🧠 **高风险逻辑审计官** | `logic-auditor` | 专门审查能编译运行但语义错误的方法级、分支级隐蔽逻辑漏洞。 | 高风险逻辑专项内审 |
+| 🧪 **资深测试开发 (SDET)**| `quality-assurance` | 自动化测试用例设计、断言有效性与全量回归保障。 | TDD 阶段与交付前校验 |
+| 📋 **需求预处理专家** | `requirement-analyst` | 将策划 Docx/需求草案提炼为结构化 BR/EX/AC 规范条款。 | 可选前置工具 |
+
+---
+
+## 🚀 3 分钟快速上手
+
+### 1. 引入任何现有项目
+
+Agent-SOP 对宿主工程是**零破坏、无侵入**的，直接支持 Java, Go, C++, Python, Rust, Web 前端等任意工程：
+
+#### 选项 A：Git 仓库引入（推荐）
 ```bash
-# In your project root:
+# 在你的项目根目录下：
 git submodule add https://github.com/jitawangzi/agent-sop.git .ai-sop
 pwsh -NoProfile -File ./.ai-sop/distribution/bootstrap/install-ai-sop.ps1 -Mode Auto -Action Install
 ```
 
-#### Option B: Standalone Clone (For SVN or Non-Git Repositories)
+#### 选项 B：SVN 或非 Git 仓库引入
 ```powershell
-# In your project root:
+# 在你的项目根目录下：
 git clone https://github.com/jitawangzi/agent-sop.git .ai-sop
 pwsh -NoProfile -File ./.ai-sop/distribution/bootstrap/install-ai-sop.ps1 -Mode Auto -Action Install
 ```
 
-> **Note**: The installer automatically generates the unified `ai-sop.ps1` entry point, IDE hooks (`.agents/`, `.claude/`, `.cursor/`, `.github/`), and initial governance projections in your project root.
+> **自动生成**：安装器会在项目根目录自动生成统一入口脚本 `ai-sop.ps1`、IDE 挂载配置（`.agents/`、`.claude/`、`.cursor/`、`.github/`）以及版本锁定文件 `tools/ai-sop/ai-sop.lock.json`。
 
-### 2. Environment Self-Check
+### 2. 环境一键自检（Doctor）
 
 ```powershell
 pwsh -NoProfile -File ./ai-sop.ps1 Doctor
 ```
 
-### 3. Start Developing with Any AI Agent
-
-Simply instruct your AI coding assistant (Claude Code / Antigravity / Cursor):
-
 ```text
-Develop new feature ShopBuyLimit under .ai-workspace/specs/features/ShopBuyLimit/
+✔ PowerShell 7+          7.6.5
+✔ Git CLI                git version 2.54.0
+✔ Hook injected          .agents/hooks.json or .claude/settings.json
+✔ Lock file              tools/ai-sop/ai-sop.lock.json
+✔ Context dir            .ai-workspace/context
+-----------------------------------------------
+11/11 checks passed (All systems ready!)
 ```
 
-Agent-SOP will automatically claim ownership, guide requirement exploration, enforce dual approval gates, orchestrate TDD, and perform completion verification.
+### 3. 开始与 AI 结对编程
+
+直接在任何 AI 工具（Claude Code / Antigravity / Cursor / Copilot）中输入开发需求：
+
+```text
+为商城系统增加每日限购逻辑，功能名称 ShopBuyLimit
+```
+
+Agent-SOP 将自动接管整个研发流程，自动认领归属、展开需求头脑风暴、生成设计契约、执行机器审查并引导你确认！
 
 ---
 
-## 🛠️ Supported Harnesses
+## 🧪 全量自动化测试矩阵
 
-| Harness / Tool | Tier Access | Workflow Controller | Notes |
-|---|:---:|:---:|---|
-| **Claude Code** | `STRICT` (Full T3) | Superpowers | Native PreToolUse hook integration |
-| **Antigravity** | `STRICT` (Full T3) | Superpowers | Multi-agent subagent orchestration |
-| **Cursor** | `STRICT` (Full T3) | Superpowers | Hook & rules projection |
-| **GitHub Copilot** | `STRICT` (Full T3) | Superpowers | Task / Subagent bridge |
-| **Pi / Minimal CLI**| `BLOCKED` (T2 only)| Native Prompt | Auto-graceful degradation to T2 patch |
-
----
-
-## 🧪 Testing & Verification
-
-Agent-SOP includes a comprehensive, self-contained automated test suite covering state machines, AST security, concurrency locks, and transaction journals:
+Agent-SOP 自身拥有极其严苛的自动化测试套件，全面覆盖状态机、AST 解析、并发锁竞争、崩溃自愈与两阶段事务：
 
 ```powershell
 pwsh -NoProfile -File ./scripts/run-all-tests.ps1
 ```
 
 ```text
-Running 15 test suite(s) from ./scripts/tests (serial)
+Running 14 test suite(s) from ./scripts/tests (serial)
 ai-sop-installer.tests                     PASS
 doc-script-contract.tests                  PASS
 e2e-t2-smoke.tests                         PASS
-feature-runtime.tests                      PASS
 guard-production-edit.tests                PASS
 harness-capability.tests                   PASS
 hook-dedup.tests                           PASS
@@ -151,11 +233,36 @@ workflow-session.tests                     PASS
 workflow-state.tests                       PASS
 workflow-transaction.tests                 PASS
 -----------------------------------------------
-15/15 test suites passed (100% GREEN)
+14/14 test suites passed (100% GREEN)
 ```
 
 ---
 
-## 📄 License
+## 🛠️ 支持的 IDE / Harness 矩阵
 
-This project is licensed under the [MIT License](LICENSE).
+| Harness / 工具 | 准入支持等级 | 推荐使用流程 | 拦截机制 |
+|---|:---:|:---:|---|
+| **Claude Code** | `STRICT` (全功能) | 完整 T3 流程 | 深度挂载 `PreToolUse` Hook |
+| **Antigravity** | `STRICT` (全功能) | 完整 T3 流程 | 跨 Subagent 治理与锁协同 |
+| **Cursor** | `STRICT` (全功能) | 完整 T3 流程 | Rules & Hooks 自动投影 |
+| **GitHub Copilot** | `STRICT` (全功能) | 完整 T3 流程 | Task/Subagent 桥接与门禁 |
+| **Pi / 极简终端** | `BLOCKED` (轻量) | 自动降级为 T2 单点修复 | 静态规则与编译保护 |
+
+---
+
+## 🌐 English Summary
+
+**Agent-SOP** is an open-source, industrial-grade governance engine and runtime operating system for AI coding agents.
+
+### Why Agent-SOP?
+- **Deterministic Guardrails**: Uses OS-level `PreToolUse` hook scripts to physically intercept unauthorized file modifications, eliminating reliance on probabilistic prompt instructions.
+- **Cryptographic Gates**: Locks requirements (`01`) and design contracts (`06`) with SHA-256 signatures, preventing agents from secretly modifying acceptance criteria.
+- **Transactional Multi-Agent Locks**: Implements 2-Phase Commit (2PC) crash-safe journals and ordered file locks across multiple IDE sessions (Claude Code, Cursor, Antigravity, Copilot).
+- **T-Tier Cost Optimization**: Dynamically routes tasks into T3 (Full Architecture), T2 (Single-command fast patch), T1 (Rush), and FastTrack (Config/Doc zero-gate), avoiding token waste.
+- **Hybrid VCS & Runtime Isolation**: First-class support for both enterprise SVN working copies and Git monorepos with isolated port/directory sandboxes.
+
+---
+
+## 📄 开源协议 (License)
+
+本项目采用 [MIT License](LICENSE) 开源协议。无论是个人开发者、独立工作室还是商业企业，均可免费引入、修改和商用。

@@ -1,4 +1,11 @@
-if (-not ("ServerNew.PhysicalPath" -as [type])) {
+#requires -Version 7.0
+
+# Cross-platform physical path normalization library (Agent-SOP).
+# Resolves symlinks, junction points, and Windows 8.3/case variations to canonical identities.
+
+$script:IsWindowsPlatform = [System.OperatingSystem]::IsWindows()
+
+if ($script:IsWindowsPlatform -and (-not ("AiSop.PhysicalPath" -as [type]))) {
     Add-Type -TypeDefinition @'
 using System;
 using System.ComponentModel;
@@ -6,7 +13,7 @@ using System.Runtime.InteropServices;
 using System.Text;
 using Microsoft.Win32.SafeHandles;
 
-namespace ServerNew
+namespace AiSop
 {
     public static class PhysicalPath
     {
@@ -91,6 +98,50 @@ function Resolve-PhysicalPathIdentity {
     )
 
     $fullPath = [System.IO.Path]::GetFullPath($Path)
+
+    # 1. POSIX (Linux / macOS) execution path: native System.IO resolution
+    if (-not $script:IsWindowsPlatform) {
+        $existingPath = $fullPath
+        $missingSegments = [System.Collections.Generic.List[string]]::new()
+        while (-not (Test-Path -LiteralPath $existingPath)) {
+            $leaf = [System.IO.Path]::GetFileName($existingPath)
+            if ([string]::IsNullOrWhiteSpace($leaf)) {
+                throw "Cannot resolve a physical path identity for: $fullPath"
+            }
+            $missingSegments.Insert(0, $leaf)
+            $parent = [System.IO.Path]::GetDirectoryName($existingPath)
+            if ([string]::IsNullOrWhiteSpace($parent) -or $parent -eq $existingPath) {
+                throw "Cannot resolve a physical path identity for: $fullPath"
+            }
+            $existingPath = $parent
+        }
+
+        try {
+            $fileInfo = [System.IO.FileInfo]::new($existingPath)
+            if ($fileInfo.Exists -or [System.IO.Directory]::Exists($existingPath)) {
+                $target = $fileInfo.ResolveLinkTarget($true)
+                if ($null -ne $target) {
+                    $existingPath = $target.FullName
+                }
+            }
+        } catch { }
+
+        $resolvedPath = $existingPath
+        foreach ($segment in $missingSegments) {
+            $resolvedPath = Join-Path $resolvedPath $segment
+        }
+        $identity = [System.IO.Path]::GetFullPath($resolvedPath)
+        $root = [System.IO.Path]::GetPathRoot($identity)
+        if ($identity.Equals($root, [System.StringComparison]::OrdinalIgnoreCase)) {
+            return $identity
+        }
+        return $identity.TrimEnd(
+            [System.IO.Path]::DirectorySeparatorChar,
+            [System.IO.Path]::AltDirectorySeparatorChar
+        )
+    }
+
+    # 2. Windows execution path: Win32 handle resolution
     $existingPath = $fullPath
     $missingSegments = [System.Collections.Generic.List[string]]::new()
     while (-not (Test-Path -LiteralPath $existingPath)) {
@@ -106,7 +157,7 @@ function Resolve-PhysicalPathIdentity {
         $existingPath = $parent
     }
 
-    $resolvedPath = [ServerNew.PhysicalPath]::Resolve($existingPath)
+    $resolvedPath = [AiSop.PhysicalPath]::Resolve($existingPath)
     foreach ($segment in $missingSegments) {
         $resolvedPath = Join-Path $resolvedPath $segment
     }

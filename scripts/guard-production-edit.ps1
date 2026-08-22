@@ -121,6 +121,30 @@ function Test-AiSopGuardPathWithinRoot {
     )
 }
 
+function Get-AiSopProductionPatterns {
+    param([string]$WorkspaceRoot)
+
+    $policyPath = Join-Path $WorkspaceRoot ".ai-sop\config\project-policy.json"
+    if (Test-Path -LiteralPath $policyPath -PathType Leaf) {
+        try {
+            $cfg = Get-Content -Raw -LiteralPath $policyPath | ConvertFrom-Json
+            if ($cfg.productionPatterns) { return @($cfg.productionPatterns) }
+        } catch { }
+    }
+
+    return @(
+        "^(?i:src)(?:\\|/|$)",
+        "^(?i:pkg)(?:\\|/|$)",
+        "^(?i:cmd)(?:\\|/|$)",
+        "^(?i:internal)(?:\\|/|$)",
+        "^(?i:app)(?:\\|/|$)",
+        "^(?i:lib)(?:\\|/|$)",
+        "^(?i:WebRoot)(?:\\|/|$)",
+        "^(?i:config)(?:\\|/|$)",
+        "^(?i:include)(?:\\|/|$)"
+    )
+}
+
 function Test-AiSopGuardProductionPath {
     param(
         [string]$Path,
@@ -135,11 +159,14 @@ function Test-AiSopGuardProductionPath {
         [System.IO.Path]::GetFullPath($Path)
     )
     $normalized = ($relative -replace "/", "\").TrimStart(".", "\")
-    return (
-        $normalized -match "^(?i:src\\com)(?:\\|$)" -or
-        $normalized -match "^(?i:WebRoot)(?:\\|$)" -or
-        $normalized -match "^(?i:config)(?:\\|$)"
-    )
+    
+    $patterns = Get-AiSopProductionPatterns -WorkspaceRoot $WorkspaceRoot
+    foreach ($pattern in $patterns) {
+        if ($normalized -match $pattern) {
+            return $true
+        }
+    }
+    return $false
 }
 
 function Get-AiSopGuardTargetDecision {

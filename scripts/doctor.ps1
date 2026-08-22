@@ -31,37 +31,85 @@ try {
     Add-Check "Git CLI" $false "not found"
 }
 
-# 3. SVN available
-try {
-    $svnVer = (svn --version --quiet 2>&1) | Out-String
-    Add-Check "SVN CLI" (-not [string]::IsNullOrWhiteSpace($svnVer)) $svnVer.Trim()
-} catch {
-    Add-Check "SVN CLI" $false "not found"
-}
-
-# 4. JDK 8 (check JAVA_HOME + java -version)
-$javaHome = [string]$env:JAVA_HOME
-$javaOk = $false
-$javaDetail = "JAVA_HOME not set"
-if (-not [string]::IsNullOrWhiteSpace($javaHome) -and (Test-Path -LiteralPath $javaHome)) {
+# 3. Version Control CLI (Git / SVN)
+$hasSvnWorkingCopy = Test-Path -LiteralPath (Join-Path $WorkspaceRoot ".svn")
+if ($hasSvnWorkingCopy) {
     try {
-        $javaOut = (& "$javaHome\bin\java" -version 2>&1) | Out-String
-        if ($javaOut -match "1\.8") {
-            $javaOk = $true
-            $javaDetail = "JDK 1.8 at $javaHome"
-        } else {
-            $javaDetail = "JAVA_HOME set but not JDK 8: $javaOut".Trim()
-        }
+        $svnVer = (svn --version --quiet 2>&1) | Out-String
+        Add-Check "SVN CLI" (-not [string]::IsNullOrWhiteSpace($svnVer)) $svnVer.Trim()
     } catch {
-        $javaDetail = "JAVA_HOME set but java not runnable: $_"
+        Add-Check "SVN CLI" $false "not found (required for .svn working copy)"
     }
+} else {
+    try {
+        $svnVer = (svn --version --quiet 2>&1) | Out-String
+        if (-not [string]::IsNullOrWhiteSpace($svnVer)) {
+            Add-Check "SVN CLI" $true "$($svnVer.Trim()) (optional)"
+        }
+    } catch { }
 }
-Add-Check "JDK 8" $javaOk $javaDetail
 
-# 5. Gradle wrapper
-$gradlew = Join-Path $WorkspaceRoot "gradlew.bat"
-if (-not (Test-Path -LiteralPath $gradlew)) { $gradlew = Join-Path $WorkspaceRoot "gradlew" }
-Add-Check "Gradle wrapper" (Test-Path -LiteralPath $gradlew) $gradlew
+# 4. Project Toolchain Detection (dynamic)
+$isJavaProject = (Test-Path -LiteralPath (Join-Path $WorkspaceRoot "pom.xml")) -or 
+                 (Test-Path -LiteralPath (Join-Path $WorkspaceRoot "build.gradle")) -or 
+                 (Test-Path -LiteralPath (Join-Path $WorkspaceRoot "build.gradle.kts")) -or
+                 (Test-Path -LiteralPath (Join-Path $WorkspaceRoot "gradlew.bat")) -or
+                 (Test-Path -LiteralPath (Join-Path $WorkspaceRoot "gradlew"))
+$isGoProject = Test-Path -LiteralPath (Join-Path $WorkspaceRoot "go.mod")
+$isNodeProject = Test-Path -LiteralPath (Join-Path $WorkspaceRoot "package.json")
+$isPythonProject = (Test-Path -LiteralPath (Join-Path $WorkspaceRoot "pyproject.toml")) -or 
+                   (Test-Path -LiteralPath (Join-Path $WorkspaceRoot "requirements.txt"))
+$isRustProject = Test-Path -LiteralPath (Join-Path $WorkspaceRoot "Cargo.toml")
+
+if ($isJavaProject) {
+    $javaHome = [string]$env:JAVA_HOME
+    $javaOk = $false
+    $javaDetail = "JAVA_HOME not set"
+    if (-not [string]::IsNullOrWhiteSpace($javaHome) -and (Test-Path -LiteralPath $javaHome)) {
+        try {
+            $javaOut = (& "$javaHome\bin\java" -version 2>&1) | Out-String
+            $javaOk = $true
+            $javaDetail = "Java runtime at $javaHome"
+        } catch {
+            $javaDetail = "JAVA_HOME set but java not runnable: $_"
+        }
+    }
+    Add-Check "JDK Toolchain" $javaOk $javaDetail
+    
+    $gradlew = Join-Path $WorkspaceRoot "gradlew.bat"
+    if (-not (Test-Path -LiteralPath $gradlew)) { $gradlew = Join-Path $WorkspaceRoot "gradlew" }
+    if (Test-Path -LiteralPath $gradlew) { Add-Check "Gradle wrapper" $true $gradlew }
+} elseif ($isGoProject) {
+    try {
+        $goVer = (go version 2>&1) | Out-String
+        Add-Check "Go Toolchain" (-not [string]::IsNullOrWhiteSpace($goVer)) $goVer.Trim()
+    } catch {
+        Add-Check "Go Toolchain" $false "go CLI not found"
+    }
+} elseif ($isNodeProject) {
+    try {
+        $nodeVer = (node -v 2>&1) | Out-String
+        Add-Check "Node.js" (-not [string]::IsNullOrWhiteSpace($nodeVer)) $nodeVer.Trim()
+    } catch {
+        Add-Check "Node.js" $false "node not found"
+    }
+} elseif ($isPythonProject) {
+    try {
+        $pyVer = (python --version 2>&1) | Out-String
+        Add-Check "Python" (-not [string]::IsNullOrWhiteSpace($pyVer)) $pyVer.Trim()
+    } catch {
+        Add-Check "Python" $false "python not found"
+    }
+} elseif ($isRustProject) {
+    try {
+        $cargoVer = (cargo --version 2>&1) | Out-String
+        Add-Check "Rust/Cargo" (-not [string]::IsNullOrWhiteSpace($cargoVer)) $cargoVer.Trim()
+    } catch {
+        Add-Check "Rust/Cargo" $false "cargo not found"
+    }
+} else {
+    Add-Check "Project Toolchain" $true "Generic Codebase"
+}
 
 # 6. .ai-sop submodule initialized (hook-dispatcher.ps1 exists)
 $dispatcher = Join-Path $SopRoot "scripts/hook-dispatcher.ps1"

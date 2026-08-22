@@ -140,59 +140,68 @@ function Get-AiSopWorkflowRemainingMilliseconds {
     return [int64][Math]::Max(0, [Math]::Floor($remaining))
 }
 
+function Get-AiSopWorkflowBaseAppDataRoot {
+    if (-not [string]::IsNullOrWhiteSpace($env:AI_SOP_REGISTRY_ROOT)) {
+        return [System.IO.Path]::GetFullPath($env:AI_SOP_REGISTRY_ROOT)
+    }
+    
+    $basePath = [System.Environment]::GetFolderPath([System.Environment+SpecialFolder]::LocalApplicationData)
+    if ([string]::IsNullOrWhiteSpace($basePath)) {
+        $userProfile = [System.Environment]::GetFolderPath([System.Environment+SpecialFolder]::UserProfile)
+        if ([string]::IsNullOrWhiteSpace($userProfile)) {
+            $userProfile = $env:HOME
+        }
+        $basePath = Join-Path $userProfile ".local/share"
+    }
+    return Join-Path $basePath "AIWorkflow"
+}
+
 function Get-AiSopWorkflowTransactionRegistryRoot {
-    [CmdletBinding()]
     param()
 
-    if (
-        -not [string]::IsNullOrWhiteSpace(
-            $env:SERVER_NEW_WORKFLOW_TRANSACTION_REGISTRY
-        )
-    ) {
-        return [System.IO.Path]::GetFullPath(
-            $env:SERVER_NEW_WORKFLOW_TRANSACTION_REGISTRY
-        )
+    if (-not [string]::IsNullOrWhiteSpace($env:AI_SOP_TRANSACTION_REGISTRY)) {
+        return [System.IO.Path]::GetFullPath($env:AI_SOP_TRANSACTION_REGISTRY)
     }
-    return Join-Path $env:LOCALAPPDATA "AIWorkflowTransactions\server_new"
+    if (-not [string]::IsNullOrWhiteSpace($env:SERVER_NEW_WORKFLOW_TRANSACTION_REGISTRY)) {
+        return [System.IO.Path]::GetFullPath($env:SERVER_NEW_WORKFLOW_TRANSACTION_REGISTRY)
+    }
+    return Join-Path (Get-AiSopWorkflowBaseAppDataRoot) "Transactions"
 }
 
 function Get-AiSopWorkflowSessionRegistryRoot {
-    if (
-        -not [string]::IsNullOrWhiteSpace(
-            $env:SERVER_NEW_WORKFLOW_SESSION_REGISTRY
-        )
-    ) {
-        return [System.IO.Path]::GetFullPath(
-            $env:SERVER_NEW_WORKFLOW_SESSION_REGISTRY
-        )
+    param()
+
+    if (-not [string]::IsNullOrWhiteSpace($env:AI_SOP_SESSION_REGISTRY)) {
+        return [System.IO.Path]::GetFullPath($env:AI_SOP_SESSION_REGISTRY)
     }
-    return Join-Path $env:LOCALAPPDATA "AIWorkflowSessions\server_new"
+    if (-not [string]::IsNullOrWhiteSpace($env:SERVER_NEW_WORKFLOW_SESSION_REGISTRY)) {
+        return [System.IO.Path]::GetFullPath($env:SERVER_NEW_WORKFLOW_SESSION_REGISTRY)
+    }
+    return Join-Path (Get-AiSopWorkflowBaseAppDataRoot) "Sessions"
 }
 
 function Get-AiSopWorkflowCommandGrantRegistryRoot {
-    if (
-        -not [string]::IsNullOrWhiteSpace(
-            $env:SERVER_NEW_WORKFLOW_COMMAND_GRANT_REGISTRY
-        )
-    ) {
-        return [System.IO.Path]::GetFullPath(
-            $env:SERVER_NEW_WORKFLOW_COMMAND_GRANT_REGISTRY
-        )
+    param()
+
+    if (-not [string]::IsNullOrWhiteSpace($env:AI_SOP_COMMAND_GRANT_REGISTRY)) {
+        return [System.IO.Path]::GetFullPath($env:AI_SOP_COMMAND_GRANT_REGISTRY)
     }
-    return Join-Path $env:LOCALAPPDATA "AIWorkflowCommandGrants\server_new"
+    if (-not [string]::IsNullOrWhiteSpace($env:SERVER_NEW_WORKFLOW_COMMAND_GRANT_REGISTRY)) {
+        return [System.IO.Path]::GetFullPath($env:SERVER_NEW_WORKFLOW_COMMAND_GRANT_REGISTRY)
+    }
+    return Join-Path (Get-AiSopWorkflowBaseAppDataRoot) "CommandGrants"
 }
 
 function Get-AiSopWorkflowOwnerRegistryRoot {
-    if (
-        -not [string]::IsNullOrWhiteSpace(
-            $env:SERVER_NEW_WORKFLOW_REGISTRY
-        )
-    ) {
-        return [System.IO.Path]::GetFullPath(
-            $env:SERVER_NEW_WORKFLOW_REGISTRY
-        )
+    param()
+
+    if (-not [string]::IsNullOrWhiteSpace($env:AI_SOP_OWNER_REGISTRY)) {
+        return [System.IO.Path]::GetFullPath($env:AI_SOP_OWNER_REGISTRY)
     }
-    return Join-Path $env:LOCALAPPDATA "AIWorkflowOwners\server_new"
+    if (-not [string]::IsNullOrWhiteSpace($env:SERVER_NEW_WORKFLOW_REGISTRY)) {
+        return [System.IO.Path]::GetFullPath($env:SERVER_NEW_WORKFLOW_REGISTRY)
+    }
+    return Join-Path (Get-AiSopWorkflowBaseAppDataRoot) "Owners"
 }
 
 function Get-AiSopWorkflowSchemaPath {

@@ -94,10 +94,10 @@ param(
     [string]$FailureKey = "",
     [string]$BlockReason = "",
     [ValidateSet("CUSTOM_SKILLS", "SUPERPOWERS")]
-    [string]$OwnerWorkflow = $env:SERVER_NEW_WORKFLOW_OWNER_WORKFLOW,
+    [string]$OwnerWorkflow = $(if (-not [string]::IsNullOrWhiteSpace($env:AI_SOP_WORKFLOW_OWNER_WORKFLOW)) { $env:AI_SOP_WORKFLOW_OWNER_WORKFLOW } else { $env:SERVER_NEW_WORKFLOW_OWNER_WORKFLOW }),
     [ValidateSet("CLAUDE_CODE", "COPILOT", "ANTIGRAVITY", "CURSOR", "GEMINI", "PI")]
-    [string]$OwnerAgent = $env:SERVER_NEW_WORKFLOW_OWNER_AGENT,
-    [string]$OwnerId = $env:SERVER_NEW_WORKFLOW_OWNER_ID
+    [string]$OwnerAgent = $(if (-not [string]::IsNullOrWhiteSpace($env:AI_SOP_WORKFLOW_OWNER_AGENT)) { $env:AI_SOP_WORKFLOW_OWNER_AGENT } else { $env:SERVER_NEW_WORKFLOW_OWNER_AGENT }),
+    [string]$OwnerId = $(if (-not [string]::IsNullOrWhiteSpace($env:AI_SOP_WORKFLOW_OWNER_ID)) { $env:AI_SOP_WORKFLOW_OWNER_ID } else { $env:SERVER_NEW_WORKFLOW_OWNER_ID })
 )
 
 $ErrorActionPreference = "Stop"
@@ -657,11 +657,7 @@ function Invoke-WithMutationOwnership {
         throw "Workflow '$OwnerWorkflow' cannot be owned by agent '$OwnerAgent'."
     }
 
-    $registryRoot = if (-not [string]::IsNullOrWhiteSpace($env:SERVER_NEW_WORKFLOW_REGISTRY)) {
-        [System.IO.Path]::GetFullPath($env:SERVER_NEW_WORKFLOW_REGISTRY)
-    } else {
-        Join-Path $env:LOCALAPPDATA "AIWorkflowOwners\server_new"
-    }
+    $registryRoot = Get-AiSopWorkflowOwnerRegistryRoot
     $ownerPath = Join-Path $registryRoot ($context.feature.ToLowerInvariant() + ".json")
     [System.IO.Directory]::CreateDirectory($registryRoot) | Out-Null
     $ownerSchema = Join-Path $SchemaRoot "workflow-owner.schema.json"

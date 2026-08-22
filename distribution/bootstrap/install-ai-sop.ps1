@@ -51,13 +51,57 @@ if ($Action -eq "Verify") {
     if ($result.result -eq "VERIFIED") { exit 0 } else { exit 1 }
 }
 
-# Install path requires a published lock commit; without it we cannot proceed.
+# Install path: if lock is missing, auto-bootstrap it from .ai-sop submodule HEAD
 $lockPath = Join-Path $WorkspaceRoot "tools\ai-sop\ai-sop.lock.json"
 if (-not (Test-Path -LiteralPath $lockPath)) {
-    $result = New-AiSopInstallResult -Action "Install" -Mode $resolvedMode -SourceUrl $SourceUrl `
-        -Commit "" -Result "LOCK_MISSING" -ErrorCode "AI_SOP_LOCK_MISSING"
-    Write-AiSopInstallResult -Result $result -OutputFormat $OutputFormat
-    exit 1
+    $headCommit = ""
+    if (Test-Path -LiteralPath (Join-Path $SopRoot ".git")) {
+        try { $headCommit = [string](& git -C $SopRoot rev-parse HEAD 2>$null) } catch { }
+    }
+    if ([string]::IsNullOrWhiteSpace($headCommit) -or $headCommit.Trim().Length -ne 40) {
+        $result = New-AiSopInstallResult -Action "Install" -Mode $resolvedMode -SourceUrl $SourceUrl `
+            -Commit "" -Result "LOCK_MISSING" -ErrorCode "AI_SOP_LOCK_MISSING"
+        Write-AiSopInstallResult -Result $result -OutputFormat $OutputFormat
+        exit 1
+    }
+    $headCommit = $headCommit.Trim()
+    $resolvedSourceUrl = if (-not [string]::IsNullOrWhiteSpace($SourceUrl)) { $SourceUrl } else { "https://github.com/jitawangzi/agent-sop.git" }
+    
+    $manifestFile = Join-Path $SopRoot "distribution\project-manifest.json"
+    $manifestSha = if (Test-Path -LiteralPath $manifestFile) { Get-AiSopSha256 -Path $manifestFile } else { "" }
+    $coreFile = Join-Path $SopRoot "distribution\install-ai-sop-core.ps1"
+    $coreSha = if (Test-Path -LiteralPath $coreFile) { Get-AiSopSha256 -Path $coreFile } else { "" }
+    $bootstrapFile = Join-Path $SopRoot "distribution\bootstrap\install-ai-sop.ps1"
+    $bootstrapSha = if (Test-Path -LiteralPath $bootstrapFile) { Get-AiSopSha256 -Path $bootstrapFile } else { "" }
+    $certFile = Join-Path $SopRoot "distribution\harness-certification.json"
+    $certSha = if (Test-Path -LiteralPath $certFile) { Get-AiSopSha256 -Path $certFile } else { "" }
+
+    $lockDir = Split-Path -Parent $lockPath
+    if (-not (Test-Path -LiteralPath $lockDir)) {
+        New-Item -ItemType Directory -Path $lockDir -Force | Out-Null
+    }
+    $initialLock = [ordered]@{
+        schemaVersion = "1.0"
+        sourceUrl = $resolvedSourceUrl
+        commit = $headCommit
+        manifest = [ordered]@{
+            path = "distribution/project-manifest.json"
+            blobSha256 = $manifestSha
+        }
+        core = [ordered]@{
+            path = "distribution/install-ai-sop-core.ps1"
+            blobSha256 = $coreSha
+        }
+        bootstrap = [ordered]@{
+            path = "distribution/bootstrap/install-ai-sop.ps1"
+            blobSha256 = $bootstrapSha
+        }
+        certification = [ordered]@{
+            path = "distribution/harness-certification.json"
+            blobSha256 = $certSha
+        }
+    }
+    $initialLock | ConvertTo-Json -Depth 10 | Set-Content -LiteralPath $lockPath -Encoding utf8
 }
 $lock = Read-AiSopLock -WorkspaceRoot $WorkspaceRoot
 

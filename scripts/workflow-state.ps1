@@ -1167,7 +1167,31 @@ function Get-CoveragePlaceholderWarnings {
             if ($filePathPart -match '^([^#]+)#') { $filePathPart = $Matches[1] }
             $resolved = $filePathPart
             if (-not [System.IO.Path]::IsPathRooted($resolved)) {
-                $resolved = Join-Path (Split-Path -Parent (Split-Path -Parent $CoveragePath)) $filePathPart
+                # Find WorkspaceRoot by walking upward from CoveragePath
+                $curDir = Split-Path -Parent $CoveragePath
+                $carrierWsRoot = $null
+                while (-not [string]::IsNullOrWhiteSpace($curDir)) {
+                    if ((Test-Path -LiteralPath (Join-Path $curDir ".ai-workspace")) -or 
+                        (Test-Path -LiteralPath (Join-Path $curDir ".git")) -or 
+                        (Test-Path -LiteralPath (Join-Path $curDir ".svn"))) {
+                        $carrierWsRoot = $curDir
+                        break
+                    }
+                    $parent = Split-Path -Parent $curDir
+                    if ($parent -eq $curDir) { break }
+                    $curDir = $parent
+                }
+                $candidateWs = if (-not [string]::IsNullOrWhiteSpace($carrierWsRoot)) { Join-Path $carrierWsRoot $filePathPart } else { $null }
+                $candidateSpec = Join-Path (Split-Path -Parent $CoveragePath) $filePathPart
+                if ($candidateWs -and (Test-Path -LiteralPath $candidateWs -PathType Leaf)) {
+                    $resolved = $candidateWs
+                } elseif (Test-Path -LiteralPath $candidateSpec -PathType Leaf) {
+                    $resolved = $candidateSpec
+                } elseif ($candidateWs) {
+                    $resolved = $candidateWs
+                } else {
+                    $resolved = $candidateSpec
+                }
             }
             if (-not (Test-Path -LiteralPath $resolved -PathType Leaf)) {
                 if ($isPlanPhase) {
@@ -2082,7 +2106,13 @@ switch ($Operation) {
             if (Test-Path -LiteralPath $featStatePath -PathType Leaf) {
                 try {
                     $fs = Get-Content -LiteralPath $featStatePath -Raw | ConvertFrom-Json
-                    if ($fs.phase -in @("PLANNING", "INTENT", "CLAIMED", "REQUIREMENT_DRAFT", "REQUIREMENT_APPROVED", "DESIGN_DRAFT", "DESIGN_REVIEWED", "DESIGN_APPROVED")) {
+                    $planPhases = @(
+                        "INIT", "CLASSIFY", "PLANNING", "INTENT", "CLAIMED",
+                        "REQUIREMENT_DRAFT", "WAIT_REQUIREMENT_APPROVAL", "REQUIREMENT_APPROVED",
+                        "DESIGN_DRAFT", "WAIT_DESIGN_APPROVAL", "DESIGN_REVIEWED", "DESIGN_APPROVED",
+                        "QA_PLAN", "TEST_PLAN_AUDIT"
+                    )
+                    if ($fs.phase -in $planPhases) {
                         $effectivePhase = "PLAN"
                     }
                 } catch {}
@@ -2434,9 +2464,9 @@ switch ($Operation) {
         $checks.Add("[$(if($compileOk){'v'}else{'?'})] 编译产物存在(以构建/测试命令执行结果为准)")
         if (-not $compileOk -and $effectiveTier -eq "T3") { $failures.Add("compile verification failed — no build artifacts found") }
 
-        # VCS unversioned file detection (hard blocker for code/config files).
+        # VCS unversioned/missing file detection (hard blocker for code/config files).
         $untrackedFiles = [System.Collections.Generic.List[string]]::new()
-        $codeExtensions = @(".java", ".groovy", ".kt", ".xml", ".properties", ".proto", ".ps1")
+        $codeExtensions = @(".java", ".groovy", ".kt", ".xml", ".properties", ".proto", ".ps1", ".csv", ".json", ".sql", ".yml", ".yaml")
         $codeDirPrefixes = @("src/", "test/", "scripts/", "distribution/", "config/")
         
         if (Test-Path -LiteralPath (Join-Path $wsRoot ".svn") -PathType Container) {
@@ -2444,8 +2474,9 @@ switch ($Operation) {
                 $svnOutput = & svn status --ignore-externals $wsRoot 2>&1
                 if ($LASTEXITCODE -eq 0) {
                     foreach ($line in $svnOutput) {
-                        if ($line -match '^\?\s+(.+)$') {
-                            $rawPath = $Matches[1].Trim()
+                        if ($line -match '^(\?|\!)\s+(.+)$') {
+                            $flag = $Matches[1]
+                            $rawPath = $Matches[2].Trim()
                             $normPath = $rawPath.Replace("\", "/")
                             $isTargetDir = $false
                             foreach ($pfx in $codeDirPrefixes) {
@@ -2453,15 +2484,19 @@ switch ($Operation) {
                             }
                             $ext = [System.IO.Path]::GetExtension($normPath).ToLowerInvariant()
                             if ($isTargetDir -and ($ext -in $codeExtensions)) {
-                                $untrackedFiles.Add($rawPath)
+                                if ($flag -eq "?") {
+                                    $untrackedFiles.Add("$rawPath (需 svn add)")
+                                } elseif ($flag -eq "!") {
+                                    $untrackedFiles.Add("$rawPath (需 svn delete)")
+                                }
                             }
                         }
                     }
                 }
             } catch {}
             if ($untrackedFiles.Count -gt 0) {
-                $failures.Add("VCS untracked code files found (run 'svn add'): $($untrackedFiles -join ', ')")
-                $checks.Add("[X] VCS 交付状态: SVN 存在未跟踪代码 ($($untrackedFiles.Count) 个文件未执行 svn add)")
+                $failures.Add("VCS untracked/missing code files found: $($untrackedFiles -join ', ')")
+                $checks.Add("[X] VCS 交付状态: SVN 存在未同步代码 ($($untrackedFiles.Count) 个文件未执行 svn add/delete)")
             } else {
                 $checks.Add("[?] VCS 交付状态: SVN 工作副本 (准备 svn commit)")
             }
@@ -2479,7 +2514,7 @@ switch ($Operation) {
                             }
                             $ext = [System.IO.Path]::GetExtension($normPath).ToLowerInvariant()
                             if ($isTargetDir -and ($ext -in $codeExtensions)) {
-                                $untrackedFiles.Add($rawPath)
+                                $untrackedFiles.Add("$rawPath (需 git add)")
                             }
                         }
                     }

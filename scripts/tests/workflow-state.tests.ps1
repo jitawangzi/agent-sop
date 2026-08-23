@@ -2013,10 +2013,35 @@ try {
         throw "ValidateTestCoverage -Phase PLAN must output VALID, got: $($planValidation -join '; ')"
     }
 
+    # Test automatic phase derivation for QA_PLAN phase
+    $syncFeatState = Join-Path $syncSpec "feature-state.json"
+    [System.IO.File]::WriteAllText($syncFeatState, '{"schemaVersion":"1.0","feature":"SyncCoverageTestFeature","tier":"T3","phase":"QA_PLAN"}', $Utf8NoBom)
+    $autoPlanValidation = & $ScriptPath -Operation ValidateTestCoverage -Path $syncCovPath
+    if ($autoPlanValidation -notcontains "VALID") {
+        throw "ValidateTestCoverage with QA_PLAN phase must auto-derive PLAN mode and output VALID, got: $($autoPlanValidation -join '; ')"
+    }
+
     # In VERIFY phase, missing carrier files on disk for P0/P1 must be ERROR and result is INVALID_PLACEHOLDERS
     $verifyValidation = & $ScriptPath -Operation ValidateTestCoverage -Path $syncCovPath -Phase VERIFY
     if ($verifyValidation -notcontains "INVALID_PLACEHOLDERS") {
         throw "ValidateTestCoverage -Phase VERIFY must output INVALID_PLACEHOLDERS when carriers are missing, got: $($verifyValidation -join '; ')"
+    }
+
+    # In VERIFY phase with real carrier file in workspace root test/
+    $realTestDir = Join-Path $TestRoot "test/com/game"
+    [System.IO.Directory]::CreateDirectory($realTestDir) | Out-Null
+    $realTestFile = Join-Path $realTestDir "RealTest.java"
+    [System.IO.File]::WriteAllText($realTestFile, "package com.game; import org.junit.Test; public class RealTest { @Test public void testBuy() {} }", $Utf8NoBom)
+    
+    $covObj.cases[0].automationCarrier = "test/com/game/RealTest.java#testBuy"
+    $covObj.cases[0].status = "VERIFIED"
+    $covObj.cases[1].automationCarrier = "test/com/game/RealTest.java#testBuy"
+    $covObj.cases[1].status = "VERIFIED"
+    [System.IO.File]::WriteAllText($syncCovPath, ($covObj | ConvertTo-Json -Depth 10), $Utf8NoBom)
+    
+    $realVerifyValidation = & $ScriptPath -Operation ValidateTestCoverage -Path $syncCovPath -Phase VERIFY
+    if ($realVerifyValidation -notcontains "VALID") {
+        throw "ValidateTestCoverage -Phase VERIFY must output VALID when relative carrier exists in workspace root test/, got: $($realVerifyValidation -join '; ')"
     }
 
     # Test VCS untracked file detection in VerifyCompletion
@@ -2028,15 +2053,15 @@ try {
     $vcsFeatState = Join-Path $vcsSpecDir "feature-state.json"
     [System.IO.File]::WriteAllText($vcsFeatState, '{"schemaVersion":"1.0","feature":"VcsTestFeature","tier":"T2","phase":"IMPLEMENTATION"}', $Utf8NoBom)
     
-    # Create untracked Java file in src/
-    $vcsSrcDir = Join-Path $vcsTestDir "src/com/test"
-    [System.IO.Directory]::CreateDirectory($vcsSrcDir) | Out-Null
-    $untrackedJava = Join-Path $vcsSrcDir "UntrackedClass.java"
-    [System.IO.File]::WriteAllText($untrackedJava, "public class UntrackedClass {}", $Utf8NoBom)
+    # Create untracked CSV file in config/
+    $vcsConfigDir = Join-Path $vcsTestDir "config"
+    [System.IO.Directory]::CreateDirectory($vcsConfigDir) | Out-Null
+    $untrackedCsv = Join-Path $vcsConfigDir "new_table.csv"
+    [System.IO.File]::WriteAllText($untrackedCsv, "id,value`n1,test", $Utf8NoBom)
 
     $vcsVerifyOut = & $ScriptPath -Operation VerifyCompletion -Path (Join-Path $vcsSpecDir "workflow-state.json")
     if ($LASTEXITCODE -eq 0 -or $vcsVerifyOut -notcontains "VERIFY_COMPLETION_FAIL") {
-        throw "VerifyCompletion must FAIL when untracked .java file exists in src/, got: $($vcsVerifyOut -join '; ')"
+        throw "VerifyCompletion must FAIL when untracked .csv file exists in config/, got: $($vcsVerifyOut -join '; ')"
     }
 
     Write-Output "All workflow state tests passed."

@@ -396,7 +396,8 @@ function Assert-RequiredApprovals {
     if ($approval.feature -ne $Runtime.feature) {
         throw "Approval feature '$($approval.feature)' does not match runtime feature '$($Runtime.feature)'."
     }
-    if ($approval.requirement.status -ne "APPROVED") {
+    $isDesignOnly = ($approval.gateMode -eq "DESIGN_ONLY")
+    if (-not $isDesignOnly -and $approval.requirement.status -ne "APPROVED") {
         throw "Requirement approval is required before entering $TargetPhase."
     }
     if ($TargetPhase -in $bothRequired -and $approval.design.status -ne "APPROVED") {

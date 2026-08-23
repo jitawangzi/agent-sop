@@ -30,7 +30,8 @@
       "minLength": 1
     },
     "requirementSha256": {
-      "$ref": "#/$defs/sha256"
+      "$ref": "#/$defs/sha256",
+      "description": "SHA-256 hash of approved 01_server_rules.md, or 64 zeros in DESIGN_ONLY mode"
     },
     "designArtifact": {
       "type": "string",

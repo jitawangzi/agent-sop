@@ -301,7 +301,7 @@ SVN 是团队源码真源。本项目基于 **SVN 分支**开发（不是 trunk 
 3. 输出建议的 `svn commit -m "<FeatureName>: <message>"` 命令供用户**人工执行**最终提交（`svn commit` 涉及团队真源，由人工确认提交，不由 AI 自动执行）。
 4. 如需合并到主干/其他分支，用 `svn merge`（有冲突检测，**禁止用文件复制覆盖**，会静默回退他人代码）。
 
-**VCS 增删即时跟踪（硬约束）**：凡新建、删除或重构源码、测试、配置或脚本文件（.java, .groovy, .kt, .xml, .properties, .proto, .ps1, .csv, .json, .sql, .yml, .yaml 等），AI 必须在创建/删除后**立即在后台执行 `svn add <file>` / `svn delete <file>`（或 `git add`）**，禁止留存未跟踪状态到任务交付尾声。
+**VCS 增删即时跟踪（硬约束）**：凡新建、删除或重构源码、测试、配置或脚本文件（.java, .groovy, .kt, .xml, .properties, .proto, .ps1, .csv, .json, .sql, .yml, .yaml 等），AI 必须在创建/删除后**立即在后台执行 `svn add <file>` / `svn delete <file>`（或 `git add`）**，禁止留存未跟踪状态到任务交付尾声。涉及文件重命名或移动时，优先使用 `svn move <old> <new>`（或 `git mv`）保留版本历史；若已在文件系统移动，AI 应配合使用 `svn delete <old>` 与 `svn add <new>`。
 
 本地 Git commit 仅作开发检查点，不是交付。
 

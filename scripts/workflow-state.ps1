@@ -875,6 +875,27 @@ function Assert-CoverageHash {
     }
 }
 
+function Resolve-AiSopWorkspaceRoot {
+    param([string]$StartPath)
+    if ([string]::IsNullOrWhiteSpace($StartPath)) { return $null }
+    $curDir = if (Test-Path -LiteralPath $StartPath -PathType Container) {
+        [System.IO.Path]::GetFullPath($StartPath)
+    } else {
+        Split-Path -Parent ([System.IO.Path]::GetFullPath($StartPath))
+    }
+    while (-not [string]::IsNullOrWhiteSpace($curDir)) {
+        if ((Test-Path -LiteralPath (Join-Path $curDir ".ai-workspace")) -or 
+            (Test-Path -LiteralPath (Join-Path $curDir ".git")) -or 
+            (Test-Path -LiteralPath (Join-Path $curDir ".svn"))) {
+            return $curDir
+        }
+        $parent = Split-Path -Parent $curDir
+        if ($parent -eq $curDir) { break }
+        $curDir = $parent
+    }
+    return $null
+}
+
 function Validate-TestCoverageState {
     param(
         [string]$CoveragePath,
@@ -1167,20 +1188,7 @@ function Get-CoveragePlaceholderWarnings {
             if ($filePathPart -match '^([^#]+)#') { $filePathPart = $Matches[1] }
             $resolved = $filePathPart
             if (-not [System.IO.Path]::IsPathRooted($resolved)) {
-                # Find WorkspaceRoot by walking upward from CoveragePath
-                $curDir = Split-Path -Parent $CoveragePath
-                $carrierWsRoot = $null
-                while (-not [string]::IsNullOrWhiteSpace($curDir)) {
-                    if ((Test-Path -LiteralPath (Join-Path $curDir ".ai-workspace")) -or 
-                        (Test-Path -LiteralPath (Join-Path $curDir ".git")) -or 
-                        (Test-Path -LiteralPath (Join-Path $curDir ".svn"))) {
-                        $carrierWsRoot = $curDir
-                        break
-                    }
-                    $parent = Split-Path -Parent $curDir
-                    if ($parent -eq $curDir) { break }
-                    $curDir = $parent
-                }
+                $carrierWsRoot = Resolve-AiSopWorkspaceRoot -StartPath (Split-Path -Parent $CoveragePath)
                 $candidateWs = if (-not [string]::IsNullOrWhiteSpace($carrierWsRoot)) { Join-Path $carrierWsRoot $filePathPart } else { $null }
                 $candidateSpec = Join-Path (Split-Path -Parent $CoveragePath) $filePathPart
                 if ($candidateWs -and (Test-Path -LiteralPath $candidateWs -PathType Leaf)) {
@@ -2272,19 +2280,7 @@ switch ($Operation) {
         
         # Workspace root resolution (search upward for .ai-workspace, .git, or .svn)
         $specFullPath = [System.IO.Path]::GetFullPath($specDir)
-        $curDir = $specFullPath
-        $wsRoot = $null
-        while (-not [string]::IsNullOrWhiteSpace($curDir)) {
-            if ((Test-Path -LiteralPath (Join-Path $curDir ".ai-workspace")) -or 
-                (Test-Path -LiteralPath (Join-Path $curDir ".git")) -or 
-                (Test-Path -LiteralPath (Join-Path $curDir ".svn"))) {
-                $wsRoot = $curDir
-                break
-            }
-            $parent = Split-Path -Parent $curDir
-            if ($parent -eq $curDir) { break }
-            $curDir = $parent
-        }
+        $wsRoot = Resolve-AiSopWorkspaceRoot -StartPath $specDir
         if ([string]::IsNullOrWhiteSpace($wsRoot)) { $wsRoot = (Get-Location).Path }
 
         # 1. Gate approval state (T3 only).
@@ -2372,19 +2368,7 @@ switch ($Operation) {
         
         # Workspace root resolution
         $specFullPath = [System.IO.Path]::GetFullPath($specDir)
-        $curDir = $specFullPath
-        $wsRoot = $null
-        while (-not [string]::IsNullOrWhiteSpace($curDir)) {
-            if ((Test-Path -LiteralPath (Join-Path $curDir ".ai-workspace")) -or 
-                (Test-Path -LiteralPath (Join-Path $curDir ".git")) -or 
-                (Test-Path -LiteralPath (Join-Path $curDir ".svn"))) {
-                $wsRoot = $curDir
-                break
-            }
-            $parent = Split-Path -Parent $curDir
-            if ($parent -eq $curDir) { break }
-            $curDir = $parent
-        }
+        $wsRoot = Resolve-AiSopWorkspaceRoot -StartPath $specDir
         if ([string]::IsNullOrWhiteSpace($wsRoot)) { $wsRoot = (Get-Location).Path }
 
         $specParent2 = Split-Path -Parent (Split-Path -Parent $specFullPath)

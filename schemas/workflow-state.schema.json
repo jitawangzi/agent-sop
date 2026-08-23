@@ -19,6 +19,14 @@
       "type": "string",
       "minLength": 1
     },
+    "gateMode": {
+      "type": "string",
+      "enum": [
+        "DUAL",
+        "DESIGN_ONLY"
+      ],
+      "default": "DUAL"
+    },
     "requirement": {
       "$ref": "#/$defs/approval"
     },
@@ -120,6 +128,11 @@
     {
       "if": {
         "properties": {
+          "gateMode": {
+            "not": {
+              "const": "DESIGN_ONLY"
+            }
+          },
           "design": {
             "properties": {
               "status": {

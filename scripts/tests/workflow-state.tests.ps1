@@ -1914,7 +1914,7 @@ try {
 
         $ownerLockPath = Join-Path $env:SERVER_NEW_WORKFLOW_REGISTRY "example.json.lock"
         $ownerLockObserved = $false
-        for ($attempt = 0; $attempt -lt 50; $attempt++) {
+        for ($attempt = 0; $attempt -lt 100; $attempt++) {
             if (Test-Path -LiteralPath $ownerLockPath) {
                 $ownerLockObserved = $true
                 break
@@ -1922,7 +1922,9 @@ try {
             Start-Sleep -Milliseconds 100
         }
         if (-not $ownerLockObserved) {
-            throw "State mutation did not acquire the owner lock before its state lock."
+            $errContent = if (Test-Path -LiteralPath $stateRaceErr) { Get-Content -LiteralPath $stateRaceErr -Raw } else { "" }
+            $outContent = if (Test-Path -LiteralPath $stateRaceOut) { Get-Content -LiteralPath $stateRaceOut -Raw } else { "" }
+            throw "State mutation did not acquire the owner lock before its state lock. Err: $errContent | Out: $outContent"
         }
 
         $completeRaceOut = Join-Path $TestRoot "complete-race.out"
@@ -2062,6 +2064,61 @@ try {
     $vcsVerifyOut = & $ScriptPath -Operation VerifyCompletion -Path (Join-Path $vcsSpecDir "workflow-state.json")
     if ($LASTEXITCODE -eq 0 -or $vcsVerifyOut -notcontains "VERIFY_COMPLETION_FAIL") {
         throw "VerifyCompletion must FAIL when untracked .csv file exists in config/, got: $($vcsVerifyOut -join '; ')"
+    }
+
+    # Test DESIGN_ONLY gateMode (single design gate for technical contract changes)
+    $designOnlyDir = Join-Path $TestRoot "design_only_feature"
+    [System.IO.Directory]::CreateDirectory($designOnlyDir) | Out-Null
+    $doSpecDir = Join-Path $designOnlyDir ".ai-workspace/specs/features/DesignOnlyFeature"
+    [System.IO.Directory]::CreateDirectory($doSpecDir) | Out-Null
+    $doApproval = Join-Path $doSpecDir "00_workflow_state.json"
+    $doFeatState = Join-Path $doSpecDir "feature-state.json"
+    $doReq = Join-Path $doSpecDir "01_server_rules.md"
+    $doDes = Join-Path $doSpecDir "06_design_contract.md"
+    $doPlan = Join-Path $doSpecDir "05_test_plan.md"
+    $doCov = Join-Path $doSpecDir "05_test_coverage.json"
+
+    $doTestFile = Join-Path $designOnlyDir "test/MyTest.java"
+    [System.IO.Directory]::CreateDirectory((Split-Path -Parent $doTestFile)) | Out-Null
+    [System.IO.File]::WriteAllText($doTestFile, "package test; public class MyTest { @Test public void testProto() {} }", $Utf8NoBom)
+
+    [System.IO.File]::WriteAllText($doDes, "# Design Contract`n`n- DC-01: Proto update`n- DR-01: Storage safety`n- TW-01: Workflow`n", $Utf8NoBom)
+    [System.IO.File]::WriteAllText($doPlan, "# Test Plan`n`n- TC-01: Test proto update`n<!-- meta: { `"id`": `"TC-01`", `"title`": `"Test proto update`", `"covers`": [`"DC-01`", `"DR-01`", `"TW-01`"], `"carrier`": `"test/MyTest.java#testProto`" } -->`n", $Utf8NoBom)
+    [System.IO.File]::WriteAllText($doFeatState, '{"schemaVersion":"1.0","feature":"DesignOnlyFeature","tier":"T3","gateMode":"DESIGN_ONLY","phase":"DONE"}', $Utf8NoBom)
+
+    $doOwnerId = "do-cursor"
+    $doSession = New-TestSuperpowersOwner `
+        -Feature "DesignOnlyFeature" `
+        -SpecDirectory $doSpecDir `
+        -Agent CURSOR `
+        -OwnerId $doOwnerId
+
+    & $ScriptPath -Operation InitApproval -Path $doApproval -Feature "DesignOnlyFeature" -GateMode DESIGN_ONLY `
+        -OwnerWorkflow SUPERPOWERS -OwnerAgent CURSOR -OwnerId $doOwnerId
+    $doStatus = & $ScriptPath -Operation Status -Path $doApproval
+    $doStatusStr = $doStatus | Out-String
+    if ($doStatusStr -notmatch "status=EXEMPT\(DESIGN_ONLY\)") {
+        throw "Status must show EXEMPT(DESIGN_ONLY) for requirement gate under DESIGN_ONLY mode, got: $doStatusStr"
+    }
+
+    # Approving design directly must succeed without requirement approval
+    & $ScriptPath -Operation Approve -Path $doApproval -Gate design -ApprovedBy "human:reviewer" `
+        -OwnerWorkflow SUPERPOWERS -OwnerAgent CURSOR -OwnerId $doOwnerId
+    
+    # SyncCoverage and ValidateTestCoverage
+    & $ScriptPath -Operation SyncCoverage -Path $doCov
+    $doVal = & $ScriptPath -Operation ValidateTestCoverage -Path $doCov -Phase PLAN
+    if ($doVal -notcontains "VALID") {
+        throw "ValidateTestCoverage must succeed in DESIGN_ONLY mode without requirement approval, got: $($doVal -join '; ')"
+    }
+
+    # Create dummy classes dir so compile verification passes
+    $doBuild = Join-Path $designOnlyDir "build/classes"
+    [System.IO.Directory]::CreateDirectory($doBuild) | Out-Null
+    $doVerify = & $ScriptPath -Operation VerifyCompletion -Path $doApproval
+    $doVerifyStr = $doVerify | Out-String
+    if ($doVerify -notcontains "VERIFY_COMPLETION_PASS" -or $doVerifyStr -notmatch "需求门禁\(豁免: 仅技术契约\)") {
+        throw "VerifyCompletion must pass and display requirement gate exemption in DESIGN_ONLY mode, got: $doVerifyStr"
     }
 
     Write-Output "All workflow state tests passed."

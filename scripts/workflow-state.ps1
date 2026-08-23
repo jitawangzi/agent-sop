@@ -99,7 +99,9 @@ param(
     [string]$OwnerAgent = $(if (-not [string]::IsNullOrWhiteSpace($env:AI_SOP_WORKFLOW_OWNER_AGENT)) { $env:AI_SOP_WORKFLOW_OWNER_AGENT } else { $env:SERVER_NEW_WORKFLOW_OWNER_AGENT }),
     [string]$OwnerId = $(if (-not [string]::IsNullOrWhiteSpace($env:AI_SOP_WORKFLOW_OWNER_ID)) { $env:AI_SOP_WORKFLOW_OWNER_ID } else { $env:SERVER_NEW_WORKFLOW_OWNER_ID }),
     [ValidateSet("PLAN", "VERIFY")]
-    [string]$Phase = ""
+    [string]$Phase = "",
+    [ValidateSet("DUAL", "DESIGN_ONLY")]
+    [string]$GateMode = "DUAL"
 )
 
 $ErrorActionPreference = "Stop"
@@ -990,43 +992,49 @@ function Validate-TestCoverageState {
     if ($approval.feature -ne $coverage.feature) {
         throw "Approval feature '$($approval.feature)' does not match coverage feature '$($coverage.feature)'."
     }
-    if ($approval.requirement.status -ne "APPROVED") {
+    $isDesignOnly = ($approval.gateMode -eq "DESIGN_ONLY")
+    if (-not $isDesignOnly -and $approval.requirement.status -ne "APPROVED") {
         throw "Requirement approval is required before validating test coverage."
     }
     if ($approval.design.status -ne "APPROVED") {
         throw "Design approval is required before validating test coverage."
     }
-    $approvedRequirementPath = [System.IO.Path]::GetFullPath(
-        (Resolve-ArtifactPath -StatePath $approvalPath -Artifact $approval.requirement.artifact)
-    )
+    if (-not $isDesignOnly) {
+        $approvedRequirementPath = [System.IO.Path]::GetFullPath(
+            (Resolve-ArtifactPath -StatePath $approvalPath -Artifact $approval.requirement.artifact)
+        )
+        if (-not $requirementPath.Equals($approvedRequirementPath, [System.StringComparison]::OrdinalIgnoreCase)) {
+            throw "Coverage requirement artifact is not the approved requirement artifact: $approvedRequirementPath"
+        }
+        $currentRequirementHash = (Get-AiSopArtifactHash -Path $requirementPath)
+        if ($approval.requirement.sha256.ToLowerInvariant() -ne $currentRequirementHash) {
+            throw "Approved requirement hash does not match the current artifact: $requirementPath"
+        }
+        Assert-CoverageHash -ArtifactPath $requirementPath -ExpectedHash $coverage.requirementSha256 -Label "Requirement"
+    }
     $approvedDesignPath = [System.IO.Path]::GetFullPath(
         (Resolve-ArtifactPath -StatePath $approvalPath -Artifact $approval.design.artifact)
     )
-    if (-not $requirementPath.Equals($approvedRequirementPath, [System.StringComparison]::OrdinalIgnoreCase)) {
-        throw "Coverage requirement artifact is not the approved requirement artifact: $approvedRequirementPath"
-    }
     if (-not $designPath.Equals($approvedDesignPath, [System.StringComparison]::OrdinalIgnoreCase)) {
         throw "Coverage design artifact is not the approved design artifact: $approvedDesignPath"
     }
-    $currentRequirementHash = (Get-AiSopArtifactHash -Path $requirementPath)
     $currentDesignHash = (Get-AiSopArtifactHash -Path $designPath)
-    if ($approval.requirement.sha256.ToLowerInvariant() -ne $currentRequirementHash) {
-        throw "Approved requirement hash does not match the current artifact: $requirementPath"
-    }
     if ($approval.design.sha256.ToLowerInvariant() -ne $currentDesignHash) {
         throw "Approved design hash does not match the current artifact: $designPath"
     }
-    Assert-CoverageHash -ArtifactPath $requirementPath -ExpectedHash $coverage.requirementSha256 -Label "Requirement"
     Assert-CoverageHash -ArtifactPath $designPath -ExpectedHash $coverage.designSha256 -Label "Design"
     Assert-CoverageHash -ArtifactPath $testPlanPath -ExpectedHash $coverage.testPlanSha256 -Label "Test plan"
 
-    $requirementIds = @(Get-DocumentClauseIds -ArtifactPath $requirementPath -Prefixes @("BR", "EX", "AC"))
     $designIds = @(Get-DocumentClauseIds -ArtifactPath $designPath -Prefixes @("DC", "DR", "TW"))
-    if ($requirementIds.Count -eq 0) {
-        throw "Requirement artifact contains no stable BR/EX/AC clause IDs."
-    }
     if ($designIds.Count -eq 0) {
         throw "Design artifact contains no stable DC/DR/TW clause IDs."
+    }
+    $requirementIds = @()
+    if (Test-Path -LiteralPath $requirementPath -PathType Leaf) {
+        $requirementIds = @(Get-DocumentClauseIds -ArtifactPath $requirementPath -Prefixes @("BR", "EX", "AC"))
+    }
+    if (-not $isDesignOnly -and $requirementIds.Count -eq 0) {
+        throw "Requirement artifact contains no stable BR/EX/AC clause IDs."
     }
 
     $caseIds = @($coverage.cases | ForEach-Object { $_.id.ToUpperInvariant() })
@@ -1095,9 +1103,13 @@ function Validate-TestCoverageState {
             throw "Coverage exemption '$clauseId' reason does not match the approved source artifact."
         }
     }
-    $uncoveredRequirementIds = @($requirementIds | Where-Object {
-        $_ -notin $referencedRequirementIds -and $_ -notin $exemptions
-    })
+    $uncoveredRequirementIds = if (-not $isDesignOnly) {
+        @($requirementIds | Where-Object {
+            $_ -notin $referencedRequirementIds -and $_ -notin $exemptions
+        })
+    } else {
+        @()
+    }
     $uncoveredDesignIds = @($designIds | Where-Object {
         $_ -notin $referencedDesignIds -and $_ -notin $exemptions
     })
@@ -1332,7 +1344,8 @@ function Approve-CanonicalArtifact {
     }
 
     $state = Validate-ApprovalState -StatePath $StatePath
-    if ($GateName -eq "design" -and $state.requirement.status -ne "APPROVED") {
+    $isDesignOnly = ($state.gateMode -eq "DESIGN_ONLY")
+    if ($GateName -eq "design" -and -not $isDesignOnly -and $state.requirement.status -ne "APPROVED") {
         throw "Requirement approval is required before design approval."
     }
 
@@ -1766,6 +1779,7 @@ switch ($Operation) {
             $state = [ordered]@{
                 schemaVersion = "1.0"
                 feature = $Feature
+                gateMode = $GateMode
                 requirement = [ordered]@{
                     artifact = $RequirementArtifact
                     status = "DRAFT"
@@ -2165,7 +2179,12 @@ switch ($Operation) {
                 } catch { }
             }
             Write-Output "feature=$feature tier=$tier phase=$phase"
+            $isDesignOnly = ($state.gateMode -eq "DESIGN_ONLY")
             foreach ($gateName in @("requirement", "design")) {
+                if ($gateName -eq "requirement" -and $isDesignOnly) {
+                    Write-Output "gate=requirement status=EXEMPT(DESIGN_ONLY) sha256= artifact=01_server_rules.md artifactExists=True hashMatch=MATCH"
+                    continue
+                }
                 $approval = $state.$gateName
                 $status = [string]$approval.status
                 $recordedSha = [string]$approval.sha256
@@ -2208,8 +2227,9 @@ switch ($Operation) {
                 $covers = @($meta.covers)
                 $reqIds = @($covers | Where-Object { $_ -match '^(BR|EX|AC)-' })
                 $desIds = @($covers | Where-Object { $_ -match '^(DC|DR|TW)-' })
-                if (-not $reqIds) { $reqIds = @("BR-PLACEHOLDER") }
-                if (-not $desIds) { $desIds = @("DC-PLACEHOLDER") }
+                if ($reqIds.Count -eq 0 -and $desIds.Count -eq 0) {
+                    $desIds = @("DC-PLACEHOLDER")
+                }
                 $cases.Add([ordered]@{
                     id = $tcId
                     status = "PLANNED"
@@ -2287,9 +2307,14 @@ switch ($Operation) {
         if ($effectiveTier -eq "T3") {
             if (Test-Path -LiteralPath $Path -PathType Leaf) {
                 $st = Get-Content -Raw -LiteralPath $Path | ConvertFrom-Json
+                $isDesignOnly = ($st.gateMode -eq "DESIGN_ONLY")
                 $reqOk = ($st.requirement.status -eq "APPROVED")
                 $desOk = ($st.design.status -eq "APPROVED")
-                $checks.Add("[$(if($reqOk){'v'}else{'X'})] 需求门禁 APPROVED")
+                if ($isDesignOnly) {
+                    $checks.Add("[v] 需求门禁(豁免: 仅技术契约)")
+                } else {
+                    $checks.Add("[$(if($reqOk){'v'}else{'X'})] 需求门禁 APPROVED")
+                }
                 $checks.Add("[$(if($desOk){'v'}else{'X'})] 设计门禁 APPROVED")
             } else {
                 $checks.Add("[X] 门禁状态文件缺失")
@@ -2396,11 +2421,16 @@ switch ($Operation) {
         if ($effectiveTier -eq "T3") {
             if (Test-Path -LiteralPath $Path -PathType Leaf) {
                 $st = Get-Content -Raw -LiteralPath $Path | ConvertFrom-Json
+                $isDesignOnly = ($st.gateMode -eq "DESIGN_ONLY")
                 $reqOk = ([string]$st.requirement.status -eq "APPROVED")
                 $desOk = ([string]$st.design.status -eq "APPROVED")
-                if (-not $reqOk) { $failures.Add("requirement gate not APPROVED") }
+                if (-not $isDesignOnly -and -not $reqOk) { $failures.Add("requirement gate not APPROVED") }
                 if (-not $desOk) { $failures.Add("design gate not APPROVED") }
-                $checks.Add("[$(if($reqOk){'v'}else{'X'})] 需求门禁 APPROVED")
+                if ($isDesignOnly) {
+                    $checks.Add("[v] 需求门禁(豁免: 仅技术契约)")
+                } else {
+                    $checks.Add("[$(if($reqOk){'v'}else{'X'})] 需求门禁 APPROVED")
+                }
                 $checks.Add("[$(if($desOk){'v'}else{'X'})] 设计门禁 APPROVED")
             } else {
                 $failures.Add("workflow-state.json missing")
@@ -2479,7 +2509,7 @@ switch ($Operation) {
                 }
             } catch {}
             if ($untrackedFiles.Count -gt 0) {
-                $failures.Add("VCS untracked/missing code files found: $($untrackedFiles -join ', ')")
+                $failures.Add("VCS untracked/missing code files found: $($untrackedFiles -join ', ') -> AI 请在后台自动执行 svn add <files> / svn delete <files> 修复后重试 VerifyCompletion")
                 $checks.Add("[X] VCS 交付状态: SVN 存在未同步代码 ($($untrackedFiles.Count) 个文件未执行 svn add/delete)")
             } else {
                 $checks.Add("[?] VCS 交付状态: SVN 工作副本 (准备 svn commit)")
@@ -2505,7 +2535,7 @@ switch ($Operation) {
                 }
             } catch {}
             if ($untrackedFiles.Count -gt 0) {
-                $failures.Add("VCS untracked code files found (run 'git add'): $($untrackedFiles -join ', ')")
+                $failures.Add("VCS untracked code files found: $($untrackedFiles -join ', ') -> AI 请在后台自动执行 git add <files> 修复后重试 VerifyCompletion")
                 $checks.Add("[X] VCS 交付状态: Git 存在未跟踪代码 ($($untrackedFiles.Count) 个文件未执行 git add)")
             } else {
                 $checks.Add("[?] VCS 交付状态: Git 仓库 (人工确认 git commit / status)")

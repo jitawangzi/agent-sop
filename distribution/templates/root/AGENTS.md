@@ -89,6 +89,8 @@ AI 单方判断不构成跳门禁的充分理由（B 类必须问用户）。
 ② 变更范围小（新增/调整设计契约 ≤ 3 条 DC 且无存储迁移）；
 AI 可在一次响应内同时呈递 `01_server_rules.md` 与 `06_design_contract.md`。用户回复单次“确认”后，AI **分别调用两次 Approve**（写入 requirement 与 design 的独立 SHA 门禁记录）。保持“两道门禁状态不漏”，消除“两次等待交互”。
 
+**技术契约调整单门禁模式（`gateMode: "DESIGN_ONLY"`）**：需求方向已定、仅调整协议/存储/技术契约的中型任务（即 `SUPERPOWERS_MANUAL.md` 模板 5），可在 `00_workflow_state.json` 中声明 `gateMode: "DESIGN_ONLY"`（或调 `InitApproval -GateMode DESIGN_ONLY`）。该模式下仅需通过 06 设计门禁（`Approve -Gate design`），01 需求门禁自动豁免放行，不走双门禁也不降级 T2。
+
 **人机交互提问节奏（统一口径）**：brainstorming/澄清阶段，AI **每轮最多问 3 个聚焦问题**，每个问题聚焦单一决策点，允许用户一句话给齐；对有意义的备选给出 2-4 选项并推荐其一（做选择题而非填空题）。本口径为本文件定义，adapter/VERIFICATION 等文档统一引用。
 
 **人工确认自然语言容差**：用户回复“确认/批准/同意/LGTM/Proceed/通过/没问题/可以/按这个搞/OK 写吧/没意见/冲”且**不带修改建议**→触发 Approve 写入门禁。用户回复含“但是/修改/调整/不对/改下”等转向词→**不写 Approve**，先修正文档再次呈递，严禁提前写入。模糊回复（“行”“先这样吧”）→ AI 须追问“这是否为最终确认？有无修改建议？”确认后再写。
@@ -298,6 +300,8 @@ SVN 是团队源码真源。本项目基于 **SVN 分支**开发（不是 trunk 
 2. 对新增文件执行 `svn add`，对删除文件执行 `svn delete`（AI 自动执行，勿漏——未跟踪文件 `?` 不会被 `svn commit` 包含）；
 3. 输出建议的 `svn commit -m "<FeatureName>: <message>"` 命令供用户**人工执行**最终提交（`svn commit` 涉及团队真源，由人工确认提交，不由 AI 自动执行）。
 4. 如需合并到主干/其他分支，用 `svn merge`（有冲突检测，**禁止用文件复制覆盖**，会静默回退他人代码）。
+
+**VCS 增删即时跟踪（硬约束）**：凡新建、删除或重构源码、测试、配置或脚本文件（.java, .groovy, .kt, .xml, .properties, .proto, .ps1, .csv, .json, .sql, .yml, .yaml 等），AI 必须在创建/删除后**立即在后台执行 `svn add <file>` / `svn delete <file>`（或 `git add`）**，禁止留存未跟踪状态到任务交付尾声。
 
 本地 Git commit 仅作开发检查点，不是交付。
 

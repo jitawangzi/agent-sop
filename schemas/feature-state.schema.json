@@ -22,6 +22,9 @@
     "tier": {
       "enum": ["T1", "T2", "T3", "FAST_TRACK"]
     },
+    "gateMode": {
+      "enum": ["DUAL", "DESIGN_ONLY"]
+    },
     "phase": {
       "enum": [
         "INTENT",

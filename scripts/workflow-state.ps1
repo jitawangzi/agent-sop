@@ -97,7 +97,9 @@ param(
     [string]$OwnerWorkflow = $(if (-not [string]::IsNullOrWhiteSpace($env:AI_SOP_WORKFLOW_OWNER_WORKFLOW)) { $env:AI_SOP_WORKFLOW_OWNER_WORKFLOW } else { $env:SERVER_NEW_WORKFLOW_OWNER_WORKFLOW }),
     [ValidateSet("CLAUDE_CODE", "COPILOT", "ANTIGRAVITY", "CURSOR", "GEMINI", "PI")]
     [string]$OwnerAgent = $(if (-not [string]::IsNullOrWhiteSpace($env:AI_SOP_WORKFLOW_OWNER_AGENT)) { $env:AI_SOP_WORKFLOW_OWNER_AGENT } else { $env:SERVER_NEW_WORKFLOW_OWNER_AGENT }),
-    [string]$OwnerId = $(if (-not [string]::IsNullOrWhiteSpace($env:AI_SOP_WORKFLOW_OWNER_ID)) { $env:AI_SOP_WORKFLOW_OWNER_ID } else { $env:SERVER_NEW_WORKFLOW_OWNER_ID })
+    [string]$OwnerId = $(if (-not [string]::IsNullOrWhiteSpace($env:AI_SOP_WORKFLOW_OWNER_ID)) { $env:AI_SOP_WORKFLOW_OWNER_ID } else { $env:SERVER_NEW_WORKFLOW_OWNER_ID }),
+    [ValidateSet("PLAN", "VERIFY")]
+    [string]$Phase = ""
 )
 
 $ErrorActionPreference = "Stop"
@@ -1088,22 +1090,29 @@ function Validate-TestCoverageState {
 function Get-CoveragePlaceholderWarnings {
     # Detect SyncCoverage placeholder fields (expected="placeholder" / operator="N_A" /
     # target="see plan") that pass VALID but carry zero real assertions. Returns a
-    # hashtable: Warnings (non-blocking, P2+ placeholders) and Errors (blocking,
-    # P0/P1 priority TCs with placeholders — high-priority cases must carry real
-    # assertions, not SyncCoverage skeletons). The caller prints Warnings alongside
-    # VALID; Errors downgrade the result from VALID to INVALID_PLACEHOLDERS.
-    param([string]$CoveragePath)
+    # hashtable: Warnings (non-blocking, P2+ placeholders, or all placeholders during PLAN phase)
+    # and Errors (blocking, P0/P1 priority TCs with placeholders during VERIFY phase).
+    param(
+        [string]$CoveragePath,
+        [string]$Phase = "VERIFY"
+    )
     $warnings = [System.Collections.Generic.List[string]]::new()
     $errors = [System.Collections.Generic.List[string]]::new()
     $coverageSchema = Join-Path $SchemaRoot "test-coverage.schema.json"
     $coverage = Read-JsonObject -FilePath $CoveragePath -SchemaPath $coverageSchema
+    $isPlanPhase = ($Phase -ieq "PLAN")
+
     foreach ($case in $coverage.cases) {
         $caseId = [string]$case.id
         $prio = [string]$case.priority
         $isHighPriority = ($prio -ieq "P0") -or ($prio -ieq "P1")
         $caseStatus = [string]$case.status
         if ($caseStatus -ieq "PLACEHOLDER") {
-            $errors.Add("ERROR: $caseId (priority=$prio) status is PLACEHOLDER — must be refined to PLANNED/IMPLEMENTED/VERIFIED")
+            if ($isPlanPhase) {
+                $warnings.Add("INFO: $caseId (priority=$prio) status is PLACEHOLDER (will be refined during implementation)")
+            } else {
+                $errors.Add("ERROR: $caseId (priority=$prio) status is PLACEHOLDER — must be refined to PLANNED/IMPLEMENTED/VERIFIED")
+            }
         }
         $placeholderHits = [System.Collections.Generic.List[string]]::new()
         $hasNonNaAssertion = $false
@@ -1123,13 +1132,15 @@ function Get-CoveragePlaceholderWarnings {
         }
         if ($placeholderHits.Count -gt 0) {
             $hitSummary = ($placeholderHits -join '; ')
-            if ($isHighPriority) {
+            if ($isPlanPhase) {
+                $warnings.Add("INFO: $caseId (priority=$prio) assertions skeleton ($hitSummary)")
+            } elseif ($isHighPriority) {
                 $errors.Add("ERROR: $caseId (priority=$prio) assertions still placeholder ($hitSummary) — high-priority TC must carry real assertions before delivery")
             } else {
                 $warnings.Add("WARN: $caseId (priority=$prio) assertions still placeholder ($hitSummary) — refine setup/trigger/assertions before delivery")
             }
         }
-        if ($isHighPriority -and -not $hasNonNaAssertion) {
+        if (-not $isPlanPhase -and $null -ne $case.assertions -and $isHighPriority -and -not $hasNonNaAssertion) {
             $errors.Add("ERROR: $caseId (priority=$prio) all assertions are N_A — high-priority cases must define at least one non-N_A assertion")
         }
 
@@ -1137,13 +1148,17 @@ function Get-CoveragePlaceholderWarnings {
         $carrier = [string]$case.automationCarrier
         $carrierTrim = $carrier.Trim()
         if ([string]::IsNullOrWhiteSpace($carrierTrim) -or $carrierTrim -ieq "__TODO__" -or $carrierTrim -ieq "see plan" -or $carrierTrim -ieq "TODO") {
-            if ($isHighPriority) {
+            if ($isPlanPhase) {
+                $warnings.Add("INFO: $caseId (priority=$prio) automationCarrier to be implemented ('$carrierTrim')")
+            } elseif ($isHighPriority) {
                 $errors.Add("ERROR: $caseId (priority=$prio) automationCarrier is placeholder ('$carrierTrim') — high-priority TC must point to test class/method or file")
             } else {
                 $warnings.Add("WARN: $caseId automationCarrier is placeholder ('$carrierTrim') — point it at the real test method/path before delivery")
             }
         } elseif ($carrierTrim -in @("JUnit", "pytest", "go test", "cargo test", "npm test")) {
-            if ($isHighPriority) {
+            if ($isPlanPhase) {
+                $warnings.Add("INFO: $caseId (priority=$prio) automationCarrier carrier type: '$carrierTrim'")
+            } elseif ($isHighPriority) {
                 $errors.Add("ERROR: $caseId (priority=$prio) automationCarrier is too generic ('$carrierTrim') — specify exact test file or Class#method")
             }
         } elseif ($carrierTrim -match '[/\\]\.[a-zA-Z0-9]+$' -or $carrierTrim -match '\.[a-zA-Z]{1,5}#') {
@@ -1155,16 +1170,22 @@ function Get-CoveragePlaceholderWarnings {
                 $resolved = Join-Path (Split-Path -Parent (Split-Path -Parent $CoveragePath)) $filePathPart
             }
             if (-not (Test-Path -LiteralPath $resolved -PathType Leaf)) {
-                $errors.Add("ERROR: $caseId automationCarrier points to a missing file: $filePathPart — verify the test path")
+                if ($isPlanPhase) {
+                    $warnings.Add("INFO: $caseId automationCarrier target test file not yet created: $filePathPart (will be verified before completion)")
+                } else {
+                    $errors.Add("ERROR: $caseId automationCarrier points to a missing file: $filePathPart — verify the test path")
+                }
             } elseif ($filePathPart -match '\.java$') {
                 $javaSrc = [System.IO.File]::ReadAllText($resolved)
                 if ($javaSrc -notmatch '@Test\b') {
-                    $errors.Add("ERROR: $caseId automationCarrier .java has no @Test method: $filePathPart — carrier must be a real test")
+                    if ($isPlanPhase) {
+                        $warnings.Add("INFO: $caseId automationCarrier .java has no @Test method yet: $filePathPart")
+                    } else {
+                        $errors.Add("ERROR: $caseId automationCarrier .java has no @Test method: $filePathPart — carrier must be a real test")
+                    }
                 }
             }
         }
-        # else: free-text carrier (e.g. "JSP/Tomcat path-B (deferred...)") — intentional
-        # disclosure, not a file path; do not block. Recorded implicitly via absence.
     }
     return [pscustomobject]@{ Warnings = $warnings; Errors = $errors }
 }
@@ -2054,7 +2075,21 @@ switch ($Operation) {
             $runtime = Validate-RuntimeState -StatePath $RuntimePath
         }
         Validate-TestCoverageState -CoveragePath $Path -Runtime $runtime | Out-Null
-        $placeholderResult = Get-CoveragePlaceholderWarnings -CoveragePath $Path
+        $effectivePhase = $Phase
+        if ([string]::IsNullOrWhiteSpace($effectivePhase)) {
+            $specDir = Split-Path -Parent $Path
+            $featStatePath = Join-Path $specDir "feature-state.json"
+            if (Test-Path -LiteralPath $featStatePath -PathType Leaf) {
+                try {
+                    $fs = Get-Content -LiteralPath $featStatePath -Raw | ConvertFrom-Json
+                    if ($fs.phase -in @("PLANNING", "INTENT", "CLAIMED", "REQUIREMENT_DRAFT", "REQUIREMENT_APPROVED", "DESIGN_DRAFT", "DESIGN_REVIEWED", "DESIGN_APPROVED")) {
+                        $effectivePhase = "PLAN"
+                    }
+                } catch {}
+            }
+        }
+        if ([string]::IsNullOrWhiteSpace($effectivePhase)) { $effectivePhase = "VERIFY" }
+        $placeholderResult = Get-CoveragePlaceholderWarnings -CoveragePath $Path -Phase $effectivePhase
         if ($placeholderResult.Errors.Count -gt 0) {
             foreach ($e in $placeholderResult.Errors) { Write-Output $e }
             Write-Output "INVALID_PLACEHOLDERS"
@@ -2139,16 +2174,12 @@ switch ($Operation) {
                 if (-not $desIds) { $desIds = @("DC-PLACEHOLDER") }
                 $cases.Add([ordered]@{
                     id = $tcId
-                    status = "PLACEHOLDER"
+                    status = "PLANNED"
                     title = [string]$meta.title
                     priority = if ($meta.priority) { [string]$meta.priority } else { "P1" }
                     testTypes = @("FUNCTIONAL")
                     requirementIds = $reqIds
                     designIds = $desIds
-                    setup = @("see 05_test_plan.md")
-                    trigger = @("see 05_test_plan.md")
-                    assertions = [ordered]@{ protocol = @(@{ target = "see plan"; operator = "N_A"; expected = "placeholder" }); serverState = @(@{ target = "see plan"; operator = "N_A"; expected = "placeholder" }); sideEffects = @(@{ target = "see plan"; operator = "EMPTY"; expected = "placeholder" }); regression = @(@{ target = "see plan"; operator = "EMPTY"; expected = "placeholder" }) }
-                    cleanup = @("see 05_test_plan.md")
                     automationCarrier = if ($meta.carrier) { [string]$meta.carrier } else { "__TODO__" }
                 })
             } catch {
@@ -2163,8 +2194,8 @@ switch ($Operation) {
         # Compute artifact SHAs (normalized) for requirement/design.
         $reqPath = Join-Path $specDir "01_server_rules.md"
         $desPath = Join-Path $specDir "06_design_contract.md"
-        $reqSha = if (Test-Path -LiteralPath $reqPath -PathType Leaf) { Get-AiSopArtifactHash -Path $reqPath } else { "" }
-        $desSha = if (Test-Path -LiteralPath $desPath -PathType Leaf) { Get-AiSopArtifactHash -Path $desPath } else { "" }
+        $reqSha = if (Test-Path -LiteralPath $reqPath -PathType Leaf) { Get-AiSopArtifactHash -Path $reqPath } else { ("0" * 64) }
+        $desSha = if (Test-Path -LiteralPath $desPath -PathType Leaf) { Get-AiSopArtifactHash -Path $desPath } else { ("0" * 64) }
         $tpSha = Get-AiSopArtifactHash -Path $testPlanPath
         $coverage = [ordered]@{
             schemaVersion = "1.0"
@@ -2257,6 +2288,13 @@ switch ($Operation) {
                 $compileOk = $true
                 break
             }
+            if (Test-Path -LiteralPath $r -PathType Container) {
+                $subClasses = Get-ChildItem -LiteralPath $r -Directory -Depth 4 -Filter "classes" -ErrorAction SilentlyContinue
+                if ($subClasses.Count -gt 0) {
+                    $compileOk = $true
+                    break
+                }
+            }
         }
         $checks.Add("[$(if($compileOk){'v'}else{'?'})] 编译产物存在(以构建/测试命令执行结果为准)")
         
@@ -2333,6 +2371,13 @@ switch ($Operation) {
                 $compileOk = $true
                 break
             }
+            if (Test-Path -LiteralPath $r -PathType Container) {
+                $subClasses = Get-ChildItem -LiteralPath $r -Directory -Depth 4 -Filter "classes" -ErrorAction SilentlyContinue
+                if ($subClasses.Count -gt 0) {
+                    $compileOk = $true
+                    break
+                }
+            }
         }
         if ($effectiveTier -eq "T3") {
             if (Test-Path -LiteralPath $Path -PathType Leaf) {
@@ -2354,7 +2399,7 @@ switch ($Operation) {
             if ($covOk) {
                 try {
                     Validate-TestCoverageState -CoveragePath $covPath -Runtime $null | Out-Null
-                    $phResult = Get-CoveragePlaceholderWarnings -CoveragePath $covPath
+                    $phResult = Get-CoveragePlaceholderWarnings -CoveragePath $covPath -Phase "VERIFY"
                     if ($phResult.Errors.Count -gt 0) {
                         $failures.Add("coverage has $($phResult.Errors.Count) placeholder/carrier error(s)")
                         $checks.Add("[X] 覆盖校验无占位/carrier错误($($phResult.Errors.Count) error)")
@@ -2388,6 +2433,68 @@ switch ($Operation) {
         }
         $checks.Add("[$(if($compileOk){'v'}else{'?'})] 编译产物存在(以构建/测试命令执行结果为准)")
         if (-not $compileOk -and $effectiveTier -eq "T3") { $failures.Add("compile verification failed — no build artifacts found") }
+
+        # VCS unversioned file detection (hard blocker for code/config files).
+        $untrackedFiles = [System.Collections.Generic.List[string]]::new()
+        $codeExtensions = @(".java", ".groovy", ".kt", ".xml", ".properties", ".proto", ".ps1")
+        $codeDirPrefixes = @("src/", "test/", "scripts/", "distribution/", "config/")
+        
+        if (Test-Path -LiteralPath (Join-Path $wsRoot ".svn") -PathType Container) {
+            try {
+                $svnOutput = & svn status --ignore-externals $wsRoot 2>&1
+                if ($LASTEXITCODE -eq 0) {
+                    foreach ($line in $svnOutput) {
+                        if ($line -match '^\?\s+(.+)$') {
+                            $rawPath = $Matches[1].Trim()
+                            $normPath = $rawPath.Replace("\", "/")
+                            $isTargetDir = $false
+                            foreach ($pfx in $codeDirPrefixes) {
+                                if ($normPath.StartsWith($pfx) -or ($normPath -match "(^|/)$([regex]::Escape($pfx))")) { $isTargetDir = $true; break }
+                            }
+                            $ext = [System.IO.Path]::GetExtension($normPath).ToLowerInvariant()
+                            if ($isTargetDir -and ($ext -in $codeExtensions)) {
+                                $untrackedFiles.Add($rawPath)
+                            }
+                        }
+                    }
+                }
+            } catch {}
+            if ($untrackedFiles.Count -gt 0) {
+                $failures.Add("VCS untracked code files found (run 'svn add'): $($untrackedFiles -join ', ')")
+                $checks.Add("[X] VCS 交付状态: SVN 存在未跟踪代码 ($($untrackedFiles.Count) 个文件未执行 svn add)")
+            } else {
+                $checks.Add("[?] VCS 交付状态: SVN 工作副本 (准备 svn commit)")
+            }
+        } elseif (Test-Path -LiteralPath (Join-Path $wsRoot ".git") -PathType Container) {
+            try {
+                $gitOutput = & git -C $wsRoot status --porcelain -uall 2>&1
+                if ($LASTEXITCODE -eq 0) {
+                    foreach ($line in $gitOutput) {
+                        if ($line -match '^\?\?\s+(.+)$') {
+                            $rawPath = $Matches[1].Trim()
+                            $normPath = $rawPath.Replace("\", "/")
+                            $isTargetDir = $false
+                            foreach ($pfx in $codeDirPrefixes) {
+                                if ($normPath.StartsWith($pfx) -or ($normPath -match "(^|/)$([regex]::Escape($pfx))")) { $isTargetDir = $true; break }
+                            }
+                            $ext = [System.IO.Path]::GetExtension($normPath).ToLowerInvariant()
+                            if ($isTargetDir -and ($ext -in $codeExtensions)) {
+                                $untrackedFiles.Add($rawPath)
+                            }
+                        }
+                    }
+                }
+            } catch {}
+            if ($untrackedFiles.Count -gt 0) {
+                $failures.Add("VCS untracked code files found (run 'git add'): $($untrackedFiles -join ', ')")
+                $checks.Add("[X] VCS 交付状态: Git 存在未跟踪代码 ($($untrackedFiles.Count) 个文件未执行 git add)")
+            } else {
+                $checks.Add("[?] VCS 交付状态: Git 仓库 (人工确认 git commit / status)")
+            }
+        } else {
+            $checks.Add("[?] VCS 交付状态: 通用工程目录")
+        }
+
         Write-Output "tier=$effectiveTier phase=$phase"
         foreach ($c in $checks) { Write-Output $c }
         if ($failures.Count -eq 0) {

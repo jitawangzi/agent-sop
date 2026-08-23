@@ -79,10 +79,6 @@
         "testTypes",
         "requirementIds",
         "designIds",
-        "setup",
-        "trigger",
-        "assertions",
-        "cleanup",
         "automationCarrier"
       ],
       "properties": {

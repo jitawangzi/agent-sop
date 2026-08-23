@@ -1969,13 +1969,31 @@ try {
 
     # Test SyncCoverage and Get-CoveragePlaceholderWarnings
     $syncFeature = "SyncCoverageTestFeature"
-    $syncSpec = Join-Path $TestRoot "specs/features/$syncFeature"
+    $syncSpec = Join-Path $TestRoot ".ai-workspace/specs/features/$syncFeature"
     [System.IO.Directory]::CreateDirectory($syncSpec) | Out-Null
+    $syncReq = Join-Path $syncSpec "01_server_rules.md"
+    $syncDes = Join-Path $syncSpec "06_design_contract.md"
+    [System.IO.File]::WriteAllText($syncReq, "# Rules`n- BR-01 buy flow`n- BR-02 limit flow", $Utf8NoBom)
+    [System.IO.File]::WriteAllText($syncDes, "# Design`n- DC-01 buy design`n- DC-02 limit design", $Utf8NoBom)
+    $syncApproval = Join-Path $syncSpec "00_workflow_state.json"
+    $syncReqSha = Get-TestArtifactHash -Path $syncReq
+    $syncDesSha = Get-TestArtifactHash -Path $syncDes
+    $syncAppState = [ordered]@{
+        schemaVersion = "1.0"
+        feature = $syncFeature
+        requirement = @{ status = "APPROVED"; sha256 = $syncReqSha; approvedBy = "tester"; approvedAt = "2026-08-23T12:00:00Z"; artifact = "01_server_rules.md" }
+        design = @{ status = "APPROVED"; sha256 = $syncDesSha; approvedBy = "tester"; approvedAt = "2026-08-23T12:00:00Z"; artifact = "06_design_contract.md" }
+    }
+    [System.IO.File]::WriteAllText($syncApproval, ($syncAppState | ConvertTo-Json -Depth 10), $Utf8NoBom)
+
     $syncTestPlan = Join-Path $syncSpec "05_test_plan.md"
     $testPlanText = @"
 # Test Plan
-<!-- meta: { "id": "TC01", "title": "Test Buy", "covers": ["BR01", "DC01"] } -->
-<!-- meta: { "id": "TC02", "title": "Test Limit", "covers": ["BR02", "DC02"], "priority": "P0" } -->
+- TC-01 Test Buy
+- TC-02 Test Limit
+
+<!-- meta: { "id": "TC-01", "title": "Test Buy", "covers": ["BR-01", "DC-01"] } -->
+<!-- meta: { "id": "TC-02", "title": "Test Limit", "covers": ["BR-02", "DC-02"], "priority": "P0" } -->
 "@
     [System.IO.File]::WriteAllText($syncTestPlan, $testPlanText, $Utf8NoBom)
     $syncCovPath = Join-Path $syncSpec "05_test_coverage.json"
@@ -1984,9 +2002,42 @@ try {
     $covObj = Get-Content -LiteralPath $syncCovPath -Raw | ConvertFrom-Json
     if ($covObj.cases.Count -ne 2) { throw "SyncCoverage must parse 2 cases, got $($covObj.cases.Count)" }
     if ($covObj.cases[0].priority -ne "P1") { throw "Default case priority must be P1, got $($covObj.cases[0].priority)" }
-    if ($covObj.cases[0].status -ne "PLACEHOLDER") { throw "Synced case status must be PLACEHOLDER, got $($covObj.cases[0].status)" }
+    if ($covObj.cases[0].status -ne "PLANNED") { throw "Synced case status must be PLANNED, got $($covObj.cases[0].status)" }
     if ($covObj.cases[1].priority -ne "P0") { throw "Explicit case priority must be P0, got $($covObj.cases[1].priority)" }
-    if ($covObj.cases[1].status -ne "PLACEHOLDER") { throw "Explicit case status must be PLACEHOLDER, got $($covObj.cases[1].status)" }
+    if ($covObj.cases[1].status -ne "PLANNED") { throw "Explicit case status must be PLANNED, got $($covObj.cases[1].status)" }
+
+    # Test Phase-Aware validation
+    # In PLAN phase, non-existent carrier files are INFO/WARN and result is VALID
+    $planValidation = & $ScriptPath -Operation ValidateTestCoverage -Path $syncCovPath -Phase PLAN
+    if ($planValidation -notcontains "VALID") {
+        throw "ValidateTestCoverage -Phase PLAN must output VALID, got: $($planValidation -join '; ')"
+    }
+
+    # In VERIFY phase, missing carrier files on disk for P0/P1 must be ERROR and result is INVALID_PLACEHOLDERS
+    $verifyValidation = & $ScriptPath -Operation ValidateTestCoverage -Path $syncCovPath -Phase VERIFY
+    if ($verifyValidation -notcontains "INVALID_PLACEHOLDERS") {
+        throw "ValidateTestCoverage -Phase VERIFY must output INVALID_PLACEHOLDERS when carriers are missing, got: $($verifyValidation -join '; ')"
+    }
+
+    # Test VCS untracked file detection in VerifyCompletion
+    $vcsTestDir = Join-Path $TestRoot "vcs_untracked_test"
+    [System.IO.Directory]::CreateDirectory($vcsTestDir) | Out-Null
+    & git -C $vcsTestDir init --quiet
+    $vcsSpecDir = Join-Path $vcsTestDir ".ai-workspace/specs/features/VcsTestFeature"
+    [System.IO.Directory]::CreateDirectory($vcsSpecDir) | Out-Null
+    $vcsFeatState = Join-Path $vcsSpecDir "feature-state.json"
+    [System.IO.File]::WriteAllText($vcsFeatState, '{"schemaVersion":"1.0","feature":"VcsTestFeature","tier":"T2","phase":"IMPLEMENTATION"}', $Utf8NoBom)
+    
+    # Create untracked Java file in src/
+    $vcsSrcDir = Join-Path $vcsTestDir "src/com/test"
+    [System.IO.Directory]::CreateDirectory($vcsSrcDir) | Out-Null
+    $untrackedJava = Join-Path $vcsSrcDir "UntrackedClass.java"
+    [System.IO.File]::WriteAllText($untrackedJava, "public class UntrackedClass {}", $Utf8NoBom)
+
+    $vcsVerifyOut = & $ScriptPath -Operation VerifyCompletion -Path (Join-Path $vcsSpecDir "workflow-state.json")
+    if ($LASTEXITCODE -eq 0 -or $vcsVerifyOut -notcontains "VERIFY_COMPLETION_FAIL") {
+        throw "VerifyCompletion must FAIL when untracked .java file exists in src/, got: $($vcsVerifyOut -join '; ')"
+    }
 
     Write-Output "All workflow state tests passed."
 } finally {

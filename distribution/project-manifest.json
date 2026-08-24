@@ -48,6 +48,24 @@
       "lineEnding": "lf"
     },
     {
+      "source": "distribution/templates/root/ai-sop.ps1",
+      "target": "ai-sop.ps1",
+      "sourceBlobSha256": "748a91e0f927bdb0ce4d3b70e397f9db3aed709bb1a96422d9b742404f0d72a9",
+      "targetSha256": "748a91e0f927bdb0ce4d3b70e397f9db3aed709bb1a96422d9b742404f0d72a9",
+      "legacySha256": "",
+      "encoding": "utf8-no-bom",
+      "lineEnding": "lf"
+    },
+    {
+      "source": "distribution/templates/tools/install-ai-sop.ps1",
+      "target": "tools/ai-sop/install-ai-sop.ps1",
+      "sourceBlobSha256": "902d646972734dfbc0e6a30f15ca604dc88131c9ed710a83e1d3feab6e7cd9d1",
+      "targetSha256": "902d646972734dfbc0e6a30f15ca604dc88131c9ed710a83e1d3feab6e7cd9d1",
+      "legacySha256": "",
+      "encoding": "utf8-no-bom",
+      "lineEnding": "lf"
+    },
+    {
       "source": "distribution/templates/hooks/agents-hooks.json",
       "target": ".agents/hooks.json",
       "sourceBlobSha256": "2ffb56609ca9160a5c6f803999b103fc6de6f9004004581088542a8e0c0e4061",

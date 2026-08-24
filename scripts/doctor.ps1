@@ -229,6 +229,19 @@ if ((Test-Path -LiteralPath $rootAgents -PathType Leaf) -and (Test-Path -Literal
     }
 }
 
+# 13. Root ai-sop.ps1 projection freshness
+$rootAiSop = Join-Path $WorkspaceRoot "ai-sop.ps1"
+$templateAiSop = Join-Path $SopRoot "distribution/templates/root/ai-sop.ps1"
+if ((Test-Path -LiteralPath $rootAiSop -PathType Leaf) -and (Test-Path -LiteralPath $templateAiSop -PathType Leaf)) {
+    $rootHash = (Get-FileHash -LiteralPath $rootAiSop -Algorithm SHA256).Hash
+    $templateHash = (Get-FileHash -LiteralPath $templateAiSop -Algorithm SHA256).Hash
+    if ($rootHash -ne $templateHash) {
+        Add-Check "ai-sop.ps1 Projection" $true "WARN: 根目录 ai-sop.ps1 与真源模板不一致 (请运行 'ai-sop.ps1 Update' 刷新)"
+    } else {
+        Add-Check "ai-sop.ps1 Projection" $true "up to date"
+    }
+}
+
 # Report
 $warnCount = @($results | Where-Object { $_.Pass -and $_.Detail -match "^WARN" }).Count
 $failCount = @($results | Where-Object { -not $_.Pass }).Count

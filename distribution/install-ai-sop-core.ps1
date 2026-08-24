@@ -403,6 +403,16 @@ function Invoke-AiSopSvnInstall {
     # Clean any stale staging/backup for this tx id.
     if (Test-Path -LiteralPath $stagingCheckout) { Remove-Item -Recurse -Force -LiteralPath $stagingCheckout }
     if (Test-Path -LiteralPath $backupDir) { Remove-Item -Recurse -Force -LiteralPath $backupDir }
+    # Clean stale incomplete transactions from previous interrupted installs
+    if (Test-Path -LiteralPath (Join-Path $stagingRoot "transactions")) {
+        Get-ChildItem -LiteralPath (Join-Path $stagingRoot "transactions") -Directory -ErrorAction SilentlyContinue | ForEach-Object {
+            $jp = Join-Path $_.FullName "journal.json"
+            $mp = Join-Path $_.FullName "commit.marker"
+            if ((Test-Path -LiteralPath $jp) -and -not (Test-Path -LiteralPath $mp)) {
+                Remove-Item -Recurse -Force -LiteralPath $_.FullName -ErrorAction SilentlyContinue
+            }
+        }
+    }
 
     # 1. Clone the SOP repo to a same-volume staging directory (detached).
     #    Skip clone if .ai-sop already exists at the locked commit (re-install = re-projection only).

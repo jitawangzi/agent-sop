@@ -1201,6 +1201,29 @@ try {
     }
     Assert-Equal $fourTerminalCount 16 "Four-terminal/four-state matrix incomplete."
 
+    # Antigravity specific safe tools (view_file, list_dir, ask_question, invoke_subagent, etc.)
+    foreach ($agToolCase in @(
+        @("view_file", [ordered]@{ AbsolutePath = (Join-Path $Workspace "README.md"); toolAction = "Viewing file"; toolSummary = "View file" }, "SAFE_NON_EDIT"),
+        @("ViewFile", [ordered]@{ AbsolutePath = (Join-Path $Workspace "README.md") }, "SAFE_NON_EDIT"),
+        @("list_dir", [ordered]@{ DirectoryPath = $Workspace; toolAction = "Listing dir"; toolSummary = "List dir" }, "SAFE_NON_EDIT"),
+        @("ListDir", [ordered]@{ DirectoryPath = $Workspace }, "SAFE_NON_EDIT"),
+        @("ask_question", [ordered]@{ questions = @(@{ question = "Confirm?"; options = @("Yes", "No") }) }, "SAFE_NON_EDIT"),
+        @("AskQuestion", [ordered]@{ questions = @() }, "SAFE_NON_EDIT"),
+        @("invoke_subagent", [ordered]@{ Subagents = @(@{ Role = "Tester"; Prompt = "Run" }) }, "SAFE_NON_EDIT"),
+        @("InvokeSubagent", [ordered]@{ Subagents = @() }, "SAFE_NON_EDIT")
+    )) {
+        $agPayload = New-AntigravityToolPayload `
+            -ToolName $agToolCase[0] `
+            -Arguments $agToolCase[1] `
+            -Workspace $Workspace
+        $agEvent = ConvertTo-AiSopHookEvent `
+            -RawPayload (ConvertTo-RawPayload $agPayload) `
+            -EventHint "PRE_TOOL_USE" `
+            -TrustedWorkspaceRoot $Workspace `
+            -AcceptedAt $AcceptedAt
+        Assert-Equal $agEvent.toolClass $agToolCase[2] "Antigravity $($agToolCase[0]) tool class mismatch."
+    }
+
     # GLOB path aliases are a strict union: zero or one may be present, never
     # both, even when their values happen to resolve to the same directory.
     $outsideGlobDirectory = Join-Path `

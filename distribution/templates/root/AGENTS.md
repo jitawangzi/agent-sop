@@ -2,7 +2,7 @@
 
 > 各 AI 工具（Claude Code / GitHub Copilot / Antigravity / Cursor / Pi）统一加载本文件作为项目指令。工具专属差异见各自的根 md（如 CLAUDE.md）。本文件是单一真源，勿在其它文件重复维护。
 
-> **能力分流提示**：若当前工具能力准入为 BLOCKED（见末节“能力准入”），只跑 T2——你无需读 T3/brainstorming/design-reviewer/subagent 等节，直接看“执行强度分层（T 档）”的 T2 + 末节能力准入即可。STRICT 工具（Claude Code/Cursor/Copilot）可跑 T3 完整流程。
+> **能力分流提示**：若当前工具能力准入为 BLOCKED（见末节“能力准入”），只跑 T2——你无需读 T3/brainstorming/design-reviewer/subagent 等节，直接看“执行强度分层（T 档）”的 T2 + 末节能力准入即可。STRICT 工具（Claude Code / Antigravity / Cursor / Copilot）可跑 T3 完整流程。
 
 ## 工作流归属
 
@@ -342,7 +342,7 @@ AI 每次回复末尾必带一行：`档位=T2 | 阶段=实现 | 下一步=编�
 建议：<恢复建议，如切换 STRICT 工具 / Claim 归属 / 用户确认接管 等>
 ```
 
-示例：`[SOP 拦截] 工具 Pi 因无 subagent（能力准入 BLOCKED），无法执行 T3 design-reviewer 独立审查。建议：降级 T2 或切换到 Claude Code/Cursor/Copilot 跑 T3。`
+示例：`[SOP 拦截] 工具 Pi 因无 subagent（能力准入 BLOCKED），无法执行 T3 design-reviewer 独立审查。建议：降级 T2 或切换到 Claude Code / Antigravity / Cursor / Copilot 跑 T3。`
 
 不得只报“我无法完成”而不给原因和恢复建议。
 

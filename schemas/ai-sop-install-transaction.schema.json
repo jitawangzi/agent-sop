@@ -67,8 +67,8 @@
     },
     "finalStateSha256": {
       "type": "string",
-      "description": "Empty until the final local Verify succeeds; then the SHA-256 of the canonical final-state summary, recorded in commit.marker.",
-      "pattern": "^([0-9a-f]{64})?$"
+      "description": "Empty until the final local Verify succeeds; then the SHA-256 of the canonical final-state summary or the 40-hex git commit SHA, recorded in commit.marker.",
+      "pattern": "^([0-9a-f]{40}|[0-9a-f]{64})?$"
     },
     "items": {
       "type": "array",

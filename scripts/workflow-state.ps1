@@ -836,7 +836,7 @@ function Get-DocumentClauseIds {
     )
 
     $prefixPattern = ($Prefixes | ForEach-Object { [regex]::Escape($_) }) -join "|"
-    $pattern = "(?im)^ {0,3}(?:[-*+]\s+|#{1,6}\s+)((?:$prefixPattern)-[A-Z0-9][A-Z0-9_-]*)\b"
+    $pattern = "(?im)^ {0,3}(?:[-*+]\s+|#{1,6}\s+)(?:\*\*)?((?:$prefixPattern)-[A-Z0-9][A-Z0-9_-]*)\b"
     return @(
         [regex]::Matches(
             (Get-MarkdownContractText -ArtifactPath $ArtifactPath),

@@ -217,6 +217,22 @@
     {
       "match": {
         "kind": "EXACT",
+        "value": "write_file"
+      },
+      "nativeShapes": [
+        "CLAUDE_PRE_TOOL_USE",
+        "COPILOT_CLAUDE_COMPAT",
+        "CURSOR_PRE_TOOL_USE",
+        "ANTIGRAVITY"
+      ],
+      "canonicalName": "WRITE",
+      "toolClass": "FILE_EDIT",
+      "argumentProfile": "WRITE",
+      "targetExtractor": "SINGLE_PATH"
+    },
+    {
+      "match": {
+        "kind": "EXACT",
         "value": "Create"
       },
       "nativeShapes": [
@@ -362,7 +378,8 @@
         "value": "write_to_file"
       },
       "nativeShapes": [
-        "ANTIGRAVITY"
+        "ANTIGRAVITY",
+        "CURSOR_PRE_TOOL_USE"
       ],
       "canonicalName": "WRITE",
       "toolClass": "FILE_EDIT",
@@ -375,7 +392,8 @@
         "value": "WriteToFile"
       },
       "nativeShapes": [
-        "ANTIGRAVITY"
+        "ANTIGRAVITY",
+        "CURSOR_PRE_TOOL_USE"
       ],
       "canonicalName": "WRITE",
       "toolClass": "FILE_EDIT",
@@ -388,7 +406,8 @@
         "value": "replace_file_content"
       },
       "nativeShapes": [
-        "ANTIGRAVITY"
+        "ANTIGRAVITY",
+        "CURSOR_PRE_TOOL_USE"
       ],
       "canonicalName": "EDIT",
       "toolClass": "FILE_EDIT",
@@ -401,7 +420,8 @@
         "value": "ReplaceFileContent"
       },
       "nativeShapes": [
-        "ANTIGRAVITY"
+        "ANTIGRAVITY",
+        "CURSOR_PRE_TOOL_USE"
       ],
       "canonicalName": "EDIT",
       "toolClass": "FILE_EDIT",

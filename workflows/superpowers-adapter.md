@@ -65,6 +65,12 @@ brainstorming 节点按需咨询 `design-architect`；设计产出后由 `design
 
 任何编辑规范产物的专家调用都属于修改型工作，需要活动的 Superpowers owner ID；只读的咨询性 review 不需要。
 
+**Superpowers 原生能力动态继承架构 (Base + Overlay)**：
+本项目专家 Skill 不是脱离 Superpowers 的硬编码分叉，而是采用“**动态基类继承（Base）+ 领域特化叠加（Overlay）**”模式：
+- 专家 Skill 在被派发时，底层自动动态读取并继承本地 Superpowers 最新原生模板（`implementer-prompt.md`、`task-reviewer-prompt.md`、`code-reviewer.md`、`test-driven-development` 等），自动获得其最新的**通用工程纪律**（升级熔断协议、零信任自评、TDD 证据链契约、Plan-Mandated 缺陷独立定性、Pristine 零噪声测试标准）；
+- 专家 Skill 本体作为领域特化叠加层，注入 Java/Spring/Redis/Mongo 架构、`Player` 资源立即落库、多版本混跑与协议增量兼容等深度领域规则；
+- 当 Superpowers 插件升级时，所有专家 Skill 无需修改任何代码，**自动持续获得 Superpowers 最新进化出的通用工程与审查能力**。
+
 ## 三层审查定位（职责不重叠）
 
 | 层 | 何时 | 视角 | 执行 |

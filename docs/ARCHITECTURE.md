@@ -170,6 +170,17 @@ AI 编码工具百花齐放（Claude Code、Copilot、Cursor、Antigravity、Pi�
 
 **价值**：CI 稳定绿（串行），想快可并行（接受 flake）；开发时不被弹窗打扰。
 
+### 决策10：Superpowers 原生能力动态继承（Base + Overlay 架构）
+
+**问题**：Superpowers 作为底层调度器持续演进，不断推出更成熟的通用工程心智（如升级熔断、零信任自评、RED/GREEN 证据链、Pristine 测试标准）。若把 Superpowers 的 prompt 文本硬编码复制到项目的各专家 Skill 中，会导致**分叉与脱节（Upstream Drift）**——Superpowers 更新后，自定义 Skill 无法自动获得新能力。
+
+**为什么这么设计**：采用“**动态基类继承（Base）+ 领域特化叠加（Overlay）**”模式：
+- **底层基类**：自定义 Skill 在运行时动态读取并继承本地 Superpowers 安装实例的原生模板（`implementer-prompt.md`、`task-reviewer-prompt.md`、`code-reviewer.md`、`test-driven-development` 等），自动吸收最新的通用工程纪律；
+- **上层特化**：自定义 Skill 专注于维护游戏服务端的特化架构规则（`Player` 落库时机、Redis/Mongo 分层、多版本混跑、双协议增量兼容）；
+- **动态合成**：控制器派发时，通过 Slot Injection 将领域规则注入到 Superpowers 原生模板骨架中。
+
+**价值**：Superpowers 插件更新后，项目专家 Skill **零成本自动持续获得最新通用工程与审查能力**，永不分叉、永不落后。
+
 ---
 
 ## 三、关键不变量（设计契约的核心约束）

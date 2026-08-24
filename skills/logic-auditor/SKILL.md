@@ -31,6 +31,17 @@ description: 高风险逻辑审计官，专门细查方法级、分支级与链�
 - 具体业务语义、状态定义、返回契约、奖励规则、活动规则必须从 `context/` 文档、`01_server_rules.md`、`06_design_contract.md` 与实际代码接口中读取
 - skill 本体不直接写死某个项目的业务分支语义
 
+## Superpowers Upstream Dynamic Base (动态继承原生基线)
+本角色在执行高风险逻辑审计前，**必须动态读取并继承本地 Superpowers 最新原生指令**（按本地环境路径嗅探，如 `~/.gemini/config/plugins/superpowers/skills/`、`~/.claude/plugins/superpowers/skills/`、`~/.cursor/plugins/superpowers/skills/`）：
+- **必读基类真源**：
+  - `subagent-driven-development/task-reviewer-prompt.md`（Part 1: Spec Compliance 与 Part 2: Code Quality 核心规范）
+  - `systematic-debugging/SKILL.md`（根因推演与深度防御心智）
+- **通用审查心智自动继承**：
+  1. **零信任与客观逻辑推演**：以代码实际控制流与数据流为准，不依赖实现者的注释解释与自述承诺。
+  2. **严密边界分支穷尽 (Branch Exhaustiveness)**：继承 Superpowers 对冷门分支、边界空值、异常处理的极限审查标准。
+  3. **四元组缺陷报告规范**：输出 `FilePath:LineNumber` + `缺陷与语义偏差` + `危害说明 (Why it matters)` + `修复方案 (How to fix)`。
+- **领域特化关系**：下文各节作为**项目领域叠加层 (Domain Overlay)**，展开方法级语义一致性（如变量同名异义嗅探）、状态流转时序闭环、`Player` 资源落库防御与游戏专项逻辑核验。
+
 ## Project-Specific Extension Loading Rule
 在执行逻辑审计前，必须判断是否需要加载项目专项扩展文档。
 

@@ -30,6 +30,16 @@ brainstorming（需求 → 确认 → design-architect 产出 06）
 - 宏观规范以 `CLAUDE.md` 项目强制规则与 `.ai-workspace/context/` 为准；具体业务以 `01_server_rules.md` 与 `06_design_contract.md` 为准。
 - 审查结论与功能规则冲突时，以功能规则文档和设计契约为准，并在报告中显式说明冲突点。
 
+## Superpowers Upstream Dynamic Base (动态继承原生基线)
+本角色在执行设计方案审查前，**必须动态读取并继承本地 Superpowers 最新设计审查指令**（按本地环境路径嗅探，如 `~/.gemini/config/plugins/superpowers/skills/`、`~/.claude/plugins/superpowers/skills/`、`~/.cursor/plugins/superpowers/skills/`）：
+- **必读基类真源**：
+  - `brainstorming/spec-document-reviewer-prompt.md`（设计文档审查清单）
+  - `brainstorming/SKILL.md`（需求与设计澄清原则）
+- **通用设计审查心智自动继承**：
+  1. **完备性与歧义审查**：继承 Superpowers 对设计草案中模糊占位（"TBD", "as appropriate", "reasonable defaults"）、未定义异常/错误码分支及边界条件缺失的严格拦截能力。
+  2. **YAGNI 与范围收敛**：检查设计是否超出了 01 需求范围，是否存在不必要的抽象与提前过度设计。
+- **领域特化关系**：下文各节作为**项目领域叠加层 (Domain Overlay)**，展开游戏服务端的宏观架构守门、存储与内存分层、无损扩展与已知高风险设计缺陷模式。
+
 ## Context Strategy
 审查前必须加载：
 - `project-summary.md`（架构、模块、存储职责）

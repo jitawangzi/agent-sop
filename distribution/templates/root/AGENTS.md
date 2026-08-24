@@ -176,6 +176,8 @@ AI 可在一次响应内同时呈递 `01_server_rules.md` 与 `06_design_contrac
 
 被调用时：使用专家的领域 checklist 与交付格式，把发现返回给 Superpowers controller，**不接管编排、不写 `.ai-sop/runtime/`**。
 
+**原生能力动态继承（Base + Overlay）**：本项目专家 Skill 底层动态继承 Superpowers 本地安装的最新原生模板（`implementer-prompt.md`、`task-reviewer-prompt.md`、`code-reviewer.md`、`test-driven-development`、`systematic-debugging`），自动吸收其升级熔断、零信任自评、RED/GREEN 证据链、Plan-Mandated 缺陷独立定性与 Pristine 零噪声测试等通用工程纪律；当 Superpowers 插件更新时，所有专家 Skill 自动获得最新工程能力，无需修改项目代码。
+
 ## 功能归属
 
 **AI 自动执行脚本（非打印给用户）**：本文件及手册中所有 `workflow-state.ps1`/`workflow-owner.ps1`/`feature-runtime.ps1`/`run-all-tests.ps1` 等命令，AI 在确认用户意图后应**直接在后台执行**（经终端工具/Bash），读取输出继续流程，而不是把命令打印出来让用户手动复制粘贴。仅当涉及人工决策（如批准需求/设计）时才暂停问用户；脚本执行本身是 AI 的职责。

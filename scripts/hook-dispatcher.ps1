@@ -999,6 +999,9 @@ function Invoke-AiSopHookDispatcher {
             -DurationMs $watch.ElapsedMilliseconds
     } catch {
         $watch.Stop()
+        if ([string]::IsNullOrWhiteSpace($agent)) {
+            $agent = Get-AiSopDispatcherInferredAgent -RawPayload $RawPayload
+        }
         $reason = [string]$_.Exception.Message
         if ($reason -notmatch "^[A-Z][A-Z0-9_]*$") {
             $reason = "GUARD_INTERNAL_ERROR"

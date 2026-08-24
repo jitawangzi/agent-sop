@@ -573,6 +573,370 @@
       "toolClass": "OWNER_REQUIRED",
       "argumentProfile": "ANY_OBJECT",
       "targetExtractor": "NONE"
+    },
+    {
+      "match": {
+        "kind": "EXACT",
+        "value": "view_file"
+      },
+      "nativeShapes": [
+        "ANTIGRAVITY"
+      ],
+      "canonicalName": "READ",
+      "toolClass": "SAFE_NON_EDIT",
+      "argumentProfile": "ANY_OBJECT",
+      "targetExtractor": "NONE"
+    },
+    {
+      "match": {
+        "kind": "EXACT",
+        "value": "ViewFile"
+      },
+      "nativeShapes": [
+        "ANTIGRAVITY"
+      ],
+      "canonicalName": "READ",
+      "toolClass": "SAFE_NON_EDIT",
+      "argumentProfile": "ANY_OBJECT",
+      "targetExtractor": "NONE"
+    },
+    {
+      "match": {
+        "kind": "EXACT",
+        "value": "list_dir"
+      },
+      "nativeShapes": [
+        "ANTIGRAVITY"
+      ],
+      "canonicalName": "GLOB",
+      "toolClass": "SAFE_NON_EDIT",
+      "argumentProfile": "ANY_OBJECT",
+      "targetExtractor": "NONE"
+    },
+    {
+      "match": {
+        "kind": "EXACT",
+        "value": "ListDir"
+      },
+      "nativeShapes": [
+        "ANTIGRAVITY"
+      ],
+      "canonicalName": "GLOB",
+      "toolClass": "SAFE_NON_EDIT",
+      "argumentProfile": "ANY_OBJECT",
+      "targetExtractor": "NONE"
+    },
+    {
+      "match": {
+        "kind": "EXACT",
+        "value": "ask_question"
+      },
+      "nativeShapes": [
+        "ANTIGRAVITY"
+      ],
+      "canonicalName": "INTERACTION",
+      "toolClass": "SAFE_NON_EDIT",
+      "argumentProfile": "ANY_OBJECT",
+      "targetExtractor": "NONE"
+    },
+    {
+      "match": {
+        "kind": "EXACT",
+        "value": "AskQuestion"
+      },
+      "nativeShapes": [
+        "ANTIGRAVITY"
+      ],
+      "canonicalName": "INTERACTION",
+      "toolClass": "SAFE_NON_EDIT",
+      "argumentProfile": "ANY_OBJECT",
+      "targetExtractor": "NONE"
+    },
+    {
+      "match": {
+        "kind": "EXACT",
+        "value": "find_by_name"
+      },
+      "nativeShapes": [
+        "ANTIGRAVITY"
+      ],
+      "canonicalName": "GLOB",
+      "toolClass": "SAFE_NON_EDIT",
+      "argumentProfile": "ANY_OBJECT",
+      "targetExtractor": "NONE"
+    },
+    {
+      "match": {
+        "kind": "EXACT",
+        "value": "FindByName"
+      },
+      "nativeShapes": [
+        "ANTIGRAVITY"
+      ],
+      "canonicalName": "GLOB",
+      "toolClass": "SAFE_NON_EDIT",
+      "argumentProfile": "ANY_OBJECT",
+      "targetExtractor": "NONE"
+    },
+    {
+      "match": {
+        "kind": "EXACT",
+        "value": "grep_search"
+      },
+      "nativeShapes": [
+        "ANTIGRAVITY"
+      ],
+      "canonicalName": "SEARCH",
+      "toolClass": "SAFE_NON_EDIT",
+      "argumentProfile": "ANY_OBJECT",
+      "targetExtractor": "NONE"
+    },
+    {
+      "match": {
+        "kind": "EXACT",
+        "value": "GrepSearch"
+      },
+      "nativeShapes": [
+        "ANTIGRAVITY"
+      ],
+      "canonicalName": "SEARCH",
+      "toolClass": "SAFE_NON_EDIT",
+      "argumentProfile": "ANY_OBJECT",
+      "targetExtractor": "NONE"
+    },
+    {
+      "match": {
+        "kind": "EXACT",
+        "value": "read_url_content"
+      },
+      "nativeShapes": [
+        "ANTIGRAVITY"
+      ],
+      "canonicalName": "READ",
+      "toolClass": "SAFE_NON_EDIT",
+      "argumentProfile": "ANY_OBJECT",
+      "targetExtractor": "NONE"
+    },
+    {
+      "match": {
+        "kind": "EXACT",
+        "value": "ReadUrlContent"
+      },
+      "nativeShapes": [
+        "ANTIGRAVITY"
+      ],
+      "canonicalName": "READ",
+      "toolClass": "SAFE_NON_EDIT",
+      "argumentProfile": "ANY_OBJECT",
+      "targetExtractor": "NONE"
+    },
+    {
+      "match": {
+        "kind": "EXACT",
+        "value": "search_web"
+      },
+      "nativeShapes": [
+        "ANTIGRAVITY"
+      ],
+      "canonicalName": "SEARCH",
+      "toolClass": "SAFE_NON_EDIT",
+      "argumentProfile": "ANY_OBJECT",
+      "targetExtractor": "NONE"
+    },
+    {
+      "match": {
+        "kind": "EXACT",
+        "value": "SearchWeb"
+      },
+      "nativeShapes": [
+        "ANTIGRAVITY"
+      ],
+      "canonicalName": "SEARCH",
+      "toolClass": "SAFE_NON_EDIT",
+      "argumentProfile": "ANY_OBJECT",
+      "targetExtractor": "NONE"
+    },
+    {
+      "match": {
+        "kind": "EXACT",
+        "value": "invoke_subagent"
+      },
+      "nativeShapes": [
+        "ANTIGRAVITY"
+      ],
+      "canonicalName": "SUBAGENT",
+      "toolClass": "SAFE_NON_EDIT",
+      "argumentProfile": "ANY_OBJECT",
+      "targetExtractor": "NONE"
+    },
+    {
+      "match": {
+        "kind": "EXACT",
+        "value": "InvokeSubagent"
+      },
+      "nativeShapes": [
+        "ANTIGRAVITY"
+      ],
+      "canonicalName": "SUBAGENT",
+      "toolClass": "SAFE_NON_EDIT",
+      "argumentProfile": "ANY_OBJECT",
+      "targetExtractor": "NONE"
+    },
+    {
+      "match": {
+        "kind": "EXACT",
+        "value": "define_subagent"
+      },
+      "nativeShapes": [
+        "ANTIGRAVITY"
+      ],
+      "canonicalName": "SUBAGENT",
+      "toolClass": "SAFE_NON_EDIT",
+      "argumentProfile": "ANY_OBJECT",
+      "targetExtractor": "NONE"
+    },
+    {
+      "match": {
+        "kind": "EXACT",
+        "value": "DefineSubagent"
+      },
+      "nativeShapes": [
+        "ANTIGRAVITY"
+      ],
+      "canonicalName": "SUBAGENT",
+      "toolClass": "SAFE_NON_EDIT",
+      "argumentProfile": "ANY_OBJECT",
+      "targetExtractor": "NONE"
+    },
+    {
+      "match": {
+        "kind": "EXACT",
+        "value": "manage_subagents"
+      },
+      "nativeShapes": [
+        "ANTIGRAVITY"
+      ],
+      "canonicalName": "SUBAGENT",
+      "toolClass": "SAFE_NON_EDIT",
+      "argumentProfile": "ANY_OBJECT",
+      "targetExtractor": "NONE"
+    },
+    {
+      "match": {
+        "kind": "EXACT",
+        "value": "ManageSubagents"
+      },
+      "nativeShapes": [
+        "ANTIGRAVITY"
+      ],
+      "canonicalName": "SUBAGENT",
+      "toolClass": "SAFE_NON_EDIT",
+      "argumentProfile": "ANY_OBJECT",
+      "targetExtractor": "NONE"
+    },
+    {
+      "match": {
+        "kind": "EXACT",
+        "value": "manage_task"
+      },
+      "nativeShapes": [
+        "ANTIGRAVITY"
+      ],
+      "canonicalName": "TASK",
+      "toolClass": "SAFE_NON_EDIT",
+      "argumentProfile": "ANY_OBJECT",
+      "targetExtractor": "NONE"
+    },
+    {
+      "match": {
+        "kind": "EXACT",
+        "value": "ManageTask"
+      },
+      "nativeShapes": [
+        "ANTIGRAVITY"
+      ],
+      "canonicalName": "TASK",
+      "toolClass": "SAFE_NON_EDIT",
+      "argumentProfile": "ANY_OBJECT",
+      "targetExtractor": "NONE"
+    },
+    {
+      "match": {
+        "kind": "EXACT",
+        "value": "schedule"
+      },
+      "nativeShapes": [
+        "ANTIGRAVITY"
+      ],
+      "canonicalName": "SCHEDULE",
+      "toolClass": "SAFE_NON_EDIT",
+      "argumentProfile": "ANY_OBJECT",
+      "targetExtractor": "NONE"
+    },
+    {
+      "match": {
+        "kind": "EXACT",
+        "value": "Schedule"
+      },
+      "nativeShapes": [
+        "ANTIGRAVITY"
+      ],
+      "canonicalName": "SCHEDULE",
+      "toolClass": "SAFE_NON_EDIT",
+      "argumentProfile": "ANY_OBJECT",
+      "targetExtractor": "NONE"
+    },
+    {
+      "match": {
+        "kind": "EXACT",
+        "value": "send_message"
+      },
+      "nativeShapes": [
+        "ANTIGRAVITY"
+      ],
+      "canonicalName": "COMMUNICATION",
+      "toolClass": "SAFE_NON_EDIT",
+      "argumentProfile": "ANY_OBJECT",
+      "targetExtractor": "NONE"
+    },
+    {
+      "match": {
+        "kind": "EXACT",
+        "value": "SendMessage"
+      },
+      "nativeShapes": [
+        "ANTIGRAVITY"
+      ],
+      "canonicalName": "COMMUNICATION",
+      "toolClass": "SAFE_NON_EDIT",
+      "argumentProfile": "ANY_OBJECT",
+      "targetExtractor": "NONE"
+    },
+    {
+      "match": {
+        "kind": "EXACT",
+        "value": "generate_image"
+      },
+      "nativeShapes": [
+        "ANTIGRAVITY"
+      ],
+      "canonicalName": "IMAGE",
+      "toolClass": "SAFE_NON_EDIT",
+      "argumentProfile": "ANY_OBJECT",
+      "targetExtractor": "NONE"
+    },
+    {
+      "match": {
+        "kind": "EXACT",
+        "value": "GenerateImage"
+      },
+      "nativeShapes": [
+        "ANTIGRAVITY"
+      ],
+      "canonicalName": "IMAGE",
+      "toolClass": "SAFE_NON_EDIT",
+      "argumentProfile": "ANY_OBJECT",
+      "targetExtractor": "NONE"
     }
   ]
 }

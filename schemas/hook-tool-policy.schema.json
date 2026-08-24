@@ -133,7 +133,8 @@
                 "enum": [
                   "READ",
                   "GLOB",
-                  "SEARCH"
+                  "SEARCH",
+                  "ANY_OBJECT"
                 ]
               },
               "targetExtractor": {

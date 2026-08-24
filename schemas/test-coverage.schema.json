@@ -92,7 +92,9 @@
             "PLACEHOLDER",
             "PLANNED",
             "IMPLEMENTED",
-            "VERIFIED"
+            "VERIFIED",
+            "AUTOMATED",
+            "PASSED"
           ]
         },
         "title": {

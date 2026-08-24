@@ -15,6 +15,7 @@ param(
     [Parameter(Mandatory)] [string]$Feature,
     [Parameter(Mandatory)] [string]$SpecDirectory,
     [ValidateSet("T1", "T2", "T3", "FAST_TRACK")] [string]$Tier = "",
+    [ValidateSet("DUAL", "DESIGN_ONLY", "")] [string]$GateMode = "",
     [string]$Phase = "",
     [string]$NextAction = "",
     [string]$AppendStep = "",
@@ -48,7 +49,8 @@ switch ($Operation) {
         if ($null -eq $s) {
             Write-Output "NO_STATE: feature-state.json does not exist at $StatePath"
         } else {
-            Write-Output "feature=$($s.feature) tier=$($s.tier) phase=$($s.phase)"
+            $tierDisplay = if ($s.gateMode -eq "DESIGN_ONLY") { "$($s.tier) (DESIGN_ONLY)" } else { [string]$s.tier }
+            Write-Output "feature=$($s.feature) tier=$tierDisplay phase=$($s.phase)"
             Write-Output "updatedAt=$($s.updatedAt)"
             if ($s.ownerSession) { Write-Output "owner=$($s.ownerSession.agent)/$($s.ownerSession.ownerId)" }
             if ($s.completedSteps) { Write-Output "completed=$($s.completedSteps -join ', ')" }
@@ -60,6 +62,16 @@ switch ($Operation) {
     "Set" {
         $s = Read-State
         if ($null -eq $s) {
+            $inheritedGateMode = $GateMode
+            if (-not $inheritedGateMode) {
+                $approvalPath = Join-Path $SpecDirectory "00_workflow_state.json"
+                if (Test-Path -LiteralPath $approvalPath -PathType Leaf) {
+                    try {
+                        $st = Get-Content -LiteralPath $approvalPath -Raw | ConvertFrom-Json
+                        if ($st.gateMode) { $inheritedGateMode = [string]$st.gateMode }
+                    } catch {}
+                }
+            }
             $s = [ordered]@{
                 schemaVersion = "1.0"
                 feature = $Feature
@@ -72,9 +84,21 @@ switch ($Operation) {
                 updatedAt = [DateTimeOffset]::UtcNow.ToString("o")
                 notes = ""
             }
+            if ($inheritedGateMode) { $s["gateMode"] = $inheritedGateMode }
         } else {
             if ($Tier) { $s.tier = $Tier }
             if ($Phase) { $s.phase = $Phase }
+            if ($GateMode) {
+                $s["gateMode"] = $GateMode
+            } elseif (-not $s.ContainsKey("gateMode") -or [string]::IsNullOrWhiteSpace($s.gateMode)) {
+                $approvalPath = Join-Path $SpecDirectory "00_workflow_state.json"
+                if (Test-Path -LiteralPath $approvalPath -PathType Leaf) {
+                    try {
+                        $st = Get-Content -LiteralPath $approvalPath -Raw | ConvertFrom-Json
+                        if ($st.gateMode) { $s["gateMode"] = [string]$st.gateMode }
+                    } catch {}
+                }
+            }
             if ($Agent -or $OwnerId) {
                 if (-not $s.ContainsKey("ownerSession")) { $s["ownerSession"] = @{} }
                 if ($Agent) { $s.ownerSession.agent = $Agent }

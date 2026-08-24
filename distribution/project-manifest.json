@@ -23,8 +23,8 @@
     {
       "source": "distribution/templates/root/AGENTS.md",
       "target": "AGENTS.md",
-      "sourceBlobSha256": "69e250f05a4379d8c2bd9d35b84e2b9d0440d1eefad53e0ccd9da56a0cc40373",
-      "targetSha256": "69e250f05a4379d8c2bd9d35b84e2b9d0440d1eefad53e0ccd9da56a0cc40373",
+      "sourceBlobSha256": "678a348ed749f0d15492b1225ac68b67ee035ca5e3e3913856044274abee8587",
+      "targetSha256": "678a348ed749f0d15492b1225ac68b67ee035ca5e3e3913856044274abee8587",
       "legacySha256": "01a3baa5611b90649dbd8f9e5861355cd611650092a29d9d4a0298d4ba9a7a77",
       "encoding": "utf8-no-bom",
       "lineEnding": "lf"
@@ -32,8 +32,8 @@
     {
       "source": "distribution/templates/root/ANTIGRAVITY.md",
       "target": "ANTIGRAVITY.md",
-      "sourceBlobSha256": "793de8d160107d761a2f486b3514b7b43ea82b6ac12f3a615596b9030afe8004",
-      "targetSha256": "793de8d160107d761a2f486b3514b7b43ea82b6ac12f3a615596b9030afe8004",
+      "sourceBlobSha256": "48e29a97bf70a1690f3c20a91eb4c2f1bad8d20a340abfaa92e2e76f9e469e25",
+      "targetSha256": "48e29a97bf70a1690f3c20a91eb4c2f1bad8d20a340abfaa92e2e76f9e469e25",
       "legacySha256": "c52fa16fdb111963e40ae3182e53b3dffe339f0c0d407701a88b7b472bfeab11",
       "encoding": "utf8-no-bom",
       "lineEnding": "lf"

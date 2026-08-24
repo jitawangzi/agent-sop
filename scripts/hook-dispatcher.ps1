@@ -956,9 +956,10 @@ function Invoke-AiSopHookDispatcher {
         } else {
             "hook-session-" + [string]$hookEvent.dedupKey
         }
+        $reconcileFunc = ${function:Get-AiSopDispatcherSessionSideEffectProof}
         $reconcile = {
             param($record, $callbackDeadline, $remainingMilliseconds)
-            return Get-AiSopDispatcherSessionSideEffectProof `
+            return & $reconcileFunc `
                 -HookEvent $hookEvent `
                 -Plan $plan `
                 -AcceptedAt $AcceptedAt `
@@ -966,9 +967,10 @@ function Invoke-AiSopHookDispatcher {
         }.GetNewClosure()
         $sideEffect = $null
         if ($plan.SideEffectKind -ne "NONE") {
+            $sideEffectFunc = ${function:Invoke-AiSopDispatcherSideEffect}
             $sideEffect = {
                 param($record, $callbackDeadline, $remainingMilliseconds)
-                Invoke-AiSopDispatcherSideEffect `
+                & $sideEffectFunc `
                     -HookEvent $hookEvent `
                     -Plan $plan `
                     -AcceptedAt $AcceptedAt `

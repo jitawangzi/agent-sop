@@ -79,7 +79,7 @@
 AI 单方判断不构成跳门禁的充分理由（B 类必须问用户）。
 
 **BLOCKED 工具的 T2 降级处理（STRICT 工具如 Claude Code / Antigravity / Cursor / Copilot 原生支持 T3，直接跑完整 Superpowers 流程，严禁弹出 T2 拦截）**：
-- **STRICT 工具（Claude Code / Antigravity / Cursor / Copilot）**：按变更类默认档位执行（新功能、行为/契约/协议/存储变更默认 T3），直接执行 Superpowers 流程，严禁自称仅支持 T2 或拦截！
+- **STRICT 工具（Claude Code / Antigravity / Cursor / Copilot）**：按变更类默认档位执行（新功能、行为/契约/协议/存储变更走 T3），直接执行 Superpowers 流程，严禁自称仅支持 T2 或拦截！
 - **BLOCKED 工具（如 Pi，最高支持 T2）**：实际执行档位 = MIN(用户指定档位, T2)。在 BLOCKED 工具下：若用户未表达流程意图且为已有行为缺陷修复，静默以 T2 执行；若用户消息含“需求/草案/设计/评审/T3”任一词，或变更是新功能/新协议/新存储/用户点名需求，必须提示：“`[SOP 拦截] 工具 <工具名> 因无 subagent（能力准入 BLOCKED），无法执行 T3 独立审查。建议：切换到 STRICT 工具（Claude Code / Antigravity / Cursor / Copilot），或回复‘仍按 T2 实现’。`”
 - 已有行为的单点逻辑修复保持静默 T2，不拦截。
 

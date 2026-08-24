@@ -10,7 +10,8 @@
       "nativeShapes": [
         "CLAUDE_PRE_TOOL_USE",
         "COPILOT_CLAUDE_COMPAT",
-        "CURSOR_PRE_TOOL_USE"
+        "CURSOR_PRE_TOOL_USE",
+        "ANTIGRAVITY"
       ],
       "canonicalName": "READ",
       "toolClass": "SAFE_NON_EDIT",
@@ -23,7 +24,8 @@
         "value": "ReadFile"
       },
       "nativeShapes": [
-        "CURSOR_PRE_TOOL_USE"
+        "CURSOR_PRE_TOOL_USE",
+        "ANTIGRAVITY"
       ],
       "canonicalName": "READ",
       "toolClass": "SAFE_NON_EDIT",
@@ -36,7 +38,8 @@
         "value": "view"
       },
       "nativeShapes": [
-        "COPILOT_GITHUB_NATIVE"
+        "COPILOT_GITHUB_NATIVE",
+        "ANTIGRAVITY"
       ],
       "canonicalName": "READ",
       "toolClass": "SAFE_NON_EDIT",
@@ -173,7 +176,8 @@
       "nativeShapes": [
         "CLAUDE_PRE_TOOL_USE",
         "COPILOT_CLAUDE_COMPAT",
-        "CURSOR_PRE_TOOL_USE"
+        "CURSOR_PRE_TOOL_USE",
+        "ANTIGRAVITY"
       ],
       "canonicalName": "EDIT",
       "toolClass": "FILE_EDIT",
@@ -186,7 +190,8 @@
         "value": "edit"
       },
       "nativeShapes": [
-        "COPILOT_GITHUB_NATIVE"
+        "COPILOT_GITHUB_NATIVE",
+        "ANTIGRAVITY"
       ],
       "canonicalName": "EDIT",
       "toolClass": "FILE_EDIT",
@@ -201,7 +206,8 @@
       "nativeShapes": [
         "CLAUDE_PRE_TOOL_USE",
         "COPILOT_CLAUDE_COMPAT",
-        "CURSOR_PRE_TOOL_USE"
+        "CURSOR_PRE_TOOL_USE",
+        "ANTIGRAVITY"
       ],
       "canonicalName": "WRITE",
       "toolClass": "FILE_EDIT",
@@ -216,7 +222,8 @@
       "nativeShapes": [
         "CLAUDE_PRE_TOOL_USE",
         "COPILOT_CLAUDE_COMPAT",
-        "CURSOR_PRE_TOOL_USE"
+        "CURSOR_PRE_TOOL_USE",
+        "ANTIGRAVITY"
       ],
       "canonicalName": "WRITE",
       "toolClass": "FILE_EDIT",
@@ -409,7 +416,8 @@
       "nativeShapes": [
         "CLAUDE_PRE_TOOL_USE",
         "COPILOT_CLAUDE_COMPAT",
-        "CURSOR_PRE_TOOL_USE"
+        "CURSOR_PRE_TOOL_USE",
+        "ANTIGRAVITY"
       ],
       "canonicalName": "SHELL",
       "toolClass": "OWNER_REQUIRED",
@@ -934,6 +942,47 @@
         "ANTIGRAVITY"
       ],
       "canonicalName": "IMAGE",
+      "toolClass": "SAFE_NON_EDIT",
+      "argumentProfile": "ANY_OBJECT",
+      "targetExtractor": "NONE"
+    },
+    {
+      "match": {
+        "kind": "EXACT",
+        "value": "Find"
+      },
+      "nativeShapes": [
+        "ANTIGRAVITY",
+        "CURSOR_PRE_TOOL_USE"
+      ],
+      "canonicalName": "GLOB",
+      "toolClass": "SAFE_NON_EDIT",
+      "argumentProfile": "ANY_OBJECT",
+      "targetExtractor": "NONE"
+    },
+    {
+      "match": {
+        "kind": "EXACT",
+        "value": "WebSearch"
+      },
+      "nativeShapes": [
+        "ANTIGRAVITY",
+        "CURSOR_PRE_TOOL_USE"
+      ],
+      "canonicalName": "SEARCH",
+      "toolClass": "SAFE_NON_EDIT",
+      "argumentProfile": "ANY_OBJECT",
+      "targetExtractor": "NONE"
+    },
+    {
+      "match": {
+        "kind": "EXACT",
+        "value": "Agent"
+      },
+      "nativeShapes": [
+        "ANTIGRAVITY"
+      ],
+      "canonicalName": "SUBAGENT",
       "toolClass": "SAFE_NON_EDIT",
       "argumentProfile": "ANY_OBJECT",
       "targetExtractor": "NONE"

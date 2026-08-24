@@ -23,8 +23,8 @@
     {
       "source": "distribution/templates/root/AGENTS.md",
       "target": "AGENTS.md",
-      "sourceBlobSha256": "46aa5668e67aa631ac3354fb1bd9d81933323fc96275aa795d17a5d736d9df8a",
-      "targetSha256": "46aa5668e67aa631ac3354fb1bd9d81933323fc96275aa795d17a5d736d9df8a",
+      "sourceBlobSha256": "b0a8b89060e962a69509092fd7e299c590b62b6743757924be9cc541fc4a8fbe",
+      "targetSha256": "b0a8b89060e962a69509092fd7e299c590b62b6743757924be9cc541fc4a8fbe",
       "legacySha256": "01a3baa5611b90649dbd8f9e5861355cd611650092a29d9d4a0298d4ba9a7a77",
       "encoding": "utf8-no-bom",
       "lineEnding": "lf"
@@ -32,8 +32,8 @@
     {
       "source": "distribution/templates/root/ANTIGRAVITY.md",
       "target": "ANTIGRAVITY.md",
-      "sourceBlobSha256": "261d69a82387c5ca2fa3ad185dd008bc00c12f0f6ed4072d79bcf248bc5a9add",
-      "targetSha256": "261d69a82387c5ca2fa3ad185dd008bc00c12f0f6ed4072d79bcf248bc5a9add",
+      "sourceBlobSha256": "d5541b94d9bd591cd3ee59d303c48f81318c3bf413428bb3a866977bc3085435",
+      "targetSha256": "d5541b94d9bd591cd3ee59d303c48f81318c3bf413428bb3a866977bc3085435",
       "legacySha256": "c52fa16fdb111963e40ae3182e53b3dffe339f0c0d407701a88b7b472bfeab11",
       "encoding": "utf8-no-bom",
       "lineEnding": "lf"
@@ -50,8 +50,8 @@
     {
       "source": "distribution/templates/hooks/agents-hooks.json",
       "target": ".agents/hooks.json",
-      "sourceBlobSha256": "f46b30f2d9eb4446cb584a4e355b56d627d3f6523ae30d8c2e5bf39aab69c588",
-      "targetSha256": "f46b30f2d9eb4446cb584a4e355b56d627d3f6523ae30d8c2e5bf39aab69c588",
+      "sourceBlobSha256": "2ffb56609ca9160a5c6f803999b103fc6de6f9004004581088542a8e0c0e4061",
+      "targetSha256": "2ffb56609ca9160a5c6f803999b103fc6de6f9004004581088542a8e0c0e4061",
       "legacySha256": "f2711d5f1809917cb57640f07a589e9f538ffd767eea316f6303c294913ae0b9",
       "encoding": "utf8-no-bom",
       "lineEnding": "lf"
@@ -59,8 +59,8 @@
     {
       "source": "distribution/templates/hooks/cursor-hooks.json",
       "target": ".cursor/hooks.json",
-      "sourceBlobSha256": "c8491d54c8bf1e42cf10a7512198b69678d8ded7385fbbd7a3ed4ed7eedf4435",
-      "targetSha256": "c8491d54c8bf1e42cf10a7512198b69678d8ded7385fbbd7a3ed4ed7eedf4435",
+      "sourceBlobSha256": "61d5faef77a9be12b04c57ad185e5563740a604229c6960bb1e76368ea4abe4f",
+      "targetSha256": "61d5faef77a9be12b04c57ad185e5563740a604229c6960bb1e76368ea4abe4f",
       "legacySha256": "",
       "encoding": "utf8-no-bom",
       "lineEnding": "lf"
@@ -68,8 +68,8 @@
     {
       "source": "distribution/templates/hooks/copilot-hooks.json",
       "target": ".github/hooks/ai-sop.json",
-      "sourceBlobSha256": "3888360758dceafddde050a9a61d33c00c299449ff1928045e3903e749e32e6b",
-      "targetSha256": "3888360758dceafddde050a9a61d33c00c299449ff1928045e3903e749e32e6b",
+      "sourceBlobSha256": "8740ad69c6ee9ac06147b8021908a52d978646f94decb9ca2d9e919c006adbae",
+      "targetSha256": "8740ad69c6ee9ac06147b8021908a52d978646f94decb9ca2d9e919c006adbae",
       "legacySha256": "",
       "encoding": "utf8-no-bom",
       "lineEnding": "lf"
@@ -77,8 +77,8 @@
     {
       "source": "distribution/templates/hooks/hook-wrapper.ps1",
       "target": ".agents/hook-wrapper.ps1",
-      "sourceBlobSha256": "2b4527176ba8c5b694476ce430358b066a3a788610a6b52dd8609b2ca471a507",
-      "targetSha256": "2b4527176ba8c5b694476ce430358b066a3a788610a6b52dd8609b2ca471a507",
+      "sourceBlobSha256": "541a33709587458e9d30a516b4960803f364c8e3d71e67e9511db2be778fbd2b",
+      "targetSha256": "541a33709587458e9d30a516b4960803f364c8e3d71e67e9511db2be778fbd2b",
       "legacySha256": "",
       "encoding": "utf8-no-bom",
       "lineEnding": "lf"
@@ -86,8 +86,8 @@
     {
       "source": "distribution/templates/hooks/hook-wrapper.ps1",
       "target": ".claude/hook-wrapper.ps1",
-      "sourceBlobSha256": "2b4527176ba8c5b694476ce430358b066a3a788610a6b52dd8609b2ca471a507",
-      "targetSha256": "2b4527176ba8c5b694476ce430358b066a3a788610a6b52dd8609b2ca471a507",
+      "sourceBlobSha256": "541a33709587458e9d30a516b4960803f364c8e3d71e67e9511db2be778fbd2b",
+      "targetSha256": "541a33709587458e9d30a516b4960803f364c8e3d71e67e9511db2be778fbd2b",
       "legacySha256": "",
       "encoding": "utf8-no-bom",
       "lineEnding": "lf"
@@ -95,8 +95,8 @@
     {
       "source": "distribution/templates/hooks/hook-wrapper.ps1",
       "target": ".cursor/hook-wrapper.ps1",
-      "sourceBlobSha256": "2b4527176ba8c5b694476ce430358b066a3a788610a6b52dd8609b2ca471a507",
-      "targetSha256": "2b4527176ba8c5b694476ce430358b066a3a788610a6b52dd8609b2ca471a507",
+      "sourceBlobSha256": "541a33709587458e9d30a516b4960803f364c8e3d71e67e9511db2be778fbd2b",
+      "targetSha256": "541a33709587458e9d30a516b4960803f364c8e3d71e67e9511db2be778fbd2b",
       "legacySha256": "",
       "encoding": "utf8-no-bom",
       "lineEnding": "lf"
@@ -104,8 +104,8 @@
     {
       "source": "distribution/templates/hooks/hook-wrapper.ps1",
       "target": ".github/hook-wrapper.ps1",
-      "sourceBlobSha256": "2b4527176ba8c5b694476ce430358b066a3a788610a6b52dd8609b2ca471a507",
-      "targetSha256": "2b4527176ba8c5b694476ce430358b066a3a788610a6b52dd8609b2ca471a507",
+      "sourceBlobSha256": "541a33709587458e9d30a516b4960803f364c8e3d71e67e9511db2be778fbd2b",
+      "targetSha256": "541a33709587458e9d30a516b4960803f364c8e3d71e67e9511db2be778fbd2b",
       "legacySha256": "",
       "encoding": "utf8-no-bom",
       "lineEnding": "lf"

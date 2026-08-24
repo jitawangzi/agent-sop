@@ -70,6 +70,11 @@ brainstorming 节点按需咨询 `design-architect`；设计产出后由 `design
 - 专家 Skill 在被派发时，底层自动动态读取并继承本地 Superpowers 最新原生模板（`implementer-prompt.md`、`task-reviewer-prompt.md`、`code-reviewer.md`、`test-driven-development` 等），自动获得其最新的**通用工程纪律**（升级熔断协议、零信任自评、TDD 证据链契约、Plan-Mandated 缺陷独立定性、Pristine 零噪声测试标准）；
 - 专家 Skill 本体作为领域特化叠加层，注入 Java/Spring/Redis/Mongo 架构、`Player` 资源立即落库、多版本混跑与协议增量兼容等深度领域规则；
 - 当 Superpowers 插件升级时，所有专家 Skill 无需修改任何代码，**自动持续获得 Superpowers 最新进化出的通用工程与审查能力**。
+- **Controller 派发子智能体时的显式 Skill 注入契约 (Prompt Injection Contract)**：
+  Controller 在派发 subagent 时，必须在 subagent prompt 的开头显式指明其角色与对应 Skill 路径，确保 subagent 实例化时立即装载 Base + Overlay 体系：
+  - 派发实现者：Prompt 必须包含 `【角色与规范】你的角色是 implementation-engine，请首先读取并严格遵守 .ai-sop/skills/implementation-engine/SKILL.md 的实现规范与 Base+Overlay 动态继承体系。`
+  - 派发内审者：Prompt 必须包含 `【角色与规范】你的角色是 implementation-auditor（或 logic-auditor），请首先读取并严格遵守 .ai-sop/skills/implementation-auditor/SKILL.md 的审计规范。`
+  - 派发设计审查者：Prompt 必须包含 `【角色与规范】你的角色是 design-reviewer，请首先读取并严格遵守 .ai-sop/skills/design-reviewer/SKILL.md 的审查规范。`
 
 ## 三层审查定位（职责不重叠）
 

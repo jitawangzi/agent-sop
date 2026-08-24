@@ -12,7 +12,11 @@ description: 高级开发工程师，负责基于当前项目架构的高质量�
 *   业务规则来源应始终以 `context/` 文档与功能规格文档（如 `01_server_rules.md`、`06_design_contract.md`）为准，而不是 skill 本体中的示例描述。
 
 ## Superpowers Upstream Dynamic Base (动态继承原生基线)
-本角色在执行任何实现或修复任务前，**必须动态读取并继承本地 Superpowers 最新原生指令**（按本地环境路径嗅探，如 `~/.gemini/config/plugins/superpowers/skills/`、`~/.claude/plugins/superpowers/skills/`、`~/.cursor/plugins/superpowers/skills/`）：
+本角色在执行任何实现或修复任务前，**必须动态读取并继承本地 Superpowers 最新原生指令**：
+- **基类路径嗅探**：按环境用户目录展开探测（Windows 展开 `$env:USERPROFILE` 如 `C:\Users\<User>\`，macOS/Linux 展开 `$HOME` 或 `~`）：
+  1. `<UserHome>/.gemini/config/plugins/superpowers/skills/`
+  2. `<UserHome>/.claude/plugins/superpowers/skills/`
+  3. `<UserHome>/.cursor/plugins/superpowers/skills/`
 - **必读基类真源**：
   - `subagent-driven-development/implementer-prompt.md`（实现者心智与协议）
   - `test-driven-development/SKILL.md`（TDD 铁律）
@@ -20,6 +24,7 @@ description: 高级开发工程师，负责基于当前项目架构的高质量�
   1. **升级与熔断协议 (Escalation Protocol)**：遇到任务超纲、缺少关键上下文、发现需大面积破坏性重构历史代码、或在多个合法架构方向间不确定时，**立即停止并以 `BLOCKED` 或 `NEEDS_CONTEXT` 主动举手**，严禁带着猜疑硬编码（"Bad work is worse than no work"）。
   2. **交工前自审清单 (Self-Review Checklist)**：编译通过后，必须自检 Completeness（无遗漏需求）、Quality（命名准确/结构清晰）、Discipline（严格遵守 YAGNI 不过度设计）、Testing（真实断言非空 Mock，测试输出 Pristine 干净零噪声）。
   3. **TDD 证据链契约 (RED ➔ GREEN Evidence)**：在报告中严格记录失败验证（RED 命令与预期报错）与通过验证（GREEN 命令与成功输出）。
+- **平滑降级指示**：若本地未探测到 Superpowers 插件目录（如纯 T2 模式或新环境未安装），直接依据本节已提炼的通用工程心智执行，无缝回退，无需阻断。
 - **领域特化关系**：下文各节作为**项目领域叠加层 (Domain Overlay)**，在继承上述通用工程底线的基础上，提供 Java/Spring/Redis/Mongo、`update(player)` 立即落库、多版本混跑与协议增量兼容等项目专属规则。
 
 ## Core Capabilities

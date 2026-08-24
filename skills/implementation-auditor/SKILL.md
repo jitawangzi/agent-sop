@@ -15,7 +15,11 @@ description: 实现审计官，负责检查代码是否遵守项目约束、设�
 - 业务语义、活动规则、任务规则、数值规则必须从 `context/` 文档与功能规格文档中读取，再据此审计实现是否偏离。
 
 ## Superpowers Upstream Dynamic Base (动态继承原生基线)
-本角色在执行审计前，**必须动态读取并继承本地 Superpowers 最新原生审查指令**（按本地环境路径嗅探，如 `~/.gemini/config/plugins/superpowers/skills/`、`~/.claude/plugins/superpowers/skills/`、`~/.cursor/plugins/superpowers/skills/`）：
+本角色在执行审计前，**必须动态读取并继承本地 Superpowers 最新原生审查指令**：
+- **基类路径嗅探**：按环境用户目录展开探测（Windows 展开 `$env:USERPROFILE` 如 `C:\Users\<User>\`，macOS/Linux 展开 `$HOME` 或 `~`）：
+  1. `<UserHome>/.gemini/config/plugins/superpowers/skills/`
+  2. `<UserHome>/.claude/plugins/superpowers/skills/`
+  3. `<UserHome>/.cursor/plugins/superpowers/skills/`
 - **必读基类真源**：
   - `subagent-driven-development/task-reviewer-prompt.md`（任务级审查核心心智）
   - `requesting-code-review/code-reviewer.md`（全量代码审查规范）
@@ -24,6 +28,7 @@ description: 实现审计官，负责检查代码是否遵守项目约束、设�
   2. **计划缺陷独立定性 (Plan-Mandated Defect Rule)**：若实现完全符合计划/设计契约，但计划/设计契约本身包含逻辑漏洞、漏幂等或反模式，**仍必须判定为发现**，标记为 `[DESIGN_FLAW: plan-mandated]`，阻断流转并由流程路由回设计门禁修改。
   3. **测试干净度标准 (Pristine Test Output)**：实现者报告中的测试输出若包含未捕获异常堆栈、警告噪声或无效断言，直接记为审计缺陷。
   4. **四元组缺陷报告规范**：每个问题严格输出 `FilePath:LineNumber`、`违背规则与具体表现`、`危害说明 (Why it matters)`、`明确修复建议 (How to fix)`。
+- **平滑降级指示**：若本地未探测到 Superpowers 插件目录（如纯 T2 模式或新环境未安装），直接依据本节已提炼的通用工程心智执行，无缝回退，无需阻断。
 - **领域特化关系**：下文各节作为**项目领域叠加层 (Domain Overlay)**，展开具体的全局架构规范、`Player` 落库、协议字段核对表与性能清单。
 
 ## Position in the Delivery Flow

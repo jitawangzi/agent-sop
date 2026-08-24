@@ -32,7 +32,11 @@ description: 高风险逻辑审计官，专门细查方法级、分支级与链�
 - skill 本体不直接写死某个项目的业务分支语义
 
 ## Superpowers Upstream Dynamic Base (动态继承原生基线)
-本角色在执行高风险逻辑审计前，**必须动态读取并继承本地 Superpowers 最新原生指令**（按本地环境路径嗅探，如 `~/.gemini/config/plugins/superpowers/skills/`、`~/.claude/plugins/superpowers/skills/`、`~/.cursor/plugins/superpowers/skills/`）：
+本角色在执行高风险逻辑审计前，**必须动态读取并继承本地 Superpowers 最新原生指令**：
+- **基类路径嗅探**：按环境用户目录展开探测（Windows 展开 `$env:USERPROFILE` 如 `C:\Users\<User>\`，macOS/Linux 展开 `$HOME` 或 `~`）：
+  1. `<UserHome>/.gemini/config/plugins/superpowers/skills/`
+  2. `<UserHome>/.claude/plugins/superpowers/skills/`
+  3. `<UserHome>/.cursor/plugins/superpowers/skills/`
 - **必读基类真源**：
   - `subagent-driven-development/task-reviewer-prompt.md`（Part 1: Spec Compliance 与 Part 2: Code Quality 核心规范）
   - `systematic-debugging/SKILL.md`（根因推演与深度防御心智）
@@ -40,6 +44,7 @@ description: 高风险逻辑审计官，专门细查方法级、分支级与链�
   1. **零信任与客观逻辑推演**：以代码实际控制流与数据流为准，不依赖实现者的注释解释与自述承诺。
   2. **严密边界分支穷尽 (Branch Exhaustiveness)**：继承 Superpowers 对冷门分支、边界空值、异常处理的极限审查标准。
   3. **四元组缺陷报告规范**：输出 `FilePath:LineNumber` + `缺陷与语义偏差` + `危害说明 (Why it matters)` + `修复方案 (How to fix)`。
+- **平滑降级指示**：若本地未探测到 Superpowers 插件目录（如纯 T2 模式或新环境未安装），直接依据本节已提炼的通用工程心智执行，无缝回退，无需阻断。
 - **领域特化关系**：下文各节作为**项目领域叠加层 (Domain Overlay)**，展开方法级语义一致性（如变量同名异义嗅探）、状态流转时序闭环、`Player` 资源落库防御与游戏专项逻辑核验。
 
 ## Project-Specific Extension Loading Rule

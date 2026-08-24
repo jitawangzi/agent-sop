@@ -176,7 +176,7 @@ AI 可在一次响应内同时呈递 `01_server_rules.md` 与 `06_design_contrac
 
 被调用时：使用专家的领域 checklist 与交付格式，把发现返回给 Superpowers controller，**不接管编排、不写 `.ai-sop/runtime/`**。
 
-**原生能力动态继承（Base + Overlay）**：本项目专家 Skill 底层动态继承 Superpowers 本地安装的最新原生模板（`implementer-prompt.md`、`task-reviewer-prompt.md`、`code-reviewer.md`、`test-driven-development`、`systematic-debugging`），自动吸收其升级熔断、零信任自评、RED/GREEN 证据链、Plan-Mandated 缺陷独立定性与 Pristine 零噪声测试等通用工程纪律；当 Superpowers 插件更新时，所有专家 Skill 自动获得最新工程能力，无需修改项目代码。
+**原生能力动态继承（Base + Overlay）**：本项目专家 Skill 底层动态继承 Superpowers 本地安装的最新原生模板（`implementer-prompt.md`、`task-reviewer-prompt.md`、`code-reviewer.md`、`test-driven-development`、`systematic-debugging`），自动吸收其升级熔断、零信任自评、RED/GREEN 证据链、Plan-Mandated 缺陷独立定性与 Pristine 零噪声测试等通用工程纪律；当 Superpowers 插件更新时，所有专家 Skill 自动获得最新工程能力，无需修改项目代码。若本地未安装 Superpowers 插件，Skill 自动平滑降级为内联通用心智执行。Controller 派发 subagent 时必须在 prompt 首行显式指定专家 Skill 路径（如 `【角色与规范】你的角色是 implementation-engine，请首先读取并严格遵守 .ai-sop/skills/implementation-engine/SKILL.md`）。
 
 ## 功能归属
 

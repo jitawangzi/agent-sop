@@ -31,13 +31,18 @@ brainstorming（需求 → 确认 → design-architect 产出 06）
 - 审查结论与功能规则冲突时，以功能规则文档和设计契约为准，并在报告中显式说明冲突点。
 
 ## Superpowers Upstream Dynamic Base (动态继承原生基线)
-本角色在执行设计方案审查前，**必须动态读取并继承本地 Superpowers 最新设计审查指令**（按本地环境路径嗅探，如 `~/.gemini/config/plugins/superpowers/skills/`、`~/.claude/plugins/superpowers/skills/`、`~/.cursor/plugins/superpowers/skills/`）：
+本角色在执行设计方案审查前，**必须动态读取并继承本地 Superpowers 最新设计审查指令**：
+- **基类路径嗅探**：按环境用户目录展开探测（Windows 展开 `$env:USERPROFILE` 如 `C:\Users\<User>\`，macOS/Linux 展开 `$HOME` 或 `~`）：
+  1. `<UserHome>/.gemini/config/plugins/superpowers/skills/`
+  2. `<UserHome>/.claude/plugins/superpowers/skills/`
+  3. `<UserHome>/.cursor/plugins/superpowers/skills/`
 - **必读基类真源**：
   - `brainstorming/spec-document-reviewer-prompt.md`（设计文档审查清单）
   - `brainstorming/SKILL.md`（需求与设计澄清原则）
 - **通用设计审查心智自动继承**：
   1. **完备性与歧义审查**：继承 Superpowers 对设计草案中模糊占位（"TBD", "as appropriate", "reasonable defaults"）、未定义异常/错误码分支及边界条件缺失的严格拦截能力。
   2. **YAGNI 与范围收敛**：检查设计是否超出了 01 需求范围，是否存在不必要的抽象与提前过度设计。
+- **平滑降级指示**：若本地未探测到 Superpowers 插件目录（如纯 T2 模式或新环境未安装），直接依据本节已提炼的通用工程心智执行，无缝回退，无需阻断。
 - **领域特化关系**：下文各节作为**项目领域叠加层 (Domain Overlay)**，展开游戏服务端的宏观架构守门、存储与内存分层、无损扩展与已知高风险设计缺陷模式。
 
 ## Context Strategy

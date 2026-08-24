@@ -1242,8 +1242,14 @@ function Get-AiSopPathFieldValues {
         "file",
         "target_file",
         "filePath",
+        "TargetFile",
+        "targetFile",
         "target_notebook",
-        "notebook_path"
+        "notebook_path",
+        "AbsolutePath",
+        "absolute_path",
+        "DirectoryPath",
+        "directory_path"
     )) {
         if (Test-MapHasKey $Arguments $field) {
             if (-not (Test-StringValue $Arguments[$field])) {
@@ -1403,13 +1409,37 @@ function Test-AiSopToolArgumentProfile {
                 "file",
                 "target_file",
                 "filePath",
+                "TargetFile",
+                "targetFile",
                 "old_string",
                 "new_string",
                 "old_str",
                 "new_str",
                 "oldText",
                 "newText",
-                "replace_all"
+                "old_text",
+                "new_text",
+                "TargetContent",
+                "targetContent",
+                "ReplacementContent",
+                "replacementContent",
+                "replace_all",
+                "AllowMultiple",
+                "allowMultiple",
+                "Instruction",
+                "instruction",
+                "Description",
+                "description",
+                "StartLine",
+                "startLine",
+                "EndLine",
+                "endLine",
+                "TargetLintErrorIds",
+                "targetLintErrorIds",
+                "toolAction",
+                "toolSummary",
+                "tool_action",
+                "tool_summary"
             ))) {
                 return $false
             }
@@ -1420,12 +1450,18 @@ function Test-AiSopToolArgumentProfile {
             $oldPresent = @(
                 "old_string",
                 "old_str",
-                "oldText"
+                "oldText",
+                "old_text",
+                "TargetContent",
+                "targetContent"
             ) | Where-Object { Test-MapHasKey $Arguments $_ }
             $newPresent = @(
                 "new_string",
                 "new_str",
-                "newText"
+                "newText",
+                "new_text",
+                "ReplacementContent",
+                "replacementContent"
             ) | Where-Object { Test-MapHasKey $Arguments $_ }
             if ($oldPresent.Count -ne 1 -or $newPresent.Count -ne 1) {
                 return $false
@@ -1438,10 +1474,25 @@ function Test-AiSopToolArgumentProfile {
             ) {
                 return $false
             }
-            return (
-                -not (Test-MapHasKey $Arguments "replace_all") -or
-                $Arguments.replace_all -is [bool]
-            )
+            if (
+                (Test-MapHasKey $Arguments "replace_all") -and
+                $Arguments.replace_all -isnot [bool]
+            ) {
+                return $false
+            }
+            if (
+                (Test-MapHasKey $Arguments "AllowMultiple") -and
+                $Arguments.AllowMultiple -isnot [bool]
+            ) {
+                return $false
+            }
+            if (
+                (Test-MapHasKey $Arguments "allowMultiple") -and
+                $Arguments.allowMultiple -isnot [bool]
+            ) {
+                return $false
+            }
+            return $true
         }
         "WRITE" {
             if (-not (Test-AiSopMapAllowedTypes $Arguments @(
@@ -1450,16 +1501,52 @@ function Test-AiSopToolArgumentProfile {
                 "file",
                 "target_file",
                 "filePath",
-                "content"
+                "TargetFile",
+                "targetFile",
+                "content",
+                "contents",
+                "CodeContent",
+                "codeContent",
+                "Overwrite",
+                "overwrite",
+                "Description",
+                "description",
+                "ArtifactMetadata",
+                "artifactMetadata",
+                "toolAction",
+                "toolSummary",
+                "tool_action",
+                "tool_summary"
             ))) {
                 return $false
             }
             $paths = Get-AiSopPathFieldValues $Arguments
+            $contentPresent = @(
+                "content",
+                "contents",
+                "CodeContent",
+                "codeContent"
+            ) | Where-Object { Test-MapHasKey $Arguments $_ }
+            if ($contentPresent.Count -ne 1) {
+                return $false
+            }
+            $contentField = @($contentPresent)[0]
+            if (
+                (Test-MapHasKey $Arguments "Overwrite") -and
+                $Arguments.Overwrite -isnot [bool]
+            ) {
+                return $false
+            }
+            if (
+                (Test-MapHasKey $Arguments "overwrite") -and
+                $Arguments.overwrite -isnot [bool]
+            ) {
+                return $false
+            }
             return (
                 $null -ne $paths -and
                 @($paths).Count -eq 1 -and
-                (Test-MapHasKey $Arguments "content") -and
-                (Test-StringValue $Arguments.content -AllowEmpty)
+                (Test-StringValue $Arguments[$contentField] -AllowEmpty)
             )
         }
         "MULTI_EDIT" {
@@ -2298,15 +2385,25 @@ function Get-AiSopCanonicalToolArguments {
                 old = Get-AiSopAliasedValue $Arguments @(
                     "old_string",
                     "old_str",
-                    "oldText"
+                    "oldText",
+                    "old_text",
+                    "TargetContent",
+                    "targetContent"
                 )
                 new = Get-AiSopAliasedValue $Arguments @(
                     "new_string",
                     "new_str",
-                    "newText"
+                    "newText",
+                    "new_text",
+                    "ReplacementContent",
+                    "replacementContent"
                 )
                 replaceAll = if (Test-MapHasKey $Arguments "replace_all") {
                     [bool]$Arguments.replace_all
+                } elseif (Test-MapHasKey $Arguments "AllowMultiple") {
+                    [bool]$Arguments.AllowMultiple
+                } elseif (Test-MapHasKey $Arguments "allowMultiple") {
+                    [bool]$Arguments.allowMultiple
                 } else {
                     $false
                 }
@@ -2315,7 +2412,12 @@ function Get-AiSopCanonicalToolArguments {
         "WRITE" {
             return [ordered]@{
                 paths = @($TargetPaths | ForEach-Object { $_.ToLowerInvariant() })
-                content = $Arguments.content
+                content = Get-AiSopAliasedValue $Arguments @(
+                    "content",
+                    "contents",
+                    "CodeContent",
+                    "codeContent"
+                )
             }
         }
         "MULTI_EDIT" {

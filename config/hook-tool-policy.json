@@ -372,7 +372,33 @@
     {
       "match": {
         "kind": "EXACT",
+        "value": "WriteToFile"
+      },
+      "nativeShapes": [
+        "ANTIGRAVITY"
+      ],
+      "canonicalName": "WRITE",
+      "toolClass": "FILE_EDIT",
+      "argumentProfile": "WRITE",
+      "targetExtractor": "SINGLE_PATH"
+    },
+    {
+      "match": {
+        "kind": "EXACT",
         "value": "replace_file_content"
+      },
+      "nativeShapes": [
+        "ANTIGRAVITY"
+      ],
+      "canonicalName": "EDIT",
+      "toolClass": "FILE_EDIT",
+      "argumentProfile": "EDIT",
+      "targetExtractor": "SINGLE_PATH"
+    },
+    {
+      "match": {
+        "kind": "EXACT",
+        "value": "ReplaceFileContent"
       },
       "nativeShapes": [
         "ANTIGRAVITY"

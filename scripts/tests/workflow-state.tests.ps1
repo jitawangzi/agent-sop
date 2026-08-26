@@ -2180,6 +2180,63 @@ try {
         throw "ValidateChangeImpact must return VALID for schema-compliant impact JSON, got: $($impactVal -join '; ')"
     }
 
+    # Test carrier method existence verification in Java test files
+    $carrierMethodTestDir = Join-Path $TestRoot "carrier_method_test"
+    [System.IO.Directory]::CreateDirectory($carrierMethodTestDir) | Out-Null
+    $cmSpecDir = Join-Path $carrierMethodTestDir ".ai-workspace/specs/features/CarrierMethodFeature"
+    [System.IO.Directory]::CreateDirectory($cmSpecDir) | Out-Null
+    $cmTestJava = Join-Path $carrierMethodTestDir "test/CarrierTest.java"
+    [System.IO.Directory]::CreateDirectory((Split-Path -Parent $cmTestJava)) | Out-Null
+    [System.IO.File]::WriteAllText($cmTestJava, "package test; public class CarrierTest { @Test public void realTestMethod() {} }", $Utf8NoBom)
+
+    $cmCovPath = Join-Path $cmSpecDir "05_test_coverage.json"
+    $cmCovJson = @'
+{
+  "schemaVersion": "1.0",
+  "feature": "CarrierMethodFeature",
+  "requirementArtifact": "01_server_rules.md",
+  "requirementSha256": "0000000000000000000000000000000000000000000000000000000000000000",
+  "designArtifact": "06_design_contract.md",
+  "designSha256": "0000000000000000000000000000000000000000000000000000000000000000",
+  "testPlanArtifact": "05_test_plan.md",
+  "testPlanSha256": "0000000000000000000000000000000000000000000000000000000000000000",
+  "cases": [
+    {
+      "id": "TC-01",
+      "status": "IMPLEMENTED",
+      "priority": "P1",
+      "requirementIds": [],
+      "designIds": ["DC-01"],
+      "automationCarrier": "test/CarrierTest.java#nonExistentMethod"
+    }
+  ],
+  "riskExemptions": []
+}
+'@
+    [System.IO.File]::WriteAllText($cmCovPath, $cmCovJson, $Utf8NoBom)
+    $cmWarnings = Get-CoveragePlaceholderWarnings -CoveragePath $cmCovPath -Phase "VERIFY"
+    if ($cmWarnings.Errors.Count -eq 0 -or $cmWarnings.Errors -notmatch "does not exist in") {
+        throw "Get-CoveragePlaceholderWarnings must report ERROR when carrier method does not exist in .java file. Errors: $($cmWarnings.Errors -join '; ')"
+    }
+
+    # Test FAST_TRACK source code modification rejection in VerifyCompletion
+    $ftTestDir = Join-Path $TestRoot "ft_src_test"
+    [System.IO.Directory]::CreateDirectory($ftTestDir) | Out-Null
+    & git -C $ftTestDir init --quiet
+    $ftSpecDir = Join-Path $ftTestDir ".ai-workspace/specs/features/FtSrcFeature"
+    [System.IO.Directory]::CreateDirectory($ftSpecDir) | Out-Null
+    $ftFeatState = Join-Path $ftSpecDir "feature-state.json"
+    [System.IO.File]::WriteAllText($ftFeatState, '{"schemaVersion":"1.0","feature":"FtSrcFeature","tier":"FAST_TRACK","phase":"DONE"}', $Utf8NoBom)
+    $ftSrcFile = Join-Path $ftTestDir "src/com/game/Main.java"
+    [System.IO.Directory]::CreateDirectory((Split-Path -Parent $ftSrcFile)) | Out-Null
+    [System.IO.File]::WriteAllText($ftSrcFile, "package com.game; public class Main {}", $Utf8NoBom)
+    
+    $ftVerifyOut = & $ScriptPath -Operation VerifyCompletion -Path (Join-Path $ftSpecDir "workflow-state.json") 2>&1
+    $ftVerifyStr = $ftVerifyOut | Out-String
+    if ($LASTEXITCODE -eq 0 -or $ftVerifyStr -notmatch "FAST_TRACK violation") {
+        throw "VerifyCompletion must fail FAST_TRACK when src/ files are modified. Output: $ftVerifyStr"
+    }
+
     Write-Output "All workflow state tests passed."
 } finally {
     foreach ($name in @(

@@ -17,6 +17,7 @@ param(
         "IncrementAttempt",
         "ValidateHandoff",
         "ValidateTestCoverage",
+        "ValidateChangeImpact",
         "ValidateTransitions",
         "SyncCoverage",
         "CheckCompletion",
@@ -899,6 +900,83 @@ function Resolve-AiSopWorkspaceRoot {
     return $null
 }
 
+function Get-ChangeSetDigest {
+    param(
+        [string]$WorkspaceRoot,
+        [string]$Baseline = $null,
+        [string[]]$ChangedSymbols = $null
+    )
+    if ([string]::IsNullOrWhiteSpace($WorkspaceRoot) -or -not (Test-Path -LiteralPath $WorkspaceRoot)) {
+        return $null
+    }
+    # 1. Git diff
+    if (Test-Path -LiteralPath (Join-Path $WorkspaceRoot ".git") -PathType Container) {
+        try {
+            $diffTarget = if ([string]::IsNullOrWhiteSpace($Baseline) -or $Baseline -eq "HEAD") { "HEAD" } else { $Baseline }
+            $gitDiff = & git -C $WorkspaceRoot diff $diffTarget 2>&1
+            if ($LASTEXITCODE -eq 0 -and $null -ne $gitDiff) {
+                $diffStr = ($gitDiff | Out-String).Trim()
+                if (-not [string]::IsNullOrWhiteSpace($diffStr)) {
+                    return (Get-StringSha256 -Text $diffStr)
+                }
+            }
+        } catch {}
+    }
+    # 2. SVN diff
+    if (Test-Path -LiteralPath (Join-Path $WorkspaceRoot ".svn") -PathType Container) {
+        try {
+            $diffArgs = if (-not [string]::IsNullOrWhiteSpace($Baseline) -and $Baseline -match '^\d+$') { @("-r", "$Baseline:WORKING") } else { @() }
+            $svnDiff = & svn diff @diffArgs $WorkspaceRoot 2>&1
+            if ($LASTEXITCODE -eq 0 -and $null -ne $svnDiff) {
+                $diffStr = ($svnDiff | Out-String).Trim()
+                if (-not [string]::IsNullOrWhiteSpace($diffStr)) {
+                    return (Get-StringSha256 -Text $diffStr)
+                }
+            }
+        } catch {}
+    }
+    # 3. Concatenated symbol / file hash fallback
+    if ($ChangedSymbols -and $ChangedSymbols.Count -gt 0) {
+        $hashParts = [System.Collections.Generic.List[string]]::new()
+        foreach ($sym in $ChangedSymbols) {
+            $filePath = $sym
+            if ($filePath -match '^([^#]+)#') { $filePath = $Matches[1] }
+            $filePath = $filePath.Replace(".", "/").Trim()
+            $candidate = Join-Path $WorkspaceRoot $filePath
+            if (Test-Path -LiteralPath $candidate -PathType Leaf) {
+                $hashParts.Add((Get-AiSopArtifactHash -Path $candidate))
+            } else {
+                $hashParts.Add($sym)
+            }
+        }
+        return (Get-StringSha256 -Text ($hashParts -join "|"))
+    }
+    return $null
+}
+
+function Validate-ChangeImpactState {
+    param(
+        [string]$ImpactPath
+    )
+    if (-not (Test-Path -LiteralPath $ImpactPath -PathType Leaf)) {
+        throw "Change impact file does not exist: $ImpactPath"
+    }
+    $impactSchema = Join-Path $SchemaRoot "change-impact.schema.json"
+    $impact = Read-JsonObject -FilePath $ImpactPath -SchemaPath $impactSchema
+    
+    $specDir = Split-Path -Parent $ImpactPath
+    $wsRoot = Resolve-AiSopWorkspaceRoot -StartPath $specDir
+    if (-not [string]::IsNullOrWhiteSpace($wsRoot)) {
+        $currentDigest = Get-ChangeSetDigest -WorkspaceRoot $wsRoot -Baseline $impact.baseline -ChangedSymbols $impact.changedSymbols
+        if (-not [string]::IsNullOrWhiteSpace($currentDigest)) {
+            if ($impact.changeSetDigest.ToLowerInvariant() -ne $currentDigest.ToLowerInvariant()) {
+                throw "Change impact analysis is stale: recorded changeSetDigest does not match actual workspace diff against baseline '$($impact.baseline)'. Re-run Behavior Impact Analysis."
+            }
+        }
+    }
+    return $impact
+}
+
 function Validate-TestCoverageState {
     param(
         [string]$CoveragePath,
@@ -1184,21 +1262,23 @@ function Get-CoveragePlaceholderWarnings {
         if ([string]::IsNullOrWhiteSpace($carrierTrim) -or $carrierTrim -ieq "__TODO__" -or $carrierTrim -ieq "see plan" -or $carrierTrim -ieq "TODO") {
             if ($isPlanPhase) {
                 $warnings.Add("INFO: $caseId (priority=$prio) automationCarrier to be implemented ('$carrierTrim')")
-            } elseif ($isHighPriority) {
-                $errors.Add("ERROR: $caseId (priority=$prio) automationCarrier is placeholder ('$carrierTrim') — high-priority TC must point to test class/method or file")
             } else {
-                $warnings.Add("WARN: $caseId automationCarrier is placeholder ('$carrierTrim') — point it at the real test method/path before delivery")
+                $errors.Add("ERROR: $caseId (priority=$prio) automationCarrier is placeholder ('$carrierTrim') — must point to real test class/method or file before delivery")
             }
         } elseif ($carrierTrim -in @("JUnit", "pytest", "go test", "cargo test", "npm test")) {
             if ($isPlanPhase) {
                 $warnings.Add("INFO: $caseId (priority=$prio) automationCarrier carrier type: '$carrierTrim'")
-            } elseif ($isHighPriority) {
+            } else {
                 $errors.Add("ERROR: $caseId (priority=$prio) automationCarrier is too generic ('$carrierTrim') — specify exact test file or Class#method")
             }
         } elseif ($carrierTrim -match '[/\\]\.[a-zA-Z0-9]+$' -or $carrierTrim -match '\.[a-zA-Z]{1,5}#') {
             # Looks like a file path (has separator + extension, or extension#method).
             $filePathPart = $carrierTrim
-            if ($filePathPart -match '^([^#]+)#') { $filePathPart = $Matches[1] }
+            $methodName = $null
+            if ($filePathPart -match '^([^#]+)#(.*)$') {
+                $filePathPart = $Matches[1]
+                $methodName = $Matches[2].Trim()
+            }
             $resolved = $filePathPart
             if (-not [System.IO.Path]::IsPathRooted($resolved)) {
                 $carrierWsRoot = Resolve-AiSopWorkspaceRoot -StartPath (Split-Path -Parent $CoveragePath)
@@ -1229,7 +1309,30 @@ function Get-CoveragePlaceholderWarnings {
                         $errors.Add("ERROR: $caseId automationCarrier .java has no @Test method: $filePathPart — carrier must be a real test")
                     }
                 }
+                if (-not [string]::IsNullOrWhiteSpace($methodName)) {
+                    if ($javaSrc -notmatch "(?m)\b$([regex]::Escape($methodName))\s*\(") {
+                        if ($isPlanPhase) {
+                            $warnings.Add("INFO: $caseId automationCarrier method '$methodName' not yet in $filePathPart")
+                        } else {
+                            $errors.Add("ERROR: $caseId automationCarrier method '$methodName' does not exist in $filePathPart")
+                        }
+                    }
+                }
             }
+        }
+    }
+
+    # executionEvidence validation in VERIFY phase
+    if (-not $isPlanPhase -and $null -ne $coverage.executionEvidence) {
+        $ev = $coverage.executionEvidence
+        if ($ev.exitCode -ne 0) {
+            $errors.Add("ERROR: executionEvidence indicates failed test execution (exitCode=$($ev.exitCode))")
+        }
+        if ($ev.failedCount -gt 0) {
+            $errors.Add("ERROR: executionEvidence indicates $($ev.failedCount) test failure(s)")
+        }
+        if ($ev.testCount -lt 1) {
+            $errors.Add("ERROR: executionEvidence indicates zero tests were executed (testCount=$($ev.testCount))")
         }
     }
     return [pscustomobject]@{ Warnings = $warnings; Errors = $errors }
@@ -2210,8 +2313,7 @@ switch ($Operation) {
     }
     "ValidateChangeImpact" {
         Assert-Argument -Name "Path" -Value $Path
-        $impactSchema = Join-Path $SchemaRoot "change-impact.schema.json"
-        $impact = Read-JsonObject -FilePath $Path -SchemaPath $impactSchema
+        $impact = Validate-ChangeImpactState -ImpactPath $Path
         Write-Output "VALID"
         return $impact
     }
@@ -2292,7 +2394,10 @@ switch ($Operation) {
             try { $fs = Get-Content -LiteralPath $featStatePath -Raw | ConvertFrom-Json; $tier = [string]$fs.tier; $phase = [string]$fs.phase } catch { }
         }
         $hasWorkflowState = (Test-Path -LiteralPath $Path -PathType Leaf) -or (Test-Path -LiteralPath (Join-Path $specDir "workflow-state.json") -PathType Leaf) -or (Test-Path -LiteralPath (Join-Path $specDir "00_workflow_state.json") -PathType Leaf)
-        $hasSpecArtifacts = (Test-Path -LiteralPath (Join-Path $specDir "01_server_rules.md") -PathType Leaf) -or (Test-Path -LiteralPath (Join-Path $specDir "06_design_contract.md") -PathType Leaf) -or (Test-Path -LiteralPath (Join-Path $specDir "05_test_plan.md") -PathType Leaf)
+        $hasSpecArtifacts = (Test-Path -LiteralPath (Join-Path $specDir "01_server_rules.md") -PathType Leaf) -or 
+                            (Test-Path -LiteralPath (Join-Path $specDir "06_design_contract.md") -PathType Leaf) -or 
+                            (Test-Path -LiteralPath (Join-Path $specDir "05_test_plan.md") -PathType Leaf) -or
+                            (Test-Path -LiteralPath (Join-Path $specDir "04_change_impact.json") -PathType Leaf)
         
         $effectiveTier = $tier
         if ($hasWorkflowState -or $hasSpecArtifacts -or $tier -eq "T3") {
@@ -2386,7 +2491,10 @@ switch ($Operation) {
             try { $fs = Get-Content -LiteralPath $featStatePath -Raw | ConvertFrom-Json; $tier = [string]$fs.tier; $phase = [string]$fs.phase } catch { }
         }
         $hasWorkflowState = (Test-Path -LiteralPath $Path -PathType Leaf) -or (Test-Path -LiteralPath (Join-Path $specDir "workflow-state.json") -PathType Leaf) -or (Test-Path -LiteralPath (Join-Path $specDir "00_workflow_state.json") -PathType Leaf)
-        $hasSpecArtifacts = (Test-Path -LiteralPath (Join-Path $specDir "01_server_rules.md") -PathType Leaf) -or (Test-Path -LiteralPath (Join-Path $specDir "06_design_contract.md") -PathType Leaf) -or (Test-Path -LiteralPath (Join-Path $specDir "05_test_plan.md") -PathType Leaf)
+        $hasSpecArtifacts = (Test-Path -LiteralPath (Join-Path $specDir "01_server_rules.md") -PathType Leaf) -or 
+                            (Test-Path -LiteralPath (Join-Path $specDir "06_design_contract.md") -PathType Leaf) -or 
+                            (Test-Path -LiteralPath (Join-Path $specDir "05_test_plan.md") -PathType Leaf) -or
+                            (Test-Path -LiteralPath (Join-Path $specDir "04_change_impact.json") -PathType Leaf)
         
         $effectiveTier = $tier
         if ($hasWorkflowState -or $hasSpecArtifacts -or $tier -eq "T3") {
@@ -2465,6 +2573,17 @@ switch ($Operation) {
             } else {
                 $failures.Add("coverage matrix missing")
             }
+            # Change impact verification (if 04_change_impact.json exists)
+            $impactPath = Join-Path $specDir "04_change_impact.json"
+            if (Test-Path -LiteralPath $impactPath -PathType Leaf) {
+                try {
+                    Validate-ChangeImpactState -ImpactPath $impactPath | Out-Null
+                    $checks.Add("[v] 行为影响分析有效且未过期")
+                } catch {
+                    $failures.Add("change impact validation threw: $($_.Exception.Message)")
+                    $checks.Add("[X] 行为影响分析校验失败")
+                }
+            }
             # feature-state phase must not be initial/empty.
             $phaseOk = (-not [string]::IsNullOrWhiteSpace($phase)) -and ($phase -ne "INIT") -and ($phase -ne "unknown") -and ($phase -ne "UNCLASSIFIED")
             if (-not $phaseOk) { $failures.Add("feature-state phase is initial/unknown ($phase)") }
@@ -2475,7 +2594,28 @@ switch ($Operation) {
                 $checks.Add("[?] 归属 Validate(owner.ps1 -Operation Validate,另跑)")
                 $checks.Add("[?] 相关测试/回归(AI 据定向 JUnit 结果自报)")
             } elseif ($effectiveTier -eq "FAST_TRACK") {
-                $checks.Add("[?] 快通道: 纯数值/文档检查自报")
+                $hasSourceCodeChanges = $false
+                if (Test-Path -LiteralPath (Join-Path $wsRoot ".git") -PathType Container) {
+                    try {
+                        $gitStat = & git -C $wsRoot status --porcelain 2>&1
+                        if ($gitStat -match '(?m)^\s*[MADRCU?]+\s+(src|pkg|internal|app)/') {
+                            $hasSourceCodeChanges = $true
+                        }
+                    } catch {}
+                } elseif (Test-Path -LiteralPath (Join-Path $wsRoot ".svn") -PathType Container) {
+                    try {
+                        $svnStat = & svn status --ignore-externals $wsRoot 2>&1
+                        if ($svnStat -match '(?m)^[MAD?]\s+.*(src|pkg|internal|app)[/\\].*') {
+                            $hasSourceCodeChanges = $true
+                        }
+                    } catch {}
+                }
+                if ($hasSourceCodeChanges) {
+                    $failures.Add("FAST_TRACK violation: production source code was modified under src/. Changes to source code require at least T2 tier.")
+                    $checks.Add("[X] 快通道合规: 源码目录发生修改(禁止快通道)")
+                } else {
+                    $checks.Add("[?] 快通道: 纯数值/文档检查自报")
+                }
             } elseif ($effectiveTier -eq "T1") {
                 $checks.Add("[?] T1: 急速逃生口(仅编译检查)")
             }

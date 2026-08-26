@@ -332,8 +332,10 @@
         "command",
         "exitCode",
         "executedAt",
+        "sourceCommitSha",
         "testCount",
-        "passedCount"
+        "passedCount",
+        "failedCount"
       ],
       "properties": {
         "command": {
@@ -341,26 +343,28 @@
           "minLength": 1
         },
         "exitCode": {
-          "type": "integer"
+          "type": "integer",
+          "enum": [0]
         },
         "executedAt": {
           "type": "string",
           "minLength": 1
         },
         "sourceCommitSha": {
-          "type": "string"
+          "type": "string",
+          "minLength": 1
         },
         "testCount": {
           "type": "integer",
-          "minimum": 0
+          "minimum": 1
         },
         "passedCount": {
           "type": "integer",
-          "minimum": 0
+          "minimum": 1
         },
         "failedCount": {
           "type": "integer",
-          "minimum": 0
+          "enum": [0]
         },
         "durationMs": {
           "type": "integer",

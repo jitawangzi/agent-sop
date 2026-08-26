@@ -926,43 +926,82 @@ function Get-ChangeSetDigest {
     }
     # 1. Git diff + status (handles git worktree where .git is a file, and standard repos)
     if (Test-Path -LiteralPath (Join-Path $WorkspaceRoot ".git")) {
-        try {
-            $diffTarget = if ([string]::IsNullOrWhiteSpace($Baseline) -or $Baseline -eq "HEAD") { "HEAD" } else { $Baseline }
-            $gitDiff = & git -C $WorkspaceRoot diff $diffTarget 2>&1
-            $gitStat = & git -C $WorkspaceRoot status --porcelain -uall 2>&1
-            $combined = [System.Collections.Generic.List[string]]::new()
-            if ($null -ne $gitDiff) {
-                $diffStr = ($gitDiff | Out-String).Trim()
-                if (-not [string]::IsNullOrWhiteSpace($diffStr)) { $combined.Add($diffStr) }
+        $diffTarget = if ([string]::IsNullOrWhiteSpace($Baseline) -or $Baseline -eq "HEAD") { "HEAD" } else { $Baseline }
+        if ($diffTarget -ne "HEAD") {
+            $verifyRef = & git -C $WorkspaceRoot rev-parse --verify --quiet "$diffTarget" 2>&1
+            if ($LASTEXITCODE -ne 0) {
+                throw "Invalid baseline commit/ref '$Baseline' in git workspace: $WorkspaceRoot"
             }
-            if ($null -ne $gitStat) {
-                $statStr = ($gitStat | Out-String).Trim()
-                if (-not [string]::IsNullOrWhiteSpace($statStr)) { $combined.Add($statStr) }
+        }
+        $gitDiff = & git -C $WorkspaceRoot diff $diffTarget -- . ":(exclude)*04_change_impact.json" ":(exclude)*00_workflow_state.json" 2>&1
+        if ($LASTEXITCODE -ne 0) {
+            throw "git diff failed against baseline '$Baseline' in workspace: $WorkspaceRoot"
+        }
+        $gitStat = & git -C $WorkspaceRoot status --porcelain -uall -- . ":(exclude)*04_change_impact.json" ":(exclude)*00_workflow_state.json" 2>&1
+        $combined = [System.Collections.Generic.List[string]]::new()
+        if ($null -ne $gitDiff) {
+            $diffStr = ($gitDiff | Out-String).Trim()
+            if (-not [string]::IsNullOrWhiteSpace($diffStr)) { $combined.Add("DIFF:`n$diffStr") }
+        }
+        if ($null -ne $gitStat) {
+            foreach ($line in ($gitStat | Out-String -Stream)) {
+                $trimmed = $line.Trim()
+                if ([string]::IsNullOrWhiteSpace($trimmed)) { continue }
+                if ($trimmed -match '^\?\?\s+(.*)$') {
+                    $untrackedRel = $Matches[1].Trim()
+                    if ($untrackedRel -like "*04_change_impact.json" -or $untrackedRel -like "*00_workflow_state.json") { continue }
+                    $fullPath = Join-Path $WorkspaceRoot $untrackedRel
+                    if (Test-Path -LiteralPath $fullPath -PathType Leaf) {
+                        $fHash = Get-AiSopArtifactHash -Path $fullPath
+                        $combined.Add("UNTRACKED:$($untrackedRel):$($fHash)")
+                    } else {
+                        $combined.Add("UNTRACKED:$($untrackedRel)")
+                    }
+                } else {
+                    $combined.Add("STATUS:$trimmed")
+                }
             }
-            if ($combined.Count -gt 0) {
-                return (Get-StringSha256 -Text ($combined -join "`n"))
-            }
-        } catch {}
+        }
+        if ($combined.Count -gt 0) {
+            return (Get-StringSha256 -Text ($combined -join "`n"))
+        }
     }
     # 2. SVN diff + status
     if (Test-Path -LiteralPath (Join-Path $WorkspaceRoot ".svn")) {
-        try {
-            $diffArgs = if (-not [string]::IsNullOrWhiteSpace($Baseline) -and $Baseline -match '^\d+$') { @("-r", "$Baseline:WORKING") } else { @() }
-            $svnDiff = & svn diff @diffArgs $WorkspaceRoot 2>&1
-            $svnStat = & svn status --ignore-externals $WorkspaceRoot 2>&1
-            $combined = [System.Collections.Generic.List[string]]::new()
-            if ($null -ne $svnDiff) {
-                $diffStr = ($svnDiff | Out-String).Trim()
-                if (-not [string]::IsNullOrWhiteSpace($diffStr)) { $combined.Add($diffStr) }
+        $diffArgs = if (-not [string]::IsNullOrWhiteSpace($Baseline) -and $Baseline -match '^\d+$') { @("-r", "$Baseline:WORKING") } else { @() }
+        if (-not [string]::IsNullOrWhiteSpace($Baseline) -and $Baseline -notmatch '^\d+$' -and $Baseline -ne "WORKING" -and $Baseline -ne "HEAD") {
+            throw "Invalid SVN baseline revision '$Baseline' in SVN workspace: $WorkspaceRoot"
+        }
+        $svnDiff = & svn diff @diffArgs $WorkspaceRoot 2>&1
+        $svnStat = & svn status --ignore-externals $WorkspaceRoot 2>&1
+        $combined = [System.Collections.Generic.List[string]]::new()
+        if ($null -ne $svnDiff) {
+            $diffLines = @($svnDiff | Out-String -Stream | Where-Object { $_ -notmatch '04_change_impact\.json' -and $_ -notmatch '00_workflow_state\.json' })
+            $diffStr = ($diffLines -join "`n").Trim()
+            if (-not [string]::IsNullOrWhiteSpace($diffStr)) { $combined.Add("DIFF:`n$diffStr") }
+        }
+        if ($null -ne $svnStat) {
+            foreach ($line in ($svnStat | Out-String -Stream)) {
+                $trimmed = $line.Trim()
+                if ([string]::IsNullOrWhiteSpace($trimmed)) { continue }
+                if ($trimmed -match '^\?\s+(.*)$') {
+                    $untrackedPath = $Matches[1].Trim()
+                    if ($untrackedPath -like "*04_change_impact.json" -or $untrackedPath -like "*00_workflow_state.json") { continue }
+                    $fullPath = if ([System.IO.Path]::IsPathRooted($untrackedPath)) { $untrackedPath } else { Join-Path $WorkspaceRoot $untrackedPath }
+                    if (Test-Path -LiteralPath $fullPath -PathType Leaf) {
+                        $fHash = Get-AiSopArtifactHash -Path $fullPath
+                        $combined.Add("UNTRACKED:$($untrackedPath):$($fHash)")
+                    } else {
+                        $combined.Add("UNTRACKED:$($untrackedPath)")
+                    }
+                } else {
+                    $combined.Add("STATUS:$trimmed")
+                }
             }
-            if ($null -ne $svnStat) {
-                $statStr = ($svnStat | Out-String).Trim()
-                if (-not [string]::IsNullOrWhiteSpace($statStr)) { $combined.Add($statStr) }
-            }
-            if ($combined.Count -gt 0) {
-                return (Get-StringSha256 -Text ($combined -join "`n"))
-            }
-        } catch {}
+        }
+        if ($combined.Count -gt 0) {
+            return (Get-StringSha256 -Text ($combined -join "`n"))
+        }
     }
     # 3. Concatenated symbol / file hash fallback
     if ($ChangedSymbols -and $ChangedSymbols.Count -gt 0) {
@@ -1307,8 +1346,15 @@ function Get-CoveragePlaceholderWarnings {
             $filePathPart = $carrierTrim
             $methodName = $null
             if ($filePathPart -match '^([^#]+)#(.*)$') {
-                $filePathPart = $Matches[1]
+                $filePathPart = $Matches[1].Trim()
                 $methodName = $Matches[2].Trim()
+                if ([string]::IsNullOrWhiteSpace($methodName)) {
+                    if ($isPlanPhase) {
+                        $warnings.Add("INFO: $caseId automationCarrier has empty method name after '#' ('$carrierTrim')")
+                    } else {
+                        $errors.Add("ERROR: $caseId automationCarrier has empty method name after '#' ('$carrierTrim') — must specify a valid test method name")
+                    }
+                }
             }
             $resolved = $filePathPart
             if (-not [System.IO.Path]::IsPathRooted($resolved)) {
@@ -1333,21 +1379,76 @@ function Get-CoveragePlaceholderWarnings {
                 }
             } elseif ($filePathPart -match '\.java$') {
                 $javaSrc = [System.IO.File]::ReadAllText($resolved)
-                if ($javaSrc -notmatch '@Test\b') {
+                if ($javaSrc -notmatch '@(?:Test|ParameterizedTest|RepeatedTest|org\.junit(?:\.jupiter\.api)?\.Test)\b') {
                     if ($isPlanPhase) {
                         $warnings.Add("INFO: $caseId automationCarrier .java has no @Test method yet: $filePathPart")
                     } else {
-                        $errors.Add("ERROR: $caseId automationCarrier .java has no @Test method: $filePathPart — carrier must be a real test")
+                        $errors.Add("ERROR: $caseId automationCarrier .java has no @Test method: $filePathPart — carrier must be a real test class")
                     }
                 }
                 if (-not [string]::IsNullOrWhiteSpace($methodName)) {
-                    $testMethodPattern = "(?s)@Test\b[^{};]*?\bvoid\s+$([regex]::Escape($methodName))\s*\("
-                    $anyMethodPattern = "(?m)^\s*(?:@\w+\s+)*(?:public|protected|private|\s)\s+[\w<>,\[\]\s]+\s+$([regex]::Escape($methodName))\s*\("
-                    if ($javaSrc -notmatch $testMethodPattern -and $javaSrc -notmatch $anyMethodPattern) {
+                    $testAnnotationPattern = '(?s)@(?:Test|ParameterizedTest|RepeatedTest|org\.junit(?:\.jupiter\.api)?\.Test)\b[^{};]*?\bvoid\s+' + [regex]::Escape($methodName) + '\s*\('
+                    $anyMethodPattern = '(?s)\b(?:void|boolean|int|long|String|[A-Z]\w*)\s+' + [regex]::Escape($methodName) + '\s*\('
+                    if ($javaSrc -notmatch $anyMethodPattern) {
                         if ($isPlanPhase) {
-                            $warnings.Add("INFO: $caseId automationCarrier method '$methodName' not yet in $filePathPart")
+                            $warnings.Add("INFO: $caseId automationCarrier test method '$methodName' not yet in $filePathPart")
                         } else {
                             $errors.Add("ERROR: $caseId automationCarrier test method '$methodName' does not exist in $filePathPart")
+                        }
+                    } elseif ($javaSrc -notmatch $testAnnotationPattern) {
+                        if ($isPlanPhase) {
+                            $warnings.Add("INFO: $caseId automationCarrier test method '$methodName' not yet in $filePathPart")
+                        } else {
+                            $errors.Add("ERROR: $caseId automationCarrier method '$methodName' in $filePathPart is not annotated with @Test — ordinary/helper/private methods cannot serve as test carrier")
+                        }
+                    }
+                }
+            } elseif ($filePathPart -match '\.py$') {
+                $pySrc = [System.IO.File]::ReadAllText($resolved)
+                if (-not [string]::IsNullOrWhiteSpace($methodName)) {
+                    $pyPattern = '(?m)(?:^\s*|;\s*)def\s+(?:test_' + [regex]::Escape($methodName) + '|' + [regex]::Escape($methodName) + ')\s*\('
+                    if ($pySrc -notmatch $pyPattern) {
+                        if ($isPlanPhase) {
+                            $warnings.Add("INFO: $caseId automationCarrier python test function '$methodName' not yet in $filePathPart")
+                        } else {
+                            $errors.Add("ERROR: $caseId automationCarrier test function '$methodName' does not exist in $filePathPart")
+                        }
+                    }
+                }
+            } elseif ($filePathPart -match '\.go$') {
+                $goSrc = [System.IO.File]::ReadAllText($resolved)
+                if (-not [string]::IsNullOrWhiteSpace($methodName)) {
+                    $goPattern = "func\s+(?:Test$([regex]::Escape($methodName))|$([regex]::Escape($methodName)))\s*\("
+                    if ($goSrc -notmatch $goPattern) {
+                        if ($isPlanPhase) {
+                            $warnings.Add("INFO: $caseId automationCarrier Go test function '$methodName' not yet in $filePathPart")
+                        } else {
+                            $errors.Add("ERROR: $caseId automationCarrier test function '$methodName' does not exist in $filePathPart")
+                        }
+                    }
+                }
+            } elseif ($filePathPart -match '\.rs$') {
+                $rsSrc = [System.IO.File]::ReadAllText($resolved)
+                if (-not [string]::IsNullOrWhiteSpace($methodName)) {
+                    $rsPattern = '(?s)#\[test\][^{};]*?fn\s+' + [regex]::Escape($methodName) + '\s*\('
+                    if ($rsSrc -notmatch $rsPattern) {
+                        if ($isPlanPhase) {
+                            $warnings.Add("INFO: $caseId automationCarrier Rust #[test] fn '$methodName' not yet in $filePathPart")
+                        } else {
+                            $errors.Add("ERROR: $caseId automationCarrier Rust test function '$methodName' does not exist in $filePathPart")
+                        }
+                    }
+                }
+            } elseif ($filePathPart -match '\.(js|ts|jsx|tsx)$') {
+                $jsSrc = [System.IO.File]::ReadAllText($resolved)
+                if (-not [string]::IsNullOrWhiteSpace($methodName)) {
+                    $jsEsc = [regex]::Escape($methodName)
+                    $jsPattern = '(?:it|test)\s*\(\s*[''"`]' + $jsEsc + '[''"`]'
+                    if ($jsSrc -notmatch $jsPattern) {
+                        if ($isPlanPhase) {
+                            $warnings.Add("INFO: $caseId automationCarrier JS/TS test '$methodName' not yet in $filePathPart")
+                        } else {
+                            $errors.Add("ERROR: $caseId automationCarrier JS/TS test block '$methodName' does not exist in $filePathPart")
                         }
                     }
                 }
@@ -1379,8 +1480,17 @@ function Get-CoveragePlaceholderWarnings {
             if ($ev.testCount -lt $coverage.cases.Count) {
                 $errors.Add("ERROR: executionEvidence testCount ($($ev.testCount)) is less than covered test cases count ($($coverage.cases.Count))")
             }
-            if ([string]::IsNullOrWhiteSpace($ev.sourceCommitSha)) {
-                $errors.Add("ERROR: executionEvidence sourceCommitSha cannot be empty")
+            if (($ev.passedCount + $ev.failedCount) -ne $ev.testCount) {
+                $errors.Add("ERROR: executionEvidence count mismatch (passedCount ($($ev.passedCount)) + failedCount ($($ev.failedCount)) != testCount ($($ev.testCount)))")
+            }
+            $parsedTime = [DateTimeOffset]::MinValue
+            if (-not [DateTimeOffset]::TryParse([string]$ev.executedAt, [ref]$parsedTime)) {
+                $errors.Add("ERROR: executionEvidence executedAt '$($ev.executedAt)' is not a valid ISO 8601 timestamp")
+            } elseif ($parsedTime -gt [DateTimeOffset]::UtcNow.AddMinutes(5)) {
+                $errors.Add("ERROR: executionEvidence executedAt '$($ev.executedAt)' is in the future")
+            }
+            if ([string]::IsNullOrWhiteSpace($ev.sourceCommitSha) -or $ev.sourceCommitSha -notmatch '^[0-9a-fA-F]{7,64}$') {
+                $errors.Add("ERROR: executionEvidence sourceCommitSha '$($ev.sourceCommitSha)' must be a valid commit SHA / revision hex string (7-64 hex chars)")
             }
         }
     }
@@ -2622,9 +2732,13 @@ switch ($Operation) {
             } else {
                 $failures.Add("coverage matrix missing")
             }
-            # Change impact verification (if 04_change_impact.json exists)
+            # Change impact verification (mandatory for T3 mode)
             $impactPath = Join-Path $specDir "04_change_impact.json"
-            if (Test-Path -LiteralPath $impactPath -PathType Leaf) {
+            $impactOk = Test-Path -LiteralPath $impactPath -PathType Leaf
+            $checks.Add("[$(if($impactOk){'v'}else{'X'})] 行为影响分析产物(04_change_impact.json)存在")
+            if (-not $impactOk) {
+                $failures.Add("04_change_impact.json is mandatory for T3 features but missing at $impactPath")
+            } else {
                 try {
                     $impact = Validate-ChangeImpactState -ImpactPath $impactPath
                     $checks.Add("[v] 行为影响分析有效且未过期")
@@ -2680,11 +2794,19 @@ switch ($Operation) {
                         if ($gitStat -match '(?m)^\s*[MADRCU?]+\s+(src|pkg|internal|app)/') {
                             $hasSourceCodeChanges = $true
                         }
+                        $gitDiff = & git -C $wsRoot diff HEAD~1 2>&1
+                        if ($gitDiff -match '(?m)^diff --git a/(src|pkg|internal|app)/') {
+                            $hasSourceCodeChanges = $true
+                        }
                     } catch {}
                 } elseif (Test-Path -LiteralPath (Join-Path $wsRoot ".svn")) {
                     try {
                         $svnStat = & svn status --ignore-externals $wsRoot 2>&1
                         if ($svnStat -match '(?m)^[MAD?]\s+.*(src|pkg|internal|app)[/\\].*') {
+                            $hasSourceCodeChanges = $true
+                        }
+                        $svnDiff = & svn diff $wsRoot 2>&1
+                        if ($svnDiff -match '(?m)^Index:\s+.*(src|pkg|internal|app)[/\\].*') {
                             $hasSourceCodeChanges = $true
                         }
                     } catch {}

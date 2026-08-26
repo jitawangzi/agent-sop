@@ -791,17 +791,43 @@ function Assert-NoRuntimeCoverageApprovalState {
         if ($LASTEXITCODE -eq 0) { throw "VerifyCompletion must fail (non-zero) when feature-state.json is missing. Output: $verifyNoStateOut" }
         if ($verifyNoStateOut -notmatch "VERIFY_COMPLETION_FAIL") { throw "VerifyCompletion must emit VERIFY_COMPLETION_FAIL on missing feature-state. Output: $verifyNoStateOut" }
 
-        # Now write a T3 feature-state.json with a terminal phase + a compile artifact
-        # dir so VerifyCompletion can reach PASS. The coverage fixture above is VALID
-        # (real carrier + real assertions), gates are APPROVED — so with feature-state
-        # tier=T3 phase=DONE and a build/ dir, the gate should PASS (exit 0).
+        # VerifyCompletion: T3 feature without 04_change_impact.json must FAIL
         $featState = Join-Path $specDirectory "feature-state.json"
         [System.IO.File]::WriteAllText($featState, '{"feature":"' + $feature + '","tier":"T3","phase":"DONE"}', $Utf8NoBom)
         $buildDir = Join-Path (Split-Path -Parent (Split-Path -Parent $specDirectory)) "build"
         [System.IO.Directory]::CreateDirectory($buildDir) | Out-Null
+        
+        $verifyNoImpact = & $ScriptPath -Operation VerifyCompletion -Path $approvalPath 2>&1
+        $verifyNoImpactOut = $verifyNoImpact | Out-String
+        if ($LASTEXITCODE -eq 0 -or $verifyNoImpactOut -notmatch "04_change_impact\.json is mandatory for T3") {
+            throw "VerifyCompletion must fail when 04_change_impact.json is missing for T3 feature. Output: $verifyNoImpactOut"
+        }
+
+        # Write valid 04_change_impact.json for T3 feature
+        $noRuntimeImpactPath = Join-Path $specDirectory "04_change_impact.json"
+        $noRuntimeDigest = Get-TestStringSha256 -Text "NoRuntimeCoverage"
+        $noRuntimeImpactJson = @"
+{
+  "schemaVersion": "1.0",
+  "feature": "$feature",
+  "baseline": "rev1",
+  "changeSetDigest": "$noRuntimeDigest",
+  "changedSymbols": ["NoRuntimeCoverage"],
+  "entryPoints": ["TEST"],
+  "upstreamCallers": ["TestRunner"],
+  "downstreamEffects": [],
+  "stateReadsWrites": [],
+  "behaviorVariants": [],
+  "invariants": [],
+  "excludedWithReason": [],
+  "requiredRegressionCases": ["TC-COVERAGE"]
+}
+"@
+        [System.IO.File]::WriteAllText($noRuntimeImpactPath, $noRuntimeImpactJson, $Utf8NoBom)
+
         $verifyPass = & $ScriptPath -Operation VerifyCompletion -Path $approvalPath 2>&1
         $verifyPassOut = $verifyPass | Out-String
-        if ($LASTEXITCODE -ne 0) { throw "VerifyCompletion must pass (exit 0) when gates APPROVED + coverage VALID + phase DONE. Output: $verifyPassOut" }
+        if ($LASTEXITCODE -ne 0) { throw "VerifyCompletion must pass (exit 0) when gates APPROVED + coverage VALID + impact VALID + phase DONE. Output: $verifyPassOut" }
         if ($verifyPassOut -notmatch "VERIFY_COMPLETION_PASS") { throw "VerifyCompletion must emit VERIFY_COMPLETION_PASS when all T3 conditions met. Output: $verifyPassOut" }
 
         # Test VerifyCompletion on T2: passes even without build directory (non-blocking for T2)
@@ -2174,6 +2200,28 @@ try {
     })
     [System.IO.File]::WriteAllText($doCov, ($doCovObj | ConvertTo-Json -Depth 10), $Utf8NoBom)
 
+    # Write valid 04_change_impact.json for DesignOnlyFeature
+    $doImpactPath = Join-Path $doSpecDir "04_change_impact.json"
+    $doDigest = Get-TestStringSha256 -Text "DesignOnlyFeature"
+    $doImpactJson = @"
+{
+  "schemaVersion": "1.0",
+  "feature": "DesignOnlyFeature",
+  "baseline": "rev1",
+  "changeSetDigest": "$doDigest",
+  "changedSymbols": ["DesignOnlyFeature"],
+  "entryPoints": ["TEST"],
+  "upstreamCallers": ["TestRunner"],
+  "downstreamEffects": [],
+  "stateReadsWrites": [],
+  "behaviorVariants": [],
+  "invariants": [],
+  "excludedWithReason": [],
+  "requiredRegressionCases": ["TC-01"]
+}
+"@
+    [System.IO.File]::WriteAllText($doImpactPath, $doImpactJson, $Utf8NoBom)
+
     # Create dummy classes dir so compile verification passes
     $doBuild = Join-Path $designOnlyDir "build/classes"
     [System.IO.Directory]::CreateDirectory($doBuild) | Out-Null
@@ -2254,7 +2302,7 @@ try {
     [System.IO.Directory]::CreateDirectory($cmSpecDir) | Out-Null
     $cmTestJava = Join-Path $carrierMethodTestDir "test/CarrierTest.java"
     [System.IO.Directory]::CreateDirectory((Split-Path -Parent $cmTestJava)) | Out-Null
-    [System.IO.File]::WriteAllText($cmTestJava, "package test; public class CarrierTest { @Test public void realTestMethod() {} }", $Utf8NoBom)
+    [System.IO.File]::WriteAllText($cmTestJava, "package test; public class CarrierTest { @Test public void realTestMethod() {} public void helperMethod() {} }", $Utf8NoBom)
 
     $cmReq = Join-Path $cmSpecDir "01_server_rules.md"
     $cmDes = Join-Path $cmSpecDir "06_design_contract.md"
@@ -2316,6 +2364,60 @@ try {
     $cmValidationStr = $cmValidation | Out-String
     if ($cmValidationStr -notmatch "does not exist in") {
         throw "ValidateTestCoverage must report error when carrier method does not exist in .java file. Output: $cmValidationStr"
+    }
+
+    # Test rejection of Java helper methods without @Test annotation
+    $cmHelperCov = $cmCovJson.Replace("nonExistentMethod", "helperMethod")
+    [System.IO.File]::WriteAllText($cmCovPath, $cmHelperCov, $Utf8NoBom)
+    $cmHelperVal = & $ScriptPath -Operation ValidateTestCoverage -Path $cmCovPath -Phase VERIFY 2>&1
+    $cmHelperStr = $cmHelperVal | Out-String
+    if ($cmHelperStr -notmatch "is not annotated with @Test") {
+        throw "ValidateTestCoverage must reject helper methods without @Test. Output: $cmHelperStr"
+    }
+
+    # Test rejection of empty #method in carrier
+    $cmEmptyMethodCov = $cmCovJson.Replace("test/CarrierTest.java#nonExistentMethod", "test/CarrierTest.java#")
+    [System.IO.File]::WriteAllText($cmCovPath, $cmEmptyMethodCov, $Utf8NoBom)
+    $cmEmptyVal = & $ScriptPath -Operation ValidateTestCoverage -Path $cmCovPath -Phase VERIFY 2>&1
+    $cmEmptyStr = $cmEmptyVal | Out-String
+    if ($cmEmptyStr -notmatch "has empty method name after") {
+        throw "ValidateTestCoverage must reject carrier with empty method name after '#'. Output: $cmEmptyStr"
+    }
+
+    # Test executionEvidence count mismatch rejection
+    $cmMismatchCov = $cmCovJson.Replace('"passedCount": 1', '"passedCount": 2') # passed 2 + failed 0 != testCount 1
+    [System.IO.File]::WriteAllText($cmCovPath, $cmMismatchCov, $Utf8NoBom)
+    $cmMismatchVal = & $ScriptPath -Operation ValidateTestCoverage -Path $cmCovPath -Phase VERIFY 2>&1
+    $cmMismatchStr = $cmMismatchVal | Out-String
+    if ($cmMismatchStr -notmatch "count mismatch") {
+        throw "ValidateTestCoverage must reject executionEvidence count mismatch. Output: $cmMismatchStr"
+    }
+
+    # Test executionEvidence invalid timestamp rejection
+    $cmBadDateCov = $cmCovJson.Replace('"executedAt": "2026-08-26T18:00:00Z"', '"executedAt": "invalid-timestamp"')
+    [System.IO.File]::WriteAllText($cmCovPath, $cmBadDateCov, $Utf8NoBom)
+    $cmBadDateVal = & $ScriptPath -Operation ValidateTestCoverage -Path $cmCovPath -Phase VERIFY 2>&1
+    $cmBadDateStr = $cmBadDateVal | Out-String
+    if ($cmBadDateStr -notmatch "not a valid ISO 8601 timestamp") {
+        throw "ValidateTestCoverage must reject invalid executionEvidence timestamp. Output: $cmBadDateStr"
+    }
+
+    # Test executionEvidence future timestamp rejection
+    $cmFutureDateCov = $cmCovJson.Replace('"executedAt": "2026-08-26T18:00:00Z"', '"executedAt": "2099-01-01T00:00:00Z"')
+    [System.IO.File]::WriteAllText($cmCovPath, $cmFutureDateCov, $Utf8NoBom)
+    $cmFutureVal = & $ScriptPath -Operation ValidateTestCoverage -Path $cmCovPath -Phase VERIFY 2>&1
+    $cmFutureStr = $cmFutureVal | Out-String
+    if ($cmFutureStr -notmatch "is in the future") {
+        throw "ValidateTestCoverage must reject future executionEvidence timestamp. Output: $cmFutureStr"
+    }
+
+    # Test executionEvidence invalid SHA rejection
+    $cmBadShaCov = $cmCovJson.Replace('"sourceCommitSha": "abcdef1234567890"', '"sourceCommitSha": "invalid!@#$"')
+    [System.IO.File]::WriteAllText($cmCovPath, $cmBadShaCov, $Utf8NoBom)
+    $cmBadShaVal = & $ScriptPath -Operation ValidateTestCoverage -Path $cmCovPath -Phase VERIFY 2>&1
+    $cmBadShaStr = $cmBadShaVal | Out-String
+    if ($cmBadShaStr -notmatch "must be a valid commit SHA") {
+        throw "ValidateTestCoverage must reject invalid executionEvidence sourceCommitSha. Output: $cmBadShaStr"
     }
 
     # Test FAST_TRACK source code modification rejection in VerifyCompletion

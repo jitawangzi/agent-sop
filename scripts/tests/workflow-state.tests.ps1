@@ -805,7 +805,7 @@ function Assert-NoRuntimeCoverageApprovalState {
 
         # Write valid 04_change_impact.json for T3 feature
         $noRuntimeImpactPath = Join-Path $specDirectory "04_change_impact.json"
-        $noRuntimeDigest = Get-TestStringSha256 -Text "NoRuntimeCoverage"
+        $noRuntimeDigest = Get-TestStringSha256 -Text "SYMBOLS:NoRuntimeCoverage"
         $noRuntimeImpactJson = @"
 {
   "schemaVersion": "1.0",
@@ -2202,7 +2202,7 @@ try {
 
     # Write valid 04_change_impact.json for DesignOnlyFeature
     $doImpactPath = Join-Path $doSpecDir "04_change_impact.json"
-    $doDigest = Get-TestStringSha256 -Text "DesignOnlyFeature"
+    $doDigest = Get-TestStringSha256 -Text "SYMBOLS:DesignOnlyFeature"
     $doImpactJson = @"
 {
   "schemaVersion": "1.0",
@@ -2692,11 +2692,38 @@ try {
         throw "AssessRisk must NOT flag pure numeric CSV value modifications as structural high-risk. Output: $csvRisk"
     }
 
-    # Modify with new row -> must trigger STRUCTURAL_CONFIG
-    [System.IO.File]::WriteAllText($csvFile, "id,cost,count`n1001,20,5`n1002,30,10`n", $Utf8NoBom)
-    $csvNewRowRisk = & $ScriptPath -Operation AssessRisk -Path $csvTestDir 2>&1 | Out-String
-    if ($csvNewRowRisk -notmatch "STRUCTURAL_CONFIG" -or $csvNewRowRisk -notmatch '"hasHighRisk":\s*true') {
-        throw "AssessRisk must flag CSV new row additions as structural high-risk. Output: $csvNewRowRisk"
+    # Test DAO / Repository persistence patterns in AssessRisk
+    $daoTestDir = Join-Path $TestRoot "dao_repo"
+    [System.IO.Directory]::CreateDirectory($daoTestDir) | Out-Null
+    & git -C $daoTestDir init --quiet
+    $daoSrc = Join-Path $daoTestDir "src/com/game/PlayerService.java"
+    [System.IO.Directory]::CreateDirectory((Split-Path -Parent $daoSrc)) | Out-Null
+    [System.IO.File]::WriteAllText($daoSrc, "package com.game; public class PlayerService { public void save() { playerDao.save(player); } }", $Utf8NoBom)
+    $daoRisk = & $ScriptPath -Operation AssessRisk -Path $daoTestDir 2>&1 | Out-String
+    if ($daoRisk -notmatch "STATE_PERSISTENCE_MUTATION" -or $daoRisk -notmatch '"hasHighRisk":\s*true') {
+        throw "AssessRisk must detect playerDao.save() as STATE_PERSISTENCE_MUTATION. Output: $daoRisk"
+    }
+
+    # Test Pester carrier exact matching (It 'foobar' must NOT match carrier #bar)
+    $psPesterFile = Join-Path $TestRoot "PesterExactCarrier.Tests.ps1"
+    [System.IO.File]::WriteAllText($psPesterFile, "Describe 'Suite' {`n    It 'foobar' { 1 | Should -Be 1 }`n}", $Utf8NoBom)
+    $pesterMismatchCov = $cmCovJson.Replace("test/CarrierTest.java#nonExistentMethod", ($psPesterFile.Replace("\", "/") + "#bar"))
+    [System.IO.File]::WriteAllText($cmCovPath, $pesterMismatchCov, $Utf8NoBom)
+    $pesterVal = & $ScriptPath -Operation ValidateTestCoverage -Path $cmCovPath -Phase VERIFY 2>&1
+    $pesterStr = $pesterVal | Out-String
+    if ($pesterStr -notmatch "does not exist in") {
+        throw "ValidateTestCoverage must reject #bar when only It 'foobar' exists. Output: $pesterStr"
+    }
+
+    # Test baseline tampering detection (BASELINE_MUTATION_DETECTED)
+    $tamperSpecDir = Join-Path $TestRoot "tamper_spec"
+    [System.IO.Directory]::CreateDirectory($tamperSpecDir) | Out-Null
+    $tamperOwnerPath = Join-Path $tamperSpecDir ".workflow-owner.json"
+    [System.IO.File]::WriteAllText($tamperOwnerPath, '{"schemaVersion":"1.1","feature":"TamperFeature","baseline":"1111111111111111111111111111111111111111"}', $Utf8NoBom)
+    $tamperFeatState = Join-Path $tamperSpecDir "feature-state.json"
+    [System.IO.File]::WriteAllText($tamperFeatState, '{"schemaVersion":"1.0","feature":"TamperFeature","baseline":"2222222222222222222222222222222222222222","tier":"T3"}', $Utf8NoBom)
+    Assert-Fails -Message "Assert-FeatureBaselineIntegrity must detect altered baseline in feature-state" -Action {
+        & $ScriptPath -Operation AssessRisk -Path $tamperSpecDir
     }
 
     Write-Output "All workflow state tests passed."

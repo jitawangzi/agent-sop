@@ -236,6 +236,10 @@
         },
         "lastTransactionId": {
           "$ref": "#/$defs/id"
+        },
+        "baseline": {
+          "type": "string",
+          "pattern": "^(?:[0-9a-fA-F]{7,64}|(?:rev|r)?[0-9]+)$"
         }
       },
       "allOf": [

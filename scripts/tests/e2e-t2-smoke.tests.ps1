@@ -203,7 +203,7 @@ try {
         testPlanSha256 = $tpSha
         cases = @(
             [ordered]@{
-                id = "TC-E2E-1"; title = "E2E smoke TC1"; priority = "P1"
+                id = "TC-E2E-1"; title = "E2E smoke TC1"; priority = "P1"; status = "PLANNED"
                 testTypes = @("FUNCTIONAL")
                 requirementIds = @("BR-1"); designIds = @("DC-1")
                 setup = @("none"); trigger = @("run"); cleanup = @("none")
@@ -211,7 +211,7 @@ try {
                 assertions = [ordered]@{ protocol = @(@{ target = "resp"; operator = "EQ"; expected = "ok" }); serverState = @(@{ target = "state"; operator = "EQ"; expected = "ok" }); sideEffects = @(@{ target = "none"; operator = "EMPTY"; expected = "" }); regression = @(@{ target = "none"; operator = "EMPTY"; expected = "" }) }
             }
             [ordered]@{
-                id = "TC-E2E-2"; title = "E2E smoke TC2"; priority = "P1"
+                id = "TC-E2E-2"; title = "E2E smoke TC2"; priority = "P1"; status = "PLANNED"
                 testTypes = @("FUNCTIONAL")
                 requirementIds = @("BR-2"); designIds = @("DC-1")
                 setup = @("none"); trigger = @("run"); cleanup = @("none")

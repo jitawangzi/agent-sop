@@ -79,6 +79,7 @@
       "required": [
         "id",
         "title",
+        "status",
         "priority",
         "testTypes",
         "requirementIds",
@@ -373,6 +374,10 @@
         "sourceCommitSha": {
           "type": "string",
           "pattern": "^(?:[0-9a-fA-F]{7,64}|(?:rev|r)?[0-9]+)$"
+        },
+        "workingTreeDigest": {
+          "type": "string",
+          "pattern": "^[0-9a-fA-F]{64}$"
         },
         "testCount": {
           "type": "integer",

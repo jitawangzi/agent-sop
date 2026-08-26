@@ -59,6 +59,9 @@
       "items": {
         "$ref": "#/$defs/riskExemption"
       }
+    },
+    "executionEvidence": {
+      "$ref": "#/$defs/executionEvidence"
     }
   },
   "$defs": {
@@ -143,6 +146,14 @@
           "items": {
             "type": "string",
             "pattern": "^(DC|DR|TW)-[A-Z0-9][A-Z0-9_-]*$"
+          }
+        },
+        "invariantIds": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": {
+            "type": "string",
+            "pattern": "^INV-[A-Z0-9][A-Z0-9_-]*$"
           }
         },
         "setup": {
@@ -311,6 +322,49 @@
         "approvedBy": {
           "type": "string",
           "minLength": 1
+        }
+      }
+    },
+    "executionEvidence": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "command",
+        "exitCode",
+        "executedAt",
+        "testCount",
+        "passedCount"
+      ],
+      "properties": {
+        "command": {
+          "type": "string",
+          "minLength": 1
+        },
+        "exitCode": {
+          "type": "integer"
+        },
+        "executedAt": {
+          "type": "string",
+          "minLength": 1
+        },
+        "sourceCommitSha": {
+          "type": "string"
+        },
+        "testCount": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "passedCount": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "failedCount": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "durationMs": {
+          "type": "integer",
+          "minimum": 0
         }
       }
     }

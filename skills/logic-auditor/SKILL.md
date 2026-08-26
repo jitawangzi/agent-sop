@@ -98,8 +98,8 @@ description: 高风险逻辑审计官，专门细查方法级、分支级与链�
 
 ### Mode C: Feature Diff Audit (功能 Diff 逻辑审计)
 适用场景：
-- 功能跨多次 SVN 提交，需要审查最终版本中的高风险逻辑
-- 既有新增类，也有改造旧类
+- 功能跨多次 SVN 提交，需要审查最终版本中的高风险逻辑；
+- 既有新增类，也有改造旧类。
 
 输入：
 - `feature_start_rev`（推荐必填）
@@ -107,20 +107,36 @@ description: 高风险逻辑审计官，专门细查方法级、分支级与链�
 - 可选：`feature_file_scope`
 - 可选：`focus_methods`
 
-审计基线：
-- 使用 `feature_start_rev -> WORKING` 的累计 diff 作为主基线
-- 只看最终代码，不按中间多次提交分别审核
-
 审计范围：
-- diff 涉及的高风险方法、分支、状态链路
-- 直接耦合上下文
-- 工作区混有其他改动时必须主动收紧范围
+- diff 涉及的高风险方法、分支、状态链路与直接耦合上下文。
+
+### Mode D: Behavior Impact Audit (行为影响审计，核心推荐)
+适用场景：
+- 在已有成熟业务系统（如礼包系统、活动系统、商店系统、抽卡系统）上做增量扩展（如新增商品类型、活动子类型、礼包配置 ID、新枚举分支、新增处理器）；
+- 修改了公共分发路由（switch-case / Map 路由 / Interceptor）；
+- 需要穿透上下文，杜绝“只看改动附近 20 行 diff”的管道视野。
+
+输入：
+- `changed_symbols`（本次新增/修改的类、方法、枚举或配置 ID）
+- `entry_points`（可触发该逻辑的外部协议/Action/GM）
+- 可选：`04_change_impact.json`
+
+审计范围（八级行为影响拓扑链穿透）：
+1. **上游入口调用者**：所有触发到达修改点的外部协议与调用者（检查是否可绕过前置查询直接发协议）；
+2. **下游被调用依赖**：修改点调用的公共 Helper、DAO 与工具类；
+3. **共享状态与存储**：涉及的 `Player`、`Roledata`、Redis、Mongo 内存与持久化字段；
+4. **配置与注册表**：`XLSDataManager` 配置项、`Enum` 定义与分发映射表；
+5. **序列化与反序列化**：存储结构转换与网络协议字段组装；
+6. **外部副作用与联动**：扣费、发奖、邮件、广播、任务进度推进与排行榜联动；
+7. **隐式前置校验链**：老系统原有的通用前置防御（`isOverBought`、`beforeRecharge`、资格判断）；
+8. **关联旧单测与回归范围**：现有旧 Case 对旧行为的保护情况。
 
 ## Mode Selection Rule
-- 若用户明确提供 `method_anchor`，默认进入 **Single-Method Audit**
-- 若用户明确提供 `class_path` 且未要求 revision diff，默认进入 **Single-Class Audit**
-- 若用户明确提供 `feature_start_rev`、要求“累计 diff 审计”或“对比初始提交到当前版本”，进入 **Feature Diff Audit**
-- 若信息不足，优先收紧范围，不得自动扩大到整个仓库
+- 若任务属于**在已有系统上新增类型/枚举/配置/分支**或涉及跨模块状态变异，**强制进入 Mode D: Behavior Impact Audit**；
+- 若用户明确提供 `method_anchor`，进入 **Single-Method Audit**；
+- 若用户明确提供 `class_path` 且为全新独立类，进入 **Single-Class Audit**；
+- 若用户明确提供 `feature_start_rev` 或要求累计版本比对，进入 **Feature Diff Audit**；
+- 无论哪种模式，结论都必须区分：本次改动引入/放大的问题、直接耦合风险、`PRE_EXISTING_LEGACY`。
 
 ## Core Responsibilities
 
@@ -304,10 +320,15 @@ description: 高风险逻辑审计官，专门细查方法级、分支级与链�
 审计时若某发现命中的反模式对应条款带 `[AUDIT-EXEMPT: 原因]`：将该发现降为 `INFO`，不作为 `FAIL`/`BLOCKER` 依据，在报告中说明"命中已声明的例外 + 原因"。无声明的反模式仍按规则判 `FAIL`/`BLOCKER`。与 `[TEST-EXEMPT]` 对称。
 
 报告必须额外包含：
-- **审计模式**
-- **审计对象**：方法 / 类 / diff 范围
+- **审计模式**（Mode A / B / C / D）
+- **审计对象**：方法 / 类 / diff 范围 / changed symbols
 - **专项扩展启用情况**：是否启用 `.ai-workspace/context/logic-audit-game-server.md`
 - **逻辑契约摘要**：预期输入、输出、关键状态、关键副作用
+- **行为影响穿透结论（Mode D 必填）**：
+  1. **Actual Inspected Scope**：实际追溯并检查过的老方法、老分支与老类清单；
+  2. **Excluded With Reason**：排除了哪些关联调用链及其排除理由；
+  3. **Behavior Delta Table**：新旧类型/新旧分支在 8 维切面上的行为差异比对；
+  4. **Unverified Blind Spots**：尚未被测试用例完全覆盖的潜在风险盲区。
 - **分支对照摘要**：至少列出高风险分支及其返回/状态变化
 - **边界情况摘要**
 - **历史问题边界说明**：哪些属于本次改动引入/放大，哪些是 `PRE_EXISTING_LEGACY`

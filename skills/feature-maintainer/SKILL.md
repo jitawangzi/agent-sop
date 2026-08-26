@@ -28,6 +28,13 @@ description: 维护任务分类专家，负责识别业务、技术契约、实�
    - 返回 `CONFIG_VALUE_CHANGE`，由编排器进入测试计划后调用 `implementation-engine(CONFIG_APPLY)`。
    - 只允许修改既有配置字段的数值；新增配置结构、解析逻辑或兼容策略必须归类为 `TECH_CONTRACT_CHANGE`。
    - 按配置流程处理并执行受影响场景的目标验证，不得擅自改写 `01` 或 `06`。
+5. **高危语义分档铁律（小 diff ≠ 小风险）**：
+   - 即使代码行数极少，只要命中以下【五大高危语义触发器】之一，**严禁归类为普通实现修复或快通道**，必须归类为 `TECH_CONTRACT_CHANGE` 或 `BUSINESS_CHANGE`：
+     ① 新增业务类型、枚举项、配置行或策略处理器；
+     ② 修改公共分发路由（switch-case / Map 路由 / Interceptor）；
+     ③ 涉及 `Player` 内存状态、Redis/Mongo、跨天重置、扣费发奖；
+     ④ 涉及新旧数据反序列化兼容、多版本混跑、并发与重试；
+     ⑤ 在已有 Action/Help 入口插入新条件分支。
 
 ### Phase 1: Contract Impact Inspection (契约影响检查)
 1.  **Read**: 读取最新的 `01_server_rules.md` 和现有的 `06_design_contract.md`。

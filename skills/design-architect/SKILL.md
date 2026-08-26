@@ -81,6 +81,10 @@ description: 激活首席架构师模式。强调“能力复用”与“无损�
     2.  **State Transition Map**: 明确关键状态与迁移条件，标出哪些迁移最容易遗漏断言。
     3.  **Testability Hooks**: 明确推荐复用哪些 GM、JSP、正式协议入口、时间推进手段，以及是否需要补充新的测试挂钩。
     4.  **Compatibility Watchpoints**: 指出本次设计复用了哪些旧链路、哪些兼容点最需要回归。
+    5.  **Legacy Behavior Invariant Matrix (旧行为保护与差分设计矩阵)**:
+        - 凡涉及在已有老系统上新增类型/枚举/配置行，必须在设计契约中列出 **8 维新旧行为差分表**：
+          ① 前置条件、② 查询展示（含懒重置）、③ 通用校验链（防 bypass）、④ 扣费逻辑、⑤ 发奖掉落、⑥ 持久化落库、⑦ 跨天重置、⑧ 幂等重试。
+        - 逐项明确标为 `IDENTICAL_TO_LEGACY`（与旧逻辑完全一致，要求旧 Case 回归）、`INTENTIONAL_DIFF`（有意差异，写明理由）、`N_A`。
 *   **Boundary Rule**:
     - 本阶段**不负责**输出完整 `05_test_plan.md`，也不负责穷举测试 Case。
     - 本阶段必须确保 QA 拿到设计后，知道“哪些地方必须测、为什么必须测、用什么手段测”。

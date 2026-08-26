@@ -2124,6 +2124,62 @@ try {
         throw "VerifyCompletion must pass and display requirement gate exemption in DESIGN_ONLY mode, got: $doVerifyStr"
     }
 
+    # Test ValidateChangeImpact operation
+    $impactDir = Join-Path $TestRoot "impact_test"
+    [System.IO.Directory]::CreateDirectory($impactDir) | Out-Null
+    $impactPath = Join-Path $impactDir "04_change_impact.json"
+    $impactJson = @'
+{
+  "schemaVersion": "1.0",
+  "feature": "ImpactTestFeature",
+  "baseline": "rev123456",
+  "changeSetDigest": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+  "changedSymbols": ["com.game.AirItemRecord#reset", "com.game.GiftPackHelper#buyGift"],
+  "entryPoints": ["COUPON_PURCHASE", "GET_CYCLE_ACTIVITY_STORE_INFO"],
+  "upstreamCallers": ["DispatchServlet", "AirProcess#doHttpRequest"],
+  "downstreamEffects": [
+    {
+      "effectType": "PERSISTENCE",
+      "targetSystem": "AirItemRecord",
+      "persistenceMethod": "updateAirData"
+    }
+  ],
+  "stateReadsWrites": [
+    {
+      "stateKey": "s_buyTotal",
+      "operation": "RESET",
+      "persisted": true
+    }
+  ],
+  "behaviorVariants": [
+    {
+      "typeKey": "TYPE_45",
+      "relationToLegacy": "IDENTICAL_TO_LEGACY",
+      "description": "Daily limit reset logic is identical to legacy gift packs"
+    }
+  ],
+  "invariants": [
+    {
+      "invariantId": "INV-01",
+      "statement": "Yesterday purchase count must be reset before today first purchase",
+      "violationRisk": "Over-purchase or limit permanently deadlocked to 0"
+    }
+  ],
+  "excludedWithReason": [
+    {
+      "symbol": "com.game.ChatHelper",
+      "reason": "Gift purchase does not trigger world broadcast"
+    }
+  ],
+  "requiredRegressionCases": ["TC-01"]
+}
+'@
+    [System.IO.File]::WriteAllText($impactPath, $impactJson, $Utf8NoBom)
+    $impactVal = & $ScriptPath -Operation ValidateChangeImpact -Path $impactPath
+    if ($impactVal -notcontains "VALID") {
+        throw "ValidateChangeImpact must return VALID for schema-compliant impact JSON, got: $($impactVal -join '; ')"
+    }
+
     Write-Output "All workflow state tests passed."
 } finally {
     foreach ($name in @(

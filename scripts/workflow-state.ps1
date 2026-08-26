@@ -2208,6 +2208,13 @@ switch ($Operation) {
             Write-Output "DIAGNOSTIC: hashMatch=DRIFT means the approved artifact was modified after approval. Use UpdateHash (cosmetic) or ResetApproval+Approve (substantive)."
         }
     }
+    "ValidateChangeImpact" {
+        Assert-Argument -Name "Path" -Value $Path
+        $impactSchema = Join-Path $SchemaRoot "change-impact.schema.json"
+        $impact = Read-JsonObject -FilePath $Path -SchemaPath $impactSchema
+        Write-Output "VALID"
+        return $impact
+    }
     "SyncCoverage" {
         # Generate 05_test_coverage.json from 05_test_plan.md HTML-comment metadata.
         # Expected format in 05_test_plan.md: <!-- meta: { "id": "TC01", "covers": ["BR01", "DC01"] } -->

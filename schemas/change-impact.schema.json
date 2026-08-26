@@ -1,0 +1,266 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "change-impact.schema.json",
+  "title": "Change Impact Analysis Contract",
+  "description": "Machine-readable full-lifecycle change impact and invariant contract for incremental feature extensions.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schemaVersion",
+    "feature",
+    "baseline",
+    "changeSetDigest",
+    "changedSymbols",
+    "entryPoints",
+    "upstreamCallers",
+    "downstreamEffects",
+    "stateReadsWrites",
+    "invariants",
+    "requiredRegressionCases"
+  ],
+  "properties": {
+    "schemaVersion": {
+      "const": "1.0"
+    },
+    "feature": {
+      "type": "string",
+      "minLength": 1
+    },
+    "baseline": {
+      "type": "string",
+      "description": "Baseline revision or Git Commit SHA against which changes are analyzed"
+    },
+    "changeSetDigest": {
+      "$ref": "#/$defs/sha256",
+      "description": "SHA-256 digest of the current change set or diff"
+    },
+    "changedSymbols": {
+      "type": "array",
+      "minItems": 1,
+      "uniqueItems": true,
+      "items": {
+        "type": "string",
+        "minLength": 1,
+        "description": "Class, method, enum or field modified/added"
+      }
+    },
+    "entryPoints": {
+      "type": "array",
+      "minItems": 1,
+      "uniqueItems": true,
+      "items": {
+        "type": "string",
+        "minLength": 1,
+        "description": "Public protocols, Actions, GM commands or scheduled hooks that trigger this change"
+      }
+    },
+    "upstreamCallers": {
+      "type": "array",
+      "uniqueItems": true,
+      "items": {
+        "type": "string",
+        "description": "Upstream callers traversing towards the changed symbols"
+      }
+    },
+    "downstreamEffects": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/downstreamEffect"
+      }
+    },
+    "stateReadsWrites": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/stateAccess"
+      }
+    },
+    "behaviorVariants": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/behaviorVariant"
+      }
+    },
+    "invariants": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/invariant"
+      }
+    },
+    "legacyPaths": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/legacyPath"
+      }
+    },
+    "excludedWithReason": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/exclusion"
+      }
+    },
+    "requiredRegressionCases": {
+      "type": "array",
+      "minItems": 1,
+      "uniqueItems": true,
+      "items": {
+        "type": "string",
+        "pattern": "^TC-[A-Z0-9][A-Z0-9_-]*$"
+      }
+    }
+  },
+  "$defs": {
+    "sha256": {
+      "type": "string",
+      "pattern": "^[a-fA-F0-9]{64}$"
+    },
+    "downstreamEffect": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "effectType",
+        "targetSystem",
+        "persistenceMethod"
+      ],
+      "properties": {
+        "effectType": {
+          "enum": [
+            "MUTATION",
+            "PERSISTENCE",
+            "REWARD",
+            "DEDUCTION",
+            "BROADCAST",
+            "EVENT_PUBLISH"
+          ]
+        },
+        "targetSystem": {
+          "type": "string",
+          "minLength": 1
+        },
+        "persistenceMethod": {
+          "type": "string",
+          "description": "E.g., updateAirData, update(player), saveCommonShop"
+        },
+        "details": {
+          "type": "string"
+        }
+      }
+    },
+    "stateAccess": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "stateKey",
+        "operation",
+        "persisted"
+      ],
+      "properties": {
+        "stateKey": {
+          "type": "string",
+          "minLength": 1
+        },
+        "operation": {
+          "enum": [
+            "READ",
+            "WRITE",
+            "RESET",
+            "ACCUMULATE"
+          ]
+        },
+        "persisted": {
+          "type": "boolean"
+        },
+        "persistenceTarget": {
+          "type": "string"
+        }
+      }
+    },
+    "behaviorVariant": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "typeKey",
+        "relationToLegacy",
+        "description"
+      ],
+      "properties": {
+        "typeKey": {
+          "type": "string"
+        },
+        "relationToLegacy": {
+          "enum": [
+            "IDENTICAL_TO_LEGACY",
+            "INTENTIONAL_DIFF",
+            "N_A"
+          ]
+        },
+        "description": {
+          "type": "string"
+        },
+        "reason": {
+          "type": "string"
+        }
+      }
+    },
+    "invariant": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "invariantId",
+        "statement",
+        "violationRisk"
+      ],
+      "properties": {
+        "invariantId": {
+          "type": "string",
+          "pattern": "^INV-[A-Z0-9][A-Z0-9_-]*$"
+        },
+        "statement": {
+          "type": "string",
+          "minLength": 1
+        },
+        "violationRisk": {
+          "type": "string",
+          "minLength": 1
+        }
+      }
+    },
+    "legacyPath": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "pathName",
+        "protectedBehavior"
+      ],
+      "properties": {
+        "pathName": {
+          "type": "string"
+        },
+        "protectedBehavior": {
+          "type": "string"
+        },
+        "regressionCaseId": {
+          "type": "string",
+          "pattern": "^TC-[A-Z0-9][A-Z0-9_-]*$"
+        }
+      }
+    },
+    "exclusion": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "symbol",
+        "reason"
+      ],
+      "properties": {
+        "symbol": {
+          "type": "string",
+          "minLength": 1
+        },
+        "reason": {
+          "type": "string",
+          "minLength": 1
+        }
+      }
+    }
+  }
+}

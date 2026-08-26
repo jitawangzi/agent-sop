@@ -51,14 +51,22 @@
 
 | 变更类 | 默认档位 |
 |---|---|
-| 行为/契约/协议/存储结构变更、新玩法 | T3 |
-| 已有行为的缺陷修复、单点逻辑调整 | T2（用户可显式升 T3） |
+| 行为/契约/协议/存储结构变更、新玩法、命中高危语义触发器 | T3 |
+| 已有行为的缺陷修复、单点非高危逻辑调整 | T2（用户可显式升 T3） |
 | 纯配置数值 / 纯文档措辞 | 快通道 |
 
-- **T3**：完整 Superpowers 流程（brainstorming → 需求确认 → design-reviewer → 设计确认 → writing-plans → subagent-driven-development + TDD → 审计 → requesting-code-review → verification-before-completion）。覆盖：**新功能、行为/契约/协议/存储变更**、需求补充。
+- **T3**：完整 Superpowers 流程（brainstorming → 需求确认 → design-reviewer → 设计确认 → writing-plans → subagent-driven-development + TDD → 审计 → requesting-code-review → verification-before-completion）。覆盖：**新功能、行为/契约/协议/存储变更**、需求补充以及**命中高危语义触发器的增量扩展**。
 
-  Bug 修复不固定为 T3——看变更触及什么（如修一个 -1 语义的数值边界 = T2；修协议字段解析逻辑 = T3）。
-- **T2（用户显式"快速修改"）**：跳过 brainstorming/需求确认/design-reviewer/设计确认/writing-plans；保留归属 Claim、编译、验证、回归、文档待更新提醒。
+  **语义风险分档原则（小 diff ≠ 小风险，强制升 T3 规则）**：
+  即使修改代码量极少（如仅 5~10 行），只要命中以下 **【五大高危语义触发器】** 之一，**严禁按 T2 快速修改跳过设计与审计**，必须强制走 T3（或执行完整的 `Mode D: Behavior Impact Audit` 行为影响审计与双重审查）：
+  1. **类型/策略扩展**：新增业务类型（`type`）、枚举（`Enum`）、配置表新增类型行、新增策略类或子处理器；
+  2. **公共分发修改**：修改了公共路由、分发器、消息映射表（`switch-case` / `Map<Integer, Handler>` / `Interceptor`）；
+  3. **状态与存储**：涉及 `Player` 内存变异、Redis/Mongo 读写、跨天/周期重置、资源增减或奖励发放；
+  4. **兼容与并发**：涉及新老数据反序列化兼容、多版本滚更混跑、分布式锁或异步任务；
+  5. **多分支入口**：在已有 Action/Help 的主干入口中插入了新的条件分支。
+
+  Bug 修复不固定为 T3——看变更触及什么（如修一个 -1 语义的数值边界 = T2；修协议字段解析逻辑或状态变异 = T3）。
+- **T2（用户显式"快速修改"）**：跳过 brainstorming/需求确认/design-reviewer/设计确认/writing-plans；保留归属 Claim、编译、验证、回归、文档待更新提醒。仅限**未命中上述高危触发器**的已有行为纯局部单点修复。
 
   **T2 执行路径（豁免 + 单命令直达）**：T2 跳过 writing-plans，故不调用 `subagent-driven-development`。T2 下**单命令直达**：用户下达 T2 指令后，AI 在单次响应内自动串联【Claim 归属 → 代码修改 → 编译 → 相关测试 → 交付完成】。**编译/测试可能超单轮超时**，允许一次进度回复（“编译中，下一轮继续”），不要求全部单 turn 完成；硬节点保留。最终 `requesting-code-review` 降为 AI 自审 + 附编译/验证证据。T2 保留归属 Claim、编译、验证、回归四个硬节点。
 - **T1（用户显式"急速修改"，极少用）**：仅限极端场景。跳过全部流程节点，仅保留编译通过 + guard 逃生口。AI 须先提醒 T1 风险，用户确认后执行。

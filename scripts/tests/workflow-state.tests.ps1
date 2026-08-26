@@ -2438,6 +2438,87 @@ try {
         throw "VerifyCompletion must fail FAST_TRACK when src/ files are modified. Output: $ftVerifyStr"
     }
 
+    # Test floating baseline rejection in ValidateChangeImpact
+    $floatingImpDir = Join-Path $TestRoot "floating_baseline_spec"
+    [System.IO.Directory]::CreateDirectory($floatingImpDir) | Out-Null
+    $floatingImpPath = Join-Path $floatingImpDir "04_change_impact.json"
+    $floatingImpJson = @"
+{
+  "schemaVersion": "1.0",
+  "feature": "FloatingFeature",
+  "baseline": "HEAD",
+  "changeSetDigest": "1111111111111111111111111111111111111111111111111111111111111111",
+  "changedSymbols": ["src/com/game/Shop.java"],
+  "entryPoints": ["ProtoBuy"],
+  "upstreamCallers": [],
+  "downstreamEffects": [],
+  "stateReadsWrites": [],
+  "invariants": [],
+  "requiredRegressionCases": ["TC-REG01"]
+}
+"@
+    [System.IO.File]::WriteAllText($floatingImpPath, $floatingImpJson, $Utf8NoBom)
+    Assert-Fails -Message "ValidateChangeImpact must reject floating baseline like HEAD/WORKING" -Action {
+        & $ScriptPath -Operation ValidateChangeImpact -Path $floatingImpPath
+    }
+
+    # Test Python helper function carrier rejection
+    $pyTestFile = Join-Path $TestRoot "test_demo.py"
+    [System.IO.File]::WriteAllText($pyTestFile, "def helper_calc():`n    return 42`n`ndef test_real():`n    assert helper_calc() == 42`n", $Utf8NoBom)
+    $pyHelperCov = $cmCovJson.Replace("test/CarrierTest.java#nonExistentMethod", ($pyTestFile.Replace("\", "/") + "#helper_calc"))
+    [System.IO.File]::WriteAllText($cmCovPath, $pyHelperCov, $Utf8NoBom)
+    $pyVal = & $ScriptPath -Operation ValidateTestCoverage -Path $cmCovPath -Phase VERIFY 2>&1
+    $pyStr = $pyVal | Out-String
+    if ($pyStr -notmatch "is not a test \(must start with 'test_'") {
+        throw "ValidateTestCoverage must reject Python helper function carrier. Output: $pyStr"
+    }
+
+    # Test Go helper function carrier rejection
+    $goTestFile = Join-Path $TestRoot "demo_test.go"
+    [System.IO.File]::WriteAllText($goTestFile, "package demo`nfunc HelperFunc() {}`nfunc TestReal(t *testing.T) {}`n", $Utf8NoBom)
+    $goHelperCov = $cmCovJson.Replace("test/CarrierTest.java#nonExistentMethod", ($goTestFile.Replace("\", "/") + "#HelperFunc"))
+    [System.IO.File]::WriteAllText($cmCovPath, $goHelperCov, $Utf8NoBom)
+    $goVal = & $ScriptPath -Operation ValidateTestCoverage -Path $cmCovPath -Phase VERIFY 2>&1
+    $goStr = $goVal | Out-String
+    if ($goStr -notmatch "must start with 'Test'") {
+        throw "ValidateTestCoverage must reject Go helper function carrier. Output: $goStr"
+    }
+
+    # Test Rust helper function carrier rejection
+    $rsTestFile = Join-Path $TestRoot "demo_test.rs"
+    [System.IO.File]::WriteAllText($rsTestFile, "fn helper_fn() {}`n#[test]`nfn test_real() {}`n", $Utf8NoBom)
+    $rsHelperCov = $cmCovJson.Replace("test/CarrierTest.java#nonExistentMethod", ($rsTestFile.Replace("\", "/") + "#helper_fn"))
+    [System.IO.File]::WriteAllText($cmCovPath, $rsHelperCov, $Utf8NoBom)
+    $rsVal = & $ScriptPath -Operation ValidateTestCoverage -Path $cmCovPath -Phase VERIFY 2>&1
+    $rsStr = $rsVal | Out-String
+    if ($rsStr -notmatch "not annotated with #\[test\]") {
+        throw "ValidateTestCoverage must reject Rust helper fn carrier without #[test]. Output: $rsStr"
+    }
+
+    # Test AssessRisk operation and machine semantic risk blocking on high-risk diff
+    $riskTestDir = Join-Path $TestRoot "risk_repo"
+    [System.IO.Directory]::CreateDirectory($riskTestDir) | Out-Null
+    & git -C $riskTestDir init --quiet
+    $riskSpecDir = Join-Path $riskTestDir ".ai-workspace/specs/features/RiskFeature"
+    [System.IO.Directory]::CreateDirectory($riskSpecDir) | Out-Null
+    $riskFeatState = Join-Path $riskSpecDir "feature-state.json"
+    [System.IO.File]::WriteAllText($riskFeatState, '{"schemaVersion":"1.0","feature":"RiskFeature","tier":"T2","phase":"DONE"}', $Utf8NoBom)
+    $riskSrc = Join-Path $riskTestDir "src/com/game/ShopEnum.java"
+    [System.IO.Directory]::CreateDirectory((Split-Path -Parent $riskSrc)) | Out-Null
+    [System.IO.File]::WriteAllText($riskSrc, "package com.game; public enum ShopEnum { TYPE_NEW_GIFT, TYPE_OLD }", $Utf8NoBom)
+    
+    $assessOut = & $ScriptPath -Operation AssessRisk -Path $riskSpecDir 2>&1
+    $assessStr = $assessOut | Out-String
+    if ($assessStr -notmatch "TYPE_EXTENSION" -or $assessStr -notmatch '"hasHighRisk":\s*true') {
+        throw "AssessRisk must detect high risk TYPE_EXTENSION. Output: $assessStr"
+    }
+
+    $riskVerifyOut = & $ScriptPath -Operation VerifyCompletion -Path (Join-Path $riskSpecDir "workflow-state.json") 2>&1
+    $riskVerifyStr = $riskVerifyOut | Out-String
+    if ($LASTEXITCODE -eq 0 -or $riskVerifyStr -notmatch "T2 high-risk violation") {
+        throw "VerifyCompletion must block T2 when high-risk semantic trigger is present without 04_change_impact.json. Output: $riskVerifyStr"
+    }
+
     Write-Output "All workflow state tests passed."
 } finally {
     foreach ($name in @(

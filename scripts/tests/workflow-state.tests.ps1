@@ -49,6 +49,21 @@ function Get-TestArtifactHash {
     return (Get-FileHash -InputStream ([System.IO.MemoryStream]::new($bytes)) -Algorithm SHA256).Hash.ToLowerInvariant()
 }
 
+function Get-TestStringSha256 {
+    param([string]$Text)
+    if ([string]::IsNullOrEmpty($Text)) {
+        return "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    }
+    $bytes = [System.Text.Encoding]::UTF8.GetBytes($Text)
+    $hasher = [System.Security.Cryptography.SHA256]::Create()
+    try {
+        $hashBytes = $hasher.ComputeHash($bytes)
+        return ([System.BitConverter]::ToString($hashBytes).Replace("-", "").ToLowerInvariant())
+    } finally {
+        $hasher.Dispose()
+    }
+}
+
 function Write-TestJson {
     param(
         [string]$Path,
@@ -595,6 +610,7 @@ function Write-TestCoverage {
             [ordered]@{
                 id = "TC-CORE"
                 title = "Core business flow"
+                status = "VERIFIED"
                 priority = "P0"
                 testTypes = @("FUNCTIONAL", "NEGATIVE", "BOUNDARY")
                 requirementIds = @($RequirementIds)
@@ -630,6 +646,15 @@ function Write-TestCoverage {
             }
         )
         riskExemptions = @()
+        executionEvidence = [ordered]@{
+            command = "pwsh test"
+            exitCode = 0
+            executedAt = "2026-08-26T00:00:00Z"
+            sourceCommitSha = "abcdef1234567890"
+            testCount = 1
+            passedCount = 1
+            failedCount = 0
+        }
     }
     Write-TestJson -Path $CoveragePath -Value $coverage
 }
@@ -657,6 +682,7 @@ function Write-NoRuntimeCoverageFixture {
             [ordered]@{
                 id = "TC-COVERAGE"
                 title = "Approval state gates no-runtime coverage validation"
+                status = "VERIFIED"
                 priority = "P0"
                 testTypes = @("FUNCTIONAL", "NEGATIVE")
                 requirementIds = @("BR-COVERAGE")
@@ -694,11 +720,21 @@ function Write-NoRuntimeCoverageFixture {
                     )
                 }
                 cleanup = @("Delete the isolated fixture directory.")
-                automationCarrier = ".ai-sop/scripts/tests/workflow-state.tests.ps1"
+                automationCarrier = "TestRunner.ps1"
             }
         )
         riskExemptions = @()
+        executionEvidence = [ordered]@{
+            command = "pwsh test"
+            exitCode = 0
+            executedAt = "2026-08-26T00:00:00Z"
+            sourceCommitSha = "abcdef1234567890"
+            testCount = 1
+            passedCount = 1
+            failedCount = 0
+        }
     }
+    [System.IO.File]::WriteAllText((Join-Path $SpecDirectory "TestRunner.ps1"), "# test", $Utf8NoBom)
     Write-TestJson -Path $coveragePath -Value $coverage
 }
 
@@ -2042,6 +2078,15 @@ try {
     $covObj.cases[0].status = "VERIFIED"
     $covObj.cases[1].automationCarrier = "test/com/game/RealTest.java#testBuy"
     $covObj.cases[1].status = "VERIFIED"
+    $covObj | Add-Member -NotePropertyName "executionEvidence" -NotePropertyValue ([ordered]@{
+        command = "pwsh test"
+        exitCode = 0
+        executedAt = "2026-08-26T00:00:00Z"
+        sourceCommitSha = "abcdef1234567890"
+        testCount = 2
+        passedCount = 2
+        failedCount = 0
+    })
     [System.IO.File]::WriteAllText($syncCovPath, ($covObj | ConvertTo-Json -Depth 10), $Utf8NoBom)
     
     $realVerifyValidation = & $ScriptPath -Operation ValidateTestCoverage -Path $syncCovPath -Phase VERIFY
@@ -2115,6 +2160,20 @@ try {
         throw "ValidateTestCoverage must succeed in DESIGN_ONLY mode without requirement approval, got: $($doVal -join '; ')"
     }
 
+    # Refine coverage to VERIFIED with executionEvidence for completion verification
+    $doCovObj = Get-Content -LiteralPath $doCov -Raw | ConvertFrom-Json
+    $doCovObj.cases[0].status = "VERIFIED"
+    $doCovObj | Add-Member -NotePropertyName "executionEvidence" -NotePropertyValue ([ordered]@{
+        command = "pwsh test"
+        exitCode = 0
+        executedAt = "2026-08-26T00:00:00Z"
+        sourceCommitSha = "abcdef1234567890"
+        testCount = 1
+        passedCount = 1
+        failedCount = 0
+    })
+    [System.IO.File]::WriteAllText($doCov, ($doCovObj | ConvertTo-Json -Depth 10), $Utf8NoBom)
+
     # Create dummy classes dir so compile verification passes
     $doBuild = Join-Path $designOnlyDir "build/classes"
     [System.IO.Directory]::CreateDirectory($doBuild) | Out-Null
@@ -2128,12 +2187,13 @@ try {
     $impactDir = Join-Path $TestRoot "impact_test"
     [System.IO.Directory]::CreateDirectory($impactDir) | Out-Null
     $impactPath = Join-Path $impactDir "04_change_impact.json"
-    $impactJson = @'
+    $expectedDigest = Get-TestStringSha256 -Text ("com.game.AirItemRecord#reset|com.game.GiftPackHelper#buyGift")
+    $impactJson = @"
 {
   "schemaVersion": "1.0",
   "feature": "ImpactTestFeature",
   "baseline": "rev123456",
-  "changeSetDigest": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+  "changeSetDigest": "$expectedDigest",
   "changedSymbols": ["com.game.AirItemRecord#reset", "com.game.GiftPackHelper#buyGift"],
   "entryPoints": ["COUPON_PURCHASE", "GET_CYCLE_ACTIVITY_STORE_INFO"],
   "upstreamCallers": ["DispatchServlet", "AirProcess#doHttpRequest"],
@@ -2173,11 +2233,18 @@ try {
   ],
   "requiredRegressionCases": ["TC-01"]
 }
-'@
+"@
     [System.IO.File]::WriteAllText($impactPath, $impactJson, $Utf8NoBom)
     $impactVal = & $ScriptPath -Operation ValidateChangeImpact -Path $impactPath
     if ($impactVal -notcontains "VALID") {
         throw "ValidateChangeImpact must return VALID for schema-compliant impact JSON, got: $($impactVal -join '; ')"
+    }
+
+    # Test stale changeSetDigest rejection
+    $staleImpactJson = $impactJson.Replace($expectedDigest, "0000000000000000000000000000000000000000000000000000000000000000")
+    [System.IO.File]::WriteAllText($impactPath, $staleImpactJson, $Utf8NoBom)
+    Assert-Fails -Message "ValidateChangeImpact must fail when changeSetDigest is stale" -Action {
+        & $ScriptPath -Operation ValidateChangeImpact -Path $impactPath
     }
 
     # Test carrier method existence verification in Java test files
@@ -2189,34 +2256,66 @@ try {
     [System.IO.Directory]::CreateDirectory((Split-Path -Parent $cmTestJava)) | Out-Null
     [System.IO.File]::WriteAllText($cmTestJava, "package test; public class CarrierTest { @Test public void realTestMethod() {} }", $Utf8NoBom)
 
+    $cmReq = Join-Path $cmSpecDir "01_server_rules.md"
+    $cmDes = Join-Path $cmSpecDir "06_design_contract.md"
+    $cmPlan = Join-Path $cmSpecDir "05_test_plan.md"
+    $cmApproval = Join-Path $cmSpecDir "00_workflow_state.json"
+    [System.IO.File]::WriteAllText($cmReq, "# Rules`n- BR-01: Rule", $Utf8NoBom)
+    [System.IO.File]::WriteAllText($cmDes, "# Design`n- DC-01: Contract", $Utf8NoBom)
+    [System.IO.File]::WriteAllText($cmPlan, "# Plan`n- TC-01: Carrier method test", $Utf8NoBom)
+
+    $cmOwnerId = "cm-cursor"
+    $cmSession = New-TestSuperpowersOwner `
+        -Feature "CarrierMethodFeature" `
+        -SpecDirectory $cmSpecDir `
+        -Agent CURSOR `
+        -OwnerId $cmOwnerId
+
+    & $ScriptPath -Operation InitApproval -Path $cmApproval -Feature "CarrierMethodFeature" -GateMode DESIGN_ONLY `
+        -OwnerWorkflow SUPERPOWERS -OwnerAgent CURSOR -OwnerId $cmOwnerId
+    & $ScriptPath -Operation Approve -Path $cmApproval -Gate design -ApprovedBy "human:reviewer" `
+        -OwnerWorkflow SUPERPOWERS -OwnerAgent CURSOR -OwnerId $cmOwnerId
+
     $cmCovPath = Join-Path $cmSpecDir "05_test_coverage.json"
-    $cmCovJson = @'
+    $cmCovJson = @"
 {
   "schemaVersion": "1.0",
   "feature": "CarrierMethodFeature",
   "requirementArtifact": "01_server_rules.md",
-  "requirementSha256": "0000000000000000000000000000000000000000000000000000000000000000",
+  "requirementSha256": "$((Get-TestArtifactHash -Path $cmReq))",
   "designArtifact": "06_design_contract.md",
-  "designSha256": "0000000000000000000000000000000000000000000000000000000000000000",
+  "designSha256": "$((Get-TestArtifactHash -Path $cmDes))",
   "testPlanArtifact": "05_test_plan.md",
-  "testPlanSha256": "0000000000000000000000000000000000000000000000000000000000000000",
+  "testPlanSha256": "$((Get-TestArtifactHash -Path $cmPlan))",
   "cases": [
     {
       "id": "TC-01",
+      "title": "Test non-existent carrier method",
       "status": "IMPLEMENTED",
       "priority": "P1",
+      "testTypes": ["FUNCTIONAL"],
       "requirementIds": [],
       "designIds": ["DC-01"],
       "automationCarrier": "test/CarrierTest.java#nonExistentMethod"
     }
   ],
-  "riskExemptions": []
+  "riskExemptions": [],
+  "executionEvidence": {
+    "command": "pwsh test",
+    "exitCode": 0,
+    "executedAt": "2026-08-26T18:00:00Z",
+    "sourceCommitSha": "abcdef1234567890",
+    "testCount": 1,
+    "passedCount": 1,
+    "failedCount": 0
+  }
 }
-'@
+"@
     [System.IO.File]::WriteAllText($cmCovPath, $cmCovJson, $Utf8NoBom)
-    $cmWarnings = Get-CoveragePlaceholderWarnings -CoveragePath $cmCovPath -Phase "VERIFY"
-    if ($cmWarnings.Errors.Count -eq 0 -or $cmWarnings.Errors -notmatch "does not exist in") {
-        throw "Get-CoveragePlaceholderWarnings must report ERROR when carrier method does not exist in .java file. Errors: $($cmWarnings.Errors -join '; ')"
+    $cmValidation = & $ScriptPath -Operation ValidateTestCoverage -Path $cmCovPath -Phase VERIFY 2>&1
+    $cmValidationStr = $cmValidation | Out-String
+    if ($cmValidationStr -notmatch "does not exist in") {
+        throw "ValidateTestCoverage must report error when carrier method does not exist in .java file. Output: $cmValidationStr"
     }
 
     # Test FAST_TRACK source code modification rejection in VerifyCompletion

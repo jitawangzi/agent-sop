@@ -142,6 +142,21 @@ function Assert-Argument {
     }
 }
 
+function Get-StringSha256 {
+    param([string]$Text)
+    if ([string]::IsNullOrEmpty($Text)) {
+        return "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    }
+    $bytes = [System.Text.Encoding]::UTF8.GetBytes($Text)
+    $hasher = [System.Security.Cryptography.SHA256]::Create()
+    try {
+        $hashBytes = $hasher.ComputeHash($bytes)
+        return ([System.BitConverter]::ToString($hashBytes).Replace("-", "").ToLowerInvariant())
+    } finally {
+        $hasher.Dispose()
+    }
+}
+
 function Get-AiSopArtifactHash {
     # Normalized SHA-256 for approval/test artifacts. CRLF/LF differences
     # (from Windows editors, git autocrlf, or cross-tool saves) must NOT cause
@@ -909,29 +924,43 @@ function Get-ChangeSetDigest {
     if ([string]::IsNullOrWhiteSpace($WorkspaceRoot) -or -not (Test-Path -LiteralPath $WorkspaceRoot)) {
         return $null
     }
-    # 1. Git diff
-    if (Test-Path -LiteralPath (Join-Path $WorkspaceRoot ".git") -PathType Container) {
+    # 1. Git diff + status (handles git worktree where .git is a file, and standard repos)
+    if (Test-Path -LiteralPath (Join-Path $WorkspaceRoot ".git")) {
         try {
             $diffTarget = if ([string]::IsNullOrWhiteSpace($Baseline) -or $Baseline -eq "HEAD") { "HEAD" } else { $Baseline }
             $gitDiff = & git -C $WorkspaceRoot diff $diffTarget 2>&1
-            if ($LASTEXITCODE -eq 0 -and $null -ne $gitDiff) {
+            $gitStat = & git -C $WorkspaceRoot status --porcelain -uall 2>&1
+            $combined = [System.Collections.Generic.List[string]]::new()
+            if ($null -ne $gitDiff) {
                 $diffStr = ($gitDiff | Out-String).Trim()
-                if (-not [string]::IsNullOrWhiteSpace($diffStr)) {
-                    return (Get-StringSha256 -Text $diffStr)
-                }
+                if (-not [string]::IsNullOrWhiteSpace($diffStr)) { $combined.Add($diffStr) }
+            }
+            if ($null -ne $gitStat) {
+                $statStr = ($gitStat | Out-String).Trim()
+                if (-not [string]::IsNullOrWhiteSpace($statStr)) { $combined.Add($statStr) }
+            }
+            if ($combined.Count -gt 0) {
+                return (Get-StringSha256 -Text ($combined -join "`n"))
             }
         } catch {}
     }
-    # 2. SVN diff
-    if (Test-Path -LiteralPath (Join-Path $WorkspaceRoot ".svn") -PathType Container) {
+    # 2. SVN diff + status
+    if (Test-Path -LiteralPath (Join-Path $WorkspaceRoot ".svn")) {
         try {
             $diffArgs = if (-not [string]::IsNullOrWhiteSpace($Baseline) -and $Baseline -match '^\d+$') { @("-r", "$Baseline:WORKING") } else { @() }
             $svnDiff = & svn diff @diffArgs $WorkspaceRoot 2>&1
-            if ($LASTEXITCODE -eq 0 -and $null -ne $svnDiff) {
+            $svnStat = & svn status --ignore-externals $WorkspaceRoot 2>&1
+            $combined = [System.Collections.Generic.List[string]]::new()
+            if ($null -ne $svnDiff) {
                 $diffStr = ($svnDiff | Out-String).Trim()
-                if (-not [string]::IsNullOrWhiteSpace($diffStr)) {
-                    return (Get-StringSha256 -Text $diffStr)
-                }
+                if (-not [string]::IsNullOrWhiteSpace($diffStr)) { $combined.Add($diffStr) }
+            }
+            if ($null -ne $svnStat) {
+                $statStr = ($svnStat | Out-String).Trim()
+                if (-not [string]::IsNullOrWhiteSpace($statStr)) { $combined.Add($statStr) }
+            }
+            if ($combined.Count -gt 0) {
+                return (Get-StringSha256 -Text ($combined -join "`n"))
             }
         } catch {}
     }
@@ -1219,11 +1248,11 @@ function Get-CoveragePlaceholderWarnings {
         $prio = [string]$case.priority
         $isHighPriority = ($prio -ieq "P0") -or ($prio -ieq "P1")
         $caseStatus = [string]$case.status
-        if ($caseStatus -ieq "PLACEHOLDER") {
+        if ($caseStatus -in @("PLACEHOLDER", "PLANNED")) {
             if ($isPlanPhase) {
-                $warnings.Add("INFO: $caseId (priority=$prio) status is PLACEHOLDER (will be refined during implementation)")
+                $warnings.Add("INFO: $caseId (priority=$prio) status is $caseStatus (will be refined during implementation)")
             } else {
-                $errors.Add("ERROR: $caseId (priority=$prio) status is PLACEHOLDER — must be refined to PLANNED/IMPLEMENTED/VERIFIED")
+                $errors.Add("ERROR: $caseId (priority=$prio) status is $caseStatus — must be refined to IMPLEMENTED/VERIFIED")
             }
         }
         $placeholderHits = [System.Collections.Generic.List[string]]::new()
@@ -1246,19 +1275,21 @@ function Get-CoveragePlaceholderWarnings {
             $hitSummary = ($placeholderHits -join '; ')
             if ($isPlanPhase) {
                 $warnings.Add("INFO: $caseId (priority=$prio) assertions skeleton ($hitSummary)")
-            } elseif ($isHighPriority) {
-                $errors.Add("ERROR: $caseId (priority=$prio) assertions still placeholder ($hitSummary) — high-priority TC must carry real assertions before delivery")
             } else {
-                $warnings.Add("WARN: $caseId (priority=$prio) assertions still placeholder ($hitSummary) — refine setup/trigger/assertions before delivery")
+                $errors.Add("ERROR: $caseId (priority=$prio) assertions contain placeholder ($hitSummary) — all cases must carry real assertions before delivery")
             }
         }
-        if (-not $isPlanPhase -and $null -ne $case.assertions -and $isHighPriority -and -not $hasNonNaAssertion) {
-            $errors.Add("ERROR: $caseId (priority=$prio) all assertions are N_A — high-priority cases must define at least one non-N_A assertion")
+        if (-not $isPlanPhase -and $null -ne $case.assertions -and -not $hasNonNaAssertion) {
+            $errors.Add("ERROR: $caseId (priority=$prio) all assertions are N_A — cases must define at least one non-N_A assertion")
         }
 
         # automationCarrier validation.
         $carrier = [string]$case.automationCarrier
         $carrierTrim = $carrier.Trim()
+        $isPathLike = ($carrierTrim -match '(?i)[/\\][a-zA-Z0-9_\-\.]+\.[a-zA-Z0-9]+' -or 
+                       $carrierTrim -match '(?i)^[a-zA-Z0-9_\-\.]+\.[a-zA-Z0-9]+' -or 
+                       $carrierTrim -match '(?i)\.[a-zA-Z0-9]+#')
+
         if ([string]::IsNullOrWhiteSpace($carrierTrim) -or $carrierTrim -ieq "__TODO__" -or $carrierTrim -ieq "see plan" -or $carrierTrim -ieq "TODO") {
             if ($isPlanPhase) {
                 $warnings.Add("INFO: $caseId (priority=$prio) automationCarrier to be implemented ('$carrierTrim')")
@@ -1271,7 +1302,7 @@ function Get-CoveragePlaceholderWarnings {
             } else {
                 $errors.Add("ERROR: $caseId (priority=$prio) automationCarrier is too generic ('$carrierTrim') — specify exact test file or Class#method")
             }
-        } elseif ($carrierTrim -match '[/\\]\.[a-zA-Z0-9]+$' -or $carrierTrim -match '\.[a-zA-Z]{1,5}#') {
+        } elseif ($isPathLike) {
             # Looks like a file path (has separator + extension, or extension#method).
             $filePathPart = $carrierTrim
             $methodName = $null
@@ -1310,29 +1341,47 @@ function Get-CoveragePlaceholderWarnings {
                     }
                 }
                 if (-not [string]::IsNullOrWhiteSpace($methodName)) {
-                    if ($javaSrc -notmatch "(?m)\b$([regex]::Escape($methodName))\s*\(") {
+                    $testMethodPattern = "(?s)@Test\b[^{};]*?\bvoid\s+$([regex]::Escape($methodName))\s*\("
+                    $anyMethodPattern = "(?m)^\s*(?:@\w+\s+)*(?:public|protected|private|\s)\s+[\w<>,\[\]\s]+\s+$([regex]::Escape($methodName))\s*\("
+                    if ($javaSrc -notmatch $testMethodPattern -and $javaSrc -notmatch $anyMethodPattern) {
                         if ($isPlanPhase) {
                             $warnings.Add("INFO: $caseId automationCarrier method '$methodName' not yet in $filePathPart")
                         } else {
-                            $errors.Add("ERROR: $caseId automationCarrier method '$methodName' does not exist in $filePathPart")
+                            $errors.Add("ERROR: $caseId automationCarrier test method '$methodName' does not exist in $filePathPart")
                         }
                     }
                 }
+            }
+        } else {
+            if ($isPlanPhase) {
+                $warnings.Add("INFO: $caseId (priority=$prio) unknown carrier format ('$carrierTrim')")
+            } else {
+                $errors.Add("ERROR: $caseId (priority=$prio) invalid carrier format ('$carrierTrim') — must specify test file path or Class#method")
             }
         }
     }
 
     # executionEvidence validation in VERIFY phase
-    if (-not $isPlanPhase -and $null -ne $coverage.executionEvidence) {
-        $ev = $coverage.executionEvidence
-        if ($ev.exitCode -ne 0) {
-            $errors.Add("ERROR: executionEvidence indicates failed test execution (exitCode=$($ev.exitCode))")
-        }
-        if ($ev.failedCount -gt 0) {
-            $errors.Add("ERROR: executionEvidence indicates $($ev.failedCount) test failure(s)")
-        }
-        if ($ev.testCount -lt 1) {
-            $errors.Add("ERROR: executionEvidence indicates zero tests were executed (testCount=$($ev.testCount))")
+    if (-not $isPlanPhase) {
+        if ($null -eq $coverage.executionEvidence) {
+            $errors.Add("ERROR: executionEvidence is missing in 05_test_coverage.json — real test execution record is mandatory in VERIFY phase")
+        } else {
+            $ev = $coverage.executionEvidence
+            if ($ev.exitCode -ne 0) {
+                $errors.Add("ERROR: executionEvidence indicates failed test execution (exitCode=$($ev.exitCode))")
+            }
+            if ($ev.failedCount -gt 0) {
+                $errors.Add("ERROR: executionEvidence indicates $($ev.failedCount) test failure(s)")
+            }
+            if ($ev.testCount -lt 1) {
+                $errors.Add("ERROR: executionEvidence indicates zero tests were executed (testCount=$($ev.testCount))")
+            }
+            if ($ev.testCount -lt $coverage.cases.Count) {
+                $errors.Add("ERROR: executionEvidence testCount ($($ev.testCount)) is less than covered test cases count ($($coverage.cases.Count))")
+            }
+            if ([string]::IsNullOrWhiteSpace($ev.sourceCommitSha)) {
+                $errors.Add("ERROR: executionEvidence sourceCommitSha cannot be empty")
+            }
         }
     }
     return [pscustomobject]@{ Warnings = $warnings; Errors = $errors }
@@ -2577,8 +2626,38 @@ switch ($Operation) {
             $impactPath = Join-Path $specDir "04_change_impact.json"
             if (Test-Path -LiteralPath $impactPath -PathType Leaf) {
                 try {
-                    Validate-ChangeImpactState -ImpactPath $impactPath | Out-Null
+                    $impact = Validate-ChangeImpactState -ImpactPath $impactPath
                     $checks.Add("[v] 行为影响分析有效且未过期")
+
+                    # Cross-validation with 05_test_coverage.json
+                    if ($covOk) {
+                        $covObj = Read-JsonObject -FilePath $covPath -SchemaPath (Join-Path $SchemaRoot "test-coverage.schema.json")
+                        $coveredInvariants = [System.Collections.Generic.HashSet[string]]::new([System.StringComparer]::OrdinalIgnoreCase)
+                        $declaredCases = [System.Collections.Generic.HashSet[string]]::new([System.StringComparer]::OrdinalIgnoreCase)
+                        foreach ($c in $covObj.cases) {
+                            $declaredCases.Add([string]$c.id) | Out-Null
+                            if ($c.invariantIds) {
+                                foreach ($invId in $c.invariantIds) {
+                                    $coveredInvariants.Add([string]$invId) | Out-Null
+                                }
+                            }
+                        }
+                        if ($impact.invariants) {
+                            foreach ($inv in $impact.invariants) {
+                                $invId = [string]$inv.invariantId
+                                if (-not $coveredInvariants.Contains($invId)) {
+                                    $failures.Add("Invariant '$invId' in 04_change_impact.json is not covered by any test case in 05_test_coverage.json")
+                                }
+                            }
+                        }
+                        if ($impact.requiredRegressionCases) {
+                            foreach ($rc in $impact.requiredRegressionCases) {
+                                if (-not $declaredCases.Contains([string]$rc)) {
+                                    $failures.Add("Required regression case '$rc' in 04_change_impact.json is missing from 05_test_coverage.json")
+                                }
+                            }
+                        }
+                    }
                 } catch {
                     $failures.Add("change impact validation threw: $($_.Exception.Message)")
                     $checks.Add("[X] 行为影响分析校验失败")
@@ -2595,14 +2674,14 @@ switch ($Operation) {
                 $checks.Add("[?] 相关测试/回归(AI 据定向 JUnit 结果自报)")
             } elseif ($effectiveTier -eq "FAST_TRACK") {
                 $hasSourceCodeChanges = $false
-                if (Test-Path -LiteralPath (Join-Path $wsRoot ".git") -PathType Container) {
+                if (Test-Path -LiteralPath (Join-Path $wsRoot ".git")) {
                     try {
-                        $gitStat = & git -C $wsRoot status --porcelain 2>&1
+                        $gitStat = & git -C $wsRoot status --porcelain -uall 2>&1
                         if ($gitStat -match '(?m)^\s*[MADRCU?]+\s+(src|pkg|internal|app)/') {
                             $hasSourceCodeChanges = $true
                         }
                     } catch {}
-                } elseif (Test-Path -LiteralPath (Join-Path $wsRoot ".svn") -PathType Container) {
+                } elseif (Test-Path -LiteralPath (Join-Path $wsRoot ".svn")) {
                     try {
                         $svnStat = & svn status --ignore-externals $wsRoot 2>&1
                         if ($svnStat -match '(?m)^[MAD?]\s+.*(src|pkg|internal|app)[/\\].*') {

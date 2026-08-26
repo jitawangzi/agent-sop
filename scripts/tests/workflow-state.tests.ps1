@@ -649,7 +649,7 @@ function Write-TestCoverage {
         executionEvidence = [ordered]@{
             command = "pwsh test"
             exitCode = 0
-            executedAt = "2026-08-26T00:00:00Z"
+            executedAt = [DateTimeOffset]::UtcNow.AddMinutes(-5).ToString("yyyy-MM-ddTHH:mm:ssZ")
             sourceCommitSha = "abcdef1234567890"
             testCount = 1
             passedCount = 1
@@ -727,7 +727,7 @@ function Write-NoRuntimeCoverageFixture {
         executionEvidence = [ordered]@{
             command = "pwsh test"
             exitCode = 0
-            executedAt = "2026-08-26T00:00:00Z"
+            executedAt = [DateTimeOffset]::UtcNow.AddMinutes(-5).ToString("yyyy-MM-ddTHH:mm:ssZ")
             sourceCommitSha = "abcdef1234567890"
             testCount = 1
             passedCount = 1
@@ -2107,7 +2107,7 @@ try {
     $covObj | Add-Member -NotePropertyName "executionEvidence" -NotePropertyValue ([ordered]@{
         command = "pwsh test"
         exitCode = 0
-        executedAt = "2026-08-26T00:00:00Z"
+        executedAt = [DateTimeOffset]::UtcNow.AddMinutes(-5).ToString("yyyy-MM-ddTHH:mm:ssZ")
         sourceCommitSha = "abcdef1234567890"
         testCount = 2
         passedCount = 2
@@ -2192,7 +2192,7 @@ try {
     $doCovObj | Add-Member -NotePropertyName "executionEvidence" -NotePropertyValue ([ordered]@{
         command = "pwsh test"
         exitCode = 0
-        executedAt = "2026-08-26T00:00:00Z"
+        executedAt = [DateTimeOffset]::UtcNow.AddMinutes(-5).ToString("yyyy-MM-ddTHH:mm:ssZ")
         sourceCommitSha = "abcdef1234567890"
         testCount = 1
         passedCount = 1
@@ -2325,6 +2325,7 @@ try {
         -OwnerWorkflow SUPERPOWERS -OwnerAgent CURSOR -OwnerId $cmOwnerId
 
     $cmCovPath = Join-Path $cmSpecDir "05_test_coverage.json"
+    $dynamicRecent = [DateTimeOffset]::UtcNow.AddMinutes(-5).ToString("yyyy-MM-ddTHH:mm:ssZ")
     $cmCovJson = @"
 {
   "schemaVersion": "1.0",
@@ -2351,7 +2352,7 @@ try {
   "executionEvidence": {
     "command": "pwsh test",
     "exitCode": 0,
-    "executedAt": "2026-08-26T18:00:00Z",
+    "executedAt": "$dynamicRecent",
     "sourceCommitSha": "abcdef1234567890",
     "testCount": 1,
     "passedCount": 1,
@@ -2394,16 +2395,14 @@ try {
     }
 
     # Test executionEvidence invalid timestamp rejection
-    $cmBadDateCov = $cmCovJson.Replace('"executedAt": "2026-08-26T18:00:00Z"', '"executedAt": "invalid-timestamp"')
+    $cmBadDateCov = $cmCovJson.Replace("`"executedAt`": `"$dynamicRecent`"", '"executedAt": "invalid-timestamp"')
     [System.IO.File]::WriteAllText($cmCovPath, $cmBadDateCov, $Utf8NoBom)
-    $cmBadDateVal = & $ScriptPath -Operation ValidateTestCoverage -Path $cmCovPath -Phase VERIFY 2>&1
-    $cmBadDateStr = $cmBadDateVal | Out-String
-    if ($cmBadDateStr -notmatch "not a valid ISO 8601 timestamp") {
-        throw "ValidateTestCoverage must reject invalid executionEvidence timestamp. Output: $cmBadDateStr"
+    Assert-Fails -Message "ValidateTestCoverage must reject invalid executionEvidence timestamp" -Action {
+        & $ScriptPath -Operation ValidateTestCoverage -Path $cmCovPath -Phase VERIFY
     }
 
     # Test executionEvidence future timestamp rejection
-    $cmFutureDateCov = $cmCovJson.Replace('"executedAt": "2026-08-26T18:00:00Z"', '"executedAt": "2099-01-01T00:00:00Z"')
+    $cmFutureDateCov = $cmCovJson.Replace("`"executedAt`": `"$dynamicRecent`"", '"executedAt": "2099-01-01T00:00:00Z"')
     [System.IO.File]::WriteAllText($cmCovPath, $cmFutureDateCov, $Utf8NoBom)
     $cmFutureVal = & $ScriptPath -Operation ValidateTestCoverage -Path $cmCovPath -Phase VERIFY 2>&1
     $cmFutureStr = $cmFutureVal | Out-String
@@ -2414,10 +2413,19 @@ try {
     # Test executionEvidence invalid SHA rejection
     $cmBadShaCov = $cmCovJson.Replace('"sourceCommitSha": "abcdef1234567890"', '"sourceCommitSha": "invalid!@#$"')
     [System.IO.File]::WriteAllText($cmCovPath, $cmBadShaCov, $Utf8NoBom)
-    $cmBadShaVal = & $ScriptPath -Operation ValidateTestCoverage -Path $cmCovPath -Phase VERIFY 2>&1
-    $cmBadShaStr = $cmBadShaVal | Out-String
-    if ($cmBadShaStr -notmatch "must be a valid commit SHA") {
-        throw "ValidateTestCoverage must reject invalid executionEvidence sourceCommitSha. Output: $cmBadShaStr"
+    Assert-Fails -Message "ValidateTestCoverage must reject invalid executionEvidence sourceCommitSha" -Action {
+        & $ScriptPath -Operation ValidateTestCoverage -Path $cmCovPath -Phase VERIFY
+    }
+
+    # Test rejection of carrier #method on unsupported extension
+    $xyzTestFile = Join-Path $TestRoot "demo.xyz"
+    [System.IO.File]::WriteAllText($xyzTestFile, "some dummy text", $Utf8NoBom)
+    $xyzHelperCov = $cmCovJson.Replace("test/CarrierTest.java#nonExistentMethod", ($xyzTestFile.Replace("\", "/") + "#someMethod"))
+    [System.IO.File]::WriteAllText($cmCovPath, $xyzHelperCov, $Utf8NoBom)
+    $xyzVal = & $ScriptPath -Operation ValidateTestCoverage -Path $cmCovPath -Phase VERIFY 2>&1
+    $xyzStr = $xyzVal | Out-String
+    if ($xyzStr -notmatch "unsupported on file extension '\.xyz'") {
+        throw "ValidateTestCoverage must reject carrier method on unsupported file extension. Output: $xyzStr"
     }
 
     # Test FAST_TRACK source code modification rejection in VerifyCompletion
@@ -2427,14 +2435,14 @@ try {
     $ftSpecDir = Join-Path $ftTestDir ".ai-workspace/specs/features/FtSrcFeature"
     [System.IO.Directory]::CreateDirectory($ftSpecDir) | Out-Null
     $ftFeatState = Join-Path $ftSpecDir "feature-state.json"
-    [System.IO.File]::WriteAllText($ftFeatState, '{"schemaVersion":"1.0","feature":"FtSrcFeature","tier":"FAST_TRACK","phase":"DONE"}', $Utf8NoBom)
+    [System.IO.File]::WriteAllText($ftFeatState, '{"schemaVersion":"1.0","feature":"FtSrcFeature","tier":"FAST_TRACK","phase":"DONE","updatedAt":"' + $dynamicRecent + '"}', $Utf8NoBom)
     $ftSrcFile = Join-Path $ftTestDir "src/com/game/Main.java"
     [System.IO.Directory]::CreateDirectory((Split-Path -Parent $ftSrcFile)) | Out-Null
     [System.IO.File]::WriteAllText($ftSrcFile, "package com.game; public class Main {}", $Utf8NoBom)
     
     $ftVerifyOut = & $ScriptPath -Operation VerifyCompletion -Path (Join-Path $ftSpecDir "workflow-state.json") 2>&1
     $ftVerifyStr = $ftVerifyOut | Out-String
-    if ($LASTEXITCODE -eq 0 -or $ftVerifyStr -notmatch "FAST_TRACK violation") {
+    if ($LASTEXITCODE -eq 0 -or ($ftVerifyStr -notmatch "FAST_TRACK violation" -and $ftVerifyStr -notmatch "HIGH_RISK_TIER_DOWNGRADE_FORBIDDEN")) {
         throw "VerifyCompletion must fail FAST_TRACK when src/ files are modified. Output: $ftVerifyStr"
     }
 
@@ -2473,15 +2481,15 @@ try {
         throw "ValidateTestCoverage must reject Python helper function carrier. Output: $pyStr"
     }
 
-    # Test Go helper function carrier rejection
+    # Test Go helper function carrier rejection (missing *testing.T)
     $goTestFile = Join-Path $TestRoot "demo_test.go"
     [System.IO.File]::WriteAllText($goTestFile, "package demo`nfunc HelperFunc() {}`nfunc TestReal(t *testing.T) {}`n", $Utf8NoBom)
     $goHelperCov = $cmCovJson.Replace("test/CarrierTest.java#nonExistentMethod", ($goTestFile.Replace("\", "/") + "#HelperFunc"))
     [System.IO.File]::WriteAllText($cmCovPath, $goHelperCov, $Utf8NoBom)
     $goVal = & $ScriptPath -Operation ValidateTestCoverage -Path $cmCovPath -Phase VERIFY 2>&1
     $goStr = $goVal | Out-String
-    if ($goStr -notmatch "must start with 'Test'") {
-        throw "ValidateTestCoverage must reject Go helper function carrier. Output: $goStr"
+    if ($goStr -notmatch "does not have a valid test signature") {
+        throw "ValidateTestCoverage must reject Go helper function carrier without *testing.T. Output: $goStr"
     }
 
     # Test Rust helper function carrier rejection
@@ -2502,7 +2510,7 @@ try {
     $riskSpecDir = Join-Path $riskTestDir ".ai-workspace/specs/features/RiskFeature"
     [System.IO.Directory]::CreateDirectory($riskSpecDir) | Out-Null
     $riskFeatState = Join-Path $riskSpecDir "feature-state.json"
-    [System.IO.File]::WriteAllText($riskFeatState, '{"schemaVersion":"1.0","feature":"RiskFeature","tier":"T2","phase":"DONE"}', $Utf8NoBom)
+    [System.IO.File]::WriteAllText($riskFeatState, '{"schemaVersion":"1.0","feature":"RiskFeature","tier":"T2","phase":"DONE","updatedAt":"' + $dynamicRecent + '"}', $Utf8NoBom)
     $riskSrc = Join-Path $riskTestDir "src/com/game/ShopEnum.java"
     [System.IO.Directory]::CreateDirectory((Split-Path -Parent $riskSrc)) | Out-Null
     [System.IO.File]::WriteAllText($riskSrc, "package com.game; public enum ShopEnum { TYPE_NEW_GIFT, TYPE_OLD }", $Utf8NoBom)
@@ -2515,8 +2523,8 @@ try {
 
     $riskVerifyOut = & $ScriptPath -Operation VerifyCompletion -Path (Join-Path $riskSpecDir "workflow-state.json") 2>&1
     $riskVerifyStr = $riskVerifyOut | Out-String
-    if ($LASTEXITCODE -eq 0 -or $riskVerifyStr -notmatch "T2 high-risk violation") {
-        throw "VerifyCompletion must block T2 when high-risk semantic trigger is present without 04_change_impact.json. Output: $riskVerifyStr"
+    if ($LASTEXITCODE -eq 0 -or $riskVerifyStr -notmatch "HIGH_RISK_TIER_DOWNGRADE_FORBIDDEN") {
+        throw "VerifyCompletion must block T2 when high-risk semantic trigger is present. Output: $riskVerifyStr"
     }
 
     Write-Output "All workflow state tests passed."

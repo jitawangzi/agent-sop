@@ -348,11 +348,11 @@
         },
         "executedAt": {
           "type": "string",
-          "minLength": 1
+          "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}(?:\\.\\d+)?(?:Z|[+-]\\d{2}:\\d{2})$"
         },
         "sourceCommitSha": {
           "type": "string",
-          "minLength": 1
+          "pattern": "^(?:[0-9a-fA-F]{7,64}|r?[0-9]+)$"
         },
         "testCount": {
           "type": "integer",

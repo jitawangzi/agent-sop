@@ -28,6 +28,7 @@
     },
     "baseline": {
       "type": "string",
+      "pattern": "^(?:[0-9a-fA-F]{7,64}|(?:rev|r)?[0-9]+)$",
       "description": "Baseline revision or Git Commit SHA against which changes are analyzed"
     },
     "changeSetDigest": {

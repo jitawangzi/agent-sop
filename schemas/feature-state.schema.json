@@ -40,6 +40,7 @@
         "QA_VERIFIED",
         "READY_TO_DELIVER",
         "DELIVERED",
+        "DONE",
         "BLOCKED"
       ]
     },
@@ -71,6 +72,39 @@
     "updatedAt": {
       "type": "string",
       "format": "date-time"
+    },
+    "baseline": {
+      "type": "string",
+      "description": "Immutable baseline Git commit SHA (7-64 hex) or SVN revision (e.g. r123456) captured when the feature was initialized"
+    },
+    "inferredRisk": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "triggersHit",
+        "minRequiredTier",
+        "hasHighRisk",
+        "evaluatedAt"
+      ],
+      "properties": {
+        "triggersHit": {
+          "type": "array",
+          "items": { "type": "string" }
+        },
+        "details": {
+          "type": "array",
+          "items": { "type": "string" }
+        },
+        "minRequiredTier": {
+          "enum": ["T1", "T2", "T3", "FAST_TRACK"]
+        },
+        "hasHighRisk": {
+          "type": "boolean"
+        },
+        "evaluatedAt": {
+          "type": "string"
+        }
+      }
     },
     "notes": { "type": "string" }
   }

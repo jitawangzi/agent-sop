@@ -32,6 +32,12 @@
     },
     "design": {
       "$ref": "#/$defs/approval"
+    },
+    "baseline": {
+      "type": "string"
+    },
+    "inferredRisk": {
+      "type": "object"
     }
   },
   "$defs": {

@@ -34,10 +34,51 @@
       "$ref": "#/$defs/approval"
     },
     "baseline": {
-      "type": "string"
+      "type": "string",
+      "pattern": "^(?:[0-9a-fA-F]{7,64}|(?:rev|r)?[0-9]+)$",
+      "description": "Immutable baseline Git commit SHA (7-64 hex) or SVN revision (e.g. r123456) captured when the feature was initialized"
     },
     "inferredRisk": {
-      "type": "object"
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "baseline",
+        "changeSetDigest",
+        "triggersHit",
+        "minRequiredTier",
+        "hasHighRisk",
+        "evaluatedAt"
+      ],
+      "properties": {
+        "baseline": {
+          "type": "string",
+          "pattern": "^(?:[0-9a-fA-F]{7,64}|(?:rev|r)?[0-9]+)$"
+        },
+        "changeSetDigest": {
+          "type": "string",
+          "pattern": "^[a-fA-F0-9]{64}$"
+        },
+        "declaredTier": {
+          "enum": ["T1", "T2", "T3", "FAST_TRACK"]
+        },
+        "minRequiredTier": {
+          "enum": ["T1", "T2", "T3", "FAST_TRACK"]
+        },
+        "hasHighRisk": {
+          "type": "boolean"
+        },
+        "triggersHit": {
+          "type": "array",
+          "items": { "type": "string" }
+        },
+        "details": {
+          "type": "array",
+          "items": { "type": "string" }
+        },
+        "evaluatedAt": {
+          "type": "string"
+        }
+      }
     }
   },
   "$defs": {

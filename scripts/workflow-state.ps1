@@ -916,6 +916,40 @@ function Resolve-AiSopWorkspaceRoot {
     return $null
 }
 
+function Get-VcsBaselineRevision {
+    param([string]$StartPath)
+    if ([string]::IsNullOrWhiteSpace($StartPath)) { return $null }
+    $cur = if (Test-Path -LiteralPath $StartPath -PathType Container) { [System.IO.Path]::GetFullPath($StartPath) } else { Split-Path -Parent ([System.IO.Path]::GetFullPath($StartPath)) }
+    while (-not [string]::IsNullOrWhiteSpace($cur)) {
+        if (Test-Path -LiteralPath (Join-Path $cur ".git")) {
+            try {
+                $headSha = (& git -C $cur rev-parse HEAD 2>&1 | Out-String).Trim()
+                if ($LASTEXITCODE -eq 0 -and $headSha -match '^[0-9a-fA-F]{7,64}$') {
+                    return $headSha
+                }
+            } catch {}
+            break
+        }
+        if (Test-Path -LiteralPath (Join-Path $cur ".svn")) {
+            try {
+                $svnRev = (& svn info --show-item revision $cur 2>&1 | Out-String).Trim()
+                if ($LASTEXITCODE -eq 0 -and $svnRev -match '^\d+$') {
+                    return $svnRev
+                }
+                $svnInfo = (& svn info $cur 2>&1 | Out-String)
+                if ($svnInfo -match '(?m)^Revision:\s*(\d+)') {
+                    return $Matches[1]
+                }
+            } catch {}
+            break
+        }
+        $parent = Split-Path -Parent $cur
+        if ($parent -eq $cur) { break }
+        $cur = $parent
+    }
+    return $null
+}
+
 function Get-ChangeSetDigest {
     param(
         [string]$WorkspaceRoot,
@@ -1017,23 +1051,7 @@ function Get-ChangeSetDigest {
         }
         return (Get-StringSha256 -Text ($combined -join "`n"))
     }
-    # 3. Concatenated symbol / file hash fallback
-    if ($ChangedSymbols -and $ChangedSymbols.Count -gt 0) {
-        $hashParts = [System.Collections.Generic.List[string]]::new()
-        foreach ($sym in $ChangedSymbols) {
-            $filePath = $sym
-            if ($filePath -match '^([^#]+)#') { $filePath = $Matches[1] }
-            $filePath = $filePath.Replace(".", "/").Trim()
-            $candidate = Join-Path $WorkspaceRoot $filePath
-            if (Test-Path -LiteralPath $candidate -PathType Leaf) {
-                $hashParts.Add((Get-AiSopArtifactHash -Path $candidate))
-            } else {
-                $hashParts.Add($sym)
-            }
-        }
-        return (Get-StringSha256 -Text ($hashParts -join "|"))
-    }
-    throw "Workspace is not a valid Git or SVN repository: $WorkspaceRoot"
+    throw "Get-ChangeSetDigest failed: workspace '$WorkspaceRoot' is not a valid Git or SVN repository. Change impact digest requires VCS tracking."
 }
 
 function Validate-ChangeImpactState {
@@ -1055,10 +1073,12 @@ function Validate-ChangeImpactState {
     $specDir = Split-Path -Parent $ImpactPath
     $wsRoot = Resolve-AiSopWorkspaceRoot -StartPath $specDir
     if (-not [string]::IsNullOrWhiteSpace($wsRoot)) {
-        $currentDigest = Get-ChangeSetDigest -WorkspaceRoot $wsRoot -Baseline $impact.baseline -ChangedSymbols $impact.changedSymbols
-        if (-not [string]::IsNullOrWhiteSpace($currentDigest)) {
-            if ($impact.changeSetDigest.ToLowerInvariant() -ne $currentDigest.ToLowerInvariant()) {
-                throw "Change impact analysis is stale: recorded changeSetDigest does not match actual workspace diff against baseline '$($impact.baseline)'. Re-run Behavior Impact Analysis."
+        if ((Test-Path -LiteralPath (Join-Path $wsRoot ".git")) -or (Test-Path -LiteralPath (Join-Path $wsRoot ".svn"))) {
+            $currentDigest = Get-ChangeSetDigest -WorkspaceRoot $wsRoot -Baseline $impact.baseline -ChangedSymbols $impact.changedSymbols
+            if (-not [string]::IsNullOrWhiteSpace($currentDigest)) {
+                if ($impact.changeSetDigest.ToLowerInvariant() -ne $currentDigest.ToLowerInvariant()) {
+                    throw "Change impact analysis is stale: recorded changeSetDigest does not match actual workspace diff against baseline '$($impact.baseline)'. Re-run Behavior Impact Analysis."
+                }
             }
         }
     }
@@ -1107,6 +1127,9 @@ function Get-SemanticRiskAssessment {
                 } catch {}
             }
         }
+    }
+    if ([string]::IsNullOrWhiteSpace($effectiveBaseline)) {
+        $effectiveBaseline = Get-VcsBaselineRevision -StartPath $WorkspaceRoot
     }
 
     # 2. Collect full diff string against baseline
@@ -1166,36 +1189,77 @@ function Get-SemanticRiskAssessment {
     }
     
     # 3. Precision Semantic Trigger detection
+    # Extract code-only diff blocks (exclude pure data files like .csv, .tsv, .json, .txt, .md)
+    $fileBlocks = [regex]::Matches($fullDiff, '(?ms)(?:diff --git a/([^\s]+)|\+\+\+\s+([^\s]+))(?:(?!diff --git|\+\+\+).)*')
+    $codeDiffBuilder = [System.Text.StringBuilder]::new()
+    foreach ($fb in $fileBlocks) {
+        $filePath = if ($fb.Groups[1].Success) { $fb.Groups[1].Value } else { $fb.Groups[2].Value }
+        if ($filePath -notmatch '\.(?:csv|tsv|json|txt|md|ya?ml)$') {
+            [void]$codeDiffBuilder.AppendLine($fb.Value)
+        }
+    }
+    $codeDiff = $codeDiffBuilder.ToString()
+
     # Trigger 1: TYPE_EXTENSION (Enums, Enum constants, Handler/Processor/Strategy subclasses)
-    if ($fullDiff -match '(?m)^\+\s*.*?\b(?:(?:public\s+|protected\s+|private\s+)?(?:final\s+|abstract\s+)?enum\s+\w+|public\s+static\s+final\s+int\s+TYPE_|\bTYPE_\w+\b|[A-Z0-9_]{3,}\s*(?:\([^)]*\))?\s*[,;])' -or
-        $fullDiff -match '(?m)^\+\s*.*?\b(?:public\s+|protected\s+|private\s+)?(?:final\s+|abstract\s+)?class\s+\w*(?:Processor|Handler|Action|Strategy|Listener|Interceptor|Filter|Controller)\b' -or
-        $fullDiff -match '(?m)^\+\s*.*?\b(?:implements|extends)\s+\w*(?:Handler|Processor|Action|Strategy|Listener|Interceptor|Filter|Controller)\b') {
+    if ($codeDiff -match '(?m)^\+\s*.*?\b(?:(?:public\s+|protected\s+|private\s+)?(?:final\s+|abstract\s+)?enum\s+\w+|public\s+static\s+final\s+int\s+TYPE_|\bTYPE_\w+\b|[A-Z][A-Z0-9_]{2,}\s*(?:\([^)]*\))?\s*[,;])' -or
+        $codeDiff -match '(?m)^\+\s*.*?\b(?:public\s+|protected\s+|private\s+)?(?:final\s+|abstract\s+)?class\s+\w*(?:Processor|Handler|Action|Strategy|Listener|Interceptor|Filter|Controller|Dispatcher|Router)\b' -or
+        $codeDiff -match '(?m)^\+\s*.*?\b(?:implements|extends)\s+\w*(?:Handler|Processor|Action|Strategy|Listener|Interceptor|Filter|Controller|Dispatcher|Router)\b') {
         $triggersHit.Add("TYPE_EXTENSION")
         $details.Add("Type/enum/strategy/handler extension detected in diff")
     }
     
-    # Trigger 2: PUBLIC_ROUTING (Dispatcher / routing modifications, excluding local switch in helper utils)
-    if ($fullDiff -match '(?m)^\+\s*.*?\b(?:registerHandler|addHandler|router\.add|routes\.put|registerAction|registerProcessor)\b' -or
-        $fullDiff -match '(?m)(?:diff --git a/.*?(?:Action|Servlet|Router|Dispatcher|Controller|Process|Handler|Protocol)|\+\+\+\s+.*?(?:Action|Servlet|Router|Dispatcher|Controller|Process|Handler|Protocol))[\s\S]*?(?:^\+\s*switch\s*\(|^\+\s*case\s+[^:]+:|^\+\s*if\s*\([^)]*?(?:cmd|msg|proto|action|type|opcode))') {
+    # Trigger 2: PUBLIC_ROUTING (Dispatcher / routing modifications, multi-branch insertions in entry points)
+    if ($codeDiff -match '(?m)^\+\s*.*?\b(?:registerHandler|addHandler|router\.add|routes\.put|registerAction|registerProcessor)\b' -or
+        $codeDiff -match '(?m)(?:diff --git a/.*?(?:Action|Servlet|Router|Dispatcher|Controller|Process|Handler|Protocol)|\+\+\+\s+.*?(?:Action|Servlet|Router|Dispatcher|Controller|Process|Handler|Protocol))[\s\S]*?(?:^\+\s*(?:switch\s*\(|case\s+[^:]+:|if\s*\(|else\s+if\s*\())') {
         $triggersHit.Add("PUBLIC_ROUTING")
-        $details.Add("Public routing / dispatcher / entry point switch-case modified")
+        $details.Add("Public routing / dispatcher / entry point switch-case or branch modified")
     }
     
     # Trigger 3: STATE_PERSISTENCE_MUTATION (Player state, persistence, daily/cycle resets, resource grants)
-    if ($fullDiff -match '(?m)^\+\s*.*?\b(?:player\.get\w+\(\)\.set|savePlayer|mongoTemplate|redisTemplate|resetDaily|resetCycle|addReward|costItem|consumeItem|s_buyTotal|gold|diamond|recharge|modifyCurrency)\b') {
+    if ($codeDiff -match '(?m)^\+\s*.*?\b(?:player\.(?:get\w+\(\)\.)?set\w+|player\.(?:add|cost|reduce|consume|deduct|modify)\w+|savePlayer|updatePlayer)\b' -or
+        $codeDiff -match '(?m)^\+\s*.*?\b(?:mongoTemplate|redisTemplate|dao\.(?:save|insert|update|delete|modify)|repository\.(?:save|insert|update|delete|modify)|mapper\.(?:insert|update|delete)|entityManager\.(?:persist|merge|remove)|session\.(?:save|update|delete)|jdbcTemplate\.(?:update|batchUpdate|execute))\b' -or
+        $codeDiff -match '(?m)^\+\s*.*?\b(?:resetDaily|resetCycle|addReward|costItem|consumeItem|addGold|reduceGold|addDiamond|costDiamond|addCurrency|deductCurrency|modifyCurrency|s_buyTotal|\b(?:get|set|add|cost|reduce|consume|has)(?:Gold|Diamond|Money|Currency|Recharge)\b)\b') {
         $triggersHit.Add("STATE_PERSISTENCE_MUTATION")
         $details.Add("State / persistence mutation or resource reset/grant detected")
     }
     
     # Trigger 4: COMPAT_CONCURRENCY (Serialization, locks, concurrency primitives)
-    if ($fullDiff -match '(?m)^\+\s*.*?\b(?:implements\s+Serializable|serialVersionUID|RLock|DistributedLock|synchronized\s*\(|volatile\s+|Atomic(?:Integer|Long|Boolean))\b') {
+    if ($codeDiff -match '(?m)^\+\s*.*?\b(?:implements\s+Serializable|serialVersionUID|RLock|DistributedLock|synchronized\s*\(|volatile\s+|Atomic(?:Integer|Long|Boolean|Reference))\b') {
         $triggersHit.Add("COMPAT_CONCURRENCY")
         $details.Add("Concurrency / lock / serialization logic modified")
     }
     
-    # Trigger 5: STRUCTURAL_CONFIG (Configuration tables, new columns, new rows)
-    if ($fullDiff -match '(?m)(?:diff --git a/.*?(?:config|data)/.*?\.csv|\+\+\+\s+.*?(?:config|data)/.*?\.csv)[\s\S]*?^\+[^#\r\n]+,[^#\r\n]+' -or
-        $fullDiff -match '(?m)(?:diff --git a/.*?(?:config|data)/.*?\.(?:json|xml)|\+\+\+\s+.*?(?:config|data)/.*?\.(?:json|xml))') {
+    # Trigger 5: STRUCTURAL_CONFIG (Configuration tables, new columns, new rows, non-numeric edits)
+    $csvBlocks = [regex]::Matches($fullDiff, '(?ms)(?:diff --git a/.*?\.csv|\+\+\+\s+.*?\.csv)(?:(?!diff --git|\+\+\+).)*')
+    $hasCsvStructural = $false
+    foreach ($blockMatch in $csvBlocks) {
+        $block = $blockMatch.Value
+        if ($block -match 'new file mode' -or $block -match 'deleted file mode') { $hasCsvStructural = $true; break }
+        $lines = $block -split "\r?\n"
+        $plusLines = @($lines | Where-Object { $_ -match '^\+(?!\+\+)' })
+        $minusLines = @($lines | Where-Object { $_ -match '^\-(?!\-\-)' })
+        if ($plusLines.Count -eq 0 -and $minusLines.Count -eq 0) { continue }
+        if ($plusLines.Count -ne $minusLines.Count) { $hasCsvStructural = $true; break }
+        for ($i = 0; $i -lt $plusLines.Count; $i++) {
+            $p = $plusLines[$i].Substring(1)
+            $m = $minusLines[$i].Substring(1)
+            $pCols = $p.Split(',')
+            $mCols = $m.Split(',')
+            if ($pCols.Count -ne $mCols.Count) { $hasCsvStructural = $true; break }
+            for ($c = 0; $c -lt $pCols.Count; $c++) {
+                $pVal = $pCols[$c].Trim()
+                $mVal = $mCols[$c].Trim()
+                if ($pVal -ne $mVal) {
+                    $pIsNum = $pVal -match '^-?\d+(?:\.\d+)?$'
+                    $mIsNum = $mVal -match '^-?\d+(?:\.\d+)?$'
+                    if (-not ($pIsNum -and $mIsNum)) { $hasCsvStructural = $true; break }
+                }
+            }
+            if ($hasCsvStructural) { break }
+        }
+        if ($hasCsvStructural) { break }
+    }
+    if ($hasCsvStructural -or $fullDiff -match '(?m)(?:diff --git a/.*?(?:config|data)/.*?\.(?:json|xml)|\+\+\+\s+.*?(?:config|data)/.*?\.(?:json|xml))') {
         $triggersHit.Add("STRUCTURAL_CONFIG")
         $details.Add("Structural table/column configuration changes detected")
     }
@@ -1207,6 +1271,7 @@ function Get-SemanticRiskAssessment {
         Details = $details.ToArray()
         MinRequiredTier = $minRequiredTier
         HasHighRisk = ($triggersHit.Count -gt 0)
+        Baseline = $effectiveBaseline
     }
 }
 
@@ -1620,22 +1685,31 @@ function Get-CoveragePlaceholderWarnings {
                 $goSrc = [System.IO.File]::ReadAllText($resolved)
                 if (-not [string]::IsNullOrWhiteSpace($methodName)) {
                     $anyGoFunc = '(?m)^\s*func\s+' + [regex]::Escape($methodName) + '\s*\('
-                    $testGoSig = if ($methodName.StartsWith("Test")) {
+                    $testGoSig = if ($methodName -cmatch '^Test[A-Z0-9_]') {
                         '(?m)^\s*func\s+' + [regex]::Escape($methodName) + '\s*\(\s*\w+\s+\*testing\.T\s*\)'
+                    } elseif ($methodName -cnotmatch '^Test') {
+                        $testNamed = "Test" + $methodName.Substring(0, 1).ToUpperInvariant() + $methodName.Substring(1)
+                        '(?m)^\s*func\s+' + [regex]::Escape($testNamed) + '\s*\(\s*\w+\s+\*testing\.T\s*\)'
                     } else {
-                        '(?m)^\s*func\s+Test' + [regex]::Escape($methodName) + '\s*\(\s*\w+\s+\*testing\.T\s*\)'
+                        $null
                     }
-                    $benchGoSig = if ($methodName.StartsWith("Benchmark")) {
+                    $benchGoSig = if ($methodName -cmatch '^Benchmark[A-Z0-9_]') {
                         '(?m)^\s*func\s+' + [regex]::Escape($methodName) + '\s*\(\s*\w+\s+\*testing\.B\s*\)'
+                    } elseif ($methodName -cnotmatch '^Benchmark') {
+                        $benchNamed = "Benchmark" + $methodName.Substring(0, 1).ToUpperInvariant() + $methodName.Substring(1)
+                        '(?m)^\s*func\s+' + [regex]::Escape($benchNamed) + '\s*\(\s*\w+\s+\*testing\.B\s*\)'
                     } else {
-                        '(?m)^\s*func\s+Benchmark' + [regex]::Escape($methodName) + '\s*\(\s*\w+\s+\*testing\.B\s*\)'
+                        $null
                     }
-                    $exampleGoSig = if ($methodName.StartsWith("Example")) {
+                    $exampleGoSig = if ($methodName -cmatch '^Example[A-Z0-9_]') {
                         '(?m)^\s*func\s+' + [regex]::Escape($methodName) + '\s*\(\s*\)'
+                    } elseif ($methodName -cnotmatch '^Example') {
+                        $exampleNamed = "Example" + $methodName.Substring(0, 1).ToUpperInvariant() + $methodName.Substring(1)
+                        '(?m)^\s*func\s+' + [regex]::Escape($exampleNamed) + '\s*\(\s*\)'
                     } else {
-                        '(?m)^\s*func\s+Example' + [regex]::Escape($methodName) + '\s*\(\s*\)'
+                        $null
                     }
-                    $isValidGoTest = ($goSrc -match $testGoSig -or $goSrc -match $benchGoSig -or $goSrc -match $exampleGoSig)
+                    $isValidGoTest = (($null -ne $testGoSig -and $goSrc -match $testGoSig) -or ($null -ne $benchGoSig -and $goSrc -match $benchGoSig) -or ($null -ne $exampleGoSig -and $goSrc -match $exampleGoSig))
                     if ($goSrc -notmatch $anyGoFunc -and -not $isValidGoTest) {
                         if ($isPlanPhase) {
                             $warnings.Add("INFO: $caseId automationCarrier Go test function '$methodName' not yet in $filePathPart")
@@ -1644,9 +1718,9 @@ function Get-CoveragePlaceholderWarnings {
                         }
                     } elseif (-not $isValidGoTest) {
                         if ($isPlanPhase) {
-                            $warnings.Add("INFO: $caseId automationCarrier Go function '$methodName' may not have valid testing.T signature")
+                            $warnings.Add("INFO: $caseId automationCarrier Go function '$methodName' may not have valid Test[A-Z0-9_] name or testing.T signature")
                         } else {
-                            $errors.Add("ERROR: $caseId automationCarrier Go function '$methodName' in $filePathPart does not have a valid test signature (func Test$methodName(t *testing.T)) — helper functions cannot serve as test carrier")
+                            $errors.Add("ERROR: $caseId automationCarrier Go function '$methodName' in $filePathPart does not have a valid test name/signature (go test requires func Test[A-Z0-9_]...(t *testing.T)) — helper functions or lowercase Testfoo cannot serve as test carrier")
                         }
                     }
                 }
@@ -1673,13 +1747,16 @@ function Get-CoveragePlaceholderWarnings {
                 $jsSrc = [System.IO.File]::ReadAllText($resolved)
                 if (-not [string]::IsNullOrWhiteSpace($methodName)) {
                     $jsEsc = [regex]::Escape($methodName)
-                    $jsTestPattern = '(?:it|test|describe)\s*\(\s*[''"`]' + $jsEsc + '[''"`]'
+                    $jsTestPattern = '(?m)(?:it|test)\s*\(\s*[''"`]' + $jsEsc + '[''"`]'
+                    $jsSuitePattern = '(?m)(?:describe|suite)\s*\(\s*[''"`]' + $jsEsc + '[''"`]'
                     $anyJsPattern = '(?m)(?:function\s+' + $jsEsc + '|const\s+' + $jsEsc + '\s*=)'
                     if ($jsSrc -notmatch $jsTestPattern) {
                         if ($isPlanPhase) {
                             $warnings.Add("INFO: $caseId automationCarrier JS/TS test '$methodName' not yet in $filePathPart")
                         } else {
-                            if ($jsSrc -match $anyJsPattern) {
+                            if ($jsSrc -match $jsSuitePattern) {
+                                $errors.Add("ERROR: $caseId automationCarrier JS/TS target '$methodName' in $filePathPart is a describe/suite block, not a test case — carrier must point to an it() or test() case")
+                            } elseif ($jsSrc -match $anyJsPattern) {
                                 $errors.Add("ERROR: $caseId automationCarrier JS/TS function '$methodName' in $filePathPart is not inside an it() or test() block — helper functions cannot serve as test carrier")
                             } else {
                                 $errors.Add("ERROR: $caseId automationCarrier JS/TS test block '$methodName' does not exist in $filePathPart")
@@ -1691,13 +1768,16 @@ function Get-CoveragePlaceholderWarnings {
                 $psSrc = [System.IO.File]::ReadAllText($resolved)
                 if (-not [string]::IsNullOrWhiteSpace($methodName)) {
                     $psEsc = [regex]::Escape($methodName)
-                    $psTestPattern = '(?i)(?:Describe|Context|It)\s+[''"].*?' + $psEsc + '.*?[''"]|function\s+(?:Test|Assert)-' + $psEsc
+                    $psTestPattern = '(?i)(?:It)\s+[''"].*?' + $psEsc + '.*?[''"]|function\s+(?:Test|Assert)-' + $psEsc
+                    $psSuitePattern = '(?i)(?:Describe|Context)\s+[''"].*?' + $psEsc + '.*?[''"]'
                     $anyPsFunc = '(?i)function\s+' + $psEsc
                     if ($psSrc -notmatch $psTestPattern) {
                         if ($isPlanPhase) {
                             $warnings.Add("INFO: $caseId automationCarrier PS1 test '$methodName' not yet in $filePathPart")
                         } else {
-                            if ($psSrc -match $anyPsFunc) {
+                            if ($psSrc -match $psSuitePattern) {
+                                $errors.Add("ERROR: $caseId automationCarrier PowerShell target '$methodName' in $filePathPart is a Describe/Context block, not an It test case — carrier must point to an It block or Test-/Assert- function")
+                            } elseif ($psSrc -match $anyPsFunc) {
                                 $errors.Add("ERROR: $caseId automationCarrier PowerShell function '$methodName' in $filePathPart is not a test/assertion function — helper functions cannot serve as test carrier")
                             } else {
                                 $errors.Add("ERROR: $caseId automationCarrier PowerShell test block '$methodName' does not exist in $filePathPart")
@@ -1765,8 +1845,45 @@ function Get-CoveragePlaceholderWarnings {
                     $errors.Add("ERROR: executionEvidence executedAt '$rawTimeStr' is stale (older than 30 days)")
                 }
             }
-            if ([string]::IsNullOrWhiteSpace($ev.sourceCommitSha) -or $ev.sourceCommitSha -notmatch '^[0-9a-fA-F]{7,64}$') {
-                $errors.Add("ERROR: executionEvidence sourceCommitSha '$($ev.sourceCommitSha)' must be a valid commit SHA / revision hex string (7-64 hex chars)")
+            if ([string]::IsNullOrWhiteSpace($ev.sourceCommitSha) -or $ev.sourceCommitSha -notmatch '^(?:[0-9a-fA-F]{7,64}|(?:rev|r)?[0-9]+)$') {
+                $errors.Add("ERROR: executionEvidence sourceCommitSha '$($ev.sourceCommitSha)' must be a valid commit SHA or numeric SVN revision string")
+            } else {
+                $specDir = Split-Path -Parent $CoveragePath
+                $carrierWsRoot = Resolve-AiSopWorkspaceRoot -StartPath $specDir
+                if ($carrierWsRoot) {
+                    if (Test-Path -LiteralPath (Join-Path $carrierWsRoot ".git")) {
+                        if ($ev.sourceCommitSha -match '^[0-9a-fA-F]{7,64}$') {
+                            $verifyRef = & git -C $carrierWsRoot rev-parse --verify --quiet "$($ev.sourceCommitSha)^{commit}" 2>&1
+                            if ($LASTEXITCODE -ne 0) {
+                                $errors.Add("ERROR: executionEvidence sourceCommitSha '$($ev.sourceCommitSha)' does not exist in git repository history")
+                            } else {
+                                $headSha = (& git -C $carrierWsRoot rev-parse HEAD 2>&1 | Out-String).Trim()
+                                if ($LASTEXITCODE -eq 0 -and -not [string]::IsNullOrWhiteSpace($headSha)) {
+                                    $isAncestor = (& git -C $carrierWsRoot merge-base --is-ancestor $ev.sourceCommitSha HEAD 2>&1)
+                                    if ($LASTEXITCODE -ne 0 -and 
+                                        -not $headSha.StartsWith($ev.sourceCommitSha, [System.StringComparison]::OrdinalIgnoreCase) -and 
+                                        -not $ev.sourceCommitSha.StartsWith($headSha, [System.StringComparison]::OrdinalIgnoreCase)) {
+                                        $errors.Add("ERROR: executionEvidence sourceCommitSha '$($ev.sourceCommitSha)' is not in the history of current HEAD ($headSha)")
+                                    }
+                                }
+                            }
+                        } else {
+                            $errors.Add("ERROR: executionEvidence sourceCommitSha '$($ev.sourceCommitSha)' is not a valid git commit SHA in git workspace")
+                        }
+                    } elseif (Test-Path -LiteralPath (Join-Path $carrierWsRoot ".svn")) {
+                        $svnNum = $ev.sourceCommitSha -replace '^(?:rev|r)', ''
+                        if ($svnNum -match '^\d+$') {
+                            $currentSvn = (& svn info --show-item revision $carrierWsRoot 2>&1 | Out-String).Trim()
+                            if ($LASTEXITCODE -eq 0 -and $currentSvn -match '^\d+$') {
+                                if ([long]$svnNum -gt [long]$currentSvn) {
+                                    $errors.Add("ERROR: executionEvidence sourceCommitSha '$($ev.sourceCommitSha)' exceeds current SVN revision ($currentSvn)")
+                                }
+                            }
+                        } else {
+                            $errors.Add("ERROR: executionEvidence sourceCommitSha '$($ev.sourceCommitSha)' is not a valid SVN revision in SVN workspace")
+                        }
+                    }
+                }
             }
         }
     }
@@ -1912,15 +2029,26 @@ function Sync-FeatureStateTierToT3 {
         $featStateFile = Join-Path $specDir "feature-state.json"
         if (Test-Path -LiteralPath $featStateFile -PathType Leaf) {
             $fs = Get-Content -LiteralPath $featStateFile -Raw | ConvertFrom-Json
+            $fsDict = [ordered]@{}
+            foreach ($p in $fs.psobject.Properties) {
+                $fsDict[$p.Name] = $p.Value
+            }
+            $changed = $false
             if ($fs.tier -ne "T3") {
-                $fsDict = [ordered]@{}
-                foreach ($p in $fs.psobject.Properties) {
-                    $fsDict[$p.Name] = $p.Value
-                }
                 $fsDict["tier"] = "T3"
+                $changed = $true
+            }
+            if (-not $fsDict.Contains("baseline") -or [string]::IsNullOrWhiteSpace($fsDict["baseline"])) {
+                $detectedBaseline = Get-VcsBaselineRevision -StartPath $specDir
+                if (-not [string]::IsNullOrWhiteSpace($detectedBaseline)) {
+                    $fsDict["baseline"] = $detectedBaseline
+                    $changed = $true
+                }
+            }
+            if ($changed) {
                 $fsDict["updatedAt"] = [DateTimeOffset]::UtcNow.ToString("o")
-                $utf8NoBom = New-Object System.Text.UTF8Encoding($false)
-                [System.IO.File]::WriteAllText($featStateFile, ($fsDict | ConvertTo-Json -Depth 10), $utf8NoBom)
+                $fsSchema = Join-Path $SchemaRoot "feature-state.schema.json"
+                Write-JsonAtomic -FilePath $featStateFile -Value $fsDict -SchemaPath $fsSchema
             }
         }
     } catch {
@@ -2314,6 +2442,8 @@ switch ($Operation) {
             if (Test-Path -LiteralPath $Path) {
                 throw "Approval state already exists: $Path"
             }
+            $specDir = Split-Path -Parent ([System.IO.Path]::GetFullPath($Path))
+            $detectedBaseline = Get-VcsBaselineRevision -StartPath $specDir
 
             $state = [ordered]@{
                 schemaVersion = "1.0"
@@ -2333,6 +2463,9 @@ switch ($Operation) {
                     approvedAt = ""
                     approvedBy = ""
                 }
+            }
+            if (-not [string]::IsNullOrWhiteSpace($detectedBaseline)) {
+                $state["baseline"] = $detectedBaseline
             }
             Write-JsonAtomic -FilePath $Path -Value $state -SchemaPath (Join-Path $SchemaRoot "workflow-state.schema.json")
             Sync-FeatureStateTierToT3 -StatePath $Path
@@ -2771,7 +2904,30 @@ switch ($Operation) {
                 $baseline = [string]$fs.baseline
             } catch {}
         }
+        if ([string]::IsNullOrWhiteSpace($baseline)) {
+            $wfStatePath = Join-Path $specDir "00_workflow_state.json"
+            if (Test-Path -LiteralPath $wfStatePath -PathType Leaf) {
+                try {
+                    $wf = Get-Content -LiteralPath $wfStatePath -Raw | ConvertFrom-Json
+                    $baseline = [string]$wf.baseline
+                } catch {}
+            }
+        }
+        if ([string]::IsNullOrWhiteSpace($baseline)) {
+            $baseline = Get-VcsBaselineRevision -StartPath $wsRoot
+        }
         $risk = Get-SemanticRiskAssessment -WorkspaceRoot $wsRoot -Baseline $baseline -DeclaredTier $declaredTier -SpecDir $specDir
+        $effectiveBaseline = if (-not [string]::IsNullOrWhiteSpace($risk.Baseline)) { $risk.Baseline } else { $baseline }
+        
+        $changeSetDigest = $null
+        if (-not [string]::IsNullOrWhiteSpace($wsRoot) -and -not [string]::IsNullOrWhiteSpace($effectiveBaseline)) {
+            try {
+                $changeSetDigest = Get-ChangeSetDigest -WorkspaceRoot $wsRoot -Baseline $effectiveBaseline
+            } catch {}
+        }
+        if ([string]::IsNullOrWhiteSpace($changeSetDigest)) {
+            $changeSetDigest = ("0" * 64)
+        }
         
         # Persist to feature-state.json if present
         if (Test-Path -LiteralPath $featStatePath -PathType Leaf) {
@@ -2782,11 +2938,19 @@ switch ($Operation) {
                 foreach ($p in $fsObj.psobject.Properties) {
                     $fsDict[$p.Name] = $p.Value
                 }
+                if (-not $fsDict.Contains("baseline") -or [string]::IsNullOrWhiteSpace($fsDict["baseline"])) {
+                    if (-not [string]::IsNullOrWhiteSpace($effectiveBaseline)) {
+                        $fsDict["baseline"] = $effectiveBaseline
+                    }
+                }
                 $fsDict["inferredRisk"] = [ordered]@{
-                    triggersHit = @($risk.TriggersHit)
-                    details = @($risk.Details)
+                    baseline = if (-not [string]::IsNullOrWhiteSpace($effectiveBaseline)) { $effectiveBaseline } else { "0" }
+                    changeSetDigest = $changeSetDigest
+                    declaredTier = if (-not [string]::IsNullOrWhiteSpace($declaredTier)) { $declaredTier } else { "T2" }
                     minRequiredTier = $risk.MinRequiredTier
                     hasHighRisk = $risk.HasHighRisk
+                    triggersHit = @($risk.TriggersHit)
+                    details = @($risk.Details)
                     evaluatedAt = [DateTimeOffset]::UtcNow.ToString("yyyy-MM-ddTHH:mm:ssZ")
                 }
                 $fsDict["updatedAt"] = [DateTimeOffset]::UtcNow.ToString("yyyy-MM-ddTHH:mm:ssZ")
@@ -2796,8 +2960,41 @@ switch ($Operation) {
             }
         }
 
+        # Also sync to 00_workflow_state.json if present
+        $wfStatePath = Join-Path $specDir "00_workflow_state.json"
+        if (Test-Path -LiteralPath $wfStatePath -PathType Leaf) {
+            try {
+                $wfSchema = Join-Path $SchemaRoot "workflow-state.schema.json"
+                $wfObj = Read-JsonObject -FilePath $wfStatePath -SchemaPath $wfSchema
+                $wfDict = [ordered]@{}
+                foreach ($p in $wfObj.psobject.Properties) {
+                    $wfDict[$p.Name] = $p.Value
+                }
+                if (-not $wfDict.Contains("baseline") -or [string]::IsNullOrWhiteSpace($wfDict["baseline"])) {
+                    if (-not [string]::IsNullOrWhiteSpace($effectiveBaseline)) {
+                        $wfDict["baseline"] = $effectiveBaseline
+                    }
+                }
+                $wfDict["inferredRisk"] = [ordered]@{
+                    baseline = if (-not [string]::IsNullOrWhiteSpace($effectiveBaseline)) { $effectiveBaseline } else { "0" }
+                    changeSetDigest = $changeSetDigest
+                    declaredTier = if (-not [string]::IsNullOrWhiteSpace($declaredTier)) { $declaredTier } else { "T2" }
+                    minRequiredTier = $risk.MinRequiredTier
+                    hasHighRisk = $risk.HasHighRisk
+                    triggersHit = @($risk.TriggersHit)
+                    details = @($risk.Details)
+                    evaluatedAt = [DateTimeOffset]::UtcNow.ToString("yyyy-MM-ddTHH:mm:ssZ")
+                }
+                Write-JsonAtomic -FilePath $wfStatePath -Value $wfDict -SchemaPath $wfSchema
+            } catch {
+                Write-Warning "Failed to persist inferredRisk to 00_workflow_state.json: $_"
+            }
+        }
+
         [pscustomobject]@{
             workspaceRoot = $wsRoot
+            baseline = $effectiveBaseline
+            changeSetDigest = $changeSetDigest
             declaredTier = $declaredTier
             minRequiredTier = $risk.MinRequiredTier
             hasHighRisk = $risk.HasHighRisk
@@ -2836,6 +3033,18 @@ switch ($Operation) {
                     testTypes = @("FUNCTIONAL")
                     requirementIds = $reqIds
                     designIds = $desIds
+                    setup = @("Execute test according to 05_test_plan.md")
+                    trigger = @("Trigger test case $tcId")
+                    assertions = [ordered]@{
+                        protocol = @(
+                            [ordered]@{
+                                target = "status"
+                                operator = "EQ"
+                                expected = "VALID"
+                            }
+                        )
+                    }
+                    cleanup = @("Clean up test fixture")
                     automationCarrier = if ($meta.carrier) { [string]$meta.carrier } else { "__TODO__" }
                 })
             } catch {

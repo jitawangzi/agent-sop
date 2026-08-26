@@ -1061,6 +1061,40 @@ Invoke-AiSopWorkflowTransaction `
 
 Write-OwnerMirror $ownerAfter
 
+function Get-VcsBaselineRevision {
+    param([string]$StartPath)
+    if ([string]::IsNullOrWhiteSpace($StartPath)) { return $null }
+    $cur = if (Test-Path -LiteralPath $StartPath -PathType Container) { [System.IO.Path]::GetFullPath($StartPath) } else { Split-Path -Parent ([System.IO.Path]::GetFullPath($StartPath)) }
+    while (-not [string]::IsNullOrWhiteSpace($cur)) {
+        if (Test-Path -LiteralPath (Join-Path $cur ".git")) {
+            try {
+                $headSha = (& git -C $cur rev-parse HEAD 2>&1 | Out-String).Trim()
+                if ($LASTEXITCODE -eq 0 -and $headSha -match '^[0-9a-fA-F]{7,64}$') {
+                    return $headSha
+                }
+            } catch {}
+            break
+        }
+        if (Test-Path -LiteralPath (Join-Path $cur ".svn")) {
+            try {
+                $svnRev = (& svn info --show-item revision $cur 2>&1 | Out-String).Trim()
+                if ($LASTEXITCODE -eq 0 -and $svnRev -match '^\d+$') {
+                    return $svnRev
+                }
+                $svnInfo = (& svn info $cur 2>&1 | Out-String)
+                if ($svnInfo -match '(?m)^Revision:\s*(\d+)') {
+                    return $Matches[1]
+                }
+            } catch {}
+            break
+        }
+        $parent = Split-Path -Parent $cur
+        if ($parent -eq $cur) { break }
+        $cur = $parent
+    }
+    return $null
+}
+
 # Auto-initialize or sync feature-state.json projection on successful Claim
 if ($Operation -eq "Claim" -and -not [string]::IsNullOrWhiteSpace($ResolvedSpecDirectory)) {
     try {
@@ -1068,6 +1102,7 @@ if ($Operation -eq "Claim" -and -not [string]::IsNullOrWhiteSpace($ResolvedSpecD
         $effectiveTier = if (-not [string]::IsNullOrWhiteSpace($Tier)) { $Tier } else { "T2" }
         $isoNow = $AcceptedAt.ToUniversalTime().ToString("o")
         $utf8NoBomEnc = New-Object System.Text.UTF8Encoding($false)
+        $detectedBaseline = Get-VcsBaselineRevision -StartPath $ResolvedSpecDirectory
         if (-not (Test-Path -LiteralPath $featStateFile -PathType Leaf)) {
             $initialState = [ordered]@{
                 schemaVersion = "1.0"
@@ -1081,6 +1116,9 @@ if ($Operation -eq "Claim" -and -not [string]::IsNullOrWhiteSpace($ResolvedSpecD
                 completedSteps = @("CLAIM")
                 nextAction = if ($effectiveTier -eq "T3") { "brainstorming / requirement draft" } else { "implementation" }
                 updatedAt = $isoNow
+            }
+            if (-not [string]::IsNullOrWhiteSpace($detectedBaseline)) {
+                $initialState["baseline"] = $detectedBaseline
             }
             [System.IO.Directory]::CreateDirectory($ResolvedSpecDirectory) | Out-Null
             $jsonStr = $initialState | ConvertTo-Json -Depth 10
@@ -1099,6 +1137,11 @@ if ($Operation -eq "Claim" -and -not [string]::IsNullOrWhiteSpace($ResolvedSpecD
                 $existingDict["ownerSession"] = [ordered]@{
                     agent = $Agent
                     ownerId = $OwnerId
+                }
+                if (-not $existingDict.Contains("baseline") -or [string]::IsNullOrWhiteSpace($existingDict["baseline"])) {
+                    if (-not [string]::IsNullOrWhiteSpace($detectedBaseline)) {
+                        $existingDict["baseline"] = $detectedBaseline
+                    }
                 }
                 $existingDict["updatedAt"] = $isoNow
                 $jsonStr = $existingDict | ConvertTo-Json -Depth 10

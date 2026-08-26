@@ -2234,13 +2234,26 @@ try {
     # Test ValidateChangeImpact operation
     $impactDir = Join-Path $TestRoot "impact_test"
     [System.IO.Directory]::CreateDirectory($impactDir) | Out-Null
-    $impactPath = Join-Path $impactDir "04_change_impact.json"
-    $expectedDigest = Get-TestStringSha256 -Text ("com.game.AirItemRecord#reset|com.game.GiftPackHelper#buyGift")
+    & git -C $impactDir init --quiet
+    & git -C $impactDir config user.name "Tester"
+    & git -C $impactDir config user.email "tester@test.local"
+    $impactDummy = Join-Path $impactDir "dummy.txt"
+    [System.IO.File]::WriteAllText($impactDummy, "dummy", $Utf8NoBom)
+    & git -C $impactDir add .
+    & git -C $impactDir commit -m "init" --quiet
+    $impactBaseSha = (& git -C $impactDir rev-parse HEAD | Out-String).Trim()
+
+    $impactSpecDir = Join-Path $impactDir ".ai-workspace/specs/features/ImpactTestFeature"
+    [System.IO.Directory]::CreateDirectory($impactSpecDir) | Out-Null
+    $impactPath = Join-Path $impactSpecDir "04_change_impact.json"
+    
+    $assessObj = (& $ScriptPath -Operation AssessRisk -Path $impactSpecDir | ConvertFrom-Json)
+    $expectedDigest = $assessObj.changeSetDigest
     $impactJson = @"
 {
   "schemaVersion": "1.0",
   "feature": "ImpactTestFeature",
-  "baseline": "rev123456",
+  "baseline": "$impactBaseSha",
   "changeSetDigest": "$expectedDigest",
   "changedSymbols": ["com.game.AirItemRecord#reset", "com.game.GiftPackHelper#buyGift"],
   "entryPoints": ["COUPON_PURCHASE", "GET_CYCLE_ACTIVITY_STORE_INFO"],
@@ -2345,6 +2358,14 @@ try {
       "testTypes": ["FUNCTIONAL"],
       "requirementIds": [],
       "designIds": ["DC-01"],
+      "setup": ["Setup carrier fixture"],
+      "trigger": ["Trigger carrier test"],
+      "assertions": {
+        "protocol": [
+          { "target": "status", "operator": "EQ", "expected": "VALID" }
+        ]
+      },
+      "cleanup": ["Cleanup carrier fixture"],
       "automationCarrier": "test/CarrierTest.java#nonExistentMethod"
     }
   ],
@@ -2488,8 +2509,41 @@ try {
     [System.IO.File]::WriteAllText($cmCovPath, $goHelperCov, $Utf8NoBom)
     $goVal = & $ScriptPath -Operation ValidateTestCoverage -Path $cmCovPath -Phase VERIFY 2>&1
     $goStr = $goVal | Out-String
-    if ($goStr -notmatch "does not have a valid test signature") {
+    if ($goStr -notmatch "does not have a valid test") {
         throw "ValidateTestCoverage must reject Go helper function carrier without *testing.T. Output: $goStr"
+    }
+
+    # Test Go lowercase test name rejection (Testfoo with lowercase 'f' is not collected by go test)
+    $goLowerTestFile = Join-Path $TestRoot "demo_lower_test.go"
+    [System.IO.File]::WriteAllText($goLowerTestFile, "package demo`nfunc Testfoo(t *testing.T) {}`n", $Utf8NoBom)
+    $goLowerCov = $cmCovJson.Replace("test/CarrierTest.java#nonExistentMethod", ($goLowerTestFile.Replace("\", "/") + "#Testfoo"))
+    [System.IO.File]::WriteAllText($cmCovPath, $goLowerCov, $Utf8NoBom)
+    $goLowerVal = & $ScriptPath -Operation ValidateTestCoverage -Path $cmCovPath -Phase VERIFY 2>&1
+    $goLowerStr = $goLowerVal | Out-String
+    if ($goLowerStr -notmatch "does not have a valid test name/signature") {
+        throw "ValidateTestCoverage must reject Go lowercase Testfoo. Output: $goLowerStr"
+    }
+
+    # Test JS describe block carrier rejection
+    $jsTestFile = Join-Path $TestRoot "demo.test.js"
+    [System.IO.File]::WriteAllText($jsTestFile, "describe('MySuite', () => { it('real_test', () => {}); });`n", $Utf8NoBom)
+    $jsDescCov = $cmCovJson.Replace("test/CarrierTest.java#nonExistentMethod", ($jsTestFile.Replace("\", "/") + "#MySuite"))
+    [System.IO.File]::WriteAllText($cmCovPath, $jsDescCov, $Utf8NoBom)
+    $jsDescVal = & $ScriptPath -Operation ValidateTestCoverage -Path $cmCovPath -Phase VERIFY 2>&1
+    $jsDescStr = $jsDescVal | Out-String
+    if ($jsDescStr -notmatch "is a describe/suite block, not a test case") {
+        throw "ValidateTestCoverage must reject JS describe block as carrier. Output: $jsDescStr"
+    }
+
+    # Test PS1 Describe block carrier rejection
+    $ps1TestFile = Join-Path $TestRoot "demo.tests.ps1"
+    [System.IO.File]::WriteAllText($ps1TestFile, "Describe 'PS1Suite' { It 'PS1Test' {} }`n", $Utf8NoBom)
+    $ps1DescCov = $cmCovJson.Replace("test/CarrierTest.java#nonExistentMethod", ($ps1TestFile.Replace("\", "/") + "#PS1Suite"))
+    [System.IO.File]::WriteAllText($cmCovPath, $ps1DescCov, $Utf8NoBom)
+    $ps1DescVal = & $ScriptPath -Operation ValidateTestCoverage -Path $cmCovPath -Phase VERIFY 2>&1
+    $ps1DescStr = $ps1DescVal | Out-String
+    if ($ps1DescStr -notmatch "is a Describe/Context block, not an It test case") {
+        throw "ValidateTestCoverage must reject PS1 Describe block as carrier. Output: $ps1DescStr"
     }
 
     # Test Rust helper function carrier rejection
@@ -2501,6 +2555,91 @@ try {
     $rsStr = $rsVal | Out-String
     if ($rsStr -notmatch "not annotated with #\[test\]") {
         throw "ValidateTestCoverage must reject Rust helper fn carrier without #[test]. Output: $rsStr"
+    }
+
+    # Test sourceCommitSha not in Git history rejection
+    $fakeCommitDir = Join-Path $TestRoot "fake_commit_repo"
+    [System.IO.Directory]::CreateDirectory($fakeCommitDir) | Out-Null
+    & git -C $fakeCommitDir init --quiet
+    & git -C $fakeCommitDir config user.name "Tester"
+    & git -C $fakeCommitDir config user.email "tester@test.local"
+    $dummyFile = Join-Path $fakeCommitDir "dummy.txt"
+    [System.IO.File]::WriteAllText($dummyFile, "dummy", $Utf8NoBom)
+    & git -C $fakeCommitDir add .
+    & git -C $fakeCommitDir commit -m "init" --quiet
+    $realCommitSha = (& git -C $fakeCommitDir rev-parse HEAD | Out-String).Trim()
+    $fakeCommitSpecDir = Join-Path $fakeCommitDir ".ai-workspace/specs/features/FakeCommitFeature"
+    [System.IO.Directory]::CreateDirectory($fakeCommitSpecDir) | Out-Null
+    $fakeCommitCovPath = Join-Path $fakeCommitSpecDir "05_test_coverage.json"
+    $realJavaTest = Join-Path $fakeCommitDir "test/RealTest.java"
+    [System.IO.Directory]::CreateDirectory((Split-Path -Parent $realJavaTest)) | Out-Null
+    [System.IO.File]::WriteAllText($realJavaTest, "package test; import org.junit.Test; public class RealTest { @Test public void testOne() {} }", $Utf8NoBom)
+    
+    $fcReq = Join-Path $fakeCommitSpecDir "01_server_rules.md"
+    $fcDes = Join-Path $fakeCommitSpecDir "06_design_contract.md"
+    $fcPlan = Join-Path $fakeCommitSpecDir "05_test_plan.md"
+    $fcApproval = Join-Path $fakeCommitSpecDir "00_workflow_state.json"
+    [System.IO.File]::WriteAllText($fcReq, "# Rules`n- BR-01: Rule", $Utf8NoBom)
+    [System.IO.File]::WriteAllText($fcDes, "# Design`n- DC-01: Contract", $Utf8NoBom)
+    [System.IO.File]::WriteAllText($fcPlan, "# Plan`n- TC-01: Real test", $Utf8NoBom)
+    $fcReqSha = Get-TestArtifactHash -Path $fcReq
+    $fcDesSha = Get-TestArtifactHash -Path $fcDes
+    $fcPlanSha = Get-TestArtifactHash -Path $fcPlan
+    $fcState = [ordered]@{
+        schemaVersion = "1.0"
+        feature = "FakeCommitFeature"
+        requirement = @{ status = "APPROVED"; sha256 = $fcReqSha; approvedBy = "tester"; approvedAt = "2026-08-23T12:00:00Z"; artifact = "01_server_rules.md" }
+        design = @{ status = "APPROVED"; sha256 = $fcDesSha; approvedBy = "tester"; approvedAt = "2026-08-23T12:00:00Z"; artifact = "06_design_contract.md" }
+    }
+    [System.IO.File]::WriteAllText($fcApproval, ($fcState | ConvertTo-Json -Depth 10), $Utf8NoBom)
+
+    $validCovJson = @"
+{
+  "schemaVersion": "1.0",
+  "feature": "FakeCommitFeature",
+  "requirementArtifact": "01_server_rules.md",
+  "requirementSha256": "$fcReqSha",
+  "designArtifact": "06_design_contract.md",
+  "designSha256": "$fcDesSha",
+  "testPlanArtifact": "05_test_plan.md",
+  "testPlanSha256": "$fcPlanSha",
+  "riskExemptions": [],
+  "cases": [
+    {
+      "id": "TC-01",
+      "status": "VERIFIED",
+      "title": "Real Test",
+      "priority": "P1",
+      "testTypes": ["FUNCTIONAL"],
+      "requirementIds": ["BR-01"],
+      "designIds": ["DC-01"],
+      "setup": ["Setup real test"],
+      "trigger": ["Trigger real test"],
+      "assertions": {
+        "protocol": [
+          { "target": "status", "operator": "EQ", "expected": "VALID" }
+        ]
+      },
+      "cleanup": ["Cleanup fixture"],
+      "automationCarrier": "test/RealTest.java#testOne"
+    }
+  ],
+  "executionEvidence": {
+    "command": "mvn test",
+    "exitCode": 0,
+    "executedAt": "__EXECUTED_AT__",
+    "sourceCommitSha": "deadbeefcafebabe0123456789abcdef01234567",
+    "testCount": 1,
+    "passedCount": 1,
+    "failedCount": 0
+  }
+}
+"@.Replace("__EXECUTED_AT__", $dynamicRecent)
+    [System.IO.File]::WriteAllText($fakeCommitCovPath, $validCovJson, $Utf8NoBom)
+    $fakeCommitVal = & $ScriptPath -Operation ValidateTestCoverage -Path $fakeCommitCovPath -Phase VERIFY 2>&1
+    $fakeCommitStr = $fakeCommitVal | Out-String
+    if ($fakeCommitStr -notmatch "does not exist in git repository history") {
+        throw "ValidateTestCoverage must reject fabricated sourceCommitSha not in Git history. Output: $fakeCommitStr"
     }
 
     # Test AssessRisk operation and machine semantic risk blocking on high-risk diff
@@ -2521,10 +2660,43 @@ try {
         throw "AssessRisk must detect high risk TYPE_EXTENSION. Output: $assessStr"
     }
 
+    # Verify inferredRisk was saved into feature-state.json with baseline and changeSetDigest
+    $savedFeat = Get-Content -LiteralPath $riskFeatState -Raw | ConvertFrom-Json
+    if ($null -eq $savedFeat.inferredRisk -or [string]::IsNullOrWhiteSpace($savedFeat.inferredRisk.changeSetDigest)) {
+        throw "AssessRisk must persist inferredRisk with changeSetDigest to feature-state.json"
+    }
+
     $riskVerifyOut = & $ScriptPath -Operation VerifyCompletion -Path (Join-Path $riskSpecDir "workflow-state.json") 2>&1
     $riskVerifyStr = $riskVerifyOut | Out-String
     if ($LASTEXITCODE -eq 0 -or $riskVerifyStr -notmatch "HIGH_RISK_TIER_DOWNGRADE_FORBIDDEN") {
         throw "VerifyCompletion must block T2 when high-risk semantic trigger is present. Output: $riskVerifyStr"
+    }
+
+    # Test CSV pure value modification does not trigger structural risk
+    $csvTestDir = Join-Path $TestRoot "csv_repo"
+    [System.IO.Directory]::CreateDirectory($csvTestDir) | Out-Null
+    & git -C $csvTestDir init --quiet
+    & git -C $csvTestDir config user.name "Tester"
+    & git -C $csvTestDir config user.email "tester@test.local"
+    $csvFile = Join-Path $csvTestDir "config/items.csv"
+    [System.IO.Directory]::CreateDirectory((Split-Path -Parent $csvFile)) | Out-Null
+    [System.IO.File]::WriteAllText($csvFile, "id,cost,count`n1001,10,5`n", $Utf8NoBom)
+    & git -C $csvTestDir add .
+    & git -C $csvTestDir commit -m "add csv" --quiet
+    $csvBaseSha = (& git -C $csvTestDir rev-parse HEAD | Out-String).Trim()
+    
+    # Modify only numeric value
+    [System.IO.File]::WriteAllText($csvFile, "id,cost,count`n1001,20,5`n", $Utf8NoBom)
+    $csvRisk = & $ScriptPath -Operation AssessRisk -Path $csvTestDir 2>&1 | Out-String
+    if ($csvRisk -match "STRUCTURAL_CONFIG" -or $csvRisk -match '"hasHighRisk":\s*true') {
+        throw "AssessRisk must NOT flag pure numeric CSV value modifications as structural high-risk. Output: $csvRisk"
+    }
+
+    # Modify with new row -> must trigger STRUCTURAL_CONFIG
+    [System.IO.File]::WriteAllText($csvFile, "id,cost,count`n1001,20,5`n1002,30,10`n", $Utf8NoBom)
+    $csvNewRowRisk = & $ScriptPath -Operation AssessRisk -Path $csvTestDir 2>&1 | Out-String
+    if ($csvNewRowRisk -notmatch "STRUCTURAL_CONFIG" -or $csvNewRowRisk -notmatch '"hasHighRisk":\s*true') {
+        throw "AssessRisk must flag CSV new row additions as structural high-risk. Output: $csvNewRowRisk"
     }
 
     Write-Output "All workflow state tests passed."
@@ -2538,6 +2710,13 @@ try {
         Remove-Item "Env:$name" -ErrorAction SilentlyContinue
     }
     if (Test-Path -LiteralPath $TestRoot) {
-        [System.IO.Directory]::Delete($TestRoot, $true)
+        try {
+            Get-ChildItem -LiteralPath $TestRoot -Recurse -Force | ForEach-Object {
+                if ($_.Attributes -band [System.IO.FileAttributes]::ReadOnly) {
+                    $_.Attributes = $_.Attributes -bxor [System.IO.FileAttributes]::ReadOnly
+                }
+            }
+            Remove-Item -LiteralPath $TestRoot -Recurse -Force -ErrorAction SilentlyContinue
+        } catch {}
     }
 }

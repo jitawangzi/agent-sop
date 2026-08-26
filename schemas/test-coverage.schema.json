@@ -175,12 +175,7 @@
         "assertions": {
           "type": "object",
           "additionalProperties": false,
-          "required": [
-            "protocol",
-            "serverState",
-            "sideEffects",
-            "regression"
-          ],
+          "minProperties": 1,
           "properties": {
             "protocol": {
               "$ref": "#/$defs/assertionList"
@@ -229,6 +224,31 @@
                 "minLength": 1
               }
             }
+          }
+        },
+        {
+          "if": {
+            "required": [
+              "status"
+            ],
+            "properties": {
+              "status": {
+                "enum": [
+                  "IMPLEMENTED",
+                  "VERIFIED",
+                  "AUTOMATED",
+                  "PASSED"
+                ]
+              }
+            }
+          },
+          "then": {
+            "required": [
+              "setup",
+              "trigger",
+              "assertions",
+              "cleanup"
+            ]
           }
         }
       ]
@@ -352,7 +372,7 @@
         },
         "sourceCommitSha": {
           "type": "string",
-          "pattern": "^(?:[0-9a-fA-F]{7,64}|r?[0-9]+)$"
+          "pattern": "^(?:[0-9a-fA-F]{7,64}|(?:rev|r)?[0-9]+)$"
         },
         "testCount": {
           "type": "integer",

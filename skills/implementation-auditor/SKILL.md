@@ -141,6 +141,9 @@ description: 实现审计官，负责检查代码是否遵守项目约束、设�
 - B3.8 新增代码对旧数据兼容是否成立
 - 新增持久化功能是否补齐删号清理链路（`PlayerHelper.deletePlayer(...)` / `PlayerDeleteEvent` / DAO 删除入口），且清理范围覆盖 Mongo、Redis、排行榜等相关数据
 - **资源变更落库完整性（致命项，必查）**：任何修改 `Player` 对象内数据（items/item_pieces/货币/装备/碎片等）的方法，mutation（`costOneBaseRes`/`addReward`/`costOnePiece` 等）后**必须立刻显式落库** `ServerEntrance.getPlayerMapper().update(player)`（规则源 `coding-style.md` B3.1"玩家资源变更必须立刻持久化 Player 对象"，必读原文）。本项目**无请求后自动存盘拦截器**，不落库 = 重登回滚 = 刷资源/刷奖励。`update(player)` 总是写 Redis（防回滚）、MySQL 节流写；需强制立即写 MySQL 用 `updateNow(player, true)`。**独立 Mongo 表**（`saveCommonShop`/`savePlayerDailyShopInfo`）只存该表自身数据（商店购买记录等），**不存 Player 对象内数据**，不能替代 `update(player)`——两者职责不同需分别调用。对照既有正确范式：`DailyShopHelper.purchaseDailyShopItem` 在 `costOneBaseRes` 后调 `getPlayerMapper().update(player)`。落库失败必须 return 失败，不能继续返回成功。
+- **查询协议懒重置落库与遗留扩展零旁路检查 (致命项，必查)**：
+  1. **查询协议懒重置落库**：若在 `GET` / `INFO` / `OPEN` 等查询类接口中执行了跨天重置、红点计算、补偿发放等改变内存实体状态的操作，**必须 100% 显式闭环调用持久化落库（如 `updateAirData`/`update(player)`）**；严禁只改内存回包正确但未落库！
+  2. **遗留系统扩展零旁路**：在老系统/旧类上新增分支时，检查是否被特判（如 `if (type == 45)`）静默绕过了原有的通用前置校验（如 `isOverBought`、`beforeRecharge`、限购防刷拦截）。
 - Redis/MongoDB 对象字段是否简写以节省存储空间
 - B4 JSON / 时间 API / 协议边界是否合规
 - **协议实现逐字段核对（程序性，规则源在 `proto-rules.md`，不在此重复）**：必读 `.ai-workspace/context/proto-rules.md` 全文，对照 `06_design_contract.md` 的"协议字段设计核对表"（proto-rules §3.6），对实现里每个新增/修改的对外字段逐条判结论——§3.4 对外形态非裸 Map（聚合转 list 带 key 字段）；§3.5 复用既有关键字命名（`consume_items`/`items`/`collected_*`），无自造同义名；§3.5 是否 grep 过既有同类组装处（如 `EquipHelper` 的 `consume_items`）；§5 资源变化字段齐全；§4 失败 STATE+code。实现与契约表不符或缺表 = 违规。

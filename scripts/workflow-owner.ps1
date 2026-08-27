@@ -42,7 +42,10 @@ param(
 
     [Parameter(Mandatory = $false)]
     [ValidateSet("T1", "T2", "T3", "FAST_TRACK")]
-    [string]$Tier = "T2"
+    [string]$Tier = "T2",
+
+    [Parameter(Mandatory = $false)]
+    [string]$Baseline = $null
 )
 
 $ErrorActionPreference = "Stop"
@@ -55,7 +58,8 @@ $ClaudeRoot = Split-Path -Parent $PSScriptRoot
 $SchemaPath = Join-Path $ClaudeRoot "schemas\workflow-owner.schema.json"
 $ResolvedSpecDirectory = Resolve-PhysicalPathIdentity -Path $SpecDirectory
 $MirrorPath = Join-Path $ResolvedSpecDirectory ".workflow-owner.json"
-$RegistryRoot = Get-AiSopWorkflowOwnerRegistryRoot
+$ownerWs = try { Get-OwnerWorkspacePath } catch { $null }
+$RegistryRoot = Get-AiSopWorkflowOwnerRegistryRoot -WorkspacePath $ownerWs
 $OwnerPath = Join-Path $RegistryRoot ($Feature.ToLowerInvariant() + ".json")
 $AcceptedAt = [DateTimeOffset]::UtcNow
 # Production budget default is 3000ms (supports subprocess verification and cross-platform IO).
@@ -72,12 +76,14 @@ $WorkflowDeadlineUtc = $AcceptedAt.AddMilliseconds($ownerDeadlineMs)
 function Assert-OwnerSchema {
     param([string]$Json)
 
+    $jsonErr = $null
     if (
         -not (
             $Json |
-                Test-Json -SchemaFile $SchemaPath -ErrorAction SilentlyContinue
+                Test-Json -SchemaFile $SchemaPath -ErrorAction SilentlyContinue -ErrorVariable jsonErr
         )
     ) {
+        Write-Warning "Owner schema validation failed for schema $SchemaPath : $jsonErr"
         throw "WORKFLOW_OWNER_CORRUPT"
     }
 }
@@ -758,7 +764,11 @@ switch ($Operation) {
         ) {
             throw "WORKFLOW_OWNER_ALREADY_ACTIVE"
         }
-        $detectedBaseline = Get-VcsBaselineRevision -StartPath $ResolvedSpecDirectory
+        $detectedBaseline = if ($PSBoundParameters.ContainsKey("Baseline") -and -not [string]::IsNullOrWhiteSpace($Baseline)) {
+            $Baseline
+        } else {
+            Get-VcsBaselineRevision -StartPath $ResolvedSpecDirectory
+        }
         $sessionAfter = Copy-WorkflowRecord $session.Record
         Set-SessionBoundTuple `
             -Session $sessionAfter `
@@ -784,6 +794,8 @@ switch ($Operation) {
         }
         if (-not [string]::IsNullOrWhiteSpace($detectedBaseline)) {
             $ownerAfter["baseline"] = $detectedBaseline
+        } else {
+            $ownerAfter["baseline"] = "0"
         }
         $targets += New-OwnerTarget `
             -Path $session.SessionPath `
@@ -828,13 +840,17 @@ switch ($Operation) {
             }
             lastTransactionId = $transactionId
         }
-        $detectedBaseline = if ($existingOwner.Contains("baseline") -and -not [string]::IsNullOrWhiteSpace($existingOwner.baseline)) {
+        $detectedBaseline = if ($PSBoundParameters.ContainsKey("Baseline") -and -not [string]::IsNullOrWhiteSpace($Baseline)) {
+            $Baseline
+        } elseif ($existingOwner.Contains("baseline") -and -not [string]::IsNullOrWhiteSpace($existingOwner.baseline)) {
             [string]$existingOwner.baseline
         } else {
             Get-VcsBaselineRevision -StartPath $ResolvedSpecDirectory
         }
         if (-not [string]::IsNullOrWhiteSpace($detectedBaseline)) {
             $ownerAfter["baseline"] = $detectedBaseline
+        } else {
+            $ownerAfter["baseline"] = "0"
         }
         $targets += New-OwnerTarget `
             -Path $session.SessionPath `
@@ -1105,66 +1121,99 @@ Invoke-AiSopWorkflowTransaction `
     -DeadlineUtc $WorkflowDeadlineUtc |
     Out-Null
 
-Write-OwnerMirror $ownerAfter
-
-# Auto-initialize or sync feature-state.json projection on successful Claim
-if ($Operation -eq "Claim" -and -not [string]::IsNullOrWhiteSpace($ResolvedSpecDirectory)) {
-    try {
-        $featStateFile = Join-Path $ResolvedSpecDirectory "feature-state.json"
-        $effectiveTier = if (-not [string]::IsNullOrWhiteSpace($Tier)) { $Tier } else { "T2" }
-        $isoNow = $AcceptedAt.ToUniversalTime().ToString("o")
-        $utf8NoBomEnc = New-Object System.Text.UTF8Encoding($false)
-        $detectedBaseline = Get-VcsBaselineRevision -StartPath $ResolvedSpecDirectory
-        if (-not (Test-Path -LiteralPath $featStateFile -PathType Leaf)) {
-            $initialState = [ordered]@{
-                schemaVersion = "1.0"
-                feature = $Feature
-                tier = $effectiveTier
-                phase = "CLAIMED"
-                ownerSession = [ordered]@{
-                    agent = $Agent
-                    ownerId = $OwnerId
-                }
-                completedSteps = @("CLAIM")
-                nextAction = if ($effectiveTier -eq "T3") { "brainstorming / requirement draft" } else { "implementation" }
-                updatedAt = $isoNow
-            }
-            if (-not [string]::IsNullOrWhiteSpace($detectedBaseline)) {
-                $initialState["baseline"] = $detectedBaseline
-            }
+if (-not [string]::IsNullOrWhiteSpace($ResolvedSpecDirectory)) {
+    $specLockPath = Join-Path $ResolvedSpecDirectory ".workflow-mutation.lock"
+    $specLockStream = $null
+    for ($attempt = 0; $attempt -lt 50; $attempt++) {
+        try {
             [System.IO.Directory]::CreateDirectory($ResolvedSpecDirectory) | Out-Null
-            $jsonStr = $initialState | ConvertTo-Json -Depth 10
-            [System.IO.File]::WriteAllText($featStateFile, $jsonStr, $utf8NoBomEnc)
-        } else {
+            $specLockStream = [System.IO.File]::Open(
+                $specLockPath,
+                [System.IO.FileMode]::OpenOrCreate,
+                [System.IO.FileAccess]::ReadWrite,
+                [System.IO.FileShare]::None
+            )
+            break
+        } catch [System.IO.IOException] {
+            Start-Sleep -Milliseconds 100
+        }
+    }
+    if ($null -eq $specLockStream) {
+        throw "Timed out acquiring spec mutation lock: $specLockPath"
+    }
+    try {
+        Write-OwnerMirror $ownerAfter
+
+        # Auto-initialize or sync feature-state.json projection on successful Claim
+        if ($Operation -eq "Claim") {
             try {
-                $existingRaw = [System.IO.File]::ReadAllText($featStateFile)
-                $existingContent = $existingRaw | ConvertFrom-Json
-                $existingDict = [ordered]@{}
-                foreach ($p in $existingContent.psobject.Properties) {
-                    $existingDict[$p.Name] = $p.Value
+                $featStateFile = Join-Path $ResolvedSpecDirectory "feature-state.json"
+                $effectiveTier = if (-not [string]::IsNullOrWhiteSpace($Tier)) { $Tier } else { "T2" }
+                $isoNow = $AcceptedAt.ToUniversalTime().ToString("o")
+                $utf8NoBomEnc = New-Object System.Text.UTF8Encoding($false)
+                $detectedBaseline = if ($ownerAfter.Contains("baseline") -and -not [string]::IsNullOrWhiteSpace($ownerAfter.baseline)) {
+                    [string]$ownerAfter.baseline
+                } else {
+                    Get-VcsBaselineRevision -StartPath $ResolvedSpecDirectory
                 }
-                if ($PSBoundParameters.ContainsKey("Tier") -and -not [string]::IsNullOrWhiteSpace($Tier)) {
-                    $existingDict["tier"] = $Tier
-                }
-                $existingDict["ownerSession"] = [ordered]@{
-                    agent = $Agent
-                    ownerId = $OwnerId
-                }
-                if (-not $existingDict.Contains("baseline") -or [string]::IsNullOrWhiteSpace($existingDict["baseline"])) {
+                if (-not (Test-Path -LiteralPath $featStateFile -PathType Leaf)) {
+                    $initialState = [ordered]@{
+                        schemaVersion = "1.0"
+                        feature = $Feature
+                        tier = $effectiveTier
+                        phase = "CLAIMED"
+                        ownerSession = [ordered]@{
+                            agent = $Agent
+                            ownerId = $OwnerId
+                        }
+                        completedSteps = @("CLAIM")
+                        nextAction = if ($effectiveTier -eq "T3") { "brainstorming / requirement draft" } else { "implementation" }
+                        updatedAt = $isoNow
+                    }
                     if (-not [string]::IsNullOrWhiteSpace($detectedBaseline)) {
-                        $existingDict["baseline"] = $detectedBaseline
+                        $initialState["baseline"] = $detectedBaseline
+                    }
+                    $jsonStr = $initialState | ConvertTo-Json -Depth 10
+                    [System.IO.File]::WriteAllText($featStateFile, $jsonStr, $utf8NoBomEnc)
+                } else {
+                    try {
+                        $existingRaw = [System.IO.File]::ReadAllText($featStateFile)
+                        $existingContent = $existingRaw | ConvertFrom-Json
+                        $existingDict = [ordered]@{}
+                        foreach ($p in $existingContent.psobject.Properties) {
+                            $existingDict[$p.Name] = $p.Value
+                        }
+                        if ($PSBoundParameters.ContainsKey("Tier") -and -not [string]::IsNullOrWhiteSpace($Tier)) {
+                            $existingDict["tier"] = $Tier
+                        }
+                        $existingDict["ownerSession"] = [ordered]@{
+                            agent = $Agent
+                            ownerId = $OwnerId
+                        }
+                        if (-not $existingDict.Contains("baseline") -or [string]::IsNullOrWhiteSpace($existingDict["baseline"])) {
+                            if (-not [string]::IsNullOrWhiteSpace($detectedBaseline)) {
+                                $existingDict["baseline"] = $detectedBaseline
+                            }
+                        }
+                        $existingDict["updatedAt"] = $isoNow
+                        $jsonStr = $existingDict | ConvertTo-Json -Depth 10
+                        [System.IO.File]::WriteAllText($featStateFile, $jsonStr, $utf8NoBomEnc)
+                    } catch {
+                        Write-Warning "Failed to update existing feature-state.json: $_"
                     }
                 }
-                $existingDict["updatedAt"] = $isoNow
-                $jsonStr = $existingDict | ConvertTo-Json -Depth 10
-                [System.IO.File]::WriteAllText($featStateFile, $jsonStr, $utf8NoBomEnc)
             } catch {
-                Write-Warning "Failed to update existing feature-state.json: $_"
+                Write-Warning "Failed to sync feature-state.json: $_"
             }
         }
-    } catch {
-        Write-Warning "Failed to sync feature-state.json: $_"
+    } finally {
+        if ($null -ne $specLockStream) {
+            $specLockStream.Dispose()
+            Remove-Item -LiteralPath $specLockPath -Force -ErrorAction SilentlyContinue
+        }
     }
+} else {
+    Write-OwnerMirror $ownerAfter
 }
 
 Write-Output $OwnerPath

@@ -181,7 +181,9 @@ Invoke-Test "Root bootstrap reports BOOTSTRAP_MISSING without .claude" {
     try {
         $rootBoot = Join-Path $ClaudeRoot "distribution\bootstrap\install-ai-sop.ps1"
         $out = & pwsh -NoProfile -File $rootBoot -Mode Auto -Action Verify -WorkspaceRoot $tmp -OutputFormat Json 2>&1
-        $o = $out | ConvertFrom-Json
+        $jsonStr = ($out | Where-Object { $_ -is [string] -and $_ -match '^\s*\{' } | Select-Object -First 1)
+        if ([string]::IsNullOrWhiteSpace($jsonStr)) { $jsonStr = ($out | Out-String).Trim() }
+        $o = $jsonStr | ConvertFrom-Json
         Assert-Equal "CORE_MISSING" $o.result "without .claude/distribution core is missing"
     } finally { Remove-Item -Recurse -Force -LiteralPath $tmp }
 }
@@ -204,7 +206,7 @@ Invoke-Test "Get-AiSopGitBlobSha256 hashes real blob bytes" {
         $commit = & git -C $work rev-parse HEAD
         # Push to bare so cat-file works against bare objects.
         & git -C $work remote add origin $bare 2>&1 | Out-Null
-        & git -C $work push --quiet origin master 2>&1 | Out-Null
+        & git -C $work push --quiet origin HEAD 2>&1 | Out-Null
         $hash = Get-AiSopGitBlobSha256 -GitDir $bare -Commit $commit -Path "manifest.txt"
         # Expected hash is over the bytes git actually stores (DC-004); read them
         # back from the bare repo to compute the reference independently.
@@ -228,7 +230,7 @@ Invoke-Test "Invoke-AiSopSvnInstall clones+renames .claude and writes PREPARED j
         & git -C $work -c user.email=t@t -c user.name=t commit --allow-empty -m init --quiet 2>&1 | Out-Null
         $commit = & git -C $work rev-parse HEAD
         & git -C $work remote add origin $bare 2>&1 | Out-Null
-        & git -C $work push --quiet origin master 2>&1 | Out-Null
+        & git -C $work push --quiet origin HEAD 2>&1 | Out-Null
         $lock = @{ sourceUrl=$bare; commit=$commit }
         # Simulate a workspace root with an existing .claude (to be backed up).
         $ws = Join-Path $tmp "workspace"; New-Item -ItemType Directory -Path $ws | Out-Null
@@ -264,7 +266,7 @@ Invoke-Test "Invoke-AiSopSvnRollback restores .claude from backup" {
         & git -C $work -c user.email=t@t -c user.name=t commit --allow-empty -m init --quiet 2>&1 | Out-Null
         $commit = & git -C $work rev-parse HEAD
         & git -C $work remote add origin $bare 2>&1 | Out-Null
-        & git -C $work push --quiet origin master 2>&1 | Out-Null
+        & git -C $work push --quiet origin HEAD 2>&1 | Out-Null
         $lock = @{ sourceUrl=$bare; commit=$commit }
         $ws = Join-Path $tmp "workspace"; New-Item -ItemType Directory -Path $ws | Out-Null
         New-Item -ItemType Directory -Path (Join-Path $ws ".ai-sop") | Out-Null

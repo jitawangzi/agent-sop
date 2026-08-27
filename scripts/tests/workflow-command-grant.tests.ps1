@@ -127,6 +127,7 @@ function Write-TestOwner {
         status = "ACTIVE"
         startedAt = $t0.AddMinutes(-1).ToString("o")
         completedAt = ""
+        baseline = "0"
     }
     if ($SchemaVersion -eq "1.1") {
         $owner.workspacePath = [System.IO.Path]::GetFullPath($Workspace)

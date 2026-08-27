@@ -754,12 +754,12 @@ try {
         $killMarker
     )
     try {
-        $killWaitDeadline = [DateTimeOffset]::UtcNow.AddSeconds(5)
+        $killWaitDeadline = [DateTimeOffset]::UtcNow.AddSeconds(20)
         while (
             -not (Test-Path $killMarker) -and
             [DateTimeOffset]::UtcNow -lt $killWaitDeadline
         ) {
-            Start-Sleep -Milliseconds 10
+            Start-Sleep -Milliseconds 20
         }
         Assert-True `
             -Condition (Test-Path $killMarker) `

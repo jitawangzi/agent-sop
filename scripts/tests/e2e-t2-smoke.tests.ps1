@@ -93,6 +93,7 @@ function Write-OwnerDirect {
             boundAt = [DateTimeOffset]::UtcNow.AddMinutes(-1).ToString("o")
         }
         lastTransactionId = "e2e-direct"
+        baseline = "0"
     }
     [System.IO.File]::WriteAllText(
         (Join-Path $env:SERVER_NEW_WORKFLOW_REGISTRY ($Feature.ToLowerInvariant() + ".json")),

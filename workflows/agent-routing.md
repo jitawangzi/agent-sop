@@ -34,3 +34,11 @@
 ## 并行功能执行
 
 并行功能执行与 Tomcat 隔离定义于 `.ai-workspace/workflows/parallel-development.md`。
+
+## 双 Agent 协同审查路由 (Dual-Agent Review Routing)
+
+当采用异构双 Agent（如 Antigravity 主开发 + Copilot 主审查，或 Claude Code + Cursor）交替迭代时：
+- **Dev Agent** 持有活动的 Workflow Owner 归属，主导业务代码修改与测试执行；
+- **Reviewer Agent** 作为独立只读审计角色，通过 `scripts/review-mailbox.ps1` 与规格产物 `review-mailbox.json` 进行结构化交互（详见 `workflows/dual-agent-review.md`）；
+- 审查者无需 Claim 写归属，通过标准信箱契约输出 `APPROVED` / `REJECTED` 判定，驱动主开发 Agent 进行闭环修复。
+

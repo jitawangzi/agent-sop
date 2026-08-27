@@ -1,0 +1,176 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "review-mailbox.schema.json",
+  "title": "Dual-Agent Review Mailbox",
+  "description": "Standard message and state machine protocol for dual-agent iterative development and independent review.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schemaVersion",
+    "feature",
+    "round",
+    "maxRounds",
+    "status",
+    "devAgent",
+    "reviewerAgent",
+    "updatedAt"
+  ],
+  "properties": {
+    "schemaVersion": {
+      "const": "1.0"
+    },
+    "feature": {
+      "type": "string",
+      "minLength": 1
+    },
+    "round": {
+      "type": "integer",
+      "minimum": 1
+    },
+    "maxRounds": {
+      "type": "integer",
+      "minimum": 1,
+      "default": 4
+    },
+    "status": {
+      "type": "string",
+      "enum": [
+        "INITIALIZED",
+        "WAITING_REVIEW",
+        "WAITING_DEV",
+        "APPROVED",
+        "REJECTED_MAX_ROUNDS"
+      ]
+    },
+    "devAgent": {
+      "type": "string",
+      "enum": [
+        "ANTIGRAVITY",
+        "CLAUDE_CODE",
+        "COPILOT",
+        "CURSOR",
+        "AIDER",
+        "CUSTOM"
+      ]
+    },
+    "reviewerAgent": {
+      "type": "string",
+      "enum": [
+        "COPILOT",
+        "CLAUDE_CODE",
+        "ANTIGRAVITY",
+        "CURSOR",
+        "GPT_4O",
+        "CUSTOM"
+      ]
+    },
+    "updatedAt": {
+      "type": "string"
+    },
+    "currentDevSubmission": {
+      "type": ["object", "null"],
+      "additionalProperties": false,
+      "required": [
+        "submittedAt",
+        "summary",
+        "changedFiles",
+        "testGateStatus"
+      ],
+      "properties": {
+        "submittedAt": {
+          "type": "string"
+        },
+        "summary": {
+          "type": "string",
+          "minLength": 1
+        },
+        "changedFiles": {
+          "type": "array",
+          "items": { "type": "string" }
+        },
+        "testGateStatus": {
+          "type": "string",
+          "enum": ["PASS", "FAIL", "SKIPPED"]
+        },
+        "testOutput": {
+          "type": "string"
+        },
+        "gitDiffDigest": {
+          "type": "string"
+        }
+      }
+    },
+    "currentReviewVerdict": {
+      "type": ["object", "null"],
+      "additionalProperties": false,
+      "required": [
+        "reviewedAt",
+        "verdict",
+        "highestSeverity",
+        "summary",
+        "issues",
+        "nextPromptForDev"
+      ],
+      "properties": {
+        "reviewedAt": {
+          "type": "string"
+        },
+        "verdict": {
+          "type": "string",
+          "enum": ["APPROVED", "REJECTED"]
+        },
+        "highestSeverity": {
+          "type": "string",
+          "enum": ["NONE", "LOW", "MEDIUM", "HIGH", "CRITICAL"]
+        },
+        "summary": {
+          "type": "string",
+          "minLength": 1
+        },
+        "issues": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "file",
+              "severity",
+              "problem",
+              "fixSuggestion"
+            ],
+            "properties": {
+              "file": { "type": "string", "minLength": 1 },
+              "lineRange": { "type": "string" },
+              "severity": {
+                "type": "string",
+                "enum": ["LOW", "MEDIUM", "HIGH", "CRITICAL"]
+              },
+              "problem": { "type": "string", "minLength": 1 },
+              "fixSuggestion": { "type": "string", "minLength": 1 }
+            }
+          }
+        },
+        "nextPromptForDev": {
+          "type": "string"
+        }
+      }
+    },
+    "history": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "round",
+          "devSubmission",
+          "reviewVerdict"
+        ],
+        "properties": {
+          "round": { "type": "integer", "minimum": 1 },
+          "devSubmission": { "type": "object" },
+          "reviewVerdict": { "type": "object" }
+        }
+      }
+    }
+  }
+}

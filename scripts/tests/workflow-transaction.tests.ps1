@@ -138,6 +138,7 @@ function New-BeforeStateSet {
             boundAt = $t0.ToString("o")
         }
         lastTransactionId = "previous-$TransactionId"
+        baseline = "0"
     }
     $grantBefore = [ordered]@{
         schemaVersion = "1.0"
@@ -326,6 +327,7 @@ function New-RealOperationState {
             status = "ACTIVE"
             startedAt = $now.AddMinutes(-1).ToString("o")
             completedAt = ""
+            baseline = "0"
         })
     } elseif ($Operation -in @("Validate", "Complete")) {
         $bound = Get-Content -LiteralPath $newSession.SessionPath -Raw |
@@ -352,6 +354,7 @@ function New-RealOperationState {
                 boundAt = $now.AddMinutes(-1).ToString("o")
             }
             lastTransactionId = "real-before-$CaseName"
+            baseline = "0"
         })
         $newSession = Get-AiSopWorkflowSession -SessionKey $bound.sessionKey
     } elseif ($Operation -eq "RebindSession") {
@@ -388,6 +391,7 @@ function New-RealOperationState {
                 boundAt = $now.AddMinutes(-1).ToString("o")
             }
             lastTransactionId = "real-before-$CaseName"
+            baseline = "0"
         })
         $sessionKeys += [string]$old.sessionKey
     }

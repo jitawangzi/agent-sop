@@ -189,6 +189,7 @@ function Write-LegacyOwner {
         agent = $Agent
         ownerId = $OwnerId
         specDirectory = [System.IO.Path]::GetFullPath($Feature.Spec)
+        baseline = "0"
         status = "ACTIVE"
         startedAt = [DateTimeOffset]::UtcNow.AddMinutes(-1).ToString("o")
         completedAt = ""
@@ -221,6 +222,7 @@ function Write-Owner11 {
         ownerId = $OwnerId
         specDirectory = [System.IO.Path]::GetFullPath($Feature.Spec)
         workspacePath = [System.IO.Path]::GetFullPath($Feature.Workspace)
+        baseline = "0"
         status = "ACTIVE"
         startedAt = $AcceptedAt.AddMinutes(-1).ToString("o")
         completedAt = ""

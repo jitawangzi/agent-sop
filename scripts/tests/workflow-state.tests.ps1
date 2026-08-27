@@ -204,6 +204,7 @@ function Write-TestLegacyOwner {
             agent = $Agent
             ownerId = $OwnerId
             specDirectory = [System.IO.Path]::GetFullPath($SpecDirectory)
+            baseline = "0"
             status = "ACTIVE"
             startedAt = [DateTimeOffset]::UtcNow.AddMinutes(-1).ToString("o")
             completedAt = ""
@@ -651,6 +652,7 @@ function Write-TestCoverage {
             exitCode = 0
             executedAt = [DateTimeOffset]::UtcNow.AddMinutes(-5).ToString("yyyy-MM-ddTHH:mm:ssZ")
             sourceCommitSha = "abcdef1234567890"
+            workingTreeDigest = ("0" * 64)
             testCount = 1
             passedCount = 1
             failedCount = 0
@@ -729,6 +731,7 @@ function Write-NoRuntimeCoverageFixture {
             exitCode = 0
             executedAt = [DateTimeOffset]::UtcNow.AddMinutes(-5).ToString("yyyy-MM-ddTHH:mm:ssZ")
             sourceCommitSha = "abcdef1234567890"
+            workingTreeDigest = ("0" * 64)
             testCount = 1
             passedCount = 1
             failedCount = 0
@@ -803,14 +806,17 @@ function Assert-NoRuntimeCoverageApprovalState {
             throw "VerifyCompletion must fail when 04_change_impact.json is missing for T3 feature. Output: $verifyNoImpactOut"
         }
 
-        # Write valid 04_change_impact.json for T3 feature
         $noRuntimeImpactPath = Join-Path $specDirectory "04_change_impact.json"
-        $noRuntimeDigest = Get-TestStringSha256 -Text "SYMBOLS:NoRuntimeCoverage"
+        $noRuntimeRisk = & $ScriptPath -Operation AssessRisk -Path $specDirectory -Baseline "0" 2>&1 | Out-String
+        $noRuntimeDigest = ($noRuntimeRisk | ConvertFrom-Json).changeSetDigest
+        $covObj = Get-Content -LiteralPath $coveragePath -Raw | ConvertFrom-Json -AsHashtable
+        $covObj.executionEvidence.workingTreeDigest = $noRuntimeDigest
+        [System.IO.File]::WriteAllText($coveragePath, ($covObj | ConvertTo-Json -Depth 10), $Utf8NoBom)
         $noRuntimeImpactJson = @"
 {
   "schemaVersion": "1.0",
   "feature": "$feature",
-  "baseline": "rev1",
+  "baseline": "0",
   "changeSetDigest": "$noRuntimeDigest",
   "changedSymbols": ["NoRuntimeCoverage"],
   "entryPoints": ["TEST"],
@@ -2031,7 +2037,7 @@ try {
         $sErr = if (Test-Path $stateRaceErr) { Get-Content $stateRaceErr -Raw } else { "" }
         $cOut = if (Test-Path $completeRaceOut) { Get-Content $completeRaceOut -Raw } else { "" }
         $cErr = if (Test-Path $completeRaceErr) { Get-Content $completeRaceErr -Raw } else { "" }
-        throw "The guarded state mutation and subsequent completion must both succeed. StateExit=$($stateRaceProcess.ExitCode), CompleteExit=$($completeRaceProcess.ExitCode)`nStateOut:$sOut`nStateErr:$sErr`nCompOut:$cOut`nCompErr:$cErr"
+        throw "The guarded state mutation and subsequent completion must both succeed. StateExit=$($stateRaceProcess.ExitCode), CompleteExit=$($completeRaceProcess.ExitCode)`nStateOut: $($sOut)`nStateErr: $($sErr)`nCompOut: $($cOut)`nCompErr: $($cErr)"
     }
 
     # Test SyncCoverage and Get-CoveragePlaceholderWarnings
@@ -2080,12 +2086,12 @@ try {
         throw "ValidateTestCoverage -Phase PLAN must output VALID, got: $($planValidation -join '; ')"
     }
 
-    # Test automatic phase derivation for QA_PLAN phase
+    # Test automatic phase derivation for PLANNING phase
     $syncFeatState = Join-Path $syncSpec "feature-state.json"
-    [System.IO.File]::WriteAllText($syncFeatState, '{"schemaVersion":"1.0","feature":"SyncCoverageTestFeature","tier":"T3","phase":"QA_PLAN"}', $Utf8NoBom)
+    [System.IO.File]::WriteAllText($syncFeatState, '{"schemaVersion":"1.0","feature":"SyncCoverageTestFeature","tier":"T3","phase":"PLANNING","updatedAt":"2026-08-27T00:00:00Z"}', $Utf8NoBom)
     $autoPlanValidation = & $ScriptPath -Operation ValidateTestCoverage -Path $syncCovPath
     if ($autoPlanValidation -notcontains "VALID") {
-        throw "ValidateTestCoverage with QA_PLAN phase must auto-derive PLAN mode and output VALID, got: $($autoPlanValidation -join '; ')"
+        throw "ValidateTestCoverage with PLANNING phase must auto-derive PLAN mode and output VALID, got: $($autoPlanValidation -join '; ')"
     }
 
     # In VERIFY phase, missing carrier files on disk for P0/P1 must be ERROR and result is INVALID_PLACEHOLDERS
@@ -2100,19 +2106,24 @@ try {
     $realTestFile = Join-Path $realTestDir "RealTest.java"
     [System.IO.File]::WriteAllText($realTestFile, "package com.game; import org.junit.Test; public class RealTest { @Test public void testBuy() {} }", $Utf8NoBom)
     
+    $syncRisk = & $ScriptPath -Operation AssessRisk -Path (Split-Path -Parent $syncCovPath) 2>&1 | Out-String
+    $syncDigest = ($syncRisk | ConvertFrom-Json).changeSetDigest
+    
+    $covObj = Get-Content -LiteralPath $syncCovPath -Raw | ConvertFrom-Json -AsHashtable
     $covObj.cases[0].automationCarrier = "test/com/game/RealTest.java#testBuy"
     $covObj.cases[0].status = "VERIFIED"
     $covObj.cases[1].automationCarrier = "test/com/game/RealTest.java#testBuy"
     $covObj.cases[1].status = "VERIFIED"
-    $covObj | Add-Member -NotePropertyName "executionEvidence" -NotePropertyValue ([ordered]@{
+    $covObj["executionEvidence"] = [ordered]@{
         command = "pwsh test"
         exitCode = 0
         executedAt = [DateTimeOffset]::UtcNow.AddMinutes(-5).ToString("yyyy-MM-ddTHH:mm:ssZ")
         sourceCommitSha = "abcdef1234567890"
+        workingTreeDigest = $syncDigest
         testCount = 2
         passedCount = 2
         failedCount = 0
-    })
+    }
     [System.IO.File]::WriteAllText($syncCovPath, ($covObj | ConvertTo-Json -Depth 10), $Utf8NoBom)
     
     $realVerifyValidation = & $ScriptPath -Operation ValidateTestCoverage -Path $syncCovPath -Phase VERIFY
@@ -2127,7 +2138,7 @@ try {
     $vcsSpecDir = Join-Path $vcsTestDir ".ai-workspace/specs/features/VcsTestFeature"
     [System.IO.Directory]::CreateDirectory($vcsSpecDir) | Out-Null
     $vcsFeatState = Join-Path $vcsSpecDir "feature-state.json"
-    [System.IO.File]::WriteAllText($vcsFeatState, '{"schemaVersion":"1.0","feature":"VcsTestFeature","tier":"T2","phase":"IMPLEMENTATION"}', $Utf8NoBom)
+    [System.IO.File]::WriteAllText($vcsFeatState, '{"schemaVersion":"1.0","feature":"VcsTestFeature","tier":"T2","phase":"IMPLEMENTING"}', $Utf8NoBom)
     
     # Create untracked CSV file in config/
     $vcsConfigDir = Join-Path $vcsTestDir "config"
@@ -2186,6 +2197,10 @@ try {
         throw "ValidateTestCoverage must succeed in DESIGN_ONLY mode without requirement approval, got: $($doVal -join '; ')"
     }
 
+    $doImpactPath = Join-Path $doSpecDir "04_change_impact.json"
+    $doRisk = & $ScriptPath -Operation AssessRisk -Path $doSpecDir -Baseline "0" 2>&1 | Out-String
+    $doDigest = ($doRisk | ConvertFrom-Json).changeSetDigest
+
     # Refine coverage to VERIFIED with executionEvidence for completion verification
     $doCovObj = Get-Content -LiteralPath $doCov -Raw | ConvertFrom-Json
     $doCovObj.cases[0].status = "VERIFIED"
@@ -2194,20 +2209,17 @@ try {
         exitCode = 0
         executedAt = [DateTimeOffset]::UtcNow.AddMinutes(-5).ToString("yyyy-MM-ddTHH:mm:ssZ")
         sourceCommitSha = "abcdef1234567890"
+        workingTreeDigest = $doDigest
         testCount = 1
         passedCount = 1
         failedCount = 0
     })
     [System.IO.File]::WriteAllText($doCov, ($doCovObj | ConvertTo-Json -Depth 10), $Utf8NoBom)
-
-    # Write valid 04_change_impact.json for DesignOnlyFeature
-    $doImpactPath = Join-Path $doSpecDir "04_change_impact.json"
-    $doDigest = Get-TestStringSha256 -Text "SYMBOLS:DesignOnlyFeature"
     $doImpactJson = @"
 {
   "schemaVersion": "1.0",
   "feature": "DesignOnlyFeature",
-  "baseline": "rev1",
+  "baseline": "0",
   "changeSetDigest": "$doDigest",
   "changedSymbols": ["DesignOnlyFeature"],
   "entryPoints": ["TEST"],
@@ -2339,6 +2351,8 @@ try {
 
     $cmCovPath = Join-Path $cmSpecDir "05_test_coverage.json"
     $dynamicRecent = [DateTimeOffset]::UtcNow.AddMinutes(-5).ToString("yyyy-MM-ddTHH:mm:ssZ")
+    $cmRisk = & $ScriptPath -Operation AssessRisk -Path $cmSpecDir -Baseline "0" 2>&1 | Out-String
+    $cmDigest = ($cmRisk | ConvertFrom-Json).changeSetDigest
     $cmCovJson = @"
 {
   "schemaVersion": "1.0",
@@ -2375,6 +2389,7 @@ try {
     "exitCode": 0,
     "executedAt": "$dynamicRecent",
     "sourceCommitSha": "abcdef1234567890",
+    "workingTreeDigest": "$cmDigest",
     "testCount": 1,
     "passedCount": 1,
     "failedCount": 0
@@ -2629,6 +2644,7 @@ try {
     "exitCode": 0,
     "executedAt": "__EXECUTED_AT__",
     "sourceCommitSha": "deadbeefcafebabe0123456789abcdef01234567",
+    "workingTreeDigest": "0000000000000000000000000000000000000000000000000000000000000000",
     "testCount": 1,
     "passedCount": 1,
     "failedCount": 0
@@ -2715,15 +2731,145 @@ try {
         throw "ValidateTestCoverage must reject #bar when only It 'foobar' exists. Output: $pesterStr"
     }
 
-    # Test baseline tampering detection (BASELINE_MUTATION_DETECTED)
-    $tamperSpecDir = Join-Path $TestRoot "tamper_spec"
-    [System.IO.Directory]::CreateDirectory($tamperSpecDir) | Out-Null
-    $tamperOwnerPath = Join-Path $tamperSpecDir ".workflow-owner.json"
-    [System.IO.File]::WriteAllText($tamperOwnerPath, '{"schemaVersion":"1.1","feature":"TamperFeature","baseline":"1111111111111111111111111111111111111111"}', $Utf8NoBom)
-    $tamperFeatState = Join-Path $tamperSpecDir "feature-state.json"
-    [System.IO.File]::WriteAllText($tamperFeatState, '{"schemaVersion":"1.0","feature":"TamperFeature","baseline":"2222222222222222222222222222222222222222","tier":"T3"}', $Utf8NoBom)
-    Assert-Fails -Message "Assert-FeatureBaselineIntegrity must detect altered baseline in feature-state" -Action {
-        & $ScriptPath -Operation AssessRisk -Path $tamperSpecDir
+    # 1. Negative Test: Registry 为旧 SHA、镜像被篡改为新 SHA 时拒绝 (BASELINE_MUTATION_DETECTED)
+    $regTamperFeature = "RegistryTamperFeature"
+    $regTamperSpec = Join-Path $TestRoot ".ai-workspace/specs/features/$regTamperFeature"
+    [System.IO.Directory]::CreateDirectory($regTamperSpec) | Out-Null
+    $regDir = $env:SERVER_NEW_WORKFLOW_REGISTRY
+    $regFile = Join-Path $regDir ($regTamperFeature.ToLowerInvariant() + ".json")
+    [System.IO.File]::WriteAllText($regFile, '{"schemaVersion":"1.1","feature":"' + $regTamperFeature + '","baseline":"1111111111111111111111111111111111111111","activeOwner":{"workflow":"SUPERPOWERS","agent":"ANTIGRAVITY","ownerId":"ag-1","assignedAt":"2026-08-27T00:00:00Z","deadlineUtc":"2026-08-28T00:00:00Z","sessionKey":"s1","targetPaths":[]},"ownerHistory":[],"auditTrail":[]}', $Utf8NoBom)
+    
+    # Mirror in spec directory is tampered with a newer baseline
+    $regTamperMirror = Join-Path $regTamperSpec ".workflow-owner.json"
+    [System.IO.File]::WriteAllText($regTamperMirror, '{"schemaVersion":"1.1","feature":"' + $regTamperFeature + '","baseline":"2222222222222222222222222222222222222222","workflow":"SUPERPOWERS","agent":"ANTIGRAVITY","ownerId":"ag-1"}', $Utf8NoBom)
+    
+    Assert-FailsWithMessageAndState -ExpectedMessage "BASELINE_MUTATION_DETECTED" -StatePath $regTamperMirror -Message "Registry baseline mismatch with mirror must trigger BASELINE_MUTATION_DETECTED" -Action {
+        & $ScriptPath -Operation AssessRisk -Path $regTamperSpec
+    }
+
+    # 2. Negative Test: 当前 HEAD + 脏工作区 + 缺失 workingTreeDigest 时拒绝 (workingTreeDigest is required)
+    $dirtyGitDir = Join-Path $TestRoot "dirty_git_repo"
+    [System.IO.Directory]::CreateDirectory($dirtyGitDir) | Out-Null
+    & git -C $dirtyGitDir init --quiet
+    & git -C $dirtyGitDir config user.name "Tester"
+    & git -C $dirtyGitDir config user.email "tester@test.local"
+    $dirtySrc = Join-Path $dirtyGitDir "src/Sample.java"
+    [System.IO.Directory]::CreateDirectory((Split-Path -Parent $dirtySrc)) | Out-Null
+    [System.IO.File]::WriteAllText($dirtySrc, "public class Sample {}", $Utf8NoBom)
+    $dirtyCarrier = Join-Path $dirtyGitDir "src/SampleTest.java"
+    [System.IO.File]::WriteAllText($dirtyCarrier, "import org.junit.Test; public class SampleTest { @Test public void testOne() {} }", $Utf8NoBom)
+    & git -C $dirtyGitDir add .
+    & git -C $dirtyGitDir commit -m "init" --quiet
+    $dirtyHeadSha = (& git -C $dirtyGitDir rev-parse HEAD | Out-String).Trim()
+
+    # Modify working tree to make it dirty
+    [System.IO.File]::WriteAllText($dirtySrc, "public class Sample { int x = 1; }", $Utf8NoBom)
+    
+    $dirtySpecDir = Join-Path $dirtyGitDir ".ai-workspace/specs/features/DirtyFeature"
+    [System.IO.Directory]::CreateDirectory($dirtySpecDir) | Out-Null
+    $dirtyCovPath = Join-Path $dirtySpecDir "05_test_coverage.json"
+    $dirtyCarrierRel = "src/SampleTest.java"
+    $dirtyCovJson = @"
+{
+  "schemaVersion": "1.0",
+  "feature": "DirtyFeature",
+  "requirementArtifact": "01_server_rules.md",
+  "requirementSha256": "0000000000000000000000000000000000000000000000000000000000000000",
+  "designArtifact": "06_design_contract.md",
+  "designSha256": "0000000000000000000000000000000000000000000000000000000000000000",
+  "testPlanArtifact": "05_test_plan.md",
+  "testPlanSha256": "0000000000000000000000000000000000000000000000000000000000000000",
+  "cases": [
+    {
+      "id": "TC-DIRTY",
+      "status": "PASS",
+      "automationCarrier": "$dirtyCarrierRel#testOne",
+      "requirementIds": ["BR-01"],
+      "designIds": ["DC-01"]
+    }
+  ],
+  "riskExemptions": [],
+  "executionEvidence": {
+    "command": "gradle test",
+    "exitCode": 0,
+    "testCount": 1,
+    "passedCount": 1,
+    "failedCount": 0,
+    "executedAt": "$dynamicRecent",
+    "sourceCommitSha": "$dirtyHeadSha"
+  }
+}
+"@
+    [System.IO.File]::WriteAllText($dirtyCovPath, $dirtyCovJson, $Utf8NoBom)
+    
+    # 2. Negative Test: 当前 HEAD + 脏工作区 + 缺失 workingTreeDigest 时拒绝 (workingTreeDigest is required)
+    Assert-Fails -Message "ValidateTestCoverage must reject coverage missing workingTreeDigest" -Action {
+        & $ScriptPath -Operation ValidateTestCoverage -Path $dirtyCovPath -Phase VERIFY
+    }
+
+    # Also test mismatched workingTreeDigest rejection
+    $mismatchCovJson = $dirtyCovJson.Replace('"sourceCommitSha": "' + $dirtyHeadSha + '"', '"sourceCommitSha": "' + $dirtyHeadSha + '", "workingTreeDigest": "0000000000000000000000000000000000000000000000000000000000000000"')
+    [System.IO.File]::WriteAllText($dirtyCovPath, $mismatchCovJson, $Utf8NoBom)
+    Assert-Fails -Message "ValidateTestCoverage must reject mismatched workingTreeDigest" -Action {
+        & $ScriptPath -Operation ValidateTestCoverage -Path $dirtyCovPath -Phase VERIFY
+    }
+
+    # 3. Negative Test: 旧祖先 SHA + 当前工作区 digest 时拒绝
+    # Create a second commit in dirtyGitDir
+    [System.IO.File]::WriteAllText($dirtySrc, "public class Sample { int x = 2; }", $Utf8NoBom)
+    & git -C $dirtyGitDir add .
+    & git -C $dirtyGitDir commit -m "second commit" --quiet
+    $newHeadSha = (& git -C $dirtyGitDir rev-parse HEAD | Out-String).Trim()
+    
+    # Calculate current digest on new HEAD
+    $currentWsDigest = (Get-TestStringSha256 -Text "CLEAN_TREE_BASELINE:$($newHeadSha)")
+    $ancestorCovJson = $dirtyCovJson.Replace('"sourceCommitSha": "' + $dirtyHeadSha + '"', '"sourceCommitSha": "' + $dirtyHeadSha + '", "workingTreeDigest": "' + $currentWsDigest + '"')
+    [System.IO.File]::WriteAllText($dirtyCovPath, $ancestorCovJson, $Utf8NoBom)
+    
+    Assert-Fails -Message "ValidateTestCoverage must reject older ancestor commit even if workingTreeDigest is supplied" -Action {
+        & $ScriptPath -Operation ValidateTestCoverage -Path $dirtyCovPath -Phase VERIFY
+    }
+
+    # 4. Negative Test: 独立临时目录（无工作区标记）时 Fail-Closed 判 T3
+    $isolatedDir = Join-Path ([System.IO.Path]::GetTempPath()) ("isolated_spec_" + [guid]::NewGuid().ToString("N"))
+    [System.IO.Directory]::CreateDirectory($isolatedDir) | Out-Null
+    try {
+        $isolatedRisk = & $ScriptPath -Operation AssessRisk -Path $isolatedDir 2>&1 | Out-String
+        if ($isolatedRisk -notmatch "WORKSPACE_UNRESOLVED" -or $isolatedRisk -notmatch '"minRequiredTier":\s*"T3"') {
+            throw "AssessRisk must fail closed to T3 with WORKSPACE_UNRESOLVED for directories outside any workspace. Output: $isolatedRisk"
+        }
+    } finally {
+        Remove-Item -LiteralPath $isolatedDir -Recurse -Force -ErrorAction SilentlyContinue
+    }
+
+    # 5. Negative Test: 带空格路径 src/foo bar.txt 修改前后的 changeSetDigest 严格变异
+    $spaceGitDir = Join-Path $TestRoot "space_git_repo"
+    [System.IO.Directory]::CreateDirectory($spaceGitDir) | Out-Null
+    & git -C $spaceGitDir init --quiet
+    & git -C $spaceGitDir config user.name "Tester"
+    & git -C $spaceGitDir config user.email "tester@test.local"
+    $spaceFile = Join-Path $spaceGitDir "src/foo bar.txt"
+    [System.IO.Directory]::CreateDirectory((Split-Path -Parent $spaceFile)) | Out-Null
+    [System.IO.File]::WriteAllText($spaceFile, "version 1", $Utf8NoBom)
+    & git -C $spaceGitDir add .
+    & git -C $spaceGitDir commit -m "add space file" --quiet
+    $spaceBaseSha = (& git -C $spaceGitDir rev-parse HEAD | Out-String).Trim()
+    
+    $spaceSpecDir = Join-Path $spaceGitDir ".ai-workspace/specs/features/SpaceFeature"
+    [System.IO.Directory]::CreateDirectory($spaceSpecDir) | Out-Null
+    $spaceFeatState = Join-Path $spaceSpecDir "feature-state.json"
+    [System.IO.File]::WriteAllText($spaceFeatState, '{"schemaVersion":"1.0","feature":"SpaceFeature","baseline":"' + $spaceBaseSha + '","tier":"T2"}', $Utf8NoBom)
+    
+    $spaceRisk1 = & $ScriptPath -Operation AssessRisk -Path $spaceSpecDir -Baseline $spaceBaseSha 2>&1 | Out-String
+    $digest1 = ($spaceRisk1 | ConvertFrom-Json).changeSetDigest
+    
+    # Now modify content of src/foo bar.txt
+    [System.IO.File]::WriteAllText($spaceFile, "version 2 with spaces and edits", $Utf8NoBom)
+    $spaceRisk2 = & $ScriptPath -Operation AssessRisk -Path $spaceSpecDir -Baseline $spaceBaseSha 2>&1 | Out-String
+    $digest2 = ($spaceRisk2 | ConvertFrom-Json).changeSetDigest
+    
+    if ($digest1 -eq $digest2) {
+        throw "Get-ChangeSetDigest must produce different digests when a file with spaces (src/foo bar.txt) is modified. digest1=$digest1, digest2=$digest2"
     }
 
     Write-Output "All workflow state tests passed."

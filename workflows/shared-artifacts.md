@@ -12,6 +12,7 @@
 | `05_test_plan.md` | 可执行用例，含稳定的 `TC-*`（Test Case）声明 + `<!-- meta: {...} -->` 元数据（供 SyncCoverage 生成 coverage JSON） |
 | `05_test_coverage.json` | 需求/设计到用例的追溯 |
 | `06_design_contract.md` | 技术契约，含稳定的 `DC-*`（Design Contract）、`DR-*`（Design Rule/风险）、`TW-*`（Test/Workflow 约定）声明 |
+| `review-mailbox.json` | 跨 Agent 协同审查信箱（遵循 `schemas/review-mailbox.schema.json`） |
 | `.workflow-owner.json` | 机器级活动归属的可读镜像 |
 
 Superpowers 在 `docs/superpowers/` 下的 plan/ledger 是执行记录，不替代规范产物。主流程不使用 `.ai-sop/runtime/`（仅手动全功能审计的 `AUDIT_ONLY` 场景按需使用，不进主流程必经链）。

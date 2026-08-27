@@ -1003,6 +1003,7 @@ $result.Record | ConvertTo-Json -Compress
             "Exact-expiry session worker failed: " +
             (Get-Content -LiteralPath $entry.Err -Raw -ErrorAction SilentlyContinue)
         )
+        $entry.Process.Dispose()
     }
     $raceRecords = @(
         $raceProcesses |
@@ -1088,6 +1089,11 @@ $result.Record | ConvertTo-Json -Compress
     Remove-Item Env:SERVER_NEW_WORKFLOW_COMMAND_GRANT_REGISTRY -ErrorAction SilentlyContinue
     Remove-Item Env:SERVER_NEW_WORKFLOW_TRANSACTION_REGISTRY -ErrorAction SilentlyContinue
     if (Test-Path -LiteralPath $TestRoot) {
-        [System.IO.Directory]::Delete($TestRoot, $true)
+        try {
+            [System.IO.Directory]::Delete($TestRoot, $true)
+        } catch {
+            Start-Sleep -Milliseconds 100
+            Remove-Item -LiteralPath $TestRoot -Recurse -Force -ErrorAction SilentlyContinue
+        }
     }
 }

@@ -354,6 +354,7 @@
         "exitCode",
         "executedAt",
         "sourceCommitSha",
+        "workingTreeDigest",
         "testCount",
         "passedCount",
         "failedCount"

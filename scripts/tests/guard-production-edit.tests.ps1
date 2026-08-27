@@ -308,6 +308,7 @@ try {
             boundAt = $t0.ToString("o")
         }
         lastTransactionId = "guard-baseline"
+        baseline = "0"
     }
     Write-Owner -Feature "GuardFeature" -Record $baselineOwner
 
@@ -359,6 +360,7 @@ try {
         specDirectory = [System.IO.Path]::GetFullPath((
             Join-Path $Workspace ".ai-workspace\specs\features\LegacyCustom"
         ))
+        baseline = "0"
         status = "ACTIVE"
         startedAt = $t0.AddMinutes(-1).ToString("o")
         completedAt = ""
@@ -378,6 +380,7 @@ try {
         agent = "CURSOR"
         ownerId = "guard-owner"
         specDirectory = $specDirectory
+        baseline = "0"
         status = "ACTIVE"
         startedAt = $t0.AddMinutes(-1).ToString("o")
         completedAt = ""

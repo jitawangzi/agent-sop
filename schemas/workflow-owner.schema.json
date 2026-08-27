@@ -62,7 +62,8 @@
         "specDirectory",
         "status",
         "startedAt",
-        "completedAt"
+        "completedAt",
+        "baseline"
       ],
       "properties": {
         "schemaVersion": {
@@ -107,6 +108,10 @@
         },
         "completedAt": {
           "type": "string"
+        },
+        "baseline": {
+          "type": "string",
+          "pattern": "^(?:[0-9a-fA-F]{7,64}|(?:rev|r)?[0-9]+)$"
         }
       },
       "allOf": [
@@ -167,7 +172,8 @@
         "startedAt",
         "completedAt",
         "sessionBinding",
-        "lastTransactionId"
+        "lastTransactionId",
+        "baseline"
       ],
       "properties": {
         "schemaVersion": {

@@ -133,6 +133,8 @@ if (-not $Parallel) {
                 $result.Output | Select-Object -Last 10 | ForEach-Object { Write-Host "        $_" -ForegroundColor DarkGray }
             }
         }
+        [System.GC]::Collect()
+        [System.GC]::WaitForPendingFinalizers()
     }
 } else {
     # Parallel: launch all, then await.

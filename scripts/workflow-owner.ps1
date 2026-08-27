@@ -764,7 +764,19 @@ switch ($Operation) {
         ) {
             throw "WORKFLOW_OWNER_ALREADY_ACTIVE"
         }
-        $detectedBaseline = if ($PSBoundParameters.ContainsKey("Baseline") -and -not [string]::IsNullOrWhiteSpace($Baseline)) {
+        $detectedBaseline = if ($null -ne $existingOwner -and -not [string]::IsNullOrWhiteSpace($existingOwner.baseline)) {
+            if ($PSBoundParameters.ContainsKey("Baseline") -and -not [string]::IsNullOrWhiteSpace($Baseline) -and $Baseline.ToLowerInvariant() -ne $existingOwner.baseline.ToLowerInvariant()) {
+                throw "BASELINE_MUTATION_DETECTED: Specified baseline '$Baseline' does not match existing owner baseline '$($existingOwner.baseline)'."
+            }
+            [string]$existingOwner.baseline
+        } elseif ($PSBoundParameters.ContainsKey("Baseline") -and -not [string]::IsNullOrWhiteSpace($Baseline)) {
+            $ws = Get-OwnerWorkspacePath
+            if (-not [string]::IsNullOrWhiteSpace($ws) -and (Test-Path -LiteralPath (Join-Path $ws ".git"))) {
+                & git -C $ws cat-file -e "$Baseline^{commit}" 2>&1 | Out-Null
+                if ($LASTEXITCODE -ne 0) {
+                    throw "INVALID_BASELINE: Git baseline commit '$Baseline' does not exist in repository '$ws'."
+                }
+            }
             $Baseline
         } else {
             Get-VcsBaselineRevision -StartPath $ResolvedSpecDirectory
@@ -840,10 +852,13 @@ switch ($Operation) {
             }
             lastTransactionId = $transactionId
         }
-        $detectedBaseline = if ($PSBoundParameters.ContainsKey("Baseline") -and -not [string]::IsNullOrWhiteSpace($Baseline)) {
-            $Baseline
-        } elseif ($existingOwner.Contains("baseline") -and -not [string]::IsNullOrWhiteSpace($existingOwner.baseline)) {
+        $detectedBaseline = if ($null -ne $existingOwner -and -not [string]::IsNullOrWhiteSpace($existingOwner.baseline)) {
+            if ($PSBoundParameters.ContainsKey("Baseline") -and -not [string]::IsNullOrWhiteSpace($Baseline) -and $Baseline.ToLowerInvariant() -ne $existingOwner.baseline.ToLowerInvariant()) {
+                throw "BASELINE_MUTATION_DETECTED: Specified baseline '$Baseline' does not match existing owner baseline '$($existingOwner.baseline)'."
+            }
             [string]$existingOwner.baseline
+        } elseif ($PSBoundParameters.ContainsKey("Baseline") -and -not [string]::IsNullOrWhiteSpace($Baseline)) {
+            $Baseline
         } else {
             Get-VcsBaselineRevision -StartPath $ResolvedSpecDirectory
         }
@@ -1151,7 +1166,7 @@ if (-not [string]::IsNullOrWhiteSpace($ResolvedSpecDirectory)) {
                 $effectiveTier = if (-not [string]::IsNullOrWhiteSpace($Tier)) { $Tier } else { "T2" }
                 $isoNow = $AcceptedAt.ToUniversalTime().ToString("o")
                 $utf8NoBomEnc = New-Object System.Text.UTF8Encoding($false)
-                $detectedBaseline = if ($ownerAfter.Contains("baseline") -and -not [string]::IsNullOrWhiteSpace($ownerAfter.baseline)) {
+                $detectedBaseline = if ($null -ne $ownerAfter -and -not [string]::IsNullOrWhiteSpace($ownerAfter.baseline)) {
                     [string]$ownerAfter.baseline
                 } else {
                     Get-VcsBaselineRevision -StartPath $ResolvedSpecDirectory

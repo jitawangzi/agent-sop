@@ -39,6 +39,10 @@ param(
     [string]$HighestSeverity,
     [string]$IssuesJson = "[]",
     [string]$NextPromptForDev = "",
+    [int]$ExpectedRound = 0,
+    [string]$ExpectedSubmittedAt = "",
+    [string]$ReviewerIdentity = "",
+    [switch]$StrictDutySeparation,
 
     [switch]$PassThru
 )
@@ -221,206 +225,287 @@ function ConvertTo-MailboxJson {
     return ($canonicalObj | ConvertTo-Json -Depth 100)
 }
 
+function Invoke-WithMailboxLock {
+    param(
+        [string]$MailboxPath,
+        [scriptblock]$Action
+    )
+    $lockPath = $MailboxPath + ".lock"
+    $lockDir = Split-Path -Parent $lockPath
+    if (-not [string]::IsNullOrWhiteSpace($lockDir) -and -not (Test-Path -LiteralPath $lockDir)) {
+        [System.IO.Directory]::CreateDirectory($lockDir) | Out-Null
+    }
+    $maxWaitSec = 10
+    $start = [DateTime]::UtcNow
+    $stream = $null
+    while (($([DateTime]::UtcNow) - $start).TotalSeconds -lt $maxWaitSec) {
+        try {
+            $stream = [System.IO.File]::Open(
+                $lockPath,
+                [System.IO.FileMode]::OpenOrCreate,
+                [System.IO.FileAccess]::ReadWrite,
+                [System.IO.FileShare]::None
+            )
+            break
+        } catch [System.IO.IOException] {
+            Start-Sleep -Milliseconds 50
+        }
+    }
+    if ($null -eq $stream) {
+        throw "MAILBOX_LOCK_TIMEOUT: Timed out waiting to acquire lock on '$lockPath'."
+    }
+    try {
+        & $Action
+    } finally {
+        $stream.Dispose()
+    }
+}
+
 $targetMailbox = Resolve-MailboxFilePath -CustomPath $MailboxPath -SpecDir $SpecDirectory -FeatureName $Feature
 
 switch ($Operation) {
     "Init" {
-        $effectiveFeature = if (-not [string]::IsNullOrWhiteSpace($Feature)) { $Feature } else { "DefaultTask" }
-        $now = [DateTime]::UtcNow.ToString("o")
+        Invoke-WithMailboxLock -MailboxPath $targetMailbox -Action {
+            $effectiveFeature = if (-not [string]::IsNullOrWhiteSpace($Feature)) { $Feature } else { "DefaultTask" }
+            $now = [DateTime]::UtcNow.ToString("o")
 
-        $mailboxObj = [ordered]@{
-            schemaVersion = "1.0"
-            feature = $effectiveFeature
-            round = 1
-            maxRounds = $MaxRounds
-            status = "INITIALIZED"
-            devAgent = $DevAgent
-            reviewerAgent = $ReviewerAgent
-            updatedAt = $now
-            currentDevSubmission = $null
-            currentReviewVerdict = $null
-            history = @()
+            $mailboxObj = [ordered]@{
+                schemaVersion = "1.0"
+                feature = $effectiveFeature
+                round = 1
+                maxRounds = $MaxRounds
+                status = "INITIALIZED"
+                devAgent = $DevAgent
+                reviewerAgent = $ReviewerAgent
+                updatedAt = $now
+                currentDevSubmission = $null
+                currentReviewVerdict = $null
+                history = @()
+            }
+
+            $jsonStr = ConvertTo-MailboxJson -MailboxObject $mailboxObj
+            Validate-MailboxSchema -Json $jsonStr
+            Write-AtomicUtf8File -FilePath $targetMailbox -Content $jsonStr
+
+            Write-Host "✅ Review Mailbox initialized for [$effectiveFeature] at: $targetMailbox" -ForegroundColor Green
+            if ($PassThru) { return $mailboxObj }
         }
-
-        $jsonStr = ConvertTo-MailboxJson -MailboxObject $mailboxObj
-        Validate-MailboxSchema -Json $jsonStr
-        Write-AtomicUtf8File -FilePath $targetMailbox -Content $jsonStr
-
-        Write-Host "✅ Review Mailbox initialized for [$effectiveFeature] at: $targetMailbox" -ForegroundColor Green
-        if ($PassThru) { return $mailboxObj }
     }
 
     "DevSubmit" {
-        if (-not (Test-Path -LiteralPath $targetMailbox)) {
-            throw "Review Mailbox not found at $targetMailbox. Please run Init first."
-        }
-
-        $rawJson = [System.IO.File]::ReadAllText($targetMailbox, [System.Text.Encoding]::UTF8)
-        $mailbox = ConvertFrom-Json $rawJson -Depth 100
-
-        if ($mailbox.status -ne "INITIALIZED" -and $mailbox.status -ne "WAITING_DEV") {
-            throw "Cannot submit dev changes when mailbox status is '$($mailbox.status)'. Expected INITIALIZED or WAITING_DEV."
-        }
-
-        if ([string]::IsNullOrWhiteSpace($Summary)) {
-            throw "Parameter -Summary is required for DevSubmit."
-        }
-
-        $gateStatus = $TestGateStatus
-        $testLog = $TestOutput
-
-        # Run verification command if requested
-        if (-not [string]::IsNullOrWhiteSpace($RunVerifyCommand)) {
-            Write-Host "⚙️ Running verification command: $RunVerifyCommand ..." -ForegroundColor Gray
-            $verifyOutput = & pwsh -NoProfile -Command $RunVerifyCommand 2>&1 | Out-String
-            if ($LASTEXITCODE -eq 0) {
-                $gateStatus = "PASS"
-                Write-Host "✅ Verification passed!" -ForegroundColor Green
-            } else {
-                $gateStatus = "FAIL"
-                Write-Host "❌ Verification failed!" -ForegroundColor Red
+        Invoke-WithMailboxLock -MailboxPath $targetMailbox -Action {
+            if (-not (Test-Path -LiteralPath $targetMailbox)) {
+                throw "Review Mailbox not found at $targetMailbox. Please run Init first."
             }
-            $testLog = $verifyOutput
-        } elseif ([string]::IsNullOrWhiteSpace($gateStatus)) {
-            $gateStatus = "SKIPPED"
-        }
 
-        # Resolve changed files if not provided
-        $files = if ($ChangedFiles -and $ChangedFiles.Count -gt 0) {
-            @($ChangedFiles)
-        } else {
-            try {
-                $gitStatus = git status --porcelain 2>$null
-                if ($gitStatus) {
-                    @($gitStatus | ForEach-Object { ($_ -split '\s+', 2)[-1].Trim() } | Where-Object { $_ -ne "" })
+            $rawJson = [System.IO.File]::ReadAllText($targetMailbox, [System.Text.Encoding]::UTF8)
+            $mailbox = ConvertFrom-Json $rawJson -Depth 100
+
+            if ($mailbox.status -ne "INITIALIZED" -and $mailbox.status -ne "WAITING_DEV") {
+                throw "Cannot submit dev changes when mailbox status is '$($mailbox.status)'. Expected INITIALIZED or WAITING_DEV."
+            }
+
+            if ([string]::IsNullOrWhiteSpace($Summary)) {
+                throw "Parameter -Summary is required for DevSubmit."
+            }
+
+            $gateStatus = $TestGateStatus
+            $testLog = $TestOutput
+
+            # Run verification command if requested
+            if (-not [string]::IsNullOrWhiteSpace($RunVerifyCommand)) {
+                Write-Host "⚙️ Running verification command: $RunVerifyCommand ..." -ForegroundColor Gray
+                $verifyOutput = & pwsh -NoProfile -Command $RunVerifyCommand 2>&1 | Out-String
+                if ($LASTEXITCODE -eq 0) {
+                    $gateStatus = "PASS"
+                    Write-Host "✅ Verification passed!" -ForegroundColor Green
                 } else {
+                    $gateStatus = "FAIL"
+                    Write-Host "❌ Verification failed!" -ForegroundColor Red
+                }
+                $testLog = $verifyOutput
+            } elseif ([string]::IsNullOrWhiteSpace($gateStatus)) {
+                $gateStatus = "SKIPPED"
+            }
+
+            # Resolve changed files if not provided
+            $files = if ($ChangedFiles -and $ChangedFiles.Count -gt 0) {
+                @($ChangedFiles)
+            } else {
+                try {
+                    $gitStatus = git status --porcelain 2>$null
+                    if ($gitStatus) {
+                        @($gitStatus | ForEach-Object { ($_ -split '\s+', 2)[-1].Trim() } | Where-Object { $_ -ne "" })
+                    } else {
+                        @()
+                    }
+                } catch {
                     @()
                 }
-            } catch {
-                @()
             }
+
+            # Generate Git Diff Digest
+            $diffDigest = try {
+                $diffStat = git diff --stat 2>$null | Out-String
+                if ([string]::IsNullOrWhiteSpace($diffStat)) { "No working directory git diff detected" } else { $diffStat.Trim() }
+            } catch {
+                "Git diff unavailable"
+            }
+
+            $now = [DateTime]::UtcNow.ToString("o")
+
+            $submission = [ordered]@{
+                submittedAt = $now
+                summary = $Summary
+                changedFiles = @($files)
+                testGateStatus = $gateStatus
+                testOutput = $testLog
+                gitDiffDigest = $diffDigest
+            }
+
+            $mailbox.currentDevSubmission = $submission
+            $mailbox.status = "WAITING_REVIEW"
+            $mailbox.updatedAt = $now
+
+            $jsonStr = ConvertTo-MailboxJson -MailboxObject $mailbox
+            Validate-MailboxSchema -Json $jsonStr
+            Write-AtomicUtf8File -FilePath $targetMailbox -Content $jsonStr
+
+            Write-Host "✅ Dev submission recorded for round $($mailbox.round). Status transitioned to WAITING_REVIEW." -ForegroundColor Green
+            if ($PassThru) { return $mailbox }
         }
-
-        # Generate Git Diff Digest
-        $diffDigest = try {
-            $diffStat = git diff --stat 2>$null | Out-String
-            if ([string]::IsNullOrWhiteSpace($diffStat)) { "No working directory git diff detected" } else { $diffStat.Trim() }
-        } catch {
-            "Git diff unavailable"
-        }
-
-        $now = [DateTime]::UtcNow.ToString("o")
-
-        $submission = [ordered]@{
-            submittedAt = $now
-            summary = $Summary
-            changedFiles = @($files)
-            testGateStatus = $gateStatus
-            testOutput = $testLog
-            gitDiffDigest = $diffDigest
-        }
-
-        $mailbox.currentDevSubmission = $submission
-        $mailbox.status = "WAITING_REVIEW"
-        $mailbox.updatedAt = $now
-
-        $jsonStr = ConvertTo-MailboxJson -MailboxObject $mailbox
-        Validate-MailboxSchema -Json $jsonStr
-        Write-AtomicUtf8File -FilePath $targetMailbox -Content $jsonStr
-
-        Write-Host "✅ Dev submission recorded for round $($mailbox.round). Status transitioned to WAITING_REVIEW." -ForegroundColor Green
-        if ($PassThru) { return $mailbox }
     }
 
     "ReviewSubmit" {
-        if (-not (Test-Path -LiteralPath $targetMailbox)) {
-            throw "Review Mailbox not found at $targetMailbox."
-        }
+        Invoke-WithMailboxLock -MailboxPath $targetMailbox -Action {
+            if (-not (Test-Path -LiteralPath $targetMailbox)) {
+                throw "Review Mailbox not found at $targetMailbox."
+            }
 
-        $rawJson = [System.IO.File]::ReadAllText($targetMailbox, [System.Text.Encoding]::UTF8)
-        $mailbox = ConvertFrom-Json $rawJson -Depth 100
+            $rawJson = [System.IO.File]::ReadAllText($targetMailbox, [System.Text.Encoding]::UTF8)
+            $mailbox = ConvertFrom-Json $rawJson -Depth 100
 
-        if ($mailbox.status -ne "WAITING_REVIEW") {
-            throw "Cannot submit review when mailbox status is '$($mailbox.status)'. Expected WAITING_REVIEW."
-        }
+            if ($mailbox.status -ne "WAITING_REVIEW") {
+                throw "Cannot submit review when mailbox status is '$($mailbox.status)'. Expected WAITING_REVIEW."
+            }
 
-        if ([string]::IsNullOrWhiteSpace($Verdict)) {
-            throw "Parameter -Verdict is required for ReviewSubmit."
-        }
-        if ([string]::IsNullOrWhiteSpace($Summary)) {
-            throw "Parameter -Summary is required for ReviewSubmit."
-        }
+            # CAS Check 1: Expected Round
+            if ($ExpectedRound -gt 0 -and [int]$mailbox.round -ne $ExpectedRound) {
+                throw "MAILBOX_CAS_CONFLICT: Expected round $ExpectedRound but mailbox is currently at round $($mailbox.round)."
+            }
 
-        $parsedIssues = @()
-        if (-not [string]::IsNullOrWhiteSpace($IssuesJson)) {
-            try {
-                $parsed = ConvertFrom-Json $IssuesJson -Depth 100
-                if ($parsed -is [System.Collections.IEnumerable] -and $parsed -isnot [string]) {
-                    $parsedIssues = @($parsed)
-                } else {
-                    $parsedIssues = @($parsed)
+            # CAS Check 2: Expected SubmittedAt
+            if (-not [string]::IsNullOrWhiteSpace($ExpectedSubmittedAt) -and $mailbox.currentDevSubmission) {
+                $actualSubStr = if ($mailbox.currentDevSubmission.submittedAt -is [System.DateTime]) { $mailbox.currentDevSubmission.submittedAt.ToString("o") } else { [string]$mailbox.currentDevSubmission.submittedAt }
+                $match = $false
+                try {
+                    $dtExpected = [DateTimeOffset]::Parse($ExpectedSubmittedAt)
+                    $dtActual = [DateTimeOffset]::Parse($actualSubStr)
+                    if ([Math]::Abs(($dtExpected - $dtActual).TotalMilliseconds) -le 1000.0) {
+                        $match = $true
+                    }
+                } catch {}
+                if (-not $match -and $actualSubStr -ne $ExpectedSubmittedAt) {
+                    throw "MAILBOX_CAS_CONFLICT: Expected submission at '$ExpectedSubmittedAt' but found '$actualSubStr'."
                 }
-            } catch {
-                throw "Failed to parse -IssuesJson as valid JSON: $_"
             }
-        }
 
-        $effectiveSeverity = if (-not [string]::IsNullOrWhiteSpace($HighestSeverity)) {
-            $HighestSeverity
-        } else {
-            if ($Verdict -eq "APPROVED") { "NONE" } else { "MEDIUM" }
-        }
-
-        $now = [DateTime]::UtcNow.ToString("o")
-
-        $verdictObj = [ordered]@{
-            reviewedAt = $now
-            verdict = $Verdict
-            highestSeverity = $effectiveSeverity
-            summary = $Summary
-            issues = @($parsedIssues)
-            nextPromptForDev = $NextPromptForDev
-        }
-
-        $mailbox.currentReviewVerdict = $verdictObj
-        $mailbox.updatedAt = $now
-
-        # Archive round into history
-        $roundRecord = [ordered]@{
-            round = [int]$mailbox.round
-            devSubmission = $mailbox.currentDevSubmission
-            reviewVerdict = $verdictObj
-        }
-        $newHistory = [System.Collections.Generic.List[object]]::new()
-        if ($mailbox.history) {
-            foreach ($item in $mailbox.history) {
-                $newHistory.Add($item)
+            # Duty Separation Check
+            if ($StrictDutySeparation -or -not [string]::IsNullOrWhiteSpace($ReviewerIdentity)) {
+                $effDev = [string]$mailbox.devAgent
+                $effRev = if (-not [string]::IsNullOrWhiteSpace($ReviewerIdentity)) { $ReviewerIdentity } else { $ReviewerAgent }
+                if (-not [string]::IsNullOrWhiteSpace($effDev) -and -not [string]::IsNullOrWhiteSpace($effRev) -and $effDev.ToLowerInvariant() -eq $effRev.ToLowerInvariant()) {
+                    throw "SEPARATION_OF_DUTIES_VIOLATION: Developer agent '$effDev' cannot review their own submission."
+                }
             }
-        }
-        $newHistory.Add($roundRecord)
-        $mailbox.history = $newHistory.ToArray()
 
-        if ($Verdict -eq "APPROVED") {
-            $mailbox.status = "APPROVED"
-            Write-Host "🎉 Review VERDICT is APPROVED! Loop successfully completed at round $($mailbox.round)." -ForegroundColor Green
-        } else {
-            if ($mailbox.round -ge $mailbox.maxRounds) {
-                $mailbox.status = "REJECTED_MAX_ROUNDS"
-                Write-Host "🛑 Review VERDICT is REJECTED and max rounds ($($mailbox.maxRounds)) reached. Status set to REJECTED_MAX_ROUNDS." -ForegroundColor Red
+            if ([string]::IsNullOrWhiteSpace($Verdict)) {
+                throw "Parameter -Verdict is required for ReviewSubmit."
+            }
+            if ([string]::IsNullOrWhiteSpace($Summary)) {
+                throw "Parameter -Summary is required for ReviewSubmit."
+            }
+
+            # Test gate validation for APPROVED verdict
+            if ($Verdict -eq "APPROVED") {
+                $devSub = $mailbox.currentDevSubmission
+                if ($null -eq $devSub -or $devSub.testGateStatus -ne "PASS") {
+                    $currStatus = if ($devSub) { [string]$devSub.testGateStatus } else { "NONE" }
+                    throw "INVALID_REVIEW_VERDICT: Cannot approve submission when testGateStatus is '$currStatus' (must be PASS)."
+                }
+            }
+
+            $parsedIssues = @()
+            if (-not [string]::IsNullOrWhiteSpace($IssuesJson)) {
+                try {
+                    $parsed = ConvertFrom-Json $IssuesJson -Depth 100
+                    if ($parsed -is [System.Collections.IEnumerable] -and $parsed -isnot [string]) {
+                        $parsedIssues = @($parsed)
+                    } else {
+                        $parsedIssues = @($parsed)
+                    }
+                } catch {
+                    throw "Failed to parse -IssuesJson as valid JSON: $_"
+                }
+            }
+
+            $effectiveSeverity = if (-not [string]::IsNullOrWhiteSpace($HighestSeverity)) {
+                $HighestSeverity
             } else {
-                $mailbox.round = [int]$mailbox.round + 1
-                $mailbox.status = "WAITING_DEV"
-                $mailbox.currentDevSubmission = $null
-                $mailbox.currentReviewVerdict = $null
-                Write-Host "⚠️ Review VERDICT is REJECTED. Moving to round $($mailbox.round). Status set to WAITING_DEV." -ForegroundColor Yellow
+                if ($Verdict -eq "APPROVED") { "NONE" } else { "MEDIUM" }
             }
+
+            $now = [DateTime]::UtcNow.ToString("o")
+
+            $verdictObj = [ordered]@{
+                reviewedAt = $now
+                verdict = $Verdict
+                highestSeverity = $effectiveSeverity
+                summary = $Summary
+                issues = @($parsedIssues)
+                nextPromptForDev = $NextPromptForDev
+            }
+
+            $mailbox.currentReviewVerdict = $verdictObj
+            $mailbox.updatedAt = $now
+
+            # Archive round into history
+            $roundRecord = [ordered]@{
+                round = [int]$mailbox.round
+                devSubmission = $mailbox.currentDevSubmission
+                reviewVerdict = $verdictObj
+            }
+            $newHistory = [System.Collections.Generic.List[object]]::new()
+            if ($mailbox.history) {
+                foreach ($item in $mailbox.history) {
+                    $newHistory.Add($item)
+                }
+            }
+            $newHistory.Add($roundRecord)
+            $mailbox.history = $newHistory.ToArray()
+
+            if ($Verdict -eq "APPROVED") {
+                $mailbox.status = "APPROVED"
+                Write-Host "🎉 Review VERDICT is APPROVED! Loop successfully completed at round $($mailbox.round)." -ForegroundColor Green
+            } else {
+                if ($mailbox.round -ge $mailbox.maxRounds) {
+                    $mailbox.status = "REJECTED_MAX_ROUNDS"
+                    Write-Host "🛑 Review VERDICT is REJECTED and max rounds ($($mailbox.maxRounds)) reached. Status set to REJECTED_MAX_ROUNDS." -ForegroundColor Red
+                } else {
+                    $mailbox.round = [int]$mailbox.round + 1
+                    $mailbox.status = "WAITING_DEV"
+                    $mailbox.currentDevSubmission = $null
+                    $mailbox.currentReviewVerdict = $null
+                    Write-Host "⚠️ Review VERDICT is REJECTED. Moving to round $($mailbox.round). Status set to WAITING_DEV." -ForegroundColor Yellow
+                }
+            }
+
+            $jsonStr = ConvertTo-MailboxJson -MailboxObject $mailbox
+            Validate-MailboxSchema -Json $jsonStr
+            Write-AtomicUtf8File -FilePath $targetMailbox -Content $jsonStr
+
+            if ($PassThru) { return $mailbox }
         }
-
-        $jsonStr = ConvertTo-MailboxJson -MailboxObject $mailbox
-        Validate-MailboxSchema -Json $jsonStr
-        Write-AtomicUtf8File -FilePath $targetMailbox -Content $jsonStr
-
-        if ($PassThru) { return $mailbox }
     }
 
     "GetStatus" {
@@ -455,11 +540,13 @@ switch ($Operation) {
     }
 
     "Reset" {
-        if (Test-Path -LiteralPath $targetMailbox) {
-            Remove-Item -LiteralPath $targetMailbox -Force
-            Write-Host "🧹 Review Mailbox removed at: $targetMailbox" -ForegroundColor Yellow
-        } else {
-            Write-Host "Review Mailbox was not present at: $targetMailbox" -ForegroundColor Gray
+        Invoke-WithMailboxLock -MailboxPath $targetMailbox -Action {
+            if (Test-Path -LiteralPath $targetMailbox) {
+                Remove-Item -LiteralPath $targetMailbox -Force
+                Write-Host "🧹 Review Mailbox removed at: $targetMailbox" -ForegroundColor Yellow
+            } else {
+                Write-Host "Review Mailbox was not present at: $targetMailbox" -ForegroundColor Gray
+            }
         }
     }
 }

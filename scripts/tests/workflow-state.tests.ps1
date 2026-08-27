@@ -598,6 +598,23 @@ function Write-TestCoverage {
     if ([string]::IsNullOrWhiteSpace($RequirementHash)) {
         $RequirementHash = (Get-TestArtifactHash -Path $RequirementPath)
     }
+    if (-not [string]::IsNullOrWhiteSpace($AutomationCarrier)) {
+        $carrierRel = ($AutomationCarrier -replace '#.*$', '').Trim()
+        if (-not [string]::IsNullOrWhiteSpace($carrierRel)) {
+            $carrierFull = if ([System.IO.Path]::IsPathRooted($carrierRel)) { $carrierRel } else { Join-Path $TestRoot $carrierRel }
+            if (-not (Test-Path -LiteralPath $carrierFull)) {
+                $carrierDir = Split-Path -Parent $carrierFull
+                if ($carrierDir -and -not (Test-Path -LiteralPath $carrierDir)) {
+                    [System.IO.Directory]::CreateDirectory($carrierDir) | Out-Null
+                }
+                if ($carrierFull -match '\.java$') {
+                    [System.IO.File]::WriteAllText($carrierFull, "package test; import org.junit.Test; public class ExampleFeatureTest { @Test public void testCore() {} }", $Utf8NoBom)
+                } else {
+                    [System.IO.File]::WriteAllText($carrierFull, "# dummy carrier", $Utf8NoBom)
+                }
+            }
+        }
+    }
     $coverage = [ordered]@{
         schemaVersion = "1.0"
         feature = "Example"
@@ -647,16 +664,18 @@ function Write-TestCoverage {
             }
         )
         riskExemptions = @()
-        executionEvidence = [ordered]@{
-            command = "pwsh test"
-            exitCode = 0
-            executedAt = [DateTimeOffset]::UtcNow.AddMinutes(-5).ToString("yyyy-MM-ddTHH:mm:ssZ")
-            sourceCommitSha = "abcdef1234567890"
-            workingTreeDigest = ("0" * 64)
-            testCount = 1
-            passedCount = 1
-            failedCount = 0
-        }
+    }
+    $actualWsDigest = & $ScriptPath -Operation AssessRisk -Path (Split-Path -Parent $CoveragePath) 2>&1 | ConvertFrom-Json
+    $covDigest = if ($actualWsDigest -and $actualWsDigest.changeSetDigest) { [string]$actualWsDigest.changeSetDigest } else { ("0" * 64) }
+    $coverage["executionEvidence"] = [ordered]@{
+        command = "pwsh test"
+        exitCode = 0
+        executedAt = [DateTimeOffset]::UtcNow.AddMinutes(-5).ToString("yyyy-MM-ddTHH:mm:ssZ")
+        sourceCommitSha = "abcdef1234567890"
+        workingTreeDigest = $covDigest
+        testCount = 1
+        passedCount = 1
+        failedCount = 0
     }
     Write-TestJson -Path $CoveragePath -Value $coverage
 }
@@ -671,6 +690,8 @@ function Write-NoRuntimeCoverageFixture {
     $designPath = Join-Path $SpecDirectory "06_design_contract.md"
     $testPlanPath = Join-Path $SpecDirectory "05_test_plan.md"
     $coveragePath = Join-Path $SpecDirectory "05_test_coverage.json"
+    $actualWsDigest = & $ScriptPath -Operation AssessRisk -Path $SpecDirectory 2>&1 | ConvertFrom-Json
+    $covDigest = if ($actualWsDigest -and $actualWsDigest.changeSetDigest) { [string]$actualWsDigest.changeSetDigest } else { ("0" * 64) }
     $coverage = [ordered]@{
         schemaVersion = "1.0"
         feature = $Feature
@@ -731,7 +752,7 @@ function Write-NoRuntimeCoverageFixture {
             exitCode = 0
             executedAt = [DateTimeOffset]::UtcNow.AddMinutes(-5).ToString("yyyy-MM-ddTHH:mm:ssZ")
             sourceCommitSha = "abcdef1234567890"
-            workingTreeDigest = ("0" * 64)
+            workingTreeDigest = $covDigest
             testCount = 1
             passedCount = 1
             failedCount = 0
@@ -841,7 +862,7 @@ function Assert-NoRuntimeCoverageApprovalState {
         $t2SpecDir = Join-Path $TestRoot "specs/features/$t2TestFeature"
         [System.IO.Directory]::CreateDirectory($t2SpecDir) | Out-Null
         $t2FeatState = Join-Path $t2SpecDir "feature-state.json"
-        [System.IO.File]::WriteAllText($t2FeatState, '{"schemaVersion":"1.0","feature":"' + $t2TestFeature + '","tier":"T2","phase":"IMPLEMENTING","updatedAt":"2026-08-23T00:00:00Z"}', $Utf8NoBom)
+        [System.IO.File]::WriteAllText($t2FeatState, '{"schemaVersion":"1.0","feature":"' + $t2TestFeature + '","tier":"T2","baseline":"0","phase":"IMPLEMENTING","updatedAt":"2026-08-23T00:00:00Z"}', $Utf8NoBom)
         $t2DummyPath = Join-Path $t2SpecDir "workflow-state.json"
         $verifyT2 = & $ScriptPath -Operation VerifyCompletion -Path $t2DummyPath 2>&1
         $verifyT2Out = $verifyT2 | Out-String
@@ -853,7 +874,7 @@ function Assert-NoRuntimeCoverageApprovalState {
         $ftSpecDir = Join-Path $TestRoot "specs/features/$ftTestFeature"
         [System.IO.Directory]::CreateDirectory($ftSpecDir) | Out-Null
         $ftFeatState = Join-Path $ftSpecDir "feature-state.json"
-        [System.IO.File]::WriteAllText($ftFeatState, '{"schemaVersion":"1.0","feature":"' + $ftTestFeature + '","tier":"FAST_TRACK","phase":"IMPLEMENTING","updatedAt":"2026-08-23T00:00:00Z"}', $Utf8NoBom)
+        [System.IO.File]::WriteAllText($ftFeatState, '{"schemaVersion":"1.0","feature":"' + $ftTestFeature + '","tier":"FAST_TRACK","baseline":"0","phase":"IMPLEMENTING","updatedAt":"2026-08-23T00:00:00Z"}', $Utf8NoBom)
         $verifyFt = & $ScriptPath -Operation VerifyCompletion -Path (Join-Path $ftSpecDir "workflow-state.json") 2>&1
         $verifyFtOut = $verifyFt | Out-String
         if ($LASTEXITCODE -ne 0) { throw "VerifyCompletion must pass on FAST_TRACK. Output: $verifyFtOut" }
@@ -863,7 +884,7 @@ function Assert-NoRuntimeCoverageApprovalState {
         $t1SpecDir = Join-Path $TestRoot "specs/features/$t1TestFeature"
         [System.IO.Directory]::CreateDirectory($t1SpecDir) | Out-Null
         $t1FeatState = Join-Path $t1SpecDir "feature-state.json"
-        [System.IO.File]::WriteAllText($t1FeatState, '{"schemaVersion":"1.0","feature":"' + $t1TestFeature + '","tier":"T1","phase":"IMPLEMENTING","updatedAt":"2026-08-23T00:00:00Z"}', $Utf8NoBom)
+        [System.IO.File]::WriteAllText($t1FeatState, '{"schemaVersion":"1.0","feature":"' + $t1TestFeature + '","tier":"T1","baseline":"0","phase":"IMPLEMENTING","updatedAt":"2026-08-23T00:00:00Z"}', $Utf8NoBom)
         $verifyT1 = & $ScriptPath -Operation VerifyCompletion -Path (Join-Path $t1SpecDir "workflow-state.json") 2>&1
         $verifyT1Out = $verifyT1 | Out-String
         if ($LASTEXITCODE -ne 0) { throw "VerifyCompletion must pass on T1. Output: $verifyT1Out" }
@@ -875,7 +896,7 @@ function Assert-NoRuntimeCoverageApprovalState {
         [System.IO.Directory]::CreateDirectory($t3EscalateSpec) | Out-Null
         [System.IO.File]::WriteAllText((Join-Path $t3EscalateSpec "01_server_rules.md"), "# Rules", $Utf8NoBom)
         $t3EscalateFeatState = Join-Path $t3EscalateSpec "feature-state.json"
-        [System.IO.File]::WriteAllText($t3EscalateFeatState, '{"schemaVersion":"1.0","feature":"' + $t3EscalateFeature + '","tier":"T2","phase":"IMPLEMENTING","updatedAt":"2026-08-23T00:00:00Z"}', $Utf8NoBom)
+        [System.IO.File]::WriteAllText($t3EscalateFeatState, '{"schemaVersion":"1.0","feature":"' + $t3EscalateFeature + '","tier":"T2","baseline":"0","phase":"IMPLEMENTING","updatedAt":"2026-08-23T00:00:00Z"}', $Utf8NoBom)
         $t3EscalateVerify = & $ScriptPath -Operation VerifyCompletion -Path (Join-Path $t3EscalateSpec "workflow-state.json") 2>&1
         $t3EscalateVerifyOut = $t3EscalateVerify | Out-String
         if ($LASTEXITCODE -eq 0) { throw "VerifyCompletion must auto-escalate to T3 and fail when 01_server_rules.md exists but gates missing. Output: $t3EscalateVerifyOut" }
@@ -1134,6 +1155,7 @@ function Assert-ReadEntrypointsRecoverTransactions {
         [string]$CoverageStatePath
     )
 
+    Write-TestCoverage
     & $ScriptPath -Operation ValidateApproval -Path $ApprovalStatePath |
         Out-Null
     & $ScriptPath -Operation ValidateRuntime -Path $RuntimeStatePath |
@@ -2053,7 +2075,8 @@ try {
     $syncDesSha = Get-TestArtifactHash -Path $syncDes
     $syncAppState = [ordered]@{
         schemaVersion = "1.0"
-        feature = $syncFeature
+        feature = "SyncCoverageTestFeature"
+        baseline = "0"
         requirement = @{ status = "APPROVED"; sha256 = $syncReqSha; approvedBy = "tester"; approvedAt = "2026-08-23T12:00:00Z"; artifact = "01_server_rules.md" }
         design = @{ status = "APPROVED"; sha256 = $syncDesSha; approvedBy = "tester"; approvedAt = "2026-08-23T12:00:00Z"; artifact = "06_design_contract.md" }
     }
@@ -2088,16 +2111,15 @@ try {
 
     # Test automatic phase derivation for PLANNING phase
     $syncFeatState = Join-Path $syncSpec "feature-state.json"
-    [System.IO.File]::WriteAllText($syncFeatState, '{"schemaVersion":"1.0","feature":"SyncCoverageTestFeature","tier":"T3","phase":"PLANNING","updatedAt":"2026-08-27T00:00:00Z"}', $Utf8NoBom)
+    [System.IO.File]::WriteAllText($syncFeatState, '{"schemaVersion":"1.0","feature":"SyncCoverageTestFeature","tier":"T3","baseline":"0","phase":"PLANNING","updatedAt":"2026-08-27T00:00:00Z"}', $Utf8NoBom)
     $autoPlanValidation = & $ScriptPath -Operation ValidateTestCoverage -Path $syncCovPath
     if ($autoPlanValidation -notcontains "VALID") {
         throw "ValidateTestCoverage with PLANNING phase must auto-derive PLAN mode and output VALID, got: $($autoPlanValidation -join '; ')"
     }
 
-    # In VERIFY phase, missing carrier files on disk for P0/P1 must be ERROR and result is INVALID_PLACEHOLDERS
-    $verifyValidation = & $ScriptPath -Operation ValidateTestCoverage -Path $syncCovPath -Phase VERIFY
-    if ($verifyValidation -notcontains "INVALID_PLACEHOLDERS") {
-        throw "ValidateTestCoverage -Phase VERIFY must output INVALID_PLACEHOLDERS when carriers are missing, got: $($verifyValidation -join '; ')"
+    # In VERIFY phase, missing carrier files on disk for P0/P1 must be ERROR and throw VALIDATE_TEST_COVERAGE_FAILED
+    Assert-Fails -Message "ValidateTestCoverage -Phase VERIFY must fail when carriers are missing or placeholders remain" -Action {
+        & $ScriptPath -Operation ValidateTestCoverage -Path $syncCovPath -Phase VERIFY
     }
 
     # In VERIFY phase with real carrier file in workspace root test/
@@ -2138,7 +2160,7 @@ try {
     $vcsSpecDir = Join-Path $vcsTestDir ".ai-workspace/specs/features/VcsTestFeature"
     [System.IO.Directory]::CreateDirectory($vcsSpecDir) | Out-Null
     $vcsFeatState = Join-Path $vcsSpecDir "feature-state.json"
-    [System.IO.File]::WriteAllText($vcsFeatState, '{"schemaVersion":"1.0","feature":"VcsTestFeature","tier":"T2","phase":"IMPLEMENTING"}', $Utf8NoBom)
+    [System.IO.File]::WriteAllText($vcsFeatState, '{"schemaVersion":"1.0","feature":"VcsTestFeature","tier":"T2","baseline":"0","phase":"IMPLEMENTING"}', $Utf8NoBom)
     
     # Create untracked CSV file in config/
     $vcsConfigDir = Join-Path $vcsTestDir "config"
@@ -2259,7 +2281,7 @@ try {
     [System.IO.Directory]::CreateDirectory($impactSpecDir) | Out-Null
     $impactPath = Join-Path $impactSpecDir "04_change_impact.json"
     
-    $assessObj = (& $ScriptPath -Operation AssessRisk -Path $impactSpecDir | ConvertFrom-Json)
+    $assessObj = (& $ScriptPath -Operation AssessRisk -Path $impactSpecDir -Baseline $impactBaseSha | ConvertFrom-Json)
     $expectedDigest = $assessObj.changeSetDigest
     $impactJson = @"
 {
@@ -2397,8 +2419,7 @@ try {
 }
 "@
     [System.IO.File]::WriteAllText($cmCovPath, $cmCovJson, $Utf8NoBom)
-    $cmValidation = & $ScriptPath -Operation ValidateTestCoverage -Path $cmCovPath -Phase VERIFY 2>&1
-    $cmValidationStr = $cmValidation | Out-String
+    $cmValidationStr = try { & $ScriptPath -Operation ValidateTestCoverage -Path $cmCovPath -Phase VERIFY 2>&1 | Out-String } catch { $_.Exception.ToString() }
     if ($cmValidationStr -notmatch "does not exist in") {
         throw "ValidateTestCoverage must report error when carrier method does not exist in .java file. Output: $cmValidationStr"
     }
@@ -2406,8 +2427,7 @@ try {
     # Test rejection of Java helper methods without @Test annotation
     $cmHelperCov = $cmCovJson.Replace("nonExistentMethod", "helperMethod")
     [System.IO.File]::WriteAllText($cmCovPath, $cmHelperCov, $Utf8NoBom)
-    $cmHelperVal = & $ScriptPath -Operation ValidateTestCoverage -Path $cmCovPath -Phase VERIFY 2>&1
-    $cmHelperStr = $cmHelperVal | Out-String
+    $cmHelperStr = try { & $ScriptPath -Operation ValidateTestCoverage -Path $cmCovPath -Phase VERIFY 2>&1 | Out-String } catch { $_.Exception.ToString() }
     if ($cmHelperStr -notmatch "is not annotated with @Test") {
         throw "ValidateTestCoverage must reject helper methods without @Test. Output: $cmHelperStr"
     }
@@ -2415,8 +2435,7 @@ try {
     # Test rejection of empty #method in carrier
     $cmEmptyMethodCov = $cmCovJson.Replace("test/CarrierTest.java#nonExistentMethod", "test/CarrierTest.java#")
     [System.IO.File]::WriteAllText($cmCovPath, $cmEmptyMethodCov, $Utf8NoBom)
-    $cmEmptyVal = & $ScriptPath -Operation ValidateTestCoverage -Path $cmCovPath -Phase VERIFY 2>&1
-    $cmEmptyStr = $cmEmptyVal | Out-String
+    $cmEmptyStr = try { & $ScriptPath -Operation ValidateTestCoverage -Path $cmCovPath -Phase VERIFY 2>&1 | Out-String } catch { $_.Exception.ToString() }
     if ($cmEmptyStr -notmatch "has empty method name after") {
         throw "ValidateTestCoverage must reject carrier with empty method name after '#'. Output: $cmEmptyStr"
     }
@@ -2424,8 +2443,7 @@ try {
     # Test executionEvidence count mismatch rejection
     $cmMismatchCov = $cmCovJson.Replace('"passedCount": 1', '"passedCount": 2') # passed 2 + failed 0 != testCount 1
     [System.IO.File]::WriteAllText($cmCovPath, $cmMismatchCov, $Utf8NoBom)
-    $cmMismatchVal = & $ScriptPath -Operation ValidateTestCoverage -Path $cmCovPath -Phase VERIFY 2>&1
-    $cmMismatchStr = $cmMismatchVal | Out-String
+    $cmMismatchStr = try { & $ScriptPath -Operation ValidateTestCoverage -Path $cmCovPath -Phase VERIFY 2>&1 | Out-String } catch { $_.Exception.ToString() }
     if ($cmMismatchStr -notmatch "count mismatch") {
         throw "ValidateTestCoverage must reject executionEvidence count mismatch. Output: $cmMismatchStr"
     }
@@ -2440,8 +2458,7 @@ try {
     # Test executionEvidence future timestamp rejection
     $cmFutureDateCov = $cmCovJson.Replace("`"executedAt`": `"$dynamicRecent`"", '"executedAt": "2099-01-01T00:00:00Z"')
     [System.IO.File]::WriteAllText($cmCovPath, $cmFutureDateCov, $Utf8NoBom)
-    $cmFutureVal = & $ScriptPath -Operation ValidateTestCoverage -Path $cmCovPath -Phase VERIFY 2>&1
-    $cmFutureStr = $cmFutureVal | Out-String
+    $cmFutureStr = try { & $ScriptPath -Operation ValidateTestCoverage -Path $cmCovPath -Phase VERIFY 2>&1 | Out-String } catch { $_.Exception.ToString() }
     if ($cmFutureStr -notmatch "is in the future") {
         throw "ValidateTestCoverage must reject future executionEvidence timestamp. Output: $cmFutureStr"
     }
@@ -2458,8 +2475,7 @@ try {
     [System.IO.File]::WriteAllText($xyzTestFile, "some dummy text", $Utf8NoBom)
     $xyzHelperCov = $cmCovJson.Replace("test/CarrierTest.java#nonExistentMethod", ($xyzTestFile.Replace("\", "/") + "#someMethod"))
     [System.IO.File]::WriteAllText($cmCovPath, $xyzHelperCov, $Utf8NoBom)
-    $xyzVal = & $ScriptPath -Operation ValidateTestCoverage -Path $cmCovPath -Phase VERIFY 2>&1
-    $xyzStr = $xyzVal | Out-String
+    $xyzStr = try { & $ScriptPath -Operation ValidateTestCoverage -Path $cmCovPath -Phase VERIFY 2>&1 | Out-String } catch { $_.Exception.ToString() }
     if ($xyzStr -notmatch "unsupported on file extension '\.xyz'") {
         throw "ValidateTestCoverage must reject carrier method on unsupported file extension. Output: $xyzStr"
     }
@@ -2468,10 +2484,19 @@ try {
     $ftTestDir = Join-Path $TestRoot "ft_src_test"
     [System.IO.Directory]::CreateDirectory($ftTestDir) | Out-Null
     & git -C $ftTestDir init --quiet
+    & git -C $ftTestDir config user.name "Tester"
+    & git -C $ftTestDir config user.email "tester@test.local"
+    $ftDummy = Join-Path $ftTestDir "dummy.txt"
+    [System.IO.File]::WriteAllText($ftDummy, "dummy", $Utf8NoBom)
+    & git -C $ftTestDir add .
+    & git -C $ftTestDir commit -m "init" --quiet
+    $ftBaseSha = (& git -C $ftTestDir rev-parse HEAD | Out-String).Trim()
+
     $ftSpecDir = Join-Path $ftTestDir ".ai-workspace/specs/features/FtSrcFeature"
     [System.IO.Directory]::CreateDirectory($ftSpecDir) | Out-Null
     $ftFeatState = Join-Path $ftSpecDir "feature-state.json"
-    [System.IO.File]::WriteAllText($ftFeatState, '{"schemaVersion":"1.0","feature":"FtSrcFeature","tier":"FAST_TRACK","phase":"DONE","updatedAt":"' + $dynamicRecent + '"}', $Utf8NoBom)
+    $ftFeatStateContent = '{"schemaVersion":"1.0","feature":"FtSrcFeature","tier":"FAST_TRACK","phase":"DONE","baseline":"' + $ftBaseSha + '","updatedAt":"' + $dynamicRecent + '"}'
+    [System.IO.File]::WriteAllText($ftFeatState, $ftFeatStateContent, $Utf8NoBom)
     $ftSrcFile = Join-Path $ftTestDir "src/com/game/Main.java"
     [System.IO.Directory]::CreateDirectory((Split-Path -Parent $ftSrcFile)) | Out-Null
     [System.IO.File]::WriteAllText($ftSrcFile, "package com.game; public class Main {}", $Utf8NoBom)
@@ -2511,8 +2536,7 @@ try {
     [System.IO.File]::WriteAllText($pyTestFile, "def helper_calc():`n    return 42`n`ndef test_real():`n    assert helper_calc() == 42`n", $Utf8NoBom)
     $pyHelperCov = $cmCovJson.Replace("test/CarrierTest.java#nonExistentMethod", ($pyTestFile.Replace("\", "/") + "#helper_calc"))
     [System.IO.File]::WriteAllText($cmCovPath, $pyHelperCov, $Utf8NoBom)
-    $pyVal = & $ScriptPath -Operation ValidateTestCoverage -Path $cmCovPath -Phase VERIFY 2>&1
-    $pyStr = $pyVal | Out-String
+    $pyStr = try { & $ScriptPath -Operation ValidateTestCoverage -Path $cmCovPath -Phase VERIFY 2>&1 | Out-String } catch { $_.Exception.ToString() }
     if ($pyStr -notmatch "is not a test \(must start with 'test_'") {
         throw "ValidateTestCoverage must reject Python helper function carrier. Output: $pyStr"
     }
@@ -2522,8 +2546,7 @@ try {
     [System.IO.File]::WriteAllText($goTestFile, "package demo`nfunc HelperFunc() {}`nfunc TestReal(t *testing.T) {}`n", $Utf8NoBom)
     $goHelperCov = $cmCovJson.Replace("test/CarrierTest.java#nonExistentMethod", ($goTestFile.Replace("\", "/") + "#HelperFunc"))
     [System.IO.File]::WriteAllText($cmCovPath, $goHelperCov, $Utf8NoBom)
-    $goVal = & $ScriptPath -Operation ValidateTestCoverage -Path $cmCovPath -Phase VERIFY 2>&1
-    $goStr = $goVal | Out-String
+    $goStr = try { & $ScriptPath -Operation ValidateTestCoverage -Path $cmCovPath -Phase VERIFY 2>&1 | Out-String } catch { $_.Exception.ToString() }
     if ($goStr -notmatch "does not have a valid test") {
         throw "ValidateTestCoverage must reject Go helper function carrier without *testing.T. Output: $goStr"
     }
@@ -2533,8 +2556,7 @@ try {
     [System.IO.File]::WriteAllText($goLowerTestFile, "package demo`nfunc Testfoo(t *testing.T) {}`n", $Utf8NoBom)
     $goLowerCov = $cmCovJson.Replace("test/CarrierTest.java#nonExistentMethod", ($goLowerTestFile.Replace("\", "/") + "#Testfoo"))
     [System.IO.File]::WriteAllText($cmCovPath, $goLowerCov, $Utf8NoBom)
-    $goLowerVal = & $ScriptPath -Operation ValidateTestCoverage -Path $cmCovPath -Phase VERIFY 2>&1
-    $goLowerStr = $goLowerVal | Out-String
+    $goLowerStr = try { & $ScriptPath -Operation ValidateTestCoverage -Path $cmCovPath -Phase VERIFY 2>&1 | Out-String } catch { $_.Exception.ToString() }
     if ($goLowerStr -notmatch "does not have a valid test name/signature") {
         throw "ValidateTestCoverage must reject Go lowercase Testfoo. Output: $goLowerStr"
     }
@@ -2544,8 +2566,7 @@ try {
     [System.IO.File]::WriteAllText($jsTestFile, "describe('MySuite', () => { it('real_test', () => {}); });`n", $Utf8NoBom)
     $jsDescCov = $cmCovJson.Replace("test/CarrierTest.java#nonExistentMethod", ($jsTestFile.Replace("\", "/") + "#MySuite"))
     [System.IO.File]::WriteAllText($cmCovPath, $jsDescCov, $Utf8NoBom)
-    $jsDescVal = & $ScriptPath -Operation ValidateTestCoverage -Path $cmCovPath -Phase VERIFY 2>&1
-    $jsDescStr = $jsDescVal | Out-String
+    $jsDescStr = try { & $ScriptPath -Operation ValidateTestCoverage -Path $cmCovPath -Phase VERIFY 2>&1 | Out-String } catch { $_.Exception.ToString() }
     if ($jsDescStr -notmatch "is a describe/suite block, not a test case") {
         throw "ValidateTestCoverage must reject JS describe block as carrier. Output: $jsDescStr"
     }
@@ -2555,8 +2576,7 @@ try {
     [System.IO.File]::WriteAllText($ps1TestFile, "Describe 'PS1Suite' { It 'PS1Test' {} }`n", $Utf8NoBom)
     $ps1DescCov = $cmCovJson.Replace("test/CarrierTest.java#nonExistentMethod", ($ps1TestFile.Replace("\", "/") + "#PS1Suite"))
     [System.IO.File]::WriteAllText($cmCovPath, $ps1DescCov, $Utf8NoBom)
-    $ps1DescVal = & $ScriptPath -Operation ValidateTestCoverage -Path $cmCovPath -Phase VERIFY 2>&1
-    $ps1DescStr = $ps1DescVal | Out-String
+    $ps1DescStr = try { & $ScriptPath -Operation ValidateTestCoverage -Path $cmCovPath -Phase VERIFY 2>&1 | Out-String } catch { $_.Exception.ToString() }
     if ($ps1DescStr -notmatch "is a Describe/Context block, not an It test case") {
         throw "ValidateTestCoverage must reject PS1 Describe block as carrier. Output: $ps1DescStr"
     }
@@ -2566,8 +2586,7 @@ try {
     [System.IO.File]::WriteAllText($rsTestFile, "fn helper_fn() {}`n#[test]`nfn test_real() {}`n", $Utf8NoBom)
     $rsHelperCov = $cmCovJson.Replace("test/CarrierTest.java#nonExistentMethod", ($rsTestFile.Replace("\", "/") + "#helper_fn"))
     [System.IO.File]::WriteAllText($cmCovPath, $rsHelperCov, $Utf8NoBom)
-    $rsVal = & $ScriptPath -Operation ValidateTestCoverage -Path $cmCovPath -Phase VERIFY 2>&1
-    $rsStr = $rsVal | Out-String
+    $rsStr = try { & $ScriptPath -Operation ValidateTestCoverage -Path $cmCovPath -Phase VERIFY 2>&1 | Out-String } catch { $_.Exception.ToString() }
     if ($rsStr -notmatch "not annotated with #\[test\]") {
         throw "ValidateTestCoverage must reject Rust helper fn carrier without #[test]. Output: $rsStr"
     }
@@ -2603,6 +2622,7 @@ try {
     $fcState = [ordered]@{
         schemaVersion = "1.0"
         feature = "FakeCommitFeature"
+        baseline = $realCommitSha
         requirement = @{ status = "APPROVED"; sha256 = $fcReqSha; approvedBy = "tester"; approvedAt = "2026-08-23T12:00:00Z"; artifact = "01_server_rules.md" }
         design = @{ status = "APPROVED"; sha256 = $fcDesSha; approvedBy = "tester"; approvedAt = "2026-08-23T12:00:00Z"; artifact = "06_design_contract.md" }
     }
@@ -2652,8 +2672,7 @@ try {
 }
 "@.Replace("__EXECUTED_AT__", $dynamicRecent)
     [System.IO.File]::WriteAllText($fakeCommitCovPath, $validCovJson, $Utf8NoBom)
-    $fakeCommitVal = & $ScriptPath -Operation ValidateTestCoverage -Path $fakeCommitCovPath -Phase VERIFY 2>&1
-    $fakeCommitStr = $fakeCommitVal | Out-String
+    $fakeCommitStr = try { & $ScriptPath -Operation ValidateTestCoverage -Path $fakeCommitCovPath -Phase VERIFY 2>&1 | Out-String } catch { $_.Exception.ToString() }
     if ($fakeCommitStr -notmatch "does not exist in git repository history") {
         throw "ValidateTestCoverage must reject fabricated sourceCommitSha not in Git history. Output: $fakeCommitStr"
     }
@@ -2662,10 +2681,19 @@ try {
     $riskTestDir = Join-Path $TestRoot "risk_repo"
     [System.IO.Directory]::CreateDirectory($riskTestDir) | Out-Null
     & git -C $riskTestDir init --quiet
+    & git -C $riskTestDir config user.name "Tester"
+    & git -C $riskTestDir config user.email "tester@test.local"
+    $riskDummy = Join-Path $riskTestDir "dummy.txt"
+    [System.IO.File]::WriteAllText($riskDummy, "dummy", $Utf8NoBom)
+    & git -C $riskTestDir add .
+    & git -C $riskTestDir commit -m "init" --quiet
+    $riskBaseSha = (& git -C $riskTestDir rev-parse HEAD | Out-String).Trim()
+
     $riskSpecDir = Join-Path $riskTestDir ".ai-workspace/specs/features/RiskFeature"
     [System.IO.Directory]::CreateDirectory($riskSpecDir) | Out-Null
     $riskFeatState = Join-Path $riskSpecDir "feature-state.json"
-    [System.IO.File]::WriteAllText($riskFeatState, '{"schemaVersion":"1.0","feature":"RiskFeature","tier":"T2","phase":"DONE","updatedAt":"' + $dynamicRecent + '"}', $Utf8NoBom)
+    $riskFeatStateContent = '{"schemaVersion":"1.0","feature":"RiskFeature","tier":"T2","phase":"DONE","baseline":"' + $riskBaseSha + '","updatedAt":"' + $dynamicRecent + '"}'
+    [System.IO.File]::WriteAllText($riskFeatState, $riskFeatStateContent, $Utf8NoBom)
     $riskSrc = Join-Path $riskTestDir "src/com/game/ShopEnum.java"
     [System.IO.Directory]::CreateDirectory((Split-Path -Parent $riskSrc)) | Out-Null
     [System.IO.File]::WriteAllText($riskSrc, "package com.game; public enum ShopEnum { TYPE_NEW_GIFT, TYPE_OLD }", $Utf8NoBom)
@@ -2725,8 +2753,7 @@ try {
     [System.IO.File]::WriteAllText($psPesterFile, "Describe 'Suite' {`n    It 'foobar' { 1 | Should -Be 1 }`n}", $Utf8NoBom)
     $pesterMismatchCov = $cmCovJson.Replace("test/CarrierTest.java#nonExistentMethod", ($psPesterFile.Replace("\", "/") + "#bar"))
     [System.IO.File]::WriteAllText($cmCovPath, $pesterMismatchCov, $Utf8NoBom)
-    $pesterVal = & $ScriptPath -Operation ValidateTestCoverage -Path $cmCovPath -Phase VERIFY 2>&1
-    $pesterStr = $pesterVal | Out-String
+    $pesterStr = try { & $ScriptPath -Operation ValidateTestCoverage -Path $cmCovPath -Phase VERIFY 2>&1 | Out-String } catch { $_.Exception.ToString() }
     if ($pesterStr -notmatch "does not exist in") {
         throw "ValidateTestCoverage must reject #bar when only It 'foobar' exists. Output: $pesterStr"
     }
@@ -2782,10 +2809,22 @@ try {
   "cases": [
     {
       "id": "TC-DIRTY",
-      "status": "PASS",
+      "title": "Dirty tree verification test",
+      "priority": "P0",
+      "status": "VERIFIED",
       "automationCarrier": "$dirtyCarrierRel#testOne",
       "requirementIds": ["BR-01"],
-      "designIds": ["DC-01"]
+      "designIds": ["DC-01"],
+      "testTypes": ["UNIT"],
+      "setup": ["init context"],
+      "trigger": ["execute test"],
+      "assertions": [
+        {
+          "target": "SampleTest#testOne",
+          "operator": "EQUALS",
+          "expected": "PASS"
+        }
+      ]
     }
   ],
   "riskExemptions": [],
@@ -2870,6 +2909,40 @@ try {
     
     if ($digest1 -eq $digest2) {
         throw "Get-ChangeSetDigest must produce different digests when a file with spaces (src/foo bar.txt) is modified. digest1=$digest1, digest2=$digest2"
+    }
+
+    # 6. Negative Test: src/feature-state.json (业务同名文件) 不被排除，修改时 digest 产生变化
+    $bizSpecDir = Join-Path $spaceGitDir ".ai-workspace/specs/features/BizFeature"
+    [System.IO.Directory]::CreateDirectory($bizSpecDir) | Out-Null
+    $bizFile = Join-Path $spaceGitDir "src/feature-state.json"
+    [System.IO.File]::WriteAllText($bizFile, '{"businessRule":"alpha"}', $Utf8NoBom)
+    & git -C $spaceGitDir add .
+    & git -C $spaceGitDir commit -m "add biz feature-state.json" --quiet
+    $bizBaseSha = (& git -C $spaceGitDir rev-parse HEAD | Out-String).Trim()
+    
+    $bizFeatState = Join-Path $bizSpecDir "feature-state.json"
+    [System.IO.File]::WriteAllText($bizFeatState, '{"schemaVersion":"1.0","feature":"BizFeature","baseline":"' + $bizBaseSha + '","tier":"T2"}', $Utf8NoBom)
+    
+    $bizRisk1 = & $ScriptPath -Operation AssessRisk -Path $bizSpecDir -Baseline $bizBaseSha 2>&1 | Out-String
+    $bizDigest1 = ($bizRisk1 | ConvertFrom-Json).changeSetDigest
+    
+    [System.IO.File]::WriteAllText($bizFile, '{"businessRule":"beta"}', $Utf8NoBom)
+    $bizRisk2 = & $ScriptPath -Operation AssessRisk -Path $bizSpecDir -Baseline $bizBaseSha 2>&1 | Out-String
+    $bizDigest2 = ($bizRisk2 | ConvertFrom-Json).changeSetDigest
+    
+    if ($bizDigest1 -eq $bizDigest2) {
+        throw "Get-ChangeSetDigest must NOT exclude business file src/feature-state.json. digest1=$bizDigest1, digest2=$bizDigest2"
+    }
+
+    # 7. Negative Test: Registry 损坏时抛出 BASELINE_REGISTRY_CORRUPTED 且不回退 HEAD
+    $corruptFeature = "CorruptRegistryFeature"
+    $corruptSpec = Join-Path $TestRoot ".ai-workspace/specs/features/$corruptFeature"
+    [System.IO.Directory]::CreateDirectory($corruptSpec) | Out-Null
+    $corruptRegFile = Join-Path $regDir ($corruptFeature.ToLowerInvariant() + ".json")
+    [System.IO.File]::WriteAllText($corruptRegFile, '{INVALID_JSON_CORRUPT', $Utf8NoBom)
+    
+    Assert-Fails -Message "AssessRisk must fail closed with BASELINE_REGISTRY_CORRUPTED when registry is corrupted" -Action {
+        & $ScriptPath -Operation AssessRisk -Path $corruptSpec
     }
 
     Write-Output "All workflow state tests passed."

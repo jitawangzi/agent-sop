@@ -933,11 +933,11 @@ function Get-VcsBaselineRevision {
         }
         if (Test-Path -LiteralPath (Join-Path $cur ".svn")) {
             try {
-                $svnRev = (& svn info --show-item revision $cur 2>&1 | Out-String).Trim()
+                $svnRev = (& svn info --non-interactive --show-item revision $cur 2>&1 | Out-String).Trim()
                 if ($LASTEXITCODE -eq 0 -and $svnRev -match '^\d+$') {
                     return $svnRev
                 }
-                $svnInfo = (& svn info $cur 2>&1 | Out-String)
+                $svnInfo = (& svn info --non-interactive $cur 2>&1 | Out-String)
                 if ($svnInfo -match '(?m)^Revision:\s*(\d+)') {
                     return $Matches[1]
                 }
@@ -988,6 +988,47 @@ function Filter-SvnDiffBlocks {
     return ($kept -join "`n`n")
 }
 
+function Assert-VcsCommitExists {
+    param(
+        [string]$WorkspaceRoot,
+        [string]$Baseline
+    )
+    if ([string]::IsNullOrWhiteSpace($WorkspaceRoot) -or [string]::IsNullOrWhiteSpace($Baseline)) { return }
+    if ($Baseline -eq "0") { return }
+    $hasGit = Test-Path -LiteralPath (Join-Path $WorkspaceRoot ".git")
+    if ($hasGit) {
+        if ($Baseline -match '^[0-9a-fA-F]{7,64}$') {
+            try {
+                & git -C $WorkspaceRoot cat-file -e "$Baseline^{commit}" 2>&1 | Out-Null
+                if ($LASTEXITCODE -ne 0) {
+                    throw "INVALID_BASELINE: Git baseline commit '$Baseline' does not exist in repository '$WorkspaceRoot'."
+                }
+            } catch {
+                if ($_.Exception.Message -match "INVALID_BASELINE") { throw }
+            }
+        }
+    }
+}
+
+function Get-FileRawSha256 {
+    param([string]$Path)
+    if (-not (Test-Path -LiteralPath $Path -PathType Leaf)) { return ("0" * 64) }
+    $bytes = [System.IO.File]::ReadAllBytes($Path)
+    $hash = [System.Security.Cryptography.SHA256]::HashData($bytes)
+    return ([System.BitConverter]::ToString($hash) -replace "-", "").ToLowerInvariant()
+}
+
+function Test-IsAiSopInternalSpecMetadata {
+    param([string]$RelativePath)
+    if ([string]::IsNullOrWhiteSpace($RelativePath)) { return $false }
+    $norm = $RelativePath.Replace("\", "/").TrimStart('/').TrimEnd('/')
+    if ($norm -match '^\.ai-workspace(?:/specs(?:/features(?:/[^/]+(?:/(?:04_change_impact\.json|00_workflow_state\.json|feature-state\.json|05_test_coverage\.json|\.workflow-owner\.json|\.workflow-mutation\.lock|.*\.lock|.*\.tmp|.*\.bak))?)?)?)?$' -or
+        $norm -match '(?:\.workflow-mutation\.lock|\.workflow-owner\.json|\.lock)$') {
+        return $true
+    }
+    return $false
+}
+
 function Get-AuthoritativeFeatureBaseline {
     param(
         [string]$SpecDir,
@@ -1029,77 +1070,87 @@ function Get-AuthoritativeFeatureBaseline {
 
     # 1. Authority 1: Transaction Registry (Single authoritative truth)
     if ($null -ne $foundRegPath) {
+        $owReg = $null
         try {
-            $owReg = Get-Content -LiteralPath $foundRegPath -Raw | ConvertFrom-Json
-            if (-not [string]::IsNullOrWhiteSpace($owReg.baseline)) {
-                $regBaseline = [string]$owReg.baseline
-                
-                # Check mirror in spec dir: if present, mirror MUST match registry!
-                $ownerMirrorPath = Join-Path $specDirFull ".workflow-owner.json"
-                if (Test-Path -LiteralPath $ownerMirrorPath -PathType Leaf) {
-                    try {
-                        $owMirror = Get-Content -LiteralPath $ownerMirrorPath -Raw | ConvertFrom-Json
-                        if (-not [string]::IsNullOrWhiteSpace($owMirror.baseline) -and 
-                            $owMirror.baseline.ToLowerInvariant() -ne $regBaseline.ToLowerInvariant()) {
-                            throw "BASELINE_MUTATION_DETECTED: .workflow-owner.json baseline '$($owMirror.baseline)' does not match transaction registry baseline '$regBaseline'. Scope tampering detected."
-                        }
-                    } catch {
-                        if ($_.Exception.Message -match "BASELINE_MUTATION_DETECTED") { throw }
-                    }
-                }
-
-                # Check feature-state.json and 00_workflow_state.json
-                $featStatePath = Join-Path $specDirFull "feature-state.json"
-                $wfStatePath = Join-Path $specDirFull "00_workflow_state.json"
-                if (Test-Path -LiteralPath $featStatePath -PathType Leaf) {
-                    try {
-                        $fs = Get-Content -LiteralPath $featStatePath -Raw | ConvertFrom-Json
-                        if (-not [string]::IsNullOrWhiteSpace($fs.baseline) -and 
-                            $fs.baseline.ToLowerInvariant() -ne $regBaseline.ToLowerInvariant()) {
-                            throw "BASELINE_MUTATION_DETECTED: feature-state.json baseline '$($fs.baseline)' does not match transaction registry baseline '$regBaseline'."
-                        }
-                    } catch {
-                        if ($_.Exception.Message -match "BASELINE_MUTATION_DETECTED") { throw }
-                    }
-                }
-                if (Test-Path -LiteralPath $wfStatePath -PathType Leaf) {
-                    try {
-                        $wf = Get-Content -LiteralPath $wfStatePath -Raw | ConvertFrom-Json
-                        if (-not [string]::IsNullOrWhiteSpace($wf.baseline) -and 
-                            $wf.baseline.ToLowerInvariant() -ne $regBaseline.ToLowerInvariant()) {
-                            throw "BASELINE_MUTATION_DETECTED: 00_workflow_state.json baseline '$($wf.baseline)' does not match transaction registry baseline '$regBaseline'."
-                        }
-                    } catch {
-                        if ($_.Exception.Message -match "BASELINE_MUTATION_DETECTED") { throw }
-                    }
-                }
-
-                return $regBaseline
-            } else {
-                throw "BASELINE_MISSING_IN_REGISTRY: Owner record for '$featureName' in registry is missing mandatory baseline revision."
-            }
+            $regRaw = [System.IO.File]::ReadAllText($foundRegPath)
+            $owReg = $regRaw | ConvertFrom-Json
         } catch {
-            if ($_.Exception.Message -match "BASELINE_MUTATION_DETECTED" -or $_.Exception.Message -match "BASELINE_MISSING_IN_REGISTRY") { throw }
+            throw "BASELINE_REGISTRY_CORRUPTED: Owner registry record for '$featureName' is corrupted or invalid."
         }
+        if ($null -eq $owReg -or [string]::IsNullOrWhiteSpace($owReg.baseline)) {
+            throw "BASELINE_MISSING_IN_REGISTRY: Owner record for '$featureName' in registry is missing mandatory baseline revision."
+        }
+        $regBaseline = [string]$owReg.baseline
+        if (-not [string]::IsNullOrWhiteSpace($effectiveWs)) {
+            Assert-VcsCommitExists -WorkspaceRoot $effectiveWs -Baseline $regBaseline
+        }
+        
+        # Check mirror in spec dir: if present, mirror MUST match registry!
+        $ownerMirrorPath = Join-Path $specDirFull ".workflow-owner.json"
+        if (Test-Path -LiteralPath $ownerMirrorPath -PathType Leaf) {
+            try {
+                $owMirror = Get-Content -LiteralPath $ownerMirrorPath -Raw | ConvertFrom-Json
+                if (-not [string]::IsNullOrWhiteSpace($owMirror.baseline) -and 
+                    $owMirror.baseline.ToLowerInvariant() -ne $regBaseline.ToLowerInvariant()) {
+                    throw "BASELINE_MUTATION_DETECTED: .workflow-owner.json baseline '$($owMirror.baseline)' does not match transaction registry baseline '$regBaseline'. Scope tampering detected."
+                }
+            } catch {
+                if ($_.Exception.Message -match "BASELINE_MUTATION_DETECTED") { throw }
+            }
+        }
+
+        # Check feature-state.json and 00_workflow_state.json
+        $featStatePath = Join-Path $specDirFull "feature-state.json"
+        $wfStatePath = Join-Path $specDirFull "00_workflow_state.json"
+        if (Test-Path -LiteralPath $featStatePath -PathType Leaf) {
+            try {
+                $fs = Get-Content -LiteralPath $featStatePath -Raw | ConvertFrom-Json
+                if (-not [string]::IsNullOrWhiteSpace($fs.baseline) -and 
+                    $fs.baseline.ToLowerInvariant() -ne $regBaseline.ToLowerInvariant()) {
+                    throw "BASELINE_MUTATION_DETECTED: feature-state.json baseline '$($fs.baseline)' does not match transaction registry baseline '$regBaseline'."
+                }
+            } catch {
+                if ($_.Exception.Message -match "BASELINE_MUTATION_DETECTED") { throw }
+            }
+        }
+        if (Test-Path -LiteralPath $wfStatePath -PathType Leaf) {
+            try {
+                $wf = Get-Content -LiteralPath $wfStatePath -Raw | ConvertFrom-Json
+                if (-not [string]::IsNullOrWhiteSpace($wf.baseline) -and 
+                    $wf.baseline.ToLowerInvariant() -ne $regBaseline.ToLowerInvariant()) {
+                    throw "BASELINE_MUTATION_DETECTED: 00_workflow_state.json baseline '$($wf.baseline)' does not match transaction registry baseline '$regBaseline'."
+                }
+            } catch {
+                if ($_.Exception.Message -match "BASELINE_MUTATION_DETECTED") { throw }
+            }
+        }
+
+        return $regBaseline
     }
 
-    # 2. Authority 2: If no registry record (e.g. offline testing before claim)
-    # Check mirror first
-    $ownerMirrorPath = Join-Path $specDirFull ".workflow-owner.json"
+    # 2. Authority 2: If no registry record exists
+    # Check if spec state files exist (in-progress feature)
+    $hasExistingState = (Test-Path -LiteralPath (Join-Path $specDirFull ".workflow-owner.json")) -or
+                         (Test-Path -LiteralPath (Join-Path $specDirFull "feature-state.json")) -or
+                         (Test-Path -LiteralPath (Join-Path $specDirFull "00_workflow_state.json")) -or
+                         (Test-Path -LiteralPath (Join-Path $specDirFull "04_change_impact.json")) -or
+                         (Test-Path -LiteralPath (Join-Path $specDirFull "05_test_plan.md"))
+
     $mirrorBaseline = $null
+    $ownerMirrorPath = Join-Path $specDirFull ".workflow-owner.json"
     if (Test-Path -LiteralPath $ownerMirrorPath -PathType Leaf) {
         try {
             $ow = Get-Content -LiteralPath $ownerMirrorPath -Raw | ConvertFrom-Json
-            if (-not [string]::IsNullOrWhiteSpace($ow.baseline)) {
-                $mirrorBaseline = [string]$ow.baseline
-            }
+            if (-not [string]::IsNullOrWhiteSpace($ow.baseline)) { $mirrorBaseline = [string]$ow.baseline }
         } catch {}
     }
 
     $featStatePath = Join-Path $specDirFull "feature-state.json"
     $wfStatePath = Join-Path $specDirFull "00_workflow_state.json"
+    $impactPath = Join-Path $specDirFull "04_change_impact.json"
     $fsBaseline = $null
     $wfBaseline = $null
+    $impactBaseline = $null
     if (Test-Path -LiteralPath $featStatePath -PathType Leaf) {
         try {
             $fs = Get-Content -LiteralPath $featStatePath -Raw | ConvertFrom-Json
@@ -1112,6 +1163,13 @@ function Get-AuthoritativeFeatureBaseline {
             if (-not [string]::IsNullOrWhiteSpace($wf.baseline)) { $wfBaseline = [string]$wf.baseline }
         } catch {}
     }
+    if (Test-Path -LiteralPath $impactPath -PathType Leaf) {
+        try {
+            $imp = Get-Content -LiteralPath $impactPath -Raw | ConvertFrom-Json
+            if (-not [string]::IsNullOrWhiteSpace($imp.baseline)) { $impactBaseline = [string]$imp.baseline }
+        } catch {}
+    }
+
     if (-not [string]::IsNullOrWhiteSpace($fsBaseline) -and -not [string]::IsNullOrWhiteSpace($wfBaseline)) {
         if ($fsBaseline.ToLowerInvariant() -ne $wfBaseline.ToLowerInvariant()) {
             throw "BASELINE_MUTATION_DETECTED: feature-state.json baseline '$fsBaseline' does not match 00_workflow_state.json baseline '$wfBaseline'."
@@ -1124,12 +1182,31 @@ function Get-AuthoritativeFeatureBaseline {
         if (-not [string]::IsNullOrWhiteSpace($wfBaseline) -and $wfBaseline.ToLowerInvariant() -ne $mirrorBaseline.ToLowerInvariant()) {
             throw "BASELINE_MUTATION_DETECTED: 00_workflow_state.json baseline '$wfBaseline' does not match .workflow-owner.json baseline '$mirrorBaseline'."
         }
-        return $mirrorBaseline
     }
-    if (-not [string]::IsNullOrWhiteSpace($fsBaseline)) { return $fsBaseline }
-    if (-not [string]::IsNullOrWhiteSpace($wfBaseline)) { return $wfBaseline }
 
-    # 3. Fallback to VCS detection only if starting completely fresh state
+    $resolvedStateBaseline = if (-not [string]::IsNullOrWhiteSpace($mirrorBaseline)) {
+        $mirrorBaseline
+    } elseif (-not [string]::IsNullOrWhiteSpace($fsBaseline)) {
+        $fsBaseline
+    } elseif (-not [string]::IsNullOrWhiteSpace($wfBaseline)) {
+        $wfBaseline
+    } elseif (-not [string]::IsNullOrWhiteSpace($impactBaseline)) {
+        $impactBaseline
+    } else {
+        $null
+    }
+
+    if ($hasExistingState) {
+        if ([string]::IsNullOrWhiteSpace($resolvedStateBaseline)) {
+            throw "BASELINE_MISSING: Existing feature state in '$specDirFull' lacks an authoritative baseline. Cannot evaluate risk against arbitrary commit."
+        }
+        if (-not [string]::IsNullOrWhiteSpace($effectiveWs)) {
+            Assert-VcsCommitExists -WorkspaceRoot $effectiveWs -Baseline $resolvedStateBaseline
+        }
+        return $resolvedStateBaseline
+    }
+
+    # 3. Fallback to VCS detection ONLY if starting brand new feature from scratch
     $startPath = if (-not [string]::IsNullOrWhiteSpace($effectiveWs)) { $effectiveWs } else { $specDirFull }
     return (Get-VcsBaselineRevision -StartPath $startPath)
 }
@@ -1203,42 +1280,56 @@ function Get-ChangeSetDigest {
     
     # 1. Git diff + status
     if ($hasGit) {
-        if ([string]::IsNullOrWhiteSpace($Baseline) -or $Baseline -match '^(?:HEAD|WORKING|master|main|origin/.*)$') {
-            throw "Invalid baseline '$Baseline' in git workspace: baseline must be a fixed immutable commit SHA (7-64 hex chars), not a floating branch/ref"
+        $gitTarget = $null
+        if (-not [string]::IsNullOrWhiteSpace($Baseline) -and $Baseline -match '^[0-9a-fA-F]{7,64}$') {
+            $gitTarget = $Baseline
+            $verifyRef = & git -C $WorkspaceRoot rev-parse --verify --quiet "$gitTarget^{commit}" 2>&1
+            if ($LASTEXITCODE -ne 0) {
+                throw "Baseline commit '$Baseline' does not exist in git workspace: $WorkspaceRoot"
+            }
+        } else {
+            $mb = (& git -C $WorkspaceRoot merge-base HEAD origin/main 2>&1 | Out-String).Trim()
+            $gitTarget = if ($LASTEXITCODE -eq 0 -and -not [string]::IsNullOrWhiteSpace($mb)) { $mb } else { "HEAD~1" }
         }
-        if ($Baseline -notmatch '^[0-9a-fA-F]{7,64}$') {
-            throw "Invalid baseline commit SHA '$Baseline' in git workspace: must be 7-64 hex characters"
-        }
-        $diffTarget = $Baseline
-        $verifyRef = & git -C $WorkspaceRoot rev-parse --verify --quiet "$diffTarget^{commit}" 2>&1
-        if ($LASTEXITCODE -ne 0) {
-            throw "Baseline commit '$Baseline' does not exist in git workspace: $WorkspaceRoot"
-        }
-        $gitDiff = & git -C $WorkspaceRoot -c core.quotepath=false diff $diffTarget -- . ":(exclude)*04_change_impact.json" ":(exclude)*00_workflow_state.json" ":(exclude)*feature-state.json" ":(exclude)*05_test_coverage.json" 2>&1
-        if ($LASTEXITCODE -ne 0) {
-            throw "git diff failed against baseline '$Baseline' in workspace: $WorkspaceRoot"
-        }
-        $gitStat = & git -C $WorkspaceRoot -c core.quotepath=false status --porcelain -uall -- . ":(exclude)*04_change_impact.json" ":(exclude)*00_workflow_state.json" ":(exclude)*feature-state.json" ":(exclude)*05_test_coverage.json" 2>&1
+
+        $gitDiff = & git -C $WorkspaceRoot -c core.quotepath=false diff $gitTarget -- . 2>&1
         if ($null -ne $gitDiff) {
-            $diffStr = ($gitDiff | Out-String).Trim()
+            $filteredGitLines = [System.Collections.Generic.List[string]]::new()
+            $skipBlock = $false
+            foreach ($dLine in ($gitDiff | Out-String -Stream)) {
+                if ($dLine -match '^diff --git a/([^\s]+)\s+b/([^\s]+)') {
+                    $pA = Unquote-GitPath -Path $Matches[1]
+                    $pB = Unquote-GitPath -Path $Matches[2]
+                    $skipBlock = (Test-IsAiSopInternalSpecMetadata -RelativePath $pA) -or (Test-IsAiSopInternalSpecMetadata -RelativePath $pB)
+                }
+                if (-not $skipBlock) {
+                    $filteredGitLines.Add($dLine)
+                }
+            }
+            $diffStr = ($filteredGitLines -join "`n").Trim()
             if (-not [string]::IsNullOrWhiteSpace($diffStr)) { $combined.Add("GIT_DIFF:`n$diffStr") }
         }
+
+        $gitStat = & git -C $WorkspaceRoot -c core.quotepath=false status --porcelain -uall 2>&1
         if ($null -ne $gitStat) {
             foreach ($line in ($gitStat | Out-String -Stream)) {
                 $trimmed = $line.Trim()
                 if ([string]::IsNullOrWhiteSpace($trimmed)) { continue }
                 if ($trimmed -match '^\?\?\s+(.*)$') {
                     $untrackedRel = Unquote-GitPath -Path $Matches[1].Trim()
-                    if ($untrackedRel -like "*04_change_impact.json" -or $untrackedRel -like "*00_workflow_state.json" -or $untrackedRel -like "*feature-state.json" -or $untrackedRel -like "*05_test_coverage.json") { continue }
+                    if (Test-IsAiSopInternalSpecMetadata -RelativePath $untrackedRel) { continue }
                     $fullPath = Join-Path $WorkspaceRoot $untrackedRel
                     if (Test-Path -LiteralPath $fullPath -PathType Leaf) {
-                        $fHash = Get-AiSopArtifactHash -Path $fullPath
+                        $fHash = Get-FileRawSha256 -Path $fullPath
                         $combined.Add("GIT_UNTRACKED:$($untrackedRel):$($fHash)")
                     } else {
                         $combined.Add("GIT_UNTRACKED:$($untrackedRel)")
                     }
                 } else {
-                    $combined.Add("GIT_STATUS:$($trimmed)")
+                    $pStatus = ($trimmed -split '\s+', 2)[-1].Trim()
+                    if (-not (Test-IsAiSopInternalSpecMetadata -RelativePath $pStatus)) {
+                        $combined.Add("GIT_STATUS:$($trimmed)")
+                    }
                 }
             }
         }
@@ -1246,19 +1337,19 @@ function Get-ChangeSetDigest {
     
     # 2. SVN diff + status
     if ($hasSvn) {
-        if ([string]::IsNullOrWhiteSpace($Baseline) -or $Baseline -match '^(?:HEAD|WORKING|trunk|branches/.*)$') {
-            throw "Invalid SVN baseline revision '$Baseline': baseline must be a fixed numeric revision (e.g. 123456), not a floating ref/branch"
+        $svnRev = if (-not [string]::IsNullOrWhiteSpace($Baseline) -and ($Baseline -replace '^(?:rev|r)', '') -match '^\d+$') {
+            $Baseline -replace '^(?:rev|r)', ''
+        } else {
+            $infoRev = (& svn info --non-interactive --show-item revision $WorkspaceRoot 2>&1 | Out-String).Trim()
+            if ($LASTEXITCODE -eq 0 -and $infoRev -match '^\d+$') { $infoRev } else { $null }
         }
-        $svnRev = $Baseline -replace '^(?:rev|r)', ''
-        if ($svnRev -notmatch '^\d+$') {
-            throw "Invalid SVN baseline revision '$Baseline' in SVN workspace: $WorkspaceRoot"
-        }
-        $diffArgs = @("-r", "$svnRev:WORKING")
-        $svnDiff = & svn diff @diffArgs $WorkspaceRoot 2>&1
-        if ($LASTEXITCODE -ne 0) {
+
+        $diffArgs = if (-not [string]::IsNullOrWhiteSpace($svnRev)) { @("-r", "$svnRev:WORKING") } else { @() }
+        $svnDiff = & svn diff --non-interactive @diffArgs $WorkspaceRoot 2>&1
+        if ($LASTEXITCODE -ne 0 -and -not $hasGit) {
             throw "svn diff failed against revision '$Baseline' in workspace: $WorkspaceRoot"
         }
-        $svnStat = & svn status --ignore-externals $WorkspaceRoot 2>&1
+        $svnStat = & svn status --non-interactive --ignore-externals $WorkspaceRoot 2>&1
         if ($null -ne $svnDiff) {
             $filteredSvnDiff = Filter-SvnDiffBlocks -DiffText ($svnDiff | Out-String)
             if (-not [string]::IsNullOrWhiteSpace($filteredSvnDiff)) { $combined.Add("SVN_DIFF:`n$filteredSvnDiff") }
@@ -1269,13 +1360,18 @@ function Get-ChangeSetDigest {
                 if ([string]::IsNullOrWhiteSpace($trimmed)) { continue }
                 if ($trimmed -match '^\?\s+(.*)$') {
                     $untrackedPath = $Matches[1].Trim()
-                    if ($untrackedPath -like "*04_change_impact.json" -or $untrackedPath -like "*00_workflow_state.json" -or $untrackedPath -like "*feature-state.json" -or $untrackedPath -like "*05_test_coverage.json") { continue }
+                    $rel = if ([System.IO.Path]::IsPathRooted($untrackedPath)) {
+                        $untrackedPath.Substring($WorkspaceRoot.Length).TrimStart('\', '/').Replace("\", "/")
+                    } else {
+                        $untrackedPath.Replace("\", "/")
+                    }
+                    if (Test-IsAiSopInternalSpecMetadata -RelativePath $rel) { continue }
                     $fullPath = if ([System.IO.Path]::IsPathRooted($untrackedPath)) { $untrackedPath } else { Join-Path $WorkspaceRoot $untrackedPath }
                     if (Test-Path -LiteralPath $fullPath -PathType Leaf) {
-                        $fHash = Get-AiSopArtifactHash -Path $fullPath
-                        $combined.Add("SVN_UNTRACKED:$($untrackedPath):$($fHash)")
+                        $fHash = Get-FileRawSha256 -Path $fullPath
+                        $combined.Add("SVN_UNTRACKED:$($rel):$($fHash)")
                     } else {
-                        $combined.Add("SVN_UNTRACKED:$($untrackedPath)")
+                        $combined.Add("SVN_UNTRACKED:$($rel)")
                     }
                 } else {
                     $combined.Add("SVN_STATUS:$($trimmed)")
@@ -1288,15 +1384,13 @@ function Get-ChangeSetDigest {
     if (-not $hasGit -and -not $hasSvn) {
         $srcFiles = Get-ChildItem -LiteralPath $WorkspaceRoot -Recurse -File -ErrorAction SilentlyContinue |
             Where-Object { 
+                $rel = $_.FullName.Substring($WorkspaceRoot.Length).TrimStart('\', '/').Replace("\", "/")
                 $_.FullName -notmatch '[\\/](\.ai-workspace|\.git|\.svn|build|target|node_modules|\.gradle)[\\/]' -and
-                $_.Name -notlike "*04_change_impact.json" -and
-                $_.Name -notlike "*00_workflow_state.json" -and
-                $_.Name -notlike "*feature-state.json" -and
-                $_.Name -notlike "*05_test_coverage.json"
+                -not (Test-IsAiSopInternalSpecMetadata -RelativePath $rel)
             } | Sort-Object { $_.FullName }
         foreach ($f in $srcFiles) {
             $rel = $f.FullName.Substring($WorkspaceRoot.Length).TrimStart('\', '/').Replace("\", "/")
-            $h = Get-AiSopArtifactHash -Path $f.FullName
+            $h = Get-FileRawSha256 -Path $f.FullName
             $combined.Add("FILE:$($rel):$($h)")
         }
     }
@@ -1305,6 +1399,7 @@ function Get-ChangeSetDigest {
         $cleanTarget = if ($hasGit) { $Baseline } elseif ($hasSvn) { $Baseline } else { $WorkspaceRoot }
         $combined.Add("CLEAN_TREE_BASELINE:$($cleanTarget)")
     }
+    $script:LastDigestCombined = ($combined -join " | ")
     return (Get-StringSha256 -Text ($combined -join "`n"))
 }
 
@@ -1374,7 +1469,7 @@ function Get-SemanticRiskAssessment {
     $fullDiff = ""
     $vcsFailed = $false
     if ($isGit) {
-        $diffTarget = if (-not [string]::IsNullOrWhiteSpace($effectiveBaseline)) {
+        $diffTarget = if (-not [string]::IsNullOrWhiteSpace($effectiveBaseline) -and $effectiveBaseline -match '^[0-9a-fA-F]{7,64}$') {
             $effectiveBaseline
         } else {
             $mb = (& git -C $WorkspaceRoot merge-base HEAD origin/main 2>&1 | Out-String).Trim()
@@ -1382,20 +1477,32 @@ function Get-SemanticRiskAssessment {
         }
         
         try {
-            $gitDiff = & git -C $WorkspaceRoot -c core.quotepath=false diff $diffTarget -- . ":(exclude)*04_change_impact.json" ":(exclude)*00_workflow_state.json" ":(exclude)*feature-state.json" ":(exclude)*05_test_coverage.json" 2>&1
+            $gitDiff = & git -C $WorkspaceRoot -c core.quotepath=false diff $diffTarget -- . 2>&1
             if ($LASTEXITCODE -ne 0) {
                 $vcsFailed = $true
             } elseif ($null -ne $gitDiff) {
-                $diffStr = ($gitDiff | Out-String).Trim()
+                $filteredGitLines = [System.Collections.Generic.List[string]]::new()
+                $skipBlock = $false
+                foreach ($dLine in ($gitDiff | Out-String -Stream)) {
+                    if ($dLine -match '^diff --git a/([^\s]+)\s+b/([^\s]+)') {
+                        $pA = Unquote-GitPath -Path $Matches[1]
+                        $pB = Unquote-GitPath -Path $Matches[2]
+                        $skipBlock = (Test-IsAiSopInternalSpecMetadata -RelativePath $pA) -or (Test-IsAiSopInternalSpecMetadata -RelativePath $pB)
+                    }
+                    if (-not $skipBlock) {
+                        $filteredGitLines.Add($dLine)
+                    }
+                }
+                $diffStr = ($filteredGitLines -join "`n").Trim()
                 if (-not [string]::IsNullOrWhiteSpace($diffStr)) { $fullDiff += "`n" + $diffStr }
             }
-            $gitStat = & git -C $WorkspaceRoot -c core.quotepath=false status --porcelain -uall -- . ":(exclude)*04_change_impact.json" ":(exclude)*00_workflow_state.json" ":(exclude)*feature-state.json" ":(exclude)*05_test_coverage.json" 2>&1
+            $gitStat = & git -C $WorkspaceRoot -c core.quotepath=false status --porcelain -uall 2>&1
             if ($null -ne $gitStat) {
                 foreach ($line in ($gitStat | Out-String -Stream)) {
                     $trimmed = $line.Trim()
                     if ($trimmed -match '^\?\?\s+(.*)$') {
                         $untrackedRel = Unquote-GitPath -Path $Matches[1].Trim()
-                        if ($untrackedRel -like "*04_change_impact.json" -or $untrackedRel -like "*00_workflow_state.json" -or $untrackedRel -like "*feature-state.json" -or $untrackedRel -like "*05_test_coverage.json") { continue }
+                        if (Test-IsAiSopInternalSpecMetadata -RelativePath $untrackedRel) { continue }
                         $fullPath = Join-Path $WorkspaceRoot $untrackedRel
                         if (Test-Path -LiteralPath $fullPath -PathType Leaf) {
                             $lines = [System.IO.File]::ReadAllLines($fullPath)
@@ -1409,23 +1516,33 @@ function Get-SemanticRiskAssessment {
         }
     }
     if ($isSvn) {
-        $svnRev = if (-not [string]::IsNullOrWhiteSpace($effectiveBaseline)) { $effectiveBaseline -replace '^r', '' } else { $null }
-        $diffArgs = if (-not [string]::IsNullOrWhiteSpace($svnRev) -and $svnRev -match '^\d+$') { @("-r", "$svnRev:WORKING") } else { @() }
+        $svnRev = if (-not [string]::IsNullOrWhiteSpace($effectiveBaseline) -and ($effectiveBaseline -replace '^(?:rev|r)', '') -match '^\d+$') {
+            $effectiveBaseline -replace '^(?:rev|r)', ''
+        } else {
+            $infoRev = (& svn info --non-interactive --show-item revision $WorkspaceRoot 2>&1 | Out-String).Trim()
+            if ($LASTEXITCODE -eq 0 -and $infoRev -match '^\d+$') { $infoRev } else { $null }
+        }
+        $diffArgs = if (-not [string]::IsNullOrWhiteSpace($svnRev)) { @("-r", "$svnRev:WORKING") } else { @() }
         try {
-            $svnDiff = & svn diff @diffArgs $WorkspaceRoot 2>&1
-            if ($LASTEXITCODE -ne 0) {
+            $svnDiff = & svn diff --non-interactive @diffArgs $WorkspaceRoot 2>&1
+            if ($LASTEXITCODE -ne 0 -and -not $isGit) {
                 $vcsFailed = $true
             } elseif ($null -ne $svnDiff) {
                 $filteredSvnDiff = Filter-SvnDiffBlocks -DiffText ($svnDiff | Out-String)
                 if (-not [string]::IsNullOrWhiteSpace($filteredSvnDiff)) { $fullDiff += "`n" + $filteredSvnDiff }
             }
-            $svnStat = & svn status --ignore-externals $WorkspaceRoot 2>&1
+            $svnStat = & svn status --non-interactive --ignore-externals $WorkspaceRoot 2>&1
             if ($null -ne $svnStat) {
                 foreach ($line in ($svnStat | Out-String -Stream)) {
                     $trimmed = $line.Trim()
                     if ($trimmed -match '^\?\s+(.*)$') {
                         $untrackedRel = $Matches[1].Trim()
-                        if ($untrackedRel -like "*04_change_impact.json" -or $untrackedRel -like "*00_workflow_state.json" -or $untrackedRel -like "*feature-state.json" -or $untrackedRel -like "*05_test_coverage.json") { continue }
+                        $rel = if ([System.IO.Path]::IsPathRooted($untrackedRel)) {
+                            $untrackedRel.Substring($WorkspaceRoot.Length).TrimStart('\', '/').Replace("\", "/")
+                        } else {
+                            $untrackedRel.Replace("\", "/")
+                        }
+                        if (Test-IsAiSopInternalSpecMetadata -RelativePath $rel) { continue }
                         $fullPath = if ([System.IO.Path]::IsPathRooted($untrackedRel)) { $untrackedRel } else { Join-Path $WorkspaceRoot $untrackedRel }
                         if (Test-Path -LiteralPath $fullPath -PathType Leaf) {
                             $lines = [System.IO.File]::ReadAllLines($fullPath)
@@ -1435,7 +1552,7 @@ function Get-SemanticRiskAssessment {
                 }
             }
         } catch {
-            $vcsFailed = $true
+            if (-not $isGit) { $vcsFailed = $true }
         }
     }
     if (-not $isGit -and -not $isSvn) {
@@ -1443,11 +1560,9 @@ function Get-SemanticRiskAssessment {
         try {
             $srcFiles = Get-ChildItem -LiteralPath $WorkspaceRoot -Recurse -File -ErrorAction SilentlyContinue |
                 Where-Object { 
+                    $rel = $_.FullName.Substring($WorkspaceRoot.Length).TrimStart('\', '/').Replace("\", "/")
                     $_.FullName -notmatch '[\\/](\.git|\.svn|\.ai-workspace|build|target|node_modules|\.gradle)[\\/]' -and
-                    $_.Name -notlike "*04_change_impact.json" -and
-                    $_.Name -notlike "*00_workflow_state.json" -and
-                    $_.Name -notlike "*feature-state.json" -and
-                    $_.Name -notlike "*05_test_coverage.json"
+                    -not (Test-IsAiSopInternalSpecMetadata -RelativePath $rel)
                 }
             foreach ($sf in $srcFiles) {
                 $lines = [System.IO.File]::ReadAllLines($sf.FullName)
@@ -2165,7 +2280,7 @@ function Get-CoveragePlaceholderWarnings {
                 } elseif (Test-Path -LiteralPath (Join-Path $carrierWsRoot ".svn")) {
                     $svnNum = $ev.sourceCommitSha -replace '^(?:rev|r)', ''
                     if ($svnNum -match '^\d+$') {
-                        $currentSvn = (& svn info --show-item revision $carrierWsRoot 2>&1 | Out-String).Trim()
+                        $currentSvn = (& svn info --non-interactive --show-item revision $carrierWsRoot 2>&1 | Out-String).Trim()
                         if ($LASTEXITCODE -eq 0 -and $currentSvn -match '^\d+$') {
                             if ([long]$svnNum -ne [long]$currentSvn) {
                                 $errors.Add("ERROR: executionEvidence sourceCommitSha '$($ev.sourceCommitSha)' does not match current SVN working revision ($currentSvn)")
@@ -2182,7 +2297,8 @@ function Get-CoveragePlaceholderWarnings {
                         $errors.Add("ERROR: executionEvidence sourceCommitSha '$($ev.sourceCommitSha)' is not a valid SVN revision in SVN workspace")
                     }
                 } else {
-                    $currentDigest = Get-ChangeSetDigest -WorkspaceRoot $carrierWsRoot
+                    $nonVcsBaseline = Get-AuthoritativeFeatureBaseline -SpecDirectory $specDir
+                    $currentDigest = Get-ChangeSetDigest -WorkspaceRoot $carrierWsRoot -Baseline $nonVcsBaseline
                     if ([string]::IsNullOrWhiteSpace($evDigest)) {
                         # already added error
                     } elseif ($evDigest.ToLowerInvariant() -ne $currentDigest.ToLowerInvariant()) {
@@ -2315,16 +2431,81 @@ function Invoke-WithFileLock {
             $script:HeldFileLocks.Remove($stateLockPath) | Out-Null
             if ($null -ne $stateStream) {
                 $stateStream.Dispose()
-                Remove-Item -LiteralPath $stateLockPath -Force -ErrorAction SilentlyContinue
             }
         }
         if ($acquiredSpecLock) {
             $script:HeldFileLocks.Remove($specLockPath) | Out-Null
             if ($null -ne $specStream) {
                 $specStream.Dispose()
-                Remove-Item -LiteralPath $specLockPath -Force -ErrorAction SilentlyContinue
             }
         }
+    }
+}
+
+function Invoke-AiSopTwoFileAtomicCommit {
+    param(
+        [string]$PathA,
+        [object]$ValueA,
+        [string]$SchemaA,
+        [string]$PathB,
+        [object]$ValueB,
+        [string]$SchemaB,
+        [string]$SpecDir
+    )
+
+    $jsonA = if ($ValueA -is [string]) { $ValueA } else { $ValueA | ConvertTo-Json -Depth 10 }
+    $jsonB = if ($null -ne $PathB -and $null -ne $ValueB) {
+        if ($ValueB -is [string]) { $ValueB } else { $ValueB | ConvertTo-Json -Depth 10 }
+    } else { $null }
+
+    if (-not [string]::IsNullOrWhiteSpace($SchemaA) -and (Test-Path -LiteralPath $SchemaA)) {
+        if (-not ($jsonA | Test-Json -SchemaFile $SchemaA -ErrorAction Stop)) {
+            throw "Pre-commit schema validation failed for $PathA against $SchemaA"
+        }
+    }
+    if ($null -ne $jsonB -and -not [string]::IsNullOrWhiteSpace($SchemaB) -and (Test-Path -LiteralPath $SchemaB)) {
+        if (-not ($jsonB | Test-Json -SchemaFile $SchemaB -ErrorAction Stop)) {
+            throw "Pre-commit schema validation failed for $PathB against $SchemaB"
+        }
+    }
+
+    $backupDir = Join-Path $SpecDir ".staging-backup-$([guid]::NewGuid().ToString('N').Substring(0,8))"
+    [System.IO.Directory]::CreateDirectory($backupDir) | Out-Null
+    $backupA = Join-Path $backupDir "backupA.json"
+    $backupB = Join-Path $backupDir "backupB.json"
+    $aExisted = Test-Path -LiteralPath $PathA -PathType Leaf
+    $bExisted = if ($null -ne $PathB) { Test-Path -LiteralPath $PathB -PathType Leaf } else { $false }
+    if ($aExisted) { [System.IO.File]::Copy($PathA, $backupA, $true) }
+    if ($bExisted) { [System.IO.File]::Copy($PathB, $backupB, $true) }
+
+    try {
+        $tmpA = $PathA + ".stage.tmp"
+        [System.IO.File]::WriteAllText($tmpA, $jsonA, $script:WorkflowUtf8NoBom)
+        
+        $tmpB = if ($null -ne $PathB -and $null -ne $jsonB) {
+            $t = $PathB + ".stage.tmp"
+            [System.IO.File]::WriteAllText($t, $jsonB, $script:WorkflowUtf8NoBom)
+            $t
+        } else { $null }
+
+        [System.IO.File]::Move($tmpA, $PathA, $true)
+        if ($null -ne $tmpB -and $null -ne $PathB) {
+            [System.IO.File]::Move($tmpB, $PathB, $true)
+        }
+    } catch {
+        if ($aExisted -and (Test-Path -LiteralPath $backupA)) {
+            [System.IO.File]::Copy($backupA, $PathA, $true)
+        } elseif (-not $aExisted -and (Test-Path -LiteralPath $PathA)) {
+            [System.IO.File]::Delete($PathA)
+        }
+        if ($bExisted -and (Test-Path -LiteralPath $backupB)) {
+            [System.IO.File]::Copy($backupB, $PathB, $true)
+        } elseif (-not $bExisted -and $null -ne $PathB -and (Test-Path -LiteralPath $PathB)) {
+            [System.IO.File]::Delete($PathB)
+        }
+        throw "TWO_PHASE_COMMIT_FAILED: $($_.Exception.Message)"
+    } finally {
+        Remove-Item -LiteralPath $backupDir -Recurse -Force -ErrorAction SilentlyContinue
     }
 }
 
@@ -3177,6 +3358,7 @@ switch ($Operation) {
             foreach ($e in $placeholderResult.Errors) { Write-Output $e }
             Write-Output "INVALID_PLACEHOLDERS"
             Write-Output "DIAGNOSTIC: traceability/hash/id-cross-check passed, but P0/P1 TCs above still carry SyncCoverage placeholder assertions (expected=placeholder/operator=N_A/target=see plan). High-priority cases must be refined with real assertions before delivery. Refine and re-run."
+            throw "VALIDATE_TEST_COVERAGE_FAILED: $($placeholderResult.Errors -join '; ')"
         } else {
             Write-Output "VALID"
             if ($placeholderResult.Warnings.Count -gt 0) {
@@ -3305,12 +3487,13 @@ switch ($Operation) {
             $changeSetDigest = ("0" * 64)
         }
         
-        # Atomically persist to feature-state.json & 00_workflow_state.json with lock
+        # Atomically persist to feature-state.json & 00_workflow_state.json with two-phase commit & lock
         $lockTarget = if (Test-Path -LiteralPath $featStatePath -PathType Leaf) { $featStatePath } else { (Join-Path $specDir "workflow-state.json") }
         Invoke-WithFileLock -StatePath $lockTarget -Action {
             $isoNow = [DateTimeOffset]::UtcNow.ToString("yyyy-MM-ddTHH:mm:ssZ")
+            $fsDict = $null
+            $fsSchema = Join-Path $SchemaRoot "feature-state.schema.json"
             if (Test-Path -LiteralPath $featStatePath -PathType Leaf) {
-                $fsSchema = Join-Path $SchemaRoot "feature-state.schema.json"
                 $fsRaw = [System.IO.File]::ReadAllText($featStatePath)
                 $fsObj = $fsRaw | ConvertFrom-Json
                 $fsDict = [ordered]@{}
@@ -3337,13 +3520,12 @@ switch ($Operation) {
                     evaluatedAt = $isoNow
                 }
                 $fsDict["updatedAt"] = $isoNow
-                Write-JsonAtomic -FilePath $featStatePath -Value $fsDict -SchemaPath $fsSchema
             }
 
-            # Also sync to 00_workflow_state.json if present
             $wfStatePath = Join-Path $specDir "00_workflow_state.json"
+            $wfDict = $null
+            $wfSchema = Join-Path $SchemaRoot "workflow-state.schema.json"
             if (Test-Path -LiteralPath $wfStatePath -PathType Leaf) {
-                $wfSchema = Join-Path $SchemaRoot "workflow-state.schema.json"
                 $wfRaw = [System.IO.File]::ReadAllText($wfStatePath)
                 $wfObj = $wfRaw | ConvertFrom-Json
                 $wfDict = [ordered]@{}
@@ -3365,6 +3547,15 @@ switch ($Operation) {
                     details = @($risk.Details)
                     evaluatedAt = $isoNow
                 }
+            }
+
+            # Execute transactional commit across both state files
+            if ($null -ne $fsDict -and $null -ne $wfDict) {
+                Invoke-AiSopTwoFileAtomicCommit -PathA $featStatePath -ValueA $fsDict -SchemaA $fsSchema `
+                    -PathB $wfStatePath -ValueB $wfDict -SchemaB $wfSchema -SpecDir $specDir
+            } elseif ($null -ne $fsDict) {
+                Write-JsonAtomic -FilePath $featStatePath -Value $fsDict -SchemaPath $fsSchema
+            } elseif ($null -ne $wfDict) {
                 Write-JsonAtomic -FilePath $wfStatePath -Value $wfDict -SchemaPath $wfSchema
             }
         }
@@ -3733,11 +3924,11 @@ switch ($Operation) {
                     } catch {}
                 } elseif (Test-Path -LiteralPath (Join-Path $wsRoot ".svn")) {
                     try {
-                        $svnStat = & svn status --ignore-externals $wsRoot 2>&1
+                        $svnStat = & svn status --non-interactive --ignore-externals $wsRoot 2>&1
                         if ($svnStat -match '(?m)^[MAD?]\s+.*(src|pkg|internal|app)[/\\].*') {
                             $hasSourceCodeChanges = $true
                         }
-                        $svnDiff = & svn diff $wsRoot 2>&1
+                        $svnDiff = & svn diff --non-interactive $wsRoot 2>&1
                         if ($svnDiff -match '(?m)^Index:\s+.*(src|pkg|internal|app)[/\\].*') {
                             $hasSourceCodeChanges = $true
                         }
@@ -3766,7 +3957,7 @@ switch ($Operation) {
         
         if (Test-Path -LiteralPath (Join-Path $wsRoot ".svn") -PathType Container) {
             try {
-                $svnOutput = & svn status --ignore-externals $wsRoot 2>&1
+                $svnOutput = & svn status --non-interactive --ignore-externals $wsRoot 2>&1
                 if ($LASTEXITCODE -eq 0) {
                     foreach ($line in $svnOutput) {
                         if ($line -match '^(\?|\!)\s+(.+)$') {

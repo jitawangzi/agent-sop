@@ -223,7 +223,7 @@ try {
         riskExemptions = @()
     }
     [System.IO.File]::WriteAllText($coveragePath, ($coverage | ConvertTo-Json -Depth 10), $Utf8NoBom)
-    & $StateScript -Operation ValidateTestCoverage -Path $coveragePath | Out-Null
+    & $StateScript -Operation ValidateTestCoverage -Path $coveragePath -Phase PLAN | Out-Null
 
     Write-Host "Step 9: ResetApproval(requirement) cascades to design (linkage)" -ForegroundColor Cyan
     & $StateScript -Operation ResetApproval -Path $approvalPath -Gate requirement `

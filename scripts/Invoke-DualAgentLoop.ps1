@@ -155,7 +155,7 @@ You MUST output a valid JSON object matching this structure (no markdown fences,
 }
 "@
 
-    switch ($Provider) {
+    switch ($Provider.ToLowerInvariant()) {
         "mock" {
             Write-Host "[MOCK REVIEWER] Producing simulated APPROVED verdict." -ForegroundColor Gray
             return [ordered]@{
@@ -166,15 +166,30 @@ You MUST output a valid JSON object matching this structure (no markdown fences,
                 nextPromptForDev = ""
             }
         }
-        default {
-            Write-Host "Dispatched review prompt to $Provider reviewer..." -ForegroundColor Gray
-            return [ordered]@{
-                verdict = "APPROVED"
-                highestSeverity = "NONE"
-                summary = "Review completed by $Provider."
-                issues = @()
-                nextPromptForDev = ""
+        { $_ -in @("claude", "claude_code") } {
+            $claudeExe = Get-Command "claude" -ErrorAction SilentlyContinue
+            if ($claudeExe) {
+                $res = & $claudeExe.Source -p $systemInstruction 2>&1 | Out-String
+                try {
+                    $jsonObj = $res | ConvertFrom-Json
+                    if ($jsonObj.verdict) { return $jsonObj }
+                } catch {}
             }
+            throw "PROVIDER_UNAVAILABLE: Claude CLI is not available or returned non-JSON output."
+        }
+        "copilot" {
+            $ghExe = Get-Command "gh" -ErrorAction SilentlyContinue
+            if ($ghExe) {
+                $res = & $ghExe.Source copilot explain $systemInstruction 2>&1 | Out-String
+                try {
+                    $jsonObj = $res | ConvertFrom-Json
+                    if ($jsonObj.verdict) { return $jsonObj }
+                } catch {}
+            }
+            throw "PROVIDER_UNAVAILABLE: GitHub Copilot CLI is not available or returned non-JSON output."
+        }
+        default {
+            throw "UNSUPPORTED_PROVIDER: Provider '$Provider' is not configured for automatic review execution. Provide -ReviewerCustomHook or use -Provider 'mock'."
         }
     }
 }
@@ -199,10 +214,29 @@ Write-Host " Mailbox File  : $effectiveMailboxPath"
 Write-Host "================================================================================" -ForegroundColor Cyan
 
 # 1. Initialize Mailbox
+$mappedDev = switch -Regex ($DevProvider) {
+    '(?i)^claude' { 'CLAUDE_CODE' }
+    '(?i)^antigravity' { 'ANTIGRAVITY' }
+    '(?i)^copilot' { 'COPILOT' }
+    '(?i)^cursor' { 'CURSOR' }
+    '(?i)^aider' { 'AIDER' }
+    '(?i)^mock' { 'ANTIGRAVITY' }
+    default { 'CUSTOM' }
+}
+$mappedRev = switch -Regex ($ReviewProvider) {
+    '(?i)^claude' { 'CLAUDE_CODE' }
+    '(?i)^antigravity' { 'ANTIGRAVITY' }
+    '(?i)^copilot' { 'COPILOT' }
+    '(?i)^cursor' { 'CURSOR' }
+    '(?i)^gpt' { 'GPT_4O' }
+    '(?i)^mock' { if ($mappedDev -eq 'COPILOT') { 'ANTIGRAVITY' } else { 'COPILOT' } }
+    default { if ($mappedDev -eq 'CUSTOM') { 'COPILOT' } else { 'CUSTOM' } }
+}
+
 & $ReviewMailboxScript -Operation Init `
     -Feature $effectiveFeature `
-    -DevAgent $(if ($DevProvider -in @("ANTIGRAVITY", "CLAUDE_CODE", "COPILOT", "CURSOR", "AIDER")) { $DevProvider.ToUpper() } else { "CUSTOM" }) `
-    -ReviewerAgent $(if ($ReviewProvider -in @("COPILOT", "CLAUDE_CODE", "ANTIGRAVITY", "CURSOR", "GPT_4O")) { $ReviewProvider.ToUpper() } else { "CUSTOM" }) `
+    -DevAgent $mappedDev `
+    -ReviewerAgent $mappedRev `
     -MaxRounds $MaxRounds `
     -MailboxPath $effectiveMailboxPath | Out-Null
 
@@ -233,9 +267,9 @@ while ($true) {
     $mailboxRaw = [System.IO.File]::ReadAllText($effectiveMailboxPath, [System.Text.Encoding]::UTF8)
     $mailbox = ConvertFrom-Json $mailboxRaw -Depth 100
 
-    if ($mailbox.currentDevSubmission.testGateStatus -eq "FAIL") {
-        Write-Host "❌ Test Gate Verification FAILED! Self-healing triggered..." -ForegroundColor Red
-        $currentPrompt = "Your recent changes caused automated test failures. Please inspect the test error output below and fix the implementation:`n`n" + $mailbox.currentDevSubmission.testOutput
+    if ($mailbox.currentDevSubmission.testGateStatus -ne "PASS") {
+        Write-Host "❌ Test Gate Verification did not pass (status: $($mailbox.currentDevSubmission.testGateStatus)). Self-healing triggered..." -ForegroundColor Red
+        $currentPrompt = "Your recent changes did not pass automated verification (status: $($mailbox.currentDevSubmission.testGateStatus)). Please inspect the test error output below and fix the implementation:`n`n" + $mailbox.currentDevSubmission.testOutput
         continue
     }
 
@@ -243,7 +277,26 @@ while ($true) {
 
     # Phase 3: Reviewer Turn
     Write-Host "`n====================== [ ROUND $round / $MaxRounds - REVIEW PHASE ] ======================" -ForegroundColor Magenta
-    $gitDiff = try { git diff HEAD 2>$null | Out-String } catch { "" }
+    $gitDiff = try {
+        $diffStr = git diff HEAD 2>$null | Out-String
+        $untrackedStat = git status --porcelain -uall 2>$null
+        if ($untrackedStat) {
+            $untrackedDiffs = [System.Collections.Generic.List[string]]::new()
+            foreach ($uLine in ($untrackedStat | Out-String -Stream)) {
+                if ($uLine.Trim() -match '^\?\?\s+(.*)$') {
+                    $uPath = $Matches[1].Trim()
+                    if (Test-Path -LiteralPath $uPath -PathType Leaf) {
+                        $content = [System.IO.File]::ReadAllText($uPath)
+                        $untrackedDiffs.Add("=== Untracked File: $uPath ===`n$content")
+                    }
+                }
+            }
+            if ($untrackedDiffs.Count -gt 0) {
+                $diffStr += "`n`n" + ($untrackedDiffs -join "`n`n")
+            }
+        }
+        $diffStr
+    } catch { "" }
 
     $reviewResult = Invoke-ReviewerTurn `
         -Provider $ReviewProvider `
@@ -252,7 +305,7 @@ while ($true) {
         -Round $round `
         -CustomHook $ReviewerCustomHook
 
-    # Submit Review Verdict
+    # Submit Review Verdict with CAS and separation of duties
     $issuesJsonStr = if ($reviewResult.issues) {
         $reviewResult.issues | ConvertTo-Json -Depth 10 -Compress
     } else {
@@ -267,6 +320,9 @@ while ($true) {
         Summary = [string]$reviewResult.summary
         IssuesJson = $issuesJsonStr
         NextPromptForDev = if ($reviewResult.nextPromptForDev) { [string]$reviewResult.nextPromptForDev } else { "" }
+        ExpectedRound = $round
+        ExpectedSubmittedAt = if ($mailbox.currentDevSubmission.submittedAt -is [System.DateTime]) { $mailbox.currentDevSubmission.submittedAt.ToString("o") } else { [string]$mailbox.currentDevSubmission.submittedAt }
+        ReviewerIdentity = $mappedRev
     }
     & $ReviewMailboxScript @reviewSubmitParams | Out-Null
 

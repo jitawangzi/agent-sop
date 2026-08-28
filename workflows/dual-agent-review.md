@@ -124,21 +124,14 @@ scripts/review-mailbox.ps1 -Operation ReviewSubmit 提交你的判定（APPROVED
 
 ---
 
-## 五、 100% 全自动无人值守模式（Autonomous Loop）⭐
+## 五、 100% 全自动无人值守模式与可视化驾驶舱 (Dual-Agent Studio) ⭐
 
-如果你不想在两个窗口中来回发令，可直接通过 `Invoke-DualAgentLoop.ps1` 启动全自动闭环：
+如需进行 100% 全自动无人值守闭环迭代或使用桌面可视化控制台，请使用独立的驾驶舱工具：
 
-```powershell
-pwsh -NoProfile -File ./.ai-sop/scripts/Invoke-DualAgentLoop.ps1 `
-    -TaskPrompt "优化 workflow-transaction 状态机并发释放逻辑" `
-    -DevProvider "claude" `
-    -ReviewProvider "copilot" `
-    -VerifyCommand "pwsh -NoProfile -File ./scripts/run-all-tests.ps1" `
-    -MaxRounds 4
-```
-
-### 核心特性：
-1. **自动驱动 Dev & Reviewer**：调度器全自动流转，支持 Claude Code、Copilot、Aider、Antigravity 等多种 Provider；
-2. **测试门禁自愈（Self-Healing）**：Dev 修改后若测试红灯，错误堆栈直接喂回 Dev 修复，不消耗 Reviewer 资源；
-3. **闭环收敛**：Reviewer 提出缺陷自动转换为下一轮指令喂回 Dev；直到测试绿灯且审查 `APPROVED` 时自动完成并生成总结。
+- **独立工程路径**：`D:\project\dual-agent-studio`
+- **启动方式**：直接双击 `D:\project\dual-agent-studio\start.bat`（或在浏览器访问 `http://localhost:3700`）
+- **核心特性**：
+  1. **跨项目通用**：零环境入侵，可自由切换驱动任何本地工程（如 `agent-sop`、Java 后端、前端工程等）；
+  2. **可视化驾驶舱**：多轮时间轴（Timeline）、实时 Git Diff 高亮、实时终端日志流；
+  3. **模型与思考深度调优**：自由指定 Dev / Reviewer 的基础模型与推理强度（Reasoning Effort / Thinking Tokens）。
 

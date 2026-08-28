@@ -11,7 +11,11 @@
     pwsh -NoProfile -File ./scripts/Invoke-DualAgentLoop.ps1 `
         -TaskPrompt "Optimize workflow-transaction lock release logic" `
         -DevProvider "claude" `
+        -DevModel "claude-3-7-sonnet-20250219" `
+        -DevReasoningEffort "high" `
         -ReviewProvider "copilot" `
+        -ReviewModel "gpt-5.4" `
+        -ReviewReasoningEffort "high" `
         -CopilotSessionId "9fa43261-d96c-430b-ac43-20e3035ec1bf" `
         -VerifyCommand "pwsh -NoProfile -File ./scripts/run-all-tests.ps1" `
         -MaxRounds 4
@@ -32,6 +36,12 @@ param(
 
     [ValidateSet("copilot", "claude", "antigravity", "gpt4o", "deepseek", "mock", "custom")]
     [string]$ReviewProvider = "copilot",
+
+    # Model & Reasoning Effort Controls
+    [string]$DevModel,
+    [string]$ReviewModel,
+    [string]$DevReasoningEffort,
+    [string]$ReviewReasoningEffort,
 
     [string]$CopilotSessionId,
 
@@ -85,24 +95,42 @@ function Invoke-DevTurn {
         [string]$Prompt,
         [int]$Round,
         [string]$SessionId,
+        [string]$Model,
+        [string]$ReasoningEffort,
         [scriptblock]$CustomHook
     )
 
-    Write-Host "`n[Round $Round] Waking Developer Agent (Provider: $Provider)..." -ForegroundColor Yellow
+    Write-Host "`n🛠️ [Round $Round] Waking Developer Agent (Provider: $Provider)..." -ForegroundColor Yellow
 
     if ($null -ne $CustomHook) {
-        & $CustomHook -Prompt $Prompt -Round $Round
+        & $CustomHook -Prompt $Prompt -Round $Round -Model $Model -ReasoningEffort $ReasoningEffort
         return
     }
 
     switch ($Provider) {
         "claude" {
             Write-Host "Running Claude Code CLI..." -ForegroundColor Gray
-            & claude -p "$Prompt"
+            $claudeArgs = @("-p", "$Prompt")
+            if (-not [string]::IsNullOrWhiteSpace($Model)) {
+                $claudeArgs += @("--model", $Model)
+            }
+            if (-not [string]::IsNullOrWhiteSpace($ReasoningEffort)) {
+                $env:MAX_THINKING_TOKENS = switch ($ReasoningEffort.ToLowerInvariant()) {
+                    "high" { "16000" }
+                    "medium" { "8000" }
+                    "low" { "4000" }
+                    default { $ReasoningEffort }
+                }
+            }
+            & claude @claudeArgs
         }
         "aider" {
             Write-Host "Running Aider CLI..." -ForegroundColor Gray
-            & aider --message "$Prompt" --yes-always
+            $aiderArgs = @("--message", "$Prompt", "--yes-always")
+            if (-not [string]::IsNullOrWhiteSpace($Model)) {
+                $aiderArgs += @("--model", $Model)
+            }
+            & aider @aiderArgs
         }
         "copilot" {
             Write-Host "Running GitHub Copilot CLI..." -ForegroundColor Gray
@@ -111,6 +139,12 @@ function Invoke-DevTurn {
                 $argsList = @("-p", $Prompt, "--allow-all")
                 if (-not [string]::IsNullOrWhiteSpace($SessionId)) {
                     $argsList += "--resume=$SessionId"
+                }
+                if (-not [string]::IsNullOrWhiteSpace($Model)) {
+                    $argsList += @("--model", $Model)
+                }
+                if (-not [string]::IsNullOrWhiteSpace($ReasoningEffort)) {
+                    $argsList += @("--reasoning-effort", $ReasoningEffort)
                 }
                 & $copilotCmd.Source @argsList
             } else {
@@ -136,13 +170,15 @@ function Invoke-ReviewerTurn {
         [string]$GitDiff,
         [int]$Round,
         [string]$SessionId,
+        [string]$Model,
+        [string]$ReasoningEffort,
         [scriptblock]$CustomHook
     )
 
-    Write-Host "`n[Round $Round] Waking Reviewer Agent (Provider: $Provider)..." -ForegroundColor Magenta
+    Write-Host "`n🔍 [Round $Round] Waking Reviewer Agent (Provider: $Provider)..." -ForegroundColor Magenta
 
     if ($null -ne $CustomHook) {
-        $result = & $CustomHook -OriginalTask $OriginalTask -GitDiff $GitDiff -Round $Round
+        $result = & $CustomHook -OriginalTask $OriginalTask -GitDiff $GitDiff -Round $Round -Model $Model -ReasoningEffort $ReasoningEffort
         return $result
     }
 
@@ -185,7 +221,19 @@ You MUST output a valid JSON object matching this structure (no markdown fences,
         { $_ -in @("claude", "claude_code") } {
             $claudeExe = Get-Command "claude" -ErrorAction SilentlyContinue
             if ($claudeExe) {
-                $res = & $claudeExe.Source -p $systemInstruction 2>&1 | Out-String
+                $claudeArgs = @("-p", $systemInstruction)
+                if (-not [string]::IsNullOrWhiteSpace($Model)) {
+                    $claudeArgs += @("--model", $Model)
+                }
+                if (-not [string]::IsNullOrWhiteSpace($ReasoningEffort)) {
+                    $env:MAX_THINKING_TOKENS = switch ($ReasoningEffort.ToLowerInvariant()) {
+                        "high" { "16000" }
+                        "medium" { "8000" }
+                        "low" { "4000" }
+                        default { $ReasoningEffort }
+                    }
+                }
+                $res = & $claudeExe.Source @claudeArgs 2>&1 | Out-String
                 try {
                     $jsonStr = if ($res -match '(?ms)\{.*\}') { $Matches[0] } else { $res }
                     $jsonObj = $jsonStr | ConvertFrom-Json
@@ -205,6 +253,12 @@ You MUST output a valid JSON object matching this structure (no markdown fences,
             $argsList = @("-p", $systemInstruction, "-s", "--allow-all")
             if (-not [string]::IsNullOrWhiteSpace($SessionId)) {
                 $argsList += "--resume=$SessionId"
+            }
+            if (-not [string]::IsNullOrWhiteSpace($Model)) {
+                $argsList += @("--model", $Model)
+            }
+            if (-not [string]::IsNullOrWhiteSpace($ReasoningEffort)) {
+                $argsList += @("--reasoning-effort", $ReasoningEffort)
             }
             $res = & $copilotCmd.Source @argsList 2>&1 | Out-String
             try {
@@ -249,10 +303,10 @@ $mappedRev = switch ($ReviewProvider.ToLowerInvariant()) {
 }
 
 Write-Host "================================================================================" -ForegroundColor Cyan
-Write-Host " DUAL-AGENT AUTONOMOUS LOOP ORCHESTRATOR" -ForegroundColor Cyan
+Write-Host " 🤖 DUAL-AGENT AUTONOMOUS LOOP ORCHESTRATOR" -ForegroundColor Cyan
 Write-Host " Feature       : $effectiveFeature" -ForegroundColor White
-Write-Host " Dev Agent     : $DevProvider ($mappedDev)" -ForegroundColor White
-Write-Host " Review Agent  : $ReviewProvider ($mappedRev)" -ForegroundColor White
+Write-Host " Dev Agent     : $DevProvider ($mappedDev) $(if ($DevModel) { "[Model: $DevModel, Effort: $DevReasoningEffort]" })" -ForegroundColor White
+Write-Host " Review Agent  : $ReviewProvider ($mappedRev) $(if ($ReviewModel) { "[Model: $ReviewModel, Effort: $ReviewReasoningEffort]" })" -ForegroundColor White
 Write-Host " Max Rounds    : $MaxRounds" -ForegroundColor White
 Write-Host " Verify Command: $VerifyCommand" -ForegroundColor White
 Write-Host " Mailbox File  : $effectiveMailboxPath" -ForegroundColor White
@@ -282,10 +336,10 @@ while ($true) {
     Write-Host "`n====================== [ ROUND $round / $MaxRounds - DEV PHASE ] ======================" -ForegroundColor Yellow
 
     # Phase 1: Dev Turn
-    Invoke-DevTurn -Provider $DevProvider -Prompt $currentPrompt -Round $round -SessionId $CopilotSessionId -CustomHook $DevCustomHook
+    Invoke-DevTurn -Provider $DevProvider -Prompt $currentPrompt -Round $round -SessionId $CopilotSessionId -Model $DevModel -ReasoningEffort $DevReasoningEffort -CustomHook $DevCustomHook
 
     # Phase 2: Dev Submit & Test Gate Verification
-    Write-Host "`n Running test gate and capturing changes..." -ForegroundColor Gray
+    Write-Host "`n⚙️ Running test gate and capturing changes..." -ForegroundColor Gray
     $devSubmitParams = @{
         Operation = "DevSubmit"
         MailboxPath = $effectiveMailboxPath
@@ -304,13 +358,13 @@ while ($true) {
         if ($selfHealAttempts -ge $MaxSelfHealAttempts) {
             throw "TEST_GATE_SELF_HEAL_EXCEEDED: Test verification failed $selfHealAttempts consecutive attempts in round $round. Halting loop to prevent infinite retry."
         }
-        Write-Host " Test Gate Verification did not pass (status: $($mailbox.currentDevSubmission.testGateStatus), attempt $selfHealAttempts/$MaxSelfHealAttempts). Self-healing triggered..." -ForegroundColor Red
+        Write-Host "❌ Test Gate Verification did not pass (status: $($mailbox.currentDevSubmission.testGateStatus), attempt $selfHealAttempts/$MaxSelfHealAttempts). Self-healing triggered..." -ForegroundColor Red
         $currentPrompt = "Your recent changes did not pass automated verification (status: $($mailbox.currentDevSubmission.testGateStatus)). Please inspect the test error output below and fix the implementation:`n`n" + $mailbox.currentDevSubmission.testOutput
         continue
     }
 
     $selfHealAttempts = 0
-    Write-Host " Test Gate Verification PASSED!" -ForegroundColor Green
+    Write-Host "✅ Test Gate Verification PASSED!" -ForegroundColor Green
 
     # Phase 3: Reviewer Turn
     Write-Host "`n====================== [ ROUND $round / $MaxRounds - REVIEW PHASE ] ======================" -ForegroundColor Magenta
@@ -345,6 +399,8 @@ while ($true) {
         -GitDiff $gitDiff `
         -Round $round `
         -SessionId $CopilotSessionId `
+        -Model $ReviewModel `
+        -ReasoningEffort $ReviewReasoningEffort `
         -CustomHook $ReviewerCustomHook
 
     # Submit Review Verdict with CAS and separation of duties
@@ -375,12 +431,12 @@ while ($true) {
 
     if ($mailbox.status -eq "APPROVED") {
         Write-Host "`n================================================================================" -ForegroundColor Green
-        Write-Host " DUAL-AGENT LOOP COMPLETED SUCCESSFULLY (APPROVED at Round $round)!" -ForegroundColor Green
+        Write-Host " 🏆 DUAL-AGENT LOOP COMPLETED SUCCESSFULLY (APPROVED at Round $round)!" -ForegroundColor Green
         Write-Host " Summary: $($mailbox.history[-1].reviewVerdict.summary)" -ForegroundColor Cyan
         Write-Host "================================================================================" -ForegroundColor Green
 
         if ($AutoCommit) {
-            Write-Host " Creating automatic git commit..." -ForegroundColor Gray
+            Write-Host "📦 Creating automatic git commit..." -ForegroundColor Gray
             git add -A
             if ($LASTEXITCODE -ne 0) {
                 throw "AUTO_COMMIT_FAILED: git add -A failed with exit code $($LASTEXITCODE)."
@@ -389,7 +445,7 @@ while ($true) {
             if ($LASTEXITCODE -ne 0) {
                 throw "AUTO_COMMIT_FAILED: git commit failed with exit code $($LASTEXITCODE): $commitOut"
             }
-            Write-Host " Committed successfully." -ForegroundColor Green
+            Write-Host "✅ Committed successfully." -ForegroundColor Green
         }
 
         if ($PassThru) { return $mailbox }
@@ -398,7 +454,7 @@ while ($true) {
 
     if ($mailbox.status -eq "REJECTED_MAX_ROUNDS") {
         Write-Host "`n================================================================================" -ForegroundColor Red
-        Write-Host " DUAL-AGENT LOOP HALTED: Max rounds ($MaxRounds) reached without approval." -ForegroundColor Red
+        Write-Host " 🚫 DUAL-AGENT LOOP HALTED: Max rounds ($MaxRounds) reached without approval." -ForegroundColor Red
         Write-Host " Latest Review Feedback:" -ForegroundColor Yellow
         Write-Host " $($mailbox.history[-1].reviewVerdict.summary)"
         Write-Host "================================================================================" -ForegroundColor Red
@@ -410,6 +466,6 @@ while ($true) {
     if ($mailbox.status -eq "WAITING_DEV") {
         $lastReview = $mailbox.history[-1].reviewVerdict
         $currentPrompt = "Round $round Review REJECTED (Highest Severity: $($lastReview.highestSeverity)).`nSummary: $($lastReview.summary)`n`nInstructions for next round:`n$($lastReview.nextPromptForDev)"
-        Write-Host " Issues detected. Auto-advancing to Round $($mailbox.round)..." -ForegroundColor Yellow
+        Write-Host "⚠️ Issues detected. Auto-advancing to Round $($mailbox.round)..." -ForegroundColor Yellow
     }
 }

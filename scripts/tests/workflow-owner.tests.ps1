@@ -1235,6 +1235,42 @@ try {
             -SessionEpochId $v1Session.Record.sessionEpochId
     }
 
+    # Negative Test: Git repository with multiple commits but no trunk branch throws BASELINE_MISSING on Claim without -Baseline
+    $noTrunkRepo = Join-Path $TestRoot "no_trunk_repo"
+    [System.IO.Directory]::CreateDirectory($noTrunkRepo) | Out-Null
+    & git -C $noTrunkRepo init -b "feature-only" --quiet
+    $dummyFile = Join-Path $noTrunkRepo "file1.txt"
+    [System.IO.File]::WriteAllText($dummyFile, "hello 1`n", $Utf8NoBom)
+    & git -C $noTrunkRepo add .
+    & git -C $noTrunkRepo commit -m "c1" --quiet
+    $dummyFile2 = Join-Path $noTrunkRepo "file2.txt"
+    [System.IO.File]::WriteAllText($dummyFile2, "hello 2`n", $Utf8NoBom)
+    & git -C $noTrunkRepo add .
+    & git -C $noTrunkRepo commit -m "c2" --quiet
+
+    $noTrunkWs = Join-Path $noTrunkRepo ".ai-workspace\specs\features\NoTrunkFeature"
+    [System.IO.Directory]::CreateDirectory($noTrunkWs) | Out-Null
+    $noTrunkFeatureObj = [pscustomobject]@{
+        Feature = "NoTrunkFeature"
+        Workspace = (Resolve-PhysicalPathIdentity -Path $noTrunkRepo)
+        Spec = $noTrunkWs
+    }
+
+    $noTrunkSession = New-Session -Feature $noTrunkFeatureObj -Agent CLAUDE_CODE -NativeSessionId "session-notrunk"
+    New-Grant -Feature $noTrunkFeatureObj -Session $noTrunkSession -Operation Claim -Agent CLAUDE_CODE -OwnerId "notrunk-owner" -Suffix "notrunk-claim" | Out-Null
+
+    Assert-Fails -Message "Claim without -Baseline on repo with no trunk branch must throw BASELINE_MISSING." -Action {
+        & (Join-Path $PSScriptRoot "..\workflow-owner.ps1") `
+            -Operation Claim `
+            -SpecDirectory $noTrunkWs `
+            -Feature "NoTrunkFeature" `
+            -Workflow SUPERPOWERS `
+            -Agent CLAUDE_CODE `
+            -OwnerId "notrunk-owner" `
+            -SessionKey $noTrunkSession.Record.sessionKey `
+            -SessionEpochId $noTrunkSession.Record.sessionEpochId
+    }
+
     Write-Output "All workflow owner tests passed."
 } finally {
     foreach ($name in @(

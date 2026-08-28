@@ -15,6 +15,7 @@ param(
     [string]$Feature,
     [string]$SpecDirectory,
     [string]$MailboxPath,
+    [string]$ProjectRoot,
 
     [ValidateSet("ANTIGRAVITY", "CLAUDE_CODE", "COPILOT", "CURSOR", "AIDER", "CUSTOM")]
     [string]$DevAgent = "ANTIGRAVITY",
@@ -86,7 +87,8 @@ function Resolve-MailboxFilePath {
     param(
         [string]$CustomPath,
         [string]$SpecDir,
-        [string]$FeatureName
+        [string]$FeatureName,
+        [string]$ExplicitProjectRoot = $null
     )
 
     $resolvedPath = if (-not [string]::IsNullOrWhiteSpace($CustomPath)) {
@@ -122,35 +124,33 @@ function Resolve-MailboxFilePath {
         }
     }
 
-    # Identify effective workspace root for the target
-    $effectiveWs = if (-not [string]::IsNullOrWhiteSpace($SpecDir)) {
+    # Confinement: target must be inside effective project workspace root
+    $currentWs = if (-not [string]::IsNullOrWhiteSpace($ExplicitProjectRoot)) {
+        [System.IO.Path]::GetFullPath($ExplicitProjectRoot)
+    } elseif (-not [string]::IsNullOrWhiteSpace($SpecDir)) {
         Resolve-AiSopWorkspaceRoot -StartPath $SpecDir
     } else {
-        Resolve-AiSopWorkspaceRoot -StartPath $resolvedPath
+        Resolve-AiSopWorkspaceRoot -StartPath $PWD
     }
-    if ([string]::IsNullOrWhiteSpace($effectiveWs)) {
-        $effectiveWs = [System.IO.Path]::GetFullPath($PWD)
+    if ([string]::IsNullOrWhiteSpace($currentWs)) {
+        $currentWs = [System.IO.Path]::GetFullPath($PWD)
     }
-    try {
-        if (Get-Command "Resolve-PhysicalPathIdentity" -ErrorAction SilentlyContinue) {
-            $effectiveWs = Resolve-PhysicalPathIdentity -Path $effectiveWs
-        }
-    } catch {}
+    $physicalCurrentWs = if (Get-Command "Resolve-PhysicalPathIdentity" -ErrorAction SilentlyContinue) {
+        Resolve-PhysicalPathIdentity -Path $currentWs
+    } else {
+        [System.IO.Path]::GetFullPath($currentWs)
+    }
 
-    $physicalTarget = try {
-        if (Get-Command "Resolve-PhysicalPathIdentity" -ErrorAction SilentlyContinue) {
-            Resolve-PhysicalPathIdentity -Path $resolvedPath
-        } else {
-            [System.IO.Path]::GetFullPath($resolvedPath)
-        }
-    } catch {
+    $physicalTarget = if (Get-Command "Resolve-PhysicalPathIdentity" -ErrorAction SilentlyContinue) {
+        Resolve-PhysicalPathIdentity -Path $resolvedPath
+    } else {
         [System.IO.Path]::GetFullPath($resolvedPath)
     }
 
-    $normWs = $effectiveWs.TrimEnd('/', '\') + [System.IO.Path]::DirectorySeparatorChar
-    if (-not $physicalTarget.Equals($effectiveWs, [System.StringComparison]::OrdinalIgnoreCase) -and
+    $normWs = $physicalCurrentWs.TrimEnd('/', '\') + [System.IO.Path]::DirectorySeparatorChar
+    if (-not $physicalTarget.Equals($physicalCurrentWs, [System.StringComparison]::OrdinalIgnoreCase) -and
         -not $physicalTarget.StartsWith($normWs, [System.StringComparison]::OrdinalIgnoreCase)) {
-        throw "PATH_TRAVERSAL_DETECTED: Target mailbox path '$resolvedPath' escapes the workspace root '$effectiveWs'."
+        throw "PATH_TRAVERSAL_DETECTED: Target mailbox path '$resolvedPath' (physical: '$physicalTarget') escapes the project workspace root '$physicalCurrentWs'."
     }
 
     return $resolvedPath
@@ -328,7 +328,7 @@ function Invoke-WithMailboxLock {
     }
 }
 
-$targetMailbox = Resolve-MailboxFilePath -CustomPath $MailboxPath -SpecDir $SpecDirectory -FeatureName $Feature
+$targetMailbox = Resolve-MailboxFilePath -CustomPath $MailboxPath -SpecDir $SpecDirectory -FeatureName $Feature -ExplicitProjectRoot $ProjectRoot
 
 switch ($Operation) {
     "Init" {

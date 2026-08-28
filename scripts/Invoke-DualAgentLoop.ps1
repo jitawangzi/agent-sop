@@ -12,6 +12,7 @@
         -TaskPrompt "Optimize workflow-transaction lock release logic" `
         -DevProvider "claude" `
         -ReviewProvider "copilot" `
+        -CopilotSessionId "9fa43261-d96c-430b-ac43-20e3035ec1bf" `
         -VerifyCommand "pwsh -NoProfile -File ./scripts/run-all-tests.ps1" `
         -MaxRounds 4
 #>
@@ -24,6 +25,7 @@ param(
     [string]$Feature,
     [string]$SpecDirectory,
     [string]$MailboxPath,
+    [string]$ProjectRoot,
 
     [ValidateSet("claude", "antigravity", "copilot", "aider", "mock", "custom")]
     [string]$DevProvider = "claude",
@@ -31,8 +33,11 @@ param(
     [ValidateSet("copilot", "claude", "antigravity", "gpt4o", "deepseek", "mock", "custom")]
     [string]$ReviewProvider = "copilot",
 
+    [string]$CopilotSessionId,
+
     [string]$VerifyCommand = "pwsh -NoProfile -File ./scripts/run-all-tests.ps1",
     [int]$MaxRounds = 4,
+    [int]$MaxSelfHealAttempts = 3,
 
     # Custom/Mock hooks for extensible providers or test simulation
     [scriptblock]$DevCustomHook,
@@ -79,11 +84,12 @@ function Invoke-DevTurn {
         [string]$Provider,
         [string]$Prompt,
         [int]$Round,
+        [string]$SessionId,
         [scriptblock]$CustomHook
     )
 
-    Write-Host "`n🚀 [Round $Round] Waking Dev Agent (Provider: $Provider)..." -ForegroundColor Cyan
-    
+    Write-Host "`n[Round $Round] Waking Developer Agent (Provider: $Provider)..." -ForegroundColor Yellow
+
     if ($null -ne $CustomHook) {
         & $CustomHook -Prompt $Prompt -Round $Round
         return
@@ -100,11 +106,15 @@ function Invoke-DevTurn {
         }
         "copilot" {
             Write-Host "Running GitHub Copilot CLI..." -ForegroundColor Gray
-            $ghExe = Get-Command "gh" -ErrorAction SilentlyContinue
-            if ($ghExe) {
-                & $ghExe.Source copilot suggest -t shell "$Prompt"
+            $copilotCmd = Get-Command "copilot", "copilot.cmd", "copilot.ps1" -ErrorAction SilentlyContinue | Select-Object -First 1
+            if ($copilotCmd) {
+                $argsList = @("-p", $Prompt, "--allow-all")
+                if (-not [string]::IsNullOrWhiteSpace($SessionId)) {
+                    $argsList += "--resume=$SessionId"
+                }
+                & $copilotCmd.Source @argsList
             } else {
-                throw "PROVIDER_UNAVAILABLE: GitHub CLI 'gh' is not found in PATH."
+                throw "PROVIDER_UNAVAILABLE: GitHub Copilot CLI ('copilot') is not found in PATH."
             }
         }
         "antigravity" {
@@ -125,10 +135,11 @@ function Invoke-ReviewerTurn {
         [string]$OriginalTask,
         [string]$GitDiff,
         [int]$Round,
+        [string]$SessionId,
         [scriptblock]$CustomHook
     )
 
-    Write-Host "`n🔍 [Round $Round] Waking Reviewer Agent (Provider: $Provider)..." -ForegroundColor Magenta
+    Write-Host "`n[Round $Round] Waking Reviewer Agent (Provider: $Provider)..." -ForegroundColor Magenta
 
     if ($null -ne $CustomHook) {
         $result = & $CustomHook -OriginalTask $OriginalTask -GitDiff $GitDiff -Round $Round
@@ -176,22 +187,34 @@ You MUST output a valid JSON object matching this structure (no markdown fences,
             if ($claudeExe) {
                 $res = & $claudeExe.Source -p $systemInstruction 2>&1 | Out-String
                 try {
-                    $jsonObj = $res | ConvertFrom-Json
-                    if ($jsonObj.verdict) { return $jsonObj }
+                    $jsonStr = if ($res -match '(?ms)\{.*\}') { $Matches[0] } else { $res }
+                    $jsonObj = $jsonStr | ConvertFrom-Json
+                    if ($null -ne $jsonObj -and -not [string]::IsNullOrWhiteSpace($jsonObj.verdict)) {
+                        return $jsonObj
+                    }
                 } catch {}
+                throw "PROVIDER_OUTPUT_INVALID: Claude CLI returned non-JSON review output: $res"
             }
-            throw "PROVIDER_UNAVAILABLE: Claude CLI is not available or returned non-JSON output."
+            throw "PROVIDER_UNAVAILABLE: Claude CLI is not available in PATH."
         }
         "copilot" {
-            $ghExe = Get-Command "gh" -ErrorAction SilentlyContinue
-            if ($ghExe) {
-                $res = & $ghExe.Source copilot explain $systemInstruction 2>&1 | Out-String
-                try {
-                    $jsonObj = $res | ConvertFrom-Json
-                    if ($jsonObj.verdict) { return $jsonObj }
-                } catch {}
+            $copilotCmd = Get-Command "copilot", "copilot.cmd", "copilot.ps1" -ErrorAction SilentlyContinue | Select-Object -First 1
+            if (-not $copilotCmd) {
+                throw "PROVIDER_UNAVAILABLE: GitHub Copilot CLI ('copilot') is not found in PATH."
             }
-            throw "PROVIDER_UNAVAILABLE: GitHub Copilot CLI is not available or returned non-JSON output."
+            $argsList = @("-p", $systemInstruction, "-s", "--allow-all")
+            if (-not [string]::IsNullOrWhiteSpace($SessionId)) {
+                $argsList += "--resume=$SessionId"
+            }
+            $res = & $copilotCmd.Source @argsList 2>&1 | Out-String
+            try {
+                $jsonStr = if ($res -match '(?ms)\{.*\}') { $Matches[0] } else { $res }
+                $jsonObj = $jsonStr | ConvertFrom-Json
+                if ($null -ne $jsonObj -and -not [string]::IsNullOrWhiteSpace($jsonObj.verdict)) {
+                    return $jsonObj
+                }
+            } catch {}
+            throw "PROVIDER_OUTPUT_INVALID: GitHub Copilot CLI returned non-JSON review output: $res"
         }
         default {
             throw "UNSUPPORTED_PROVIDER: Provider '$Provider' is not configured for automatic review execution. Provide -ReviewerCustomHook or use -Provider 'mock'."
@@ -208,44 +231,47 @@ $effectiveFeature = if (-not [string]::IsNullOrWhiteSpace($Feature)) {
 
 $effectiveMailboxPath = Resolve-MailboxFile -CustomPath $MailboxPath -SpecDir $SpecDirectory -FeatureName $effectiveFeature
 
+# Map Agents
+$mappedDev = switch ($DevProvider.ToLowerInvariant()) {
+    "claude" { "CLAUDE_CODE" }
+    "aider" { "AIDER" }
+    "copilot" { "COPILOT" }
+    "antigravity" { "ANTIGRAVITY" }
+    "mock" { "ANTIGRAVITY" }
+    default { "CUSTOM" }
+}
+$mappedRev = switch ($ReviewProvider.ToLowerInvariant()) {
+    "claude" { "CLAUDE_CODE" }
+    "copilot" { "COPILOT" }
+    "antigravity" { "ANTIGRAVITY" }
+    "mock" { if ($mappedDev -eq "COPILOT") { "ANTIGRAVITY" } else { "COPILOT" } }
+    default { if ($mappedDev -eq "CUSTOM") { "COPILOT" } else { "CUSTOM" } }
+}
+
 Write-Host "================================================================================" -ForegroundColor Cyan
-Write-Host " 🤖 DUAL-AGENT AUTONOMOUS LOOP ORCHESTRATOR" -ForegroundColor Cyan
-Write-Host " Feature       : $effectiveFeature"
-Write-Host " Dev Agent     : $DevProvider"
-Write-Host " Review Agent  : $ReviewProvider"
-Write-Host " Max Rounds    : $MaxRounds"
-Write-Host " Verify Command: $VerifyCommand"
-Write-Host " Mailbox File  : $effectiveMailboxPath"
+Write-Host " DUAL-AGENT AUTONOMOUS LOOP ORCHESTRATOR" -ForegroundColor Cyan
+Write-Host " Feature       : $effectiveFeature" -ForegroundColor White
+Write-Host " Dev Agent     : $DevProvider ($mappedDev)" -ForegroundColor White
+Write-Host " Review Agent  : $ReviewProvider ($mappedRev)" -ForegroundColor White
+Write-Host " Max Rounds    : $MaxRounds" -ForegroundColor White
+Write-Host " Verify Command: $VerifyCommand" -ForegroundColor White
+Write-Host " Mailbox File  : $effectiveMailboxPath" -ForegroundColor White
+if (-not [string]::IsNullOrWhiteSpace($CopilotSessionId)) {
+    Write-Host " Copilot Session: $CopilotSessionId" -ForegroundColor White
+}
 Write-Host "================================================================================" -ForegroundColor Cyan
 
 # 1. Initialize Mailbox
-$mappedDev = switch -Regex ($DevProvider) {
-    '(?i)^claude' { 'CLAUDE_CODE' }
-    '(?i)^antigravity' { 'ANTIGRAVITY' }
-    '(?i)^copilot' { 'COPILOT' }
-    '(?i)^cursor' { 'CURSOR' }
-    '(?i)^aider' { 'AIDER' }
-    '(?i)^mock' { 'ANTIGRAVITY' }
-    default { 'CUSTOM' }
-}
-$mappedRev = switch -Regex ($ReviewProvider) {
-    '(?i)^claude' { 'CLAUDE_CODE' }
-    '(?i)^antigravity' { 'ANTIGRAVITY' }
-    '(?i)^copilot' { 'COPILOT' }
-    '(?i)^cursor' { 'CURSOR' }
-    '(?i)^gpt' { 'GPT_4O' }
-    '(?i)^mock' { if ($mappedDev -eq 'COPILOT') { 'ANTIGRAVITY' } else { 'COPILOT' } }
-    default { if ($mappedDev -eq 'CUSTOM') { 'COPILOT' } else { 'CUSTOM' } }
-}
-
 & $ReviewMailboxScript -Operation Init `
     -Feature $effectiveFeature `
     -DevAgent $mappedDev `
     -ReviewerAgent $mappedRev `
     -MaxRounds $MaxRounds `
-    -MailboxPath $effectiveMailboxPath | Out-Null
+    -MailboxPath $effectiveMailboxPath `
+    -ProjectRoot $ProjectRoot | Out-Null
 
 $currentPrompt = $TaskPrompt
+$selfHealAttempts = 0
 
 while ($true) {
     # Read Mailbox State
@@ -256,15 +282,16 @@ while ($true) {
     Write-Host "`n====================== [ ROUND $round / $MaxRounds - DEV PHASE ] ======================" -ForegroundColor Yellow
 
     # Phase 1: Dev Turn
-    Invoke-DevTurn -Provider $DevProvider -Prompt $currentPrompt -Round $round -CustomHook $DevCustomHook
+    Invoke-DevTurn -Provider $DevProvider -Prompt $currentPrompt -Round $round -SessionId $CopilotSessionId -CustomHook $DevCustomHook
 
     # Phase 2: Dev Submit & Test Gate Verification
-    Write-Host "`n⚙️ Running test gate and capturing changes..." -ForegroundColor Gray
+    Write-Host "`n Running test gate and capturing changes..." -ForegroundColor Gray
     $devSubmitParams = @{
         Operation = "DevSubmit"
         MailboxPath = $effectiveMailboxPath
         Summary = "Round $round code modifications completed."
         RunVerifyCommand = $VerifyCommand
+        ProjectRoot = $ProjectRoot
     }
     & $ReviewMailboxScript @devSubmitParams | Out-Null
 
@@ -273,12 +300,17 @@ while ($true) {
     $mailbox = ConvertFrom-Json $mailboxRaw -Depth 100
 
     if ($mailbox.currentDevSubmission.testGateStatus -ne "PASS") {
-        Write-Host "�?Test Gate Verification did not pass (status: $($mailbox.currentDevSubmission.testGateStatus)). Self-healing triggered..." -ForegroundColor Red
+        $selfHealAttempts++
+        if ($selfHealAttempts -ge $MaxSelfHealAttempts) {
+            throw "TEST_GATE_SELF_HEAL_EXCEEDED: Test verification failed $selfHealAttempts consecutive attempts in round $round. Halting loop to prevent infinite retry."
+        }
+        Write-Host " Test Gate Verification did not pass (status: $($mailbox.currentDevSubmission.testGateStatus), attempt $selfHealAttempts/$MaxSelfHealAttempts). Self-healing triggered..." -ForegroundColor Red
         $currentPrompt = "Your recent changes did not pass automated verification (status: $($mailbox.currentDevSubmission.testGateStatus)). Please inspect the test error output below and fix the implementation:`n`n" + $mailbox.currentDevSubmission.testOutput
         continue
     }
 
-    Write-Host "�?Test Gate Verification PASSED!" -ForegroundColor Green
+    $selfHealAttempts = 0
+    Write-Host " Test Gate Verification PASSED!" -ForegroundColor Green
 
     # Phase 3: Reviewer Turn
     Write-Host "`n====================== [ ROUND $round / $MaxRounds - REVIEW PHASE ] ======================" -ForegroundColor Magenta
@@ -312,6 +344,7 @@ while ($true) {
         -OriginalTask $TaskPrompt `
         -GitDiff $gitDiff `
         -Round $round `
+        -SessionId $CopilotSessionId `
         -CustomHook $ReviewerCustomHook
 
     # Submit Review Verdict with CAS and separation of duties
@@ -332,6 +365,7 @@ while ($true) {
         ExpectedRound = $round
         ExpectedSubmittedAt = if ($mailbox.currentDevSubmission.submittedAt -is [System.DateTime]) { $mailbox.currentDevSubmission.submittedAt.ToString("o") } else { [string]$mailbox.currentDevSubmission.submittedAt }
         ReviewerIdentity = $mappedRev
+        ProjectRoot = $ProjectRoot
     }
     & $ReviewMailboxScript @reviewSubmitParams | Out-Null
 
@@ -341,12 +375,12 @@ while ($true) {
 
     if ($mailbox.status -eq "APPROVED") {
         Write-Host "`n================================================================================" -ForegroundColor Green
-        Write-Host " 🎉 DUAL-AGENT LOOP COMPLETED SUCCESSFULLY (APPROVED at Round $round)!" -ForegroundColor Green
+        Write-Host " DUAL-AGENT LOOP COMPLETED SUCCESSFULLY (APPROVED at Round $round)!" -ForegroundColor Green
         Write-Host " Summary: $($mailbox.history[-1].reviewVerdict.summary)" -ForegroundColor Cyan
         Write-Host "================================================================================" -ForegroundColor Green
 
         if ($AutoCommit) {
-            Write-Host "📦 Creating automatic git commit..." -ForegroundColor Gray
+            Write-Host " Creating automatic git commit..." -ForegroundColor Gray
             git add -A
             if ($LASTEXITCODE -ne 0) {
                 throw "AUTO_COMMIT_FAILED: git add -A failed with exit code $($LASTEXITCODE)."
@@ -355,7 +389,7 @@ while ($true) {
             if ($LASTEXITCODE -ne 0) {
                 throw "AUTO_COMMIT_FAILED: git commit failed with exit code $($LASTEXITCODE): $commitOut"
             }
-            Write-Host "�?Committed successfully." -ForegroundColor Green
+            Write-Host " Committed successfully." -ForegroundColor Green
         }
 
         if ($PassThru) { return $mailbox }
@@ -364,7 +398,7 @@ while ($true) {
 
     if ($mailbox.status -eq "REJECTED_MAX_ROUNDS") {
         Write-Host "`n================================================================================" -ForegroundColor Red
-        Write-Host " 🛑 DUAL-AGENT LOOP HALTED: Max rounds ($MaxRounds) reached without approval." -ForegroundColor Red
+        Write-Host " DUAL-AGENT LOOP HALTED: Max rounds ($MaxRounds) reached without approval." -ForegroundColor Red
         Write-Host " Latest Review Feedback:" -ForegroundColor Yellow
         Write-Host " $($mailbox.history[-1].reviewVerdict.summary)"
         Write-Host "================================================================================" -ForegroundColor Red
@@ -376,6 +410,6 @@ while ($true) {
     if ($mailbox.status -eq "WAITING_DEV") {
         $lastReview = $mailbox.history[-1].reviewVerdict
         $currentPrompt = "Round $round Review REJECTED (Highest Severity: $($lastReview.highestSeverity)).`nSummary: $($lastReview.summary)`n`nInstructions for next round:`n$($lastReview.nextPromptForDev)"
-        Write-Host "🔁 Issues detected. Auto-advancing to Round $($mailbox.round)..." -ForegroundColor Yellow
+        Write-Host " Issues detected. Auto-advancing to Round $($mailbox.round)..." -ForegroundColor Yellow
     }
 }

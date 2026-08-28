@@ -39,6 +39,7 @@ try {
         -VerifyCommand "Write-Host 'Test OK'; exit 0" `
         -MaxRounds 3 `
         -MailboxPath $mb1 `
+        -ProjectRoot $TestRoot `
         -PassThru
 
     Assert-Equal $res1.status "APPROVED" "Single round should result in APPROVED"
@@ -87,6 +88,7 @@ try {
         -VerifyCommand "exit 0" `
         -MaxRounds 3 `
         -MailboxPath $mb2 `
+        -ProjectRoot $TestRoot `
         -PassThru
 
     Assert-Equal $res2.status "APPROVED" "Multi-round should eventually result in APPROVED"
@@ -118,7 +120,8 @@ try {
             -ReviewerCustomHook $alwaysRejectHook `
             -VerifyCommand "exit 0" `
             -MaxRounds 2 `
-            -MailboxPath $mb3 | Out-Null
+            -MailboxPath $mb3 `
+            -ProjectRoot $TestRoot | Out-Null
     } catch {
         $failedLoop = $true
     }
@@ -126,6 +129,27 @@ try {
     $raw3 = [System.IO.File]::ReadAllText($mb3, [System.Text.Encoding]::UTF8)
     $data3 = ConvertFrom-Json $raw3
     Assert-Equal $data3.status "REJECTED_MAX_ROUNDS" "Should set status to REJECTED_MAX_ROUNDS upon reaching limit"
+
+    # 4. Test Self-Heal Limit Exceeded on failing verify command
+    $mb4 = Join-Path $TestRoot "mb4.json"
+    $selfHealExceeded = $false
+    try {
+        & $OrchestratorScript `
+            -TaskPrompt "Task With Failing Test" `
+            -Feature "FeatureFailingTest" `
+            -DevProvider "mock" `
+            -ReviewProvider "mock" `
+            -VerifyCommand "exit 1" `
+            -MaxRounds 3 `
+            -MaxSelfHealAttempts 2 `
+            -MailboxPath $mb4 `
+            -ProjectRoot $TestRoot | Out-Null
+    } catch {
+        if ($_.Exception.Message -match "TEST_GATE_SELF_HEAL_EXCEEDED") {
+            $selfHealExceeded = $true
+        }
+    }
+    Assert-True $selfHealExceeded "Failing verify command must throw TEST_GATE_SELF_HEAL_EXCEEDED when retry limit is exceeded"
 
     Write-Host "All autonomous dual-agent loop tests passed successfully." -ForegroundColor Green
 }

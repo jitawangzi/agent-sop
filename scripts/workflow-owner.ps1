@@ -755,11 +755,31 @@ function Get-VcsBaselineRevision {
     return $null
 }
 
+function Get-GitTrunkForkPoint {
+    param([AllowEmptyString()][AllowNull()][string]$WorkspacePath = $null)
+    if ([string]::IsNullOrWhiteSpace($WorkspacePath)) { return $null }
+
+    $trunkRefs = @("origin/main", "origin/master", "main", "master")
+    foreach ($trunk in $trunkRefs) {
+        & git -C $WorkspacePath rev-parse --verify --quiet "$trunk^{commit}" 2>$null | Out-Null
+        if ($LASTEXITCODE -eq 0) {
+            $fp = (& git -C $WorkspacePath merge-base HEAD "$trunk" 2>$null | Out-String).Trim()
+            if ($LASTEXITCODE -eq 0 -and $fp -match '^[0-9a-fA-F]{40,64}$') {
+                & git -C $WorkspacePath cat-file -e "$fp^{commit}" 2>$null | Out-Null
+                if ($LASTEXITCODE -eq 0) {
+                    return $fp
+                }
+            }
+        }
+    }
+    return $null
+}
+
 function Resolve-AuthoritativeVcsBaseline {
     param(
-        [string]$WorkspacePath,
-        [string]$ProposedBaseline = $null,
-        [string]$SpecDirectory = $null
+        [AllowEmptyString()][AllowNull()][string]$WorkspacePath = $null,
+        [AllowEmptyString()][AllowNull()][string]$ProposedBaseline = $null,
+        [AllowEmptyString()][AllowNull()][string]$SpecDirectory = $null
     )
     if ([string]::IsNullOrWhiteSpace($WorkspacePath)) {
         $WorkspacePath = Get-OwnerWorkspacePath
@@ -772,31 +792,21 @@ function Resolve-AuthoritativeVcsBaseline {
     $isSvn = -not [string]::IsNullOrWhiteSpace($WorkspacePath) -and (Test-Path -LiteralPath (Join-Path $WorkspacePath ".svn"))
 
     if ($isGit) {
-        # Find fork point with main/master
-        $forkPoint = (& git -C $WorkspacePath merge-base HEAD origin/main 2>&1 | Out-String).Trim()
-        if ($LASTEXITCODE -ne 0 -or [string]::IsNullOrWhiteSpace($forkPoint)) {
-            $forkPoint = (& git -C $WorkspacePath merge-base HEAD origin/master 2>&1 | Out-String).Trim()
-        }
-        if ($LASTEXITCODE -ne 0 -or [string]::IsNullOrWhiteSpace($forkPoint)) {
-            $forkPoint = (& git -C $WorkspacePath merge-base HEAD main 2>&1 | Out-String).Trim()
-        }
-        if ($LASTEXITCODE -ne 0 -or [string]::IsNullOrWhiteSpace($forkPoint)) {
-            $forkPoint = (& git -C $WorkspacePath merge-base HEAD master 2>&1 | Out-String).Trim()
-        }
+        $forkPoint = Get-GitTrunkForkPoint -WorkspacePath $WorkspacePath
 
         if (-not [string]::IsNullOrWhiteSpace($ProposedBaseline)) {
-            & git -C $WorkspacePath cat-file -e "$ProposedBaseline^{commit}" 2>&1 | Out-Null
+            & git -C $WorkspacePath cat-file -e "$ProposedBaseline^{commit}" 2>$null | Out-Null
             if ($LASTEXITCODE -ne 0) {
                 throw "INVALID_BASELINE: Git baseline commit '$ProposedBaseline' does not exist in repository '$WorkspacePath'."
             }
-            & git -C $WorkspacePath merge-base --is-ancestor "$ProposedBaseline" HEAD 2>&1 | Out-Null
+            & git -C $WorkspacePath merge-base --is-ancestor "$ProposedBaseline" HEAD 2>$null | Out-Null
             if ($LASTEXITCODE -ne 0) {
                 throw "INVALID_BASELINE: Git baseline commit '$ProposedBaseline' is not an ancestor of current HEAD in '$WorkspacePath'."
             }
-            if ($LASTEXITCODE -eq 0 -and -not [string]::IsNullOrWhiteSpace($forkPoint) -and $forkPoint.ToLowerInvariant() -ne $ProposedBaseline.ToLowerInvariant()) {
-                & git -C $WorkspacePath merge-base --is-ancestor "$forkPoint" "$ProposedBaseline" 2>&1 | Out-Null
+            if (-not [string]::IsNullOrWhiteSpace($forkPoint) -and $forkPoint.ToLowerInvariant() -ne $ProposedBaseline.ToLowerInvariant()) {
+                & git -C $WorkspacePath merge-base --is-ancestor "$forkPoint" "$ProposedBaseline" 2>$null | Out-Null
                 if ($LASTEXITCODE -eq 0) {
-                    & git -C $WorkspacePath merge-base --is-ancestor "$ProposedBaseline" "$forkPoint" 2>&1 | Out-Null
+                    & git -C $WorkspacePath merge-base --is-ancestor "$ProposedBaseline" "$forkPoint" 2>$null | Out-Null
                     if ($LASTEXITCODE -ne 0) {
                         throw "BASELINE_MUTATION_DETECTED: Proposed baseline '$ProposedBaseline' is ahead of branch fork-point '$forkPoint'. Narrowing review scope is prohibited."
                     }
@@ -809,11 +819,15 @@ function Resolve-AuthoritativeVcsBaseline {
         if (-not [string]::IsNullOrWhiteSpace($forkPoint)) {
             return $forkPoint
         }
-        $headSha = (& git -C $WorkspacePath rev-parse HEAD 2>&1 | Out-String).Trim()
-        if ($LASTEXITCODE -eq 0 -and -not [string]::IsNullOrWhiteSpace($headSha)) {
-            return $headSha
+        
+        # Check if HEAD is the initial root commit (only commit in repo)
+        $rootCommit = (& git -C $WorkspacePath rev-list --max-parents=0 HEAD 2>$null | Out-String).Trim()
+        $headCommit = (& git -C $WorkspacePath rev-parse HEAD 2>$null | Out-String).Trim()
+        if ($LASTEXITCODE -eq 0 -and -not [string]::IsNullOrWhiteSpace($rootCommit) -and $rootCommit.ToLowerInvariant() -eq $headCommit.ToLowerInvariant()) {
+            return $rootCommit
         }
-        throw "BASELINE_MISSING: Unable to resolve authoritative Git baseline or fork-point in '$WorkspacePath'."
+
+        throw "BASELINE_MISSING: Unable to resolve authoritative Git trunk fork-point in '$WorkspacePath'. A trunk branch (main/master) is required."
     }
 
     if ($isSvn) {

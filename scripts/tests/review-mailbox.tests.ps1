@@ -27,11 +27,16 @@ function Assert-Equal {
     }
 }
 
+function Invoke-Mailbox {
+    param([Parameter(ValueFromRemainingArguments = $true)]$Args)
+    & pwsh -NoProfile -File $ReviewMailboxScript -ProjectRoot $TestRoot @Args
+}
+
 try {
     Write-Host "Running Dual-Agent Review Mailbox Tests..." -ForegroundColor Cyan
 
     # 1. Test Init
-    pwsh -NoProfile -File $ReviewMailboxScript -Operation Init `
+    Invoke-Mailbox -Operation Init `
         -Feature "TestDualAgent" `
         -DevAgent "ANTIGRAVITY" `
         -ReviewerAgent "COPILOT" `
@@ -49,7 +54,7 @@ try {
     Assert-Equal $data.reviewerAgent "COPILOT" "ReviewerAgent should match"
 
     # 2. Test DevSubmit (Round 1)
-    pwsh -NoProfile -File $ReviewMailboxScript -Operation DevSubmit `
+    Invoke-Mailbox -Operation DevSubmit `
         -MailboxPath $TestMailboxPath `
         -Summary "Added new cache lock mechanism" `
         -ChangedFiles @("scripts/test.ps1", "config/app.json") `
@@ -64,7 +69,7 @@ try {
     Assert-Equal $data.currentDevSubmission.testGateStatus "PASS" "Test gate status should match"
 
     # 3. Test Invalid DevSubmit in WAITING_REVIEW state
-    $null = pwsh -NoProfile -File $ReviewMailboxScript -Operation DevSubmit `
+    $null = Invoke-Mailbox -Operation DevSubmit `
         -MailboxPath $TestMailboxPath `
         -Summary "Second submit attempt" 2>$null
     Assert-True ($LASTEXITCODE -ne 0) "DevSubmit during WAITING_REVIEW must fail"
@@ -82,7 +87,7 @@ try {
   }
 ]
 "@
-    pwsh -NoProfile -File $ReviewMailboxScript -Operation ReviewSubmit `
+    Invoke-Mailbox -Operation ReviewSubmit `
         -MailboxPath $TestMailboxPath `
         -Verdict "REJECTED" `
         -HighestSeverity "HIGH" `
@@ -103,7 +108,7 @@ try {
     Assert-Equal $data.history[0].reviewVerdict.issues.Count 1 "Archived issues should be preserved"
 
     # 5. Test DevSubmit (Round 2)
-    pwsh -NoProfile -File $ReviewMailboxScript -Operation DevSubmit `
+    Invoke-Mailbox -Operation DevSubmit `
         -MailboxPath $TestMailboxPath `
         -Summary "Fixed lock timeout issue as requested" `
         -ChangedFiles @("scripts/test.ps1") `
@@ -117,7 +122,7 @@ try {
 
     # 6. Test ReviewSubmit - APPROVED (Round 2 Completion)
     $sub2Time = if ($data.currentDevSubmission.submittedAt -is [System.DateTime]) { $data.currentDevSubmission.submittedAt.ToString("o") } else { [string]$data.currentDevSubmission.submittedAt }
-    pwsh -NoProfile -File $ReviewMailboxScript -Operation ReviewSubmit `
+    Invoke-Mailbox -Operation ReviewSubmit `
         -MailboxPath $TestMailboxPath `
         -Verdict "APPROVED" `
         -HighestSeverity "NONE" `
@@ -134,14 +139,14 @@ try {
 
     # 7. Test MaxRounds Reached -> REJECTED_MAX_ROUNDS
     $maxRoundMailbox = Join-Path $TestRoot "max-round-mailbox.json"
-    pwsh -NoProfile -File $ReviewMailboxScript -Operation Init `
+    Invoke-Mailbox -Operation Init `
         -Feature "MaxRoundTest" `
         -MaxRounds 1 `
         -DevAgent "ANTIGRAVITY" `
         -ReviewerAgent "COPILOT" `
         -MailboxPath $maxRoundMailbox | Out-Null
 
-    pwsh -NoProfile -File $ReviewMailboxScript -Operation DevSubmit `
+    Invoke-Mailbox -Operation DevSubmit `
         -MailboxPath $maxRoundMailbox `
         -Summary "Initial try" `
         -TestGateStatus "PASS" | Out-Null
@@ -150,7 +155,7 @@ try {
     $maxData = ConvertFrom-Json $maxRaw
     $maxSubTime = if ($maxData.currentDevSubmission.submittedAt -is [System.DateTime]) { $maxData.currentDevSubmission.submittedAt.ToString("o") } else { [string]$maxData.currentDevSubmission.submittedAt }
 
-    pwsh -NoProfile -File $ReviewMailboxScript -Operation ReviewSubmit `
+    Invoke-Mailbox -Operation ReviewSubmit `
         -MailboxPath $maxRoundMailbox `
         -Verdict "REJECTED" `
         -Summary "Still has bugs" `
@@ -163,13 +168,13 @@ try {
     Assert-Equal $data.status "REJECTED_MAX_ROUNDS" "Status must be REJECTED_MAX_ROUNDS when max round reached"
 
     # 8. Test Reset
-    pwsh -NoProfile -File $ReviewMailboxScript -Operation Reset -MailboxPath $maxRoundMailbox | Out-Null
+    Invoke-Mailbox -Operation Reset -MailboxPath $maxRoundMailbox | Out-Null
     Assert-True (-not (Test-Path -LiteralPath $maxRoundMailbox)) "Mailbox file should be deleted on Reset"
 
     # 9. Negative Test: Path Traversal in FeatureName is rejected
     $traversalFailed = $false
     try {
-        pwsh -NoProfile -File $ReviewMailboxScript -Operation Init -Feature "../../traversal" 2>$null
+        Invoke-Mailbox -Operation Init -Feature "../../traversal" 2>$null
         if ($LASTEXITCODE -ne 0) { $traversalFailed = $true }
     } catch {
         $traversalFailed = $true
@@ -178,13 +183,13 @@ try {
 
     # 10. Negative Test: Duty Separation (Developer reviewing own code is rejected)
     $dutyMb = Join-Path $TestRoot "duty-mailbox.json"
-    pwsh -NoProfile -File $ReviewMailboxScript -Operation Init `
+    Invoke-Mailbox -Operation Init `
         -Feature "DutyTest" `
         -DevAgent "ANTIGRAVITY" `
         -ReviewerAgent "ANTIGRAVITY" `
         -MailboxPath $dutyMb 2>$null
     
-    pwsh -NoProfile -File $ReviewMailboxScript -Operation DevSubmit `
+    Invoke-Mailbox -Operation DevSubmit `
         -MailboxPath $dutyMb `
         -Summary "Dev changes" `
         -TestGateStatus "PASS" 2>$null
@@ -195,7 +200,7 @@ try {
 
     $dutyFailed = $false
     try {
-        $resDuty = pwsh -NoProfile -File $ReviewMailboxScript -Operation ReviewSubmit `
+        $resDuty = Invoke-Mailbox -Operation ReviewSubmit `
             -MailboxPath $dutyMb `
             -Verdict "APPROVED" `
             -Summary "Self review" `
@@ -212,13 +217,13 @@ try {
 
     # 11. Test: DevSubmit on FAIL test gate stays in WAITING_DEV and allows resubmission without deadlock
     $selfHealMb = Join-Path $TestRoot "self-heal-mailbox.json"
-    pwsh -NoProfile -File $ReviewMailboxScript -Operation Init `
+    Invoke-Mailbox -Operation Init `
         -Feature "SelfHealTest" `
         -DevAgent "ANTIGRAVITY" `
         -ReviewerAgent "COPILOT" `
         -MailboxPath $selfHealMb | Out-Null
     
-    pwsh -NoProfile -File $ReviewMailboxScript -Operation DevSubmit `
+    Invoke-Mailbox -Operation DevSubmit `
         -MailboxPath $selfHealMb `
         -Summary "First try with broken code" `
         -TestGateStatus "FAIL" `
@@ -229,7 +234,7 @@ try {
     Assert-Equal $healData1.status "WAITING_DEV" "DevSubmit with FAIL gate must keep status in WAITING_DEV"
 
     # Resubmit fix on same round without deadlock
-    pwsh -NoProfile -File $ReviewMailboxScript -Operation DevSubmit `
+    Invoke-Mailbox -Operation DevSubmit `
         -MailboxPath $selfHealMb `
         -Summary "Fixed assertion error" `
         -TestGateStatus "PASS" `
@@ -258,13 +263,13 @@ try {
 
     # 13. Negative Test: ReviewSubmit CAS conflict on mismatched ExpectedRound
     $casMb = Join-Path $TestRoot "cas-test-mailbox.json"
-    pwsh -NoProfile -File $ReviewMailboxScript -Operation Init `
+    Invoke-Mailbox -Operation Init `
         -Feature "CasTest" `
         -DevAgent "ANTIGRAVITY" `
         -ReviewerAgent "COPILOT" `
         -MailboxPath $casMb | Out-Null
     
-    pwsh -NoProfile -File $ReviewMailboxScript -Operation DevSubmit `
+    Invoke-Mailbox -Operation DevSubmit `
         -MailboxPath $casMb `
         -Summary "Valid dev changes" `
         -TestGateStatus "PASS" | Out-Null
@@ -275,7 +280,7 @@ try {
 
     $roundCasFailed = $false
     try {
-        $resRoundCas = pwsh -NoProfile -File $ReviewMailboxScript -Operation ReviewSubmit `
+        $resRoundCas = Invoke-Mailbox -Operation ReviewSubmit `
             -MailboxPath $casMb `
             -Verdict "APPROVED" `
             -Summary "CAS test" `
@@ -293,7 +298,7 @@ try {
     # 14. Negative Test: ReviewSubmit CAS conflict on mismatched ExpectedSubmittedAt
     $timeCasFailed = $false
     try {
-        $resTimeCas = pwsh -NoProfile -File $ReviewMailboxScript -Operation ReviewSubmit `
+        $resTimeCas = Invoke-Mailbox -Operation ReviewSubmit `
             -MailboxPath $casMb `
             -Verdict "APPROVED" `
             -Summary "CAS test" `
@@ -307,6 +312,27 @@ try {
         $timeCasFailed = $true
     }
     Assert-True $timeCasFailed "ReviewSubmit with wrong ExpectedSubmittedAt must throw MAILBOX_CAS_CONFLICT"
+
+    # 15. Negative Test: Absolute path under foreign directory/repo is rejected by PWD workspace boundary
+    $foreignDir = Join-Path ([System.IO.Path]::GetTempPath()) ("foreign-repo-" + [guid]::NewGuid().ToString("N"))
+    [System.IO.Directory]::CreateDirectory($foreignDir) | Out-Null
+    $foreignMb = Join-Path $foreignDir "foreign-mailbox.json"
+    $foreignFailed = $false
+    try {
+        $resForeign = pwsh -NoProfile -File $ReviewMailboxScript -Operation Init `
+            -Feature "ForeignTest" `
+            -DevAgent "ANTIGRAVITY" `
+            -ReviewerAgent "COPILOT" `
+            -MailboxPath $foreignMb 2>&1 | Out-String
+        if ($LASTEXITCODE -ne 0 -or $resForeign -match "PATH_TRAVERSAL_DETECTED") {
+            $foreignFailed = $true
+        }
+    } catch {
+        $foreignFailed = $true
+    } finally {
+        Remove-Item -LiteralPath $foreignDir -Recurse -Force -ErrorAction SilentlyContinue
+    }
+    Assert-True $foreignFailed "MailboxPath pointing to foreign absolute directory outside PWD workspace must be rejected with PATH_TRAVERSAL_DETECTED"
 
     Write-Host "All review mailbox tests passed successfully." -ForegroundColor Green
 }

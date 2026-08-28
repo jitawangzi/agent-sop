@@ -273,12 +273,12 @@ while ($true) {
     $mailbox = ConvertFrom-Json $mailboxRaw -Depth 100
 
     if ($mailbox.currentDevSubmission.testGateStatus -ne "PASS") {
-        Write-Host "‚ùå Test Gate Verification did not pass (status: $($mailbox.currentDevSubmission.testGateStatus)). Self-healing triggered..." -ForegroundColor Red
+        Write-Host "‚ù?Test Gate Verification did not pass (status: $($mailbox.currentDevSubmission.testGateStatus)). Self-healing triggered..." -ForegroundColor Red
         $currentPrompt = "Your recent changes did not pass automated verification (status: $($mailbox.currentDevSubmission.testGateStatus)). Please inspect the test error output below and fix the implementation:`n`n" + $mailbox.currentDevSubmission.testOutput
         continue
     }
 
-    Write-Host "‚úÖ Test Gate Verification PASSED!" -ForegroundColor Green
+    Write-Host "‚ú?Test Gate Verification PASSED!" -ForegroundColor Green
 
     # Phase 3: Reviewer Turn
     Write-Host "`n====================== [ ROUND $round / $MaxRounds - REVIEW PHASE ] ======================" -ForegroundColor Magenta
@@ -355,7 +355,7 @@ while ($true) {
             if ($LASTEXITCODE -ne 0) {
                 throw "AUTO_COMMIT_FAILED: git commit failed with exit code $($LASTEXITCODE): $commitOut"
             }
-            Write-Host "‚úÖ Committed successfully." -ForegroundColor Green
+            Write-Host "‚ú?Committed successfully." -ForegroundColor Green
         }
 
         if ($PassThru) { return $mailbox }

@@ -3001,6 +3001,55 @@ try {
         throw "Invoke-RecoverPendingJournal must clean up journal file after recovery."
     }
 
+    # 12. Negative Test: Crash-after-both-moves recovery keeps new content (never rolls back PREPARED when tmp files are already moved)
+    $crashTestDir = Join-Path $TestRoot "spec-crash-test"
+    [System.IO.Directory]::CreateDirectory($crashTestDir) | Out-Null
+    $targetA = Join-Path $crashTestDir "00_workflow_state.json"
+    $backupA = $targetA + ".stage.bak"
+    $oldContent = '{"schemaVersion":"1.0","feature":"OldContent","baseline":"0"}'
+    $newContent = '{"schemaVersion":"1.0","feature":"NewContent","baseline":"0","requirement":{"artifact":"01_server_rules.md","status":"DRAFT","approvedBy":"","approvedAt":"","sha256":""},"design":{"artifact":"06_design_contract.md","status":"DRAFT","approvedBy":"","approvedAt":"","sha256":""}}'
+    [System.IO.File]::WriteAllText($targetA, $newContent, $Utf8NoBom)
+    [System.IO.File]::WriteAllText($backupA, $oldContent, $Utf8NoBom)
+    $preparedCrashJournal = [ordered]@{
+        journalId = "crash-journal-2"
+        state = "PREPARED"
+        timestamp = [DateTimeOffset]::UtcNow.ToString("o")
+        targets = @(
+            [ordered]@{ path = $targetA; tmpPath = ($targetA + ".stage.tmp"); existed = $true; backupPath = $backupA }
+        )
+    }
+    $crashJournalPath = Join-Path $crashTestDir ".commit-journal.json"
+    [System.IO.File]::WriteAllText($crashJournalPath, ($preparedCrashJournal | ConvertTo-Json -Depth 10), $Utf8NoBom)
+
+    & $ScriptPath -Operation AssessRisk -Path $crashTestDir 2>&1 | Out-Null
+    $recoveredTargetContent = [System.IO.File]::ReadAllText($targetA)
+    if ($recoveredTargetContent -notmatch "NewContent") {
+        throw "Invoke-RecoverPendingJournal must preserve new content on PREPARED crash recovery when moves already completed. Expected 'NewContent', found: $recoveredTargetContent"
+    }
+    if (Test-Path -LiteralPath $backupA) {
+        throw "Invoke-RecoverPendingJournal must clean up backup files after successful recovery."
+    }
+    if (Test-Path -LiteralPath $crashJournalPath) {
+        throw "Invoke-RecoverPendingJournal must clean up journal file after successful recovery."
+    }
+
+    # 13. Negative Test: Corrupted journal fails closed
+    $corruptJournalDir = Join-Path $TestRoot "spec-corrupt-journal"
+    [System.IO.Directory]::CreateDirectory($corruptJournalDir) | Out-Null
+    [System.IO.File]::WriteAllText((Join-Path $corruptJournalDir ".commit-journal.json"), "{ invalid-json :::", $Utf8NoBom)
+    Assert-Fails -Message "Corrupted commit journal must fail closed with error." -Action {
+        & $ScriptPath -Operation AssessRisk -Path $corruptJournalDir
+    }
+
+    # 14. Negative Test: Assert-FeatureBaselineIntegrity throws BASELINE_MISSING on feature state lacking authoritative baseline
+    $missingBaselineDir = Join-Path $TestRoot "spec-missing-baseline"
+    [System.IO.Directory]::CreateDirectory($missingBaselineDir) | Out-Null
+    # Write a state file without baseline and no registry record
+    [System.IO.File]::WriteAllText((Join-Path $missingBaselineDir "feature-state.json"), '{"schemaVersion":"1.0","feature":"MissingBaseline"}', $Utf8NoBom)
+    Assert-Fails -Message "Assert-FeatureBaselineIntegrity must throw on missing authoritative baseline." -Action {
+        & $ScriptPath -Operation AssessRisk -Path $missingBaselineDir
+    }
+
     Write-Output "All workflow state tests passed."
 } finally {
     foreach ($name in @(

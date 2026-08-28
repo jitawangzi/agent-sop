@@ -10,6 +10,7 @@ $ReviewMailboxScript = Join-Path $ScriptsRoot "review-mailbox.ps1"
 $MailboxSchema = Join-Path (Split-Path -Parent $ScriptsRoot) "schemas\review-mailbox.schema.json"
 
 $TestRoot = Join-Path ([System.IO.Path]::GetTempPath()) ("review-mailbox-tests-" + [guid]::NewGuid().ToString("N"))
+[System.IO.Directory]::CreateDirectory((Join-Path $TestRoot ".ai-workspace")) | Out-Null
 $TestMailboxPath = Join-Path $TestRoot "specs\features\TestDualAgent\review-mailbox.json"
 
 function Assert-True {
@@ -237,6 +238,75 @@ try {
     $healRaw2 = [System.IO.File]::ReadAllText($selfHealMb, [System.Text.Encoding]::UTF8)
     $healData2 = ConvertFrom-Json $healRaw2
     Assert-Equal $healData2.status "WAITING_REVIEW" "DevSubmit with PASS gate transitions to WAITING_REVIEW"
+
+    # 12. Negative Test: Path traversal defense blocks MailboxPath outside workspace root
+    $traversalFailed = $false
+    try {
+        $outsidePath = Join-Path $PWD "..\outside-mailbox.json"
+        $resTraverse = pwsh -NoProfile -File $ReviewMailboxScript -Operation Init `
+            -Feature "TraverseTest" `
+            -DevAgent "ANTIGRAVITY" `
+            -ReviewerAgent "COPILOT" `
+            -MailboxPath $outsidePath 2>&1 | Out-String
+        if ($LASTEXITCODE -ne 0 -or $resTraverse -match "PATH_TRAVERSAL_DETECTED") {
+            $traversalFailed = $true
+        }
+    } catch {
+        $traversalFailed = $true
+    }
+    Assert-True $traversalFailed "MailboxPath escaping workspace root must be rejected with PATH_TRAVERSAL_DETECTED"
+
+    # 13. Negative Test: ReviewSubmit CAS conflict on mismatched ExpectedRound
+    $casMb = Join-Path $TestRoot "cas-test-mailbox.json"
+    pwsh -NoProfile -File $ReviewMailboxScript -Operation Init `
+        -Feature "CasTest" `
+        -DevAgent "ANTIGRAVITY" `
+        -ReviewerAgent "COPILOT" `
+        -MailboxPath $casMb | Out-Null
+    
+    pwsh -NoProfile -File $ReviewMailboxScript -Operation DevSubmit `
+        -MailboxPath $casMb `
+        -Summary "Valid dev changes" `
+        -TestGateStatus "PASS" | Out-Null
+    
+    $casRaw = [System.IO.File]::ReadAllText($casMb, [System.Text.Encoding]::UTF8)
+    $casData = ConvertFrom-Json $casRaw
+    $casSubTime = if ($casData.currentDevSubmission.submittedAt -is [System.DateTime]) { $casData.currentDevSubmission.submittedAt.ToString("o") } else { [string]$casData.currentDevSubmission.submittedAt }
+
+    $roundCasFailed = $false
+    try {
+        $resRoundCas = pwsh -NoProfile -File $ReviewMailboxScript -Operation ReviewSubmit `
+            -MailboxPath $casMb `
+            -Verdict "APPROVED" `
+            -Summary "CAS test" `
+            -ExpectedRound 99 `
+            -ExpectedSubmittedAt $casSubTime `
+            -ReviewerIdentity "COPILOT" 2>&1 | Out-String
+        if ($LASTEXITCODE -ne 0 -or $resRoundCas -match "MAILBOX_CAS_CONFLICT") {
+            $roundCasFailed = $true
+        }
+    } catch {
+        $roundCasFailed = $true
+    }
+    Assert-True $roundCasFailed "ReviewSubmit with wrong ExpectedRound must throw MAILBOX_CAS_CONFLICT"
+
+    # 14. Negative Test: ReviewSubmit CAS conflict on mismatched ExpectedSubmittedAt
+    $timeCasFailed = $false
+    try {
+        $resTimeCas = pwsh -NoProfile -File $ReviewMailboxScript -Operation ReviewSubmit `
+            -MailboxPath $casMb `
+            -Verdict "APPROVED" `
+            -Summary "CAS test" `
+            -ExpectedRound 1 `
+            -ExpectedSubmittedAt "1999-01-01T00:00:00Z" `
+            -ReviewerIdentity "COPILOT" 2>&1 | Out-String
+        if ($LASTEXITCODE -ne 0 -or $resTimeCas -match "MAILBOX_CAS_CONFLICT") {
+            $timeCasFailed = $true
+        }
+    } catch {
+        $timeCasFailed = $true
+    }
+    Assert-True $timeCasFailed "ReviewSubmit with wrong ExpectedSubmittedAt must throw MAILBOX_CAS_CONFLICT"
 
     Write-Host "All review mailbox tests passed successfully." -ForegroundColor Green
 }

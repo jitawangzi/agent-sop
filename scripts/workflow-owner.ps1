@@ -755,6 +755,93 @@ function Get-VcsBaselineRevision {
     return $null
 }
 
+function Resolve-AuthoritativeVcsBaseline {
+    param(
+        [string]$WorkspacePath,
+        [string]$ProposedBaseline = $null,
+        [string]$SpecDirectory = $null
+    )
+    if ([string]::IsNullOrWhiteSpace($WorkspacePath)) {
+        $WorkspacePath = Get-OwnerWorkspacePath
+    }
+    if ([string]::IsNullOrWhiteSpace($WorkspacePath) -and -not [string]::IsNullOrWhiteSpace($SpecDirectory)) {
+        $WorkspacePath = Resolve-AiSopWorkspaceRoot -StartPath $SpecDirectory
+    }
+    
+    $isGit = -not [string]::IsNullOrWhiteSpace($WorkspacePath) -and (Test-Path -LiteralPath (Join-Path $WorkspacePath ".git"))
+    $isSvn = -not [string]::IsNullOrWhiteSpace($WorkspacePath) -and (Test-Path -LiteralPath (Join-Path $WorkspacePath ".svn"))
+
+    if ($isGit) {
+        # Find fork point with main/master
+        $forkPoint = (& git -C $WorkspacePath merge-base HEAD origin/main 2>&1 | Out-String).Trim()
+        if ($LASTEXITCODE -ne 0 -or [string]::IsNullOrWhiteSpace($forkPoint)) {
+            $forkPoint = (& git -C $WorkspacePath merge-base HEAD origin/master 2>&1 | Out-String).Trim()
+        }
+        if ($LASTEXITCODE -ne 0 -or [string]::IsNullOrWhiteSpace($forkPoint)) {
+            $forkPoint = (& git -C $WorkspacePath merge-base HEAD main 2>&1 | Out-String).Trim()
+        }
+        if ($LASTEXITCODE -ne 0 -or [string]::IsNullOrWhiteSpace($forkPoint)) {
+            $forkPoint = (& git -C $WorkspacePath merge-base HEAD master 2>&1 | Out-String).Trim()
+        }
+
+        if (-not [string]::IsNullOrWhiteSpace($ProposedBaseline)) {
+            & git -C $WorkspacePath cat-file -e "$ProposedBaseline^{commit}" 2>&1 | Out-Null
+            if ($LASTEXITCODE -ne 0) {
+                throw "INVALID_BASELINE: Git baseline commit '$ProposedBaseline' does not exist in repository '$WorkspacePath'."
+            }
+            & git -C $WorkspacePath merge-base --is-ancestor "$ProposedBaseline" HEAD 2>&1 | Out-Null
+            if ($LASTEXITCODE -ne 0) {
+                throw "INVALID_BASELINE: Git baseline commit '$ProposedBaseline' is not an ancestor of current HEAD in '$WorkspacePath'."
+            }
+            if ($LASTEXITCODE -eq 0 -and -not [string]::IsNullOrWhiteSpace($forkPoint) -and $forkPoint.ToLowerInvariant() -ne $ProposedBaseline.ToLowerInvariant()) {
+                & git -C $WorkspacePath merge-base --is-ancestor "$forkPoint" "$ProposedBaseline" 2>&1 | Out-Null
+                if ($LASTEXITCODE -eq 0) {
+                    & git -C $WorkspacePath merge-base --is-ancestor "$ProposedBaseline" "$forkPoint" 2>&1 | Out-Null
+                    if ($LASTEXITCODE -ne 0) {
+                        throw "BASELINE_MUTATION_DETECTED: Proposed baseline '$ProposedBaseline' is ahead of branch fork-point '$forkPoint'. Narrowing review scope is prohibited."
+                    }
+                }
+            }
+            return $ProposedBaseline
+        }
+
+        # Default path (no -Baseline passed): MUST resolve to the branch fork-point if available
+        if (-not [string]::IsNullOrWhiteSpace($forkPoint)) {
+            return $forkPoint
+        }
+        $headSha = (& git -C $WorkspacePath rev-parse HEAD 2>&1 | Out-String).Trim()
+        if ($LASTEXITCODE -eq 0 -and -not [string]::IsNullOrWhiteSpace($headSha)) {
+            return $headSha
+        }
+        throw "BASELINE_MISSING: Unable to resolve authoritative Git baseline or fork-point in '$WorkspacePath'."
+    }
+
+    if ($isSvn) {
+        if (-not [string]::IsNullOrWhiteSpace($ProposedBaseline)) {
+            $svnNum = $ProposedBaseline -replace '^(?:rev|r)', ''
+            if ($svnNum -notmatch '^\d+$') {
+                throw "INVALID_BASELINE: Proposed SVN baseline '$ProposedBaseline' is not a valid revision number."
+            }
+            return $svnNum
+        }
+        $infoRev = (& svn info --non-interactive --show-item revision $WorkspacePath 2>&1 | Out-String).Trim()
+        if ($LASTEXITCODE -eq 0 -and $infoRev -match '^\d+$') {
+            return $infoRev
+        }
+        throw "SVN_INFO_FAILED: Unable to resolve SVN baseline revision in '$WorkspacePath'."
+    }
+
+    if (-not [string]::IsNullOrWhiteSpace($ProposedBaseline)) {
+        return $ProposedBaseline
+    }
+    $vcsStartPath = if (-not [string]::IsNullOrWhiteSpace($SpecDirectory)) { $SpecDirectory } else { $WorkspacePath }
+    $vcsRev = Get-VcsBaselineRevision -StartPath $vcsStartPath
+    if (-not [string]::IsNullOrWhiteSpace($vcsRev)) {
+        return $vcsRev
+    }
+    return "0"
+}
+
 switch ($Operation) {
     "Claim" {
         Assert-ActiveGrantSession -Grant $grant -Session $session -RequireUnbound
@@ -769,40 +856,9 @@ switch ($Operation) {
                 throw "BASELINE_MUTATION_DETECTED: Specified baseline '$Baseline' does not match existing owner baseline '$($existingOwner.baseline)'."
             }
             [string]$existingOwner.baseline
-        } elseif ($PSBoundParameters.ContainsKey("Baseline") -and -not [string]::IsNullOrWhiteSpace($Baseline)) {
-            $ws = Get-OwnerWorkspacePath
-            if (-not [string]::IsNullOrWhiteSpace($ws) -and (Test-Path -LiteralPath (Join-Path $ws ".git"))) {
-                & git -C $ws cat-file -e "$Baseline^{commit}" 2>&1 | Out-Null
-                if ($LASTEXITCODE -ne 0) {
-                    throw "INVALID_BASELINE: Git baseline commit '$Baseline' does not exist in repository '$ws'."
-                }
-                & git -C $ws merge-base --is-ancestor "$Baseline" HEAD 2>&1 | Out-Null
-                if ($LASTEXITCODE -ne 0) {
-                    throw "INVALID_BASELINE: Git baseline commit '$Baseline' is not an ancestor of current HEAD in '$ws'."
-                }
-                $forkPoint = (& git -C $ws merge-base HEAD origin/main 2>&1 | Out-String).Trim()
-                if ($LASTEXITCODE -ne 0 -or [string]::IsNullOrWhiteSpace($forkPoint)) {
-                    $forkPoint = (& git -C $ws merge-base HEAD origin/master 2>&1 | Out-String).Trim()
-                }
-                if ($LASTEXITCODE -ne 0 -or [string]::IsNullOrWhiteSpace($forkPoint)) {
-                    $forkPoint = (& git -C $ws merge-base HEAD main 2>&1 | Out-String).Trim()
-                }
-                if ($LASTEXITCODE -ne 0 -or [string]::IsNullOrWhiteSpace($forkPoint)) {
-                    $forkPoint = (& git -C $ws merge-base HEAD master 2>&1 | Out-String).Trim()
-                }
-                if ($LASTEXITCODE -eq 0 -and -not [string]::IsNullOrWhiteSpace($forkPoint) -and $forkPoint.ToLowerInvariant() -ne $Baseline.ToLowerInvariant()) {
-                    & git -C $ws merge-base --is-ancestor "$forkPoint" "$Baseline" 2>&1 | Out-Null
-                    if ($LASTEXITCODE -eq 0) {
-                        & git -C $ws merge-base --is-ancestor "$Baseline" "$forkPoint" 2>&1 | Out-Null
-                        if ($LASTEXITCODE -ne 0) {
-                            throw "BASELINE_MUTATION_DETECTED: Proposed baseline '$Baseline' is ahead of branch fork-point '$forkPoint'. Narrowing review scope is prohibited."
-                        }
-                    }
-                }
-            }
-            $Baseline
         } else {
-            Get-VcsBaselineRevision -StartPath $ResolvedSpecDirectory
+            $passedBaseline = if ($PSBoundParameters.ContainsKey("Baseline") -and -not [string]::IsNullOrWhiteSpace($Baseline)) { $Baseline } else { $null }
+            Resolve-AuthoritativeVcsBaseline -WorkspacePath (Get-OwnerWorkspacePath) -ProposedBaseline $passedBaseline -SpecDirectory $ResolvedSpecDirectory
         }
         $sessionAfter = Copy-WorkflowRecord $session.Record
         Set-SessionBoundTuple `
@@ -880,21 +936,9 @@ switch ($Operation) {
                 throw "BASELINE_MUTATION_DETECTED: Specified baseline '$Baseline' does not match existing owner baseline '$($existingOwner.baseline)'."
             }
             [string]$existingOwner.baseline
-        } elseif ($PSBoundParameters.ContainsKey("Baseline") -and -not [string]::IsNullOrWhiteSpace($Baseline)) {
-            $ws = Get-OwnerWorkspacePath
-            if (-not [string]::IsNullOrWhiteSpace($ws) -and (Test-Path -LiteralPath (Join-Path $ws ".git"))) {
-                & git -C $ws cat-file -e "$Baseline^{commit}" 2>&1 | Out-Null
-                if ($LASTEXITCODE -ne 0) {
-                    throw "INVALID_BASELINE: Git baseline commit '$Baseline' does not exist in repository '$ws'."
-                }
-                & git -C $ws merge-base --is-ancestor "$Baseline" HEAD 2>&1 | Out-Null
-                if ($LASTEXITCODE -ne 0) {
-                    throw "INVALID_BASELINE: Git baseline commit '$Baseline' is not an ancestor of current HEAD in '$ws'."
-                }
-            }
-            $Baseline
         } else {
-            Get-VcsBaselineRevision -StartPath $ResolvedSpecDirectory
+            $passedBaseline = if ($PSBoundParameters.ContainsKey("Baseline") -and -not [string]::IsNullOrWhiteSpace($Baseline)) { $Baseline } else { $null }
+            Resolve-AuthoritativeVcsBaseline -WorkspacePath (Get-OwnerWorkspacePath) -ProposedBaseline $passedBaseline -SpecDirectory $ResolvedSpecDirectory
         }
         if (-not [string]::IsNullOrWhiteSpace($detectedBaseline)) {
             $ownerAfter["baseline"] = $detectedBaseline

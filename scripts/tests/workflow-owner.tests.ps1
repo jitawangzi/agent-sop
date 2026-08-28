@@ -1149,6 +1149,92 @@ try {
     $completedOwner = Read-OwnerRecord "OwnerTierTestFeature"
     Assert-Equal $completedOwner.status "COMPLETE" "Complete must succeed once VerifyCompletion passes."
 
+    # 4. Test Git baseline fork-point authoritative stamping
+    $gitFeature = New-TestFeature "GitBaselineForkTest"
+    $ws = $gitFeature.Workspace
+    & git -C $ws init -b main 2>&1 | Out-Null
+    & git -C $ws config user.email "test@example.com" 2>&1 | Out-Null
+    & git -C $ws config user.name "Test" 2>&1 | Out-Null
+    [System.IO.File]::WriteAllText((Join-Path $ws "init.txt"), "init")
+    & git -C $ws add init.txt 2>&1 | Out-Null
+    & git -C $ws commit -m "initial commit on main" 2>&1 | Out-Null
+    $mainSha = (& git -C $ws rev-parse HEAD 2>&1 | Out-String).Trim()
+
+    # Create feature branch and add 2 commits
+    & git -C $ws checkout -b feature/test-branch 2>&1 | Out-Null
+    [System.IO.File]::WriteAllText((Join-Path $ws "feat1.txt"), "feat1")
+    & git -C $ws add feat1.txt 2>&1 | Out-Null
+    & git -C $ws commit -m "feat 1" 2>&1 | Out-Null
+    $feat1Sha = (& git -C $ws rev-parse HEAD 2>&1 | Out-String).Trim()
+
+    [System.IO.File]::WriteAllText((Join-Path $ws "feat2.txt"), "feat2")
+    & git -C $ws add feat2.txt 2>&1 | Out-Null
+    & git -C $ws commit -m "feat 2" 2>&1 | Out-Null
+    $feat2Sha = (& git -C $ws rev-parse HEAD 2>&1 | Out-String).Trim()
+
+    $gitSession = New-Session -Feature $gitFeature -Agent CLAUDE_CODE -NativeSessionId "session-git-1"
+    New-Grant -Feature $gitFeature -Session $gitSession -Operation Claim -Agent CLAUDE_CODE -OwnerId "git-owner-1" -Suffix "git-claim" | Out-Null
+
+    # Claim WITHOUT passing -Baseline on feature branch: MUST record $mainSha (the fork-point), NOT $feat2Sha (HEAD)
+    Invoke-Owner `
+        -Feature $gitFeature `
+        -Operation Claim `
+        -Workflow SUPERPOWERS `
+        -Agent CLAUDE_CODE `
+        -OwnerId "git-owner-1" | Out-Null
+
+    $gitOwnerRecord = Read-OwnerRecord "GitBaselineForkTest"
+    Assert-Equal $gitOwnerRecord.baseline $mainSha "Claim without -Baseline on a feature branch must record trunk fork-point, not HEAD."
+
+    # Test explicit mutation: BindSession with baseline ahead of fork-point must throw BASELINE_MUTATION_DETECTED
+    $v1Feature = New-TestFeature "GitBaselineBindTest"
+    $wsV1 = $v1Feature.Workspace
+    & git -C $wsV1 init -b main 2>&1 | Out-Null
+    & git -C $wsV1 config user.email "test@example.com" 2>&1 | Out-Null
+    & git -C $wsV1 config user.name "Test" 2>&1 | Out-Null
+    [System.IO.File]::WriteAllText((Join-Path $wsV1 "init.txt"), "init")
+    & git -C $wsV1 add init.txt 2>&1 | Out-Null
+    & git -C $wsV1 commit -m "init" 2>&1 | Out-Null
+    $v1MainSha = (& git -C $wsV1 rev-parse HEAD 2>&1 | Out-String).Trim()
+
+    & git -C $wsV1 checkout -b feat/v1 2>&1 | Out-Null
+    [System.IO.File]::WriteAllText((Join-Path $wsV1 "feat.txt"), "feat")
+    & git -C $wsV1 add feat.txt 2>&1 | Out-Null
+    & git -C $wsV1 commit -m "feat" 2>&1 | Out-Null
+    $v1FeatSha = (& git -C $wsV1 rev-parse HEAD 2>&1 | Out-String).Trim()
+
+    # Pre-create 1.0 owner with trunk baseline
+    $v1OwnerPath = Join-Path (Get-AiSopWorkflowOwnerRegistryRoot -WorkspacePath $wsV1) "gitbaselinebindtest.json"
+    $v1OwnerObj = [ordered]@{
+        schemaVersion = "1.0"
+        feature = "GitBaselineBindTest"
+        workflow = "SUPERPOWERS"
+        agent = "CLAUDE_CODE"
+        ownerId = "v1-owner"
+        specDirectory = $v1Feature.Spec
+        status = "ACTIVE"
+        startedAt = [DateTimeOffset]::UtcNow.ToString("o")
+        completedAt = ""
+        baseline = $v1MainSha
+    }
+    [System.IO.File]::WriteAllText($v1OwnerPath, ($v1OwnerObj | ConvertTo-Json -Depth 10), $Utf8NoBom)
+
+    $v1Session = New-Session -Feature $v1Feature -Agent CLAUDE_CODE -NativeSessionId "session-v1"
+    New-Grant -Feature $v1Feature -Session $v1Session -Operation BindSession -Agent CLAUDE_CODE -OwnerId "v1-owner" -Suffix "v1-bind" | Out-Null
+
+    Assert-Fails -Message "BindSession with baseline ahead of fork-point must throw BASELINE_MUTATION_DETECTED." -Action {
+        & (Join-Path $PSScriptRoot "..\workflow-owner.ps1") `
+            -Operation BindSession `
+            -SpecDirectory $v1Feature.Spec `
+            -Feature "GitBaselineBindTest" `
+            -Workflow SUPERPOWERS `
+            -Agent CLAUDE_CODE `
+            -OwnerId "v1-owner" `
+            -Baseline $v1FeatSha `
+            -SessionKey $v1Session.Record.sessionKey `
+            -SessionEpochId $v1Session.Record.sessionEpochId
+    }
+
     Write-Output "All workflow owner tests passed."
 } finally {
     foreach ($name in @(
@@ -1160,6 +1246,13 @@ try {
         Remove-Item "Env:$name" -ErrorAction SilentlyContinue
     }
     if (Test-Path -LiteralPath $TestRoot) {
-        [System.IO.Directory]::Delete($TestRoot, $true)
+        try {
+            Get-ChildItem -LiteralPath $TestRoot -Recurse -Force | ForEach-Object {
+                if ($_.Attributes -band [System.IO.FileAttributes]::ReadOnly) {
+                    $_.Attributes = $_.Attributes -bxor [System.IO.FileAttributes]::ReadOnly
+                }
+            }
+            Remove-Item -LiteralPath $TestRoot -Recurse -Force -ErrorAction SilentlyContinue
+        } catch {}
     }
 }

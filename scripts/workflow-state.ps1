@@ -1068,6 +1068,7 @@ function Get-GitDiffHeaderPaths {
 
 function Get-AuthoritativeFeatureBaseline {
     param(
+        [Alias("SpecDirectory")]
         [string]$SpecDir,
         [string]$WorkspaceRoot = $null
     )
@@ -1088,7 +1089,9 @@ function Get-AuthoritativeFeatureBaseline {
                 if (-not [string]::IsNullOrWhiteSpace($ow.workspacePath)) {
                     $effectiveWs = [string]$ow.workspacePath
                 }
-            } catch {}
+            } catch {
+                throw "BASELINE_REGISTRY_CORRUPTED: Failed to parse .workflow-owner.json in '$specDirFull': $($_.Exception.Message)"
+            }
         }
     }
 
@@ -1112,10 +1115,10 @@ function Get-AuthoritativeFeatureBaseline {
             $regRaw = [System.IO.File]::ReadAllText($foundRegPath)
             $owReg = $regRaw | ConvertFrom-Json
         } catch {
-            throw "BASELINE_REGISTRY_CORRUPTED: Owner registry record for '$featureName' is corrupted or invalid."
+            throw "BASELINE_REGISTRY_CORRUPTED: Transaction registry record at '$foundRegPath' is corrupted: $($_.Exception.Message)"
         }
         if ($null -eq $owReg -or [string]::IsNullOrWhiteSpace($owReg.baseline)) {
-            throw "BASELINE_MISSING_IN_REGISTRY: Owner record for '$featureName' in registry is missing mandatory baseline revision."
+            throw "BASELINE_REGISTRY_CORRUPTED: Transaction registry record at '$foundRegPath' lacks a valid baseline."
         }
         $regBaseline = [string]$owReg.baseline
         if (-not [string]::IsNullOrWhiteSpace($effectiveWs)) {
@@ -1133,6 +1136,7 @@ function Get-AuthoritativeFeatureBaseline {
                 }
             } catch {
                 if ($_.Exception.Message -match "BASELINE_MUTATION_DETECTED") { throw }
+                throw "BASELINE_REGISTRY_CORRUPTED: Failed to parse .workflow-owner.json in '$specDirFull': $($_.Exception.Message)"
             }
         }
 
@@ -1148,6 +1152,7 @@ function Get-AuthoritativeFeatureBaseline {
                 }
             } catch {
                 if ($_.Exception.Message -match "BASELINE_MUTATION_DETECTED") { throw }
+                throw "BASELINE_REGISTRY_CORRUPTED: Failed to parse feature-state.json in '$specDirFull': $($_.Exception.Message)"
             }
         }
         if (Test-Path -LiteralPath $wfStatePath -PathType Leaf) {
@@ -1159,6 +1164,7 @@ function Get-AuthoritativeFeatureBaseline {
                 }
             } catch {
                 if ($_.Exception.Message -match "BASELINE_MUTATION_DETECTED") { throw }
+                throw "BASELINE_REGISTRY_CORRUPTED: Failed to parse 00_workflow_state.json in '$specDirFull': $($_.Exception.Message)"
             }
         }
 
@@ -1179,7 +1185,9 @@ function Get-AuthoritativeFeatureBaseline {
         try {
             $ow = Get-Content -LiteralPath $ownerMirrorPath -Raw | ConvertFrom-Json
             if (-not [string]::IsNullOrWhiteSpace($ow.baseline)) { $mirrorBaseline = [string]$ow.baseline }
-        } catch {}
+        } catch {
+            throw "BASELINE_REGISTRY_CORRUPTED: Failed to parse .workflow-owner.json in '$specDirFull': $($_.Exception.Message)"
+        }
     }
 
     $featStatePath = Join-Path $specDirFull "feature-state.json"
@@ -1192,19 +1200,25 @@ function Get-AuthoritativeFeatureBaseline {
         try {
             $fs = Get-Content -LiteralPath $featStatePath -Raw | ConvertFrom-Json
             if (-not [string]::IsNullOrWhiteSpace($fs.baseline)) { $fsBaseline = [string]$fs.baseline }
-        } catch {}
+        } catch {
+            throw "BASELINE_REGISTRY_CORRUPTED: Failed to parse feature-state.json in '$specDirFull': $($_.Exception.Message)"
+        }
     }
     if (Test-Path -LiteralPath $wfStatePath -PathType Leaf) {
         try {
             $wf = Get-Content -LiteralPath $wfStatePath -Raw | ConvertFrom-Json
             if (-not [string]::IsNullOrWhiteSpace($wf.baseline)) { $wfBaseline = [string]$wf.baseline }
-        } catch {}
+        } catch {
+            throw "BASELINE_REGISTRY_CORRUPTED: Failed to parse 00_workflow_state.json in '$specDirFull': $($_.Exception.Message)"
+        }
     }
     if (Test-Path -LiteralPath $impactPath -PathType Leaf) {
         try {
             $imp = Get-Content -LiteralPath $impactPath -Raw | ConvertFrom-Json
             if (-not [string]::IsNullOrWhiteSpace($imp.baseline)) { $impactBaseline = [string]$imp.baseline }
-        } catch {}
+        } catch {
+            throw "BASELINE_REGISTRY_CORRUPTED: Failed to parse 04_change_impact.json in '$specDirFull': $($_.Exception.Message)"
+        }
     }
 
     if (-not [string]::IsNullOrWhiteSpace($fsBaseline) -and -not [string]::IsNullOrWhiteSpace($wfBaseline)) {
@@ -1245,7 +1259,11 @@ function Get-AuthoritativeFeatureBaseline {
 
     # 3. Fallback to VCS detection ONLY if starting brand new feature from scratch
     $startPath = if (-not [string]::IsNullOrWhiteSpace($effectiveWs)) { $effectiveWs } else { $specDirFull }
-    return (Get-VcsBaselineRevision -StartPath $startPath)
+    $detected = Get-VcsBaselineRevision -StartPath $startPath
+    if (-not [string]::IsNullOrWhiteSpace($detected)) {
+        return $detected
+    }
+    return "0"
 }
 
 function Assert-FeatureBaselineIntegrity {
@@ -1256,7 +1274,9 @@ function Assert-FeatureBaselineIntegrity {
     )
     if ([string]::IsNullOrWhiteSpace($SpecDir)) { return }
     $authoritative = Get-AuthoritativeFeatureBaseline -SpecDir $SpecDir -WorkspaceRoot $WorkspaceRoot
-    if ([string]::IsNullOrWhiteSpace($authoritative)) { return }
+    if ([string]::IsNullOrWhiteSpace($authoritative)) {
+        throw "BASELINE_MISSING: Spec directory '$SpecDir' lacks an authoritative baseline."
+    }
     
     if (-not [string]::IsNullOrWhiteSpace($ProposedBaseline)) {
         if ($ProposedBaseline.ToLowerInvariant() -ne $authoritative.ToLowerInvariant()) {
@@ -1273,6 +1293,7 @@ function Assert-FeatureBaselineIntegrity {
             }
         } catch {
             if ($_.Exception.Message -match "BASELINE_MUTATION_DETECTED") { throw }
+            throw "BASELINE_REGISTRY_CORRUPTED: Failed to parse feature-state.json in '$SpecDir': $($_.Exception.Message)"
         }
     }
     
@@ -1285,6 +1306,7 @@ function Assert-FeatureBaselineIntegrity {
             }
         } catch {
             if ($_.Exception.Message -match "BASELINE_MUTATION_DETECTED") { throw }
+            throw "BASELINE_REGISTRY_CORRUPTED: Failed to parse 00_workflow_state.json in '$SpecDir': $($_.Exception.Message)"
         }
     }
 
@@ -1574,7 +1596,10 @@ function Get-SemanticRiskAssessment {
             $effectiveBaseline -replace '^(?:rev|r)', ''
         } else {
             $infoRev = (& svn info --non-interactive --show-item revision $WorkspaceRoot 2>&1 | Out-String).Trim()
-            if ($LASTEXITCODE -eq 0 -and $infoRev -match '^\d+$') { $infoRev } else { $null }
+            if ($LASTEXITCODE -eq 0 -and $infoRev -match '^\d+$') { $infoRev } else {
+                $vcsFailed = $true
+                $null
+            }
         }
         $diffArgs = if (-not [string]::IsNullOrWhiteSpace($svnRev)) { @("-r", $svnRev) } else { @() }
         try {
@@ -2351,7 +2376,7 @@ function Get-CoveragePlaceholderWarnings {
                         $errors.Add("ERROR: executionEvidence sourceCommitSha '$($ev.sourceCommitSha)' is not a valid SVN revision in SVN workspace")
                     }
                 } else {
-                    $nonVcsBaseline = Get-AuthoritativeFeatureBaseline -SpecDirectory $specDir
+                    $nonVcsBaseline = Get-AuthoritativeFeatureBaseline -SpecDir $specDir
                     $currentDigest = Get-ChangeSetDigest -WorkspaceRoot $carrierWsRoot -Baseline $nonVcsBaseline
                     if ([string]::IsNullOrWhiteSpace($evDigest)) {
                         # already added error
@@ -2508,37 +2533,20 @@ function Invoke-RecoverPendingJournal {
     try {
         $raw = [System.IO.File]::ReadAllText($journalPath)
         $journal = $raw | ConvertFrom-Json
-        if ($null -eq $journal) {
-            Remove-Item -LiteralPath $journalPath -Force -ErrorAction SilentlyContinue
-            return
+        if ($null -eq $journal -or [string]::IsNullOrWhiteSpace($journal.state)) {
+            throw "CORRUPT_JOURNAL: Journal file at '$journalPath' is empty or corrupt."
         }
 
         if ($journal.state -eq "PREPARED") {
-            $allTmpExist = $true
+            # Roll-forward: move any remaining .tmp files to their target paths.
+            # If a .tmp file is already missing, it was already moved before the crash (no-op).
             foreach ($item in $journal.targets) {
-                if (-not [string]::IsNullOrWhiteSpace($item.tmpPath) -and -not (Test-Path -LiteralPath $item.tmpPath)) {
-                    $allTmpExist = $false
-                    break
-                }
-            }
-            if ($allTmpExist) {
-                # Roll-forward
-                foreach ($item in $journal.targets) {
-                    if (-not [string]::IsNullOrWhiteSpace($item.tmpPath) -and (Test-Path -LiteralPath $item.tmpPath)) {
-                        [System.IO.File]::Move($item.tmpPath, $item.path, $true)
-                    }
-                }
-            } else {
-                # Roll-back
-                foreach ($item in $journal.targets) {
-                    if ($item.existed -and -not [string]::IsNullOrWhiteSpace($item.backupPath) -and (Test-Path -LiteralPath $item.backupPath)) {
-                        [System.IO.File]::Copy($item.backupPath, $item.path, $true)
-                    } elseif (-not $item.existed -and (Test-Path -LiteralPath $item.path)) {
-                        [System.IO.File]::Delete($item.path)
-                    }
+                if (-not [string]::IsNullOrWhiteSpace($item.tmpPath) -and (Test-Path -LiteralPath $item.tmpPath)) {
+                    [System.IO.File]::Move($item.tmpPath, $item.path, $true)
                 }
             }
         } elseif ($journal.state -eq "ROLLED_BACK") {
+            # Roll-back: restore backups or delete newly created files
             foreach ($item in $journal.targets) {
                 if ($item.existed -and -not [string]::IsNullOrWhiteSpace($item.backupPath) -and (Test-Path -LiteralPath $item.backupPath)) {
                     [System.IO.File]::Copy($item.backupPath, $item.path, $true)
@@ -2559,7 +2567,7 @@ function Invoke-RecoverPendingJournal {
         }
         Remove-Item -LiteralPath $journalPath -Force -ErrorAction SilentlyContinue
     } catch {
-        Write-Warning "Journal recovery encountered warning: $_"
+        throw "JOURNAL_RECOVERY_FAILED: Failed to recover pending journal at '$journalPath': $($_.Exception.Message)"
     }
 }
 

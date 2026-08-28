@@ -10,7 +10,7 @@ $OrchestratorScript = Join-Path $ScriptsRoot "Invoke-DualAgentLoop.ps1"
 $MailboxSchema = Join-Path (Split-Path -Parent $ScriptsRoot) "schemas\review-mailbox.schema.json"
 
 $TestRoot = Join-Path ([System.IO.Path]::GetTempPath()) ("dual-agent-loop-tests-" + [guid]::NewGuid().ToString("N"))
-[System.IO.Directory]::CreateDirectory($TestRoot) | Out-Null
+[System.IO.Directory]::CreateDirectory((Join-Path $TestRoot ".ai-workspace")) | Out-Null
 
 function Assert-True {
     param([bool]$Condition, [string]$Message)

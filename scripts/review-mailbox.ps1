@@ -50,9 +50,36 @@ param(
 Set-StrictMode -Version Latest
 $ErrorActionPreference = "Stop"
 
+$pathIdentityScript = Join-Path $PSScriptRoot "path-identity.ps1"
+if (Test-Path -LiteralPath $pathIdentityScript) {
+    . $pathIdentityScript
+}
+
 function Get-MailboxSchemaPath {
     $root = Split-Path -Parent $PSScriptRoot
     return (Join-Path $root "schemas\review-mailbox.schema.json")
+}
+
+function Resolve-AiSopWorkspaceRoot {
+    param([string]$StartPath)
+    if ([string]::IsNullOrWhiteSpace($StartPath)) { return $null }
+    $curDir = if (Test-Path -LiteralPath $StartPath -PathType Container) {
+        [System.IO.Path]::GetFullPath($StartPath)
+    } else {
+        Split-Path -Parent ([System.IO.Path]::GetFullPath($StartPath))
+    }
+    while (-not [string]::IsNullOrWhiteSpace($curDir)) {
+        if ((Test-Path -LiteralPath (Join-Path $curDir ".ai-workspace")) -or 
+            (Test-Path -LiteralPath (Join-Path $curDir ".ai-sop")) -or 
+            (Test-Path -LiteralPath (Join-Path $curDir ".git")) -or 
+            (Test-Path -LiteralPath (Join-Path $curDir ".svn"))) {
+            return $curDir
+        }
+        $parent = Split-Path -Parent $curDir
+        if ($parent -eq $curDir) { break }
+        $curDir = $parent
+    }
+    return $null
 }
 
 function Resolve-MailboxFilePath {
@@ -62,34 +89,71 @@ function Resolve-MailboxFilePath {
         [string]$FeatureName
     )
 
-    if (-not [string]::IsNullOrWhiteSpace($CustomPath)) {
+    $resolvedPath = if (-not [string]::IsNullOrWhiteSpace($CustomPath)) {
         if ([System.IO.Path]::IsPathRooted($CustomPath)) {
-            return [System.IO.Path]::GetFullPath($CustomPath)
+            [System.IO.Path]::GetFullPath($CustomPath)
+        } else {
+            [System.IO.Path]::GetFullPath((Join-Path $PWD $CustomPath))
         }
-        return [System.IO.Path]::GetFullPath((Join-Path $PWD $CustomPath))
-    }
-
-    if (-not [string]::IsNullOrWhiteSpace($SpecDir)) {
+    } elseif (-not [string]::IsNullOrWhiteSpace($SpecDir)) {
         $resolvedSpec = if ([System.IO.Path]::IsPathRooted($SpecDir)) { [System.IO.Path]::GetFullPath($SpecDir) } else { [System.IO.Path]::GetFullPath((Join-Path $PWD $SpecDir)) }
-        return (Join-Path $resolvedSpec "review-mailbox.json")
-    }
-
-    if (-not [string]::IsNullOrWhiteSpace($FeatureName)) {
+        Join-Path $resolvedSpec "review-mailbox.json"
+    } elseif (-not [string]::IsNullOrWhiteSpace($FeatureName)) {
         if ($FeatureName -match '[\.\/\\:\*\?"<>\|]') {
             throw "INVALID_FEATURE_NAME: Feature name '$FeatureName' contains illegal characters or path traversal elements."
         }
         $featureDir = [System.IO.Path]::GetFullPath((Join-Path $PWD ".ai-workspace\specs\features\$FeatureName"))
         if (Test-Path -LiteralPath $featureDir) {
-            return (Join-Path $featureDir "review-mailbox.json")
+            Join-Path $featureDir "review-mailbox.json"
+        } else {
+            $sopDir = Join-Path $PWD ".ai-sop"
+            if (Test-Path -LiteralPath $sopDir) {
+                [System.IO.Path]::GetFullPath((Join-Path $sopDir "review-mailbox.json"))
+            } else {
+                [System.IO.Path]::GetFullPath((Join-Path $PWD "review-mailbox.json"))
+            }
+        }
+    } else {
+        $sopDir = Join-Path $PWD ".ai-sop"
+        if (Test-Path -LiteralPath $sopDir) {
+            [System.IO.Path]::GetFullPath((Join-Path $sopDir "review-mailbox.json"))
+        } else {
+            [System.IO.Path]::GetFullPath((Join-Path $PWD "review-mailbox.json"))
         }
     }
 
-    $sopDir = Join-Path $PWD ".ai-sop"
-    if (Test-Path -LiteralPath $sopDir) {
-        return [System.IO.Path]::GetFullPath((Join-Path $sopDir "review-mailbox.json"))
+    # Identify effective workspace root for the target
+    $effectiveWs = if (-not [string]::IsNullOrWhiteSpace($SpecDir)) {
+        Resolve-AiSopWorkspaceRoot -StartPath $SpecDir
+    } else {
+        Resolve-AiSopWorkspaceRoot -StartPath $resolvedPath
+    }
+    if ([string]::IsNullOrWhiteSpace($effectiveWs)) {
+        $effectiveWs = [System.IO.Path]::GetFullPath($PWD)
+    }
+    try {
+        if (Get-Command "Resolve-PhysicalPathIdentity" -ErrorAction SilentlyContinue) {
+            $effectiveWs = Resolve-PhysicalPathIdentity -Path $effectiveWs
+        }
+    } catch {}
+
+    $physicalTarget = try {
+        if (Get-Command "Resolve-PhysicalPathIdentity" -ErrorAction SilentlyContinue) {
+            Resolve-PhysicalPathIdentity -Path $resolvedPath
+        } else {
+            [System.IO.Path]::GetFullPath($resolvedPath)
+        }
+    } catch {
+        [System.IO.Path]::GetFullPath($resolvedPath)
     }
 
-    return [System.IO.Path]::GetFullPath((Join-Path $PWD "review-mailbox.json"))
+    $normWs = $effectiveWs.TrimEnd('/', '\') + [System.IO.Path]::DirectorySeparatorChar
+    if (-not $physicalTarget.Equals($effectiveWs, [System.StringComparison]::OrdinalIgnoreCase) -and
+        -not $physicalTarget.StartsWith($normWs, [System.StringComparison]::OrdinalIgnoreCase)) {
+        throw "PATH_TRAVERSAL_DETECTED: Target mailbox path '$resolvedPath' escapes the workspace root '$effectiveWs'."
+    }
+
+    return $resolvedPath
 }
 
 function Write-AtomicUtf8File {

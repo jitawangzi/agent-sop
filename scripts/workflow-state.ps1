@@ -1022,11 +1022,48 @@ function Test-IsAiSopInternalSpecMetadata {
     param([string]$RelativePath)
     if ([string]::IsNullOrWhiteSpace($RelativePath)) { return $false }
     $norm = $RelativePath.Replace("\", "/").TrimStart('/').TrimEnd('/')
-    if ($norm -match '^\.ai-workspace(?:/specs(?:/features(?:/[^/]+(?:/(?:04_change_impact\.json|00_workflow_state\.json|feature-state\.json|05_test_coverage\.json|\.workflow-owner\.json|\.workflow-mutation\.lock|.*\.lock|.*\.tmp|.*\.bak))?)?)?)?$' -or
-        $norm -match '(?:\.workflow-mutation\.lock|\.workflow-owner\.json|\.lock)$') {
+    
+    # 1. Root-level governance metadata & lock files
+    if ($norm -match '^(?:\.workflow-owner\.json(?:\.(?:lock|bak|stage\.tmp))?|\.workflow-mutation\.lock|\.workflow-mutation\.lock\.lock|\.ai-workspace|\.ai-sop|\.ai-sop/.*)$') {
         return $true
     }
+    
+    # 2. .ai-workspace spec tree internal state files and their specific lock/temp/backup files
+    if ($norm -match '^\.ai-workspace/specs/features/[^/]+/(?:04_change_impact\.json|00_workflow_state\.json|workflow-state\.json|feature-state\.json|05_test_coverage\.json|\.workflow-owner\.json|\.workflow-mutation\.lock|\.commit-journal\.json)(?:\.(?:lock|bak|stage\.tmp))?$') {
+        return $true
+    }
+    
+    # 3. .ai-workspace directory ancestors
+    if ($norm -match '^\.ai-workspace(?:/specs(?:/features(?:/[^/]+)?)?)?$') {
+        return $true
+    }
+
     return $false
+}
+
+function Get-GitDiffHeaderPaths {
+    param([string]$DiffLine)
+    if ($DiffLine -notmatch '^diff --git\s+') { return $null }
+    $rest = $DiffLine.Substring(11).Trim()
+    $pA = ""
+    $pB = ""
+    if ($rest -match '^"a/(.+?)"\s+"b/(.+?)"$') {
+        $pA = $Matches[1]
+        $pB = $Matches[2]
+    } elseif ($rest -match '^"(.+?)"\s+"(.+?)"$') {
+        $pA = $Matches[1] -replace '^a/', ''
+        $pB = $Matches[2] -replace '^b/', ''
+    } elseif ($rest -match '^a/(.+?)\s+b/(.+)$') {
+        $pA = $Matches[1]
+        $pB = $Matches[2]
+    } elseif ($rest -match '^([^\s]+)\s+([^\s]+)$') {
+        $pA = $Matches[1] -replace '^a/', ''
+        $pB = $Matches[2] -replace '^b/', ''
+    }
+    return @{
+        PathA = Unquote-GitPath -Path $pA
+        PathB = Unquote-GitPath -Path $pB
+    }
 }
 
 function Get-AuthoritativeFeatureBaseline {
@@ -1293,14 +1330,23 @@ function Get-ChangeSetDigest {
         }
 
         $gitDiff = & git -C $WorkspaceRoot -c core.quotepath=false diff $gitTarget -- . 2>&1
+        if ($LASTEXITCODE -ne 0) {
+            throw "git diff failed against target '$gitTarget' in workspace: $WorkspaceRoot"
+        }
         if ($null -ne $gitDiff) {
             $filteredGitLines = [System.Collections.Generic.List[string]]::new()
             $skipBlock = $false
             foreach ($dLine in ($gitDiff | Out-String -Stream)) {
-                if ($dLine -match '^diff --git a/([^\s]+)\s+b/([^\s]+)') {
-                    $pA = Unquote-GitPath -Path $Matches[1]
-                    $pB = Unquote-GitPath -Path $Matches[2]
-                    $skipBlock = (Test-IsAiSopInternalSpecMetadata -RelativePath $pA) -or (Test-IsAiSopInternalSpecMetadata -RelativePath $pB)
+                if ($dLine -match '^diff --git\s+') {
+                    $skipBlock = $false
+                    $paths = Get-GitDiffHeaderPaths -DiffLine $dLine
+                    if ($null -ne $paths) {
+                        $pA = $paths.PathA
+                        $pB = $paths.PathB
+                        if (-not [string]::IsNullOrWhiteSpace($pA) -or -not [string]::IsNullOrWhiteSpace($pB)) {
+                            $skipBlock = (Test-IsAiSopInternalSpecMetadata -RelativePath $pA) -or (Test-IsAiSopInternalSpecMetadata -RelativePath $pB)
+                        }
+                    }
                 }
                 if (-not $skipBlock) {
                     $filteredGitLines.Add($dLine)
@@ -1341,12 +1387,14 @@ function Get-ChangeSetDigest {
             $Baseline -replace '^(?:rev|r)', ''
         } else {
             $infoRev = (& svn info --non-interactive --show-item revision $WorkspaceRoot 2>&1 | Out-String).Trim()
-            if ($LASTEXITCODE -eq 0 -and $infoRev -match '^\d+$') { $infoRev } else { $null }
+            if ($LASTEXITCODE -eq 0 -and $infoRev -match '^\d+$') { $infoRev } else {
+                throw "SVN_INFO_FAILED: svn info failed in workspace '$WorkspaceRoot'. Output: $infoRev"
+            }
         }
 
-        $diffArgs = if (-not [string]::IsNullOrWhiteSpace($svnRev)) { @("-r", "$svnRev:WORKING") } else { @() }
+        $diffArgs = if (-not [string]::IsNullOrWhiteSpace($svnRev)) { @("-r", $svnRev) } else { @() }
         $svnDiff = & svn diff --non-interactive @diffArgs $WorkspaceRoot 2>&1
-        if ($LASTEXITCODE -ne 0 -and -not $hasGit) {
+        if ($LASTEXITCODE -ne 0) {
             throw "svn diff failed against revision '$Baseline' in workspace: $WorkspaceRoot"
         }
         $svnStat = & svn status --non-interactive --ignore-externals $WorkspaceRoot 2>&1
@@ -1484,10 +1532,16 @@ function Get-SemanticRiskAssessment {
                 $filteredGitLines = [System.Collections.Generic.List[string]]::new()
                 $skipBlock = $false
                 foreach ($dLine in ($gitDiff | Out-String -Stream)) {
-                    if ($dLine -match '^diff --git a/([^\s]+)\s+b/([^\s]+)') {
-                        $pA = Unquote-GitPath -Path $Matches[1]
-                        $pB = Unquote-GitPath -Path $Matches[2]
-                        $skipBlock = (Test-IsAiSopInternalSpecMetadata -RelativePath $pA) -or (Test-IsAiSopInternalSpecMetadata -RelativePath $pB)
+                    if ($dLine -match '^diff --git\s+') {
+                        $skipBlock = $false
+                        $paths = Get-GitDiffHeaderPaths -DiffLine $dLine
+                        if ($null -ne $paths) {
+                            $pA = $paths.PathA
+                            $pB = $paths.PathB
+                            if (-not [string]::IsNullOrWhiteSpace($pA) -or -not [string]::IsNullOrWhiteSpace($pB)) {
+                                $skipBlock = (Test-IsAiSopInternalSpecMetadata -RelativePath $pA) -or (Test-IsAiSopInternalSpecMetadata -RelativePath $pB)
+                            }
+                        }
                     }
                     if (-not $skipBlock) {
                         $filteredGitLines.Add($dLine)
@@ -1522,10 +1576,10 @@ function Get-SemanticRiskAssessment {
             $infoRev = (& svn info --non-interactive --show-item revision $WorkspaceRoot 2>&1 | Out-String).Trim()
             if ($LASTEXITCODE -eq 0 -and $infoRev -match '^\d+$') { $infoRev } else { $null }
         }
-        $diffArgs = if (-not [string]::IsNullOrWhiteSpace($svnRev)) { @("-r", "$svnRev:WORKING") } else { @() }
+        $diffArgs = if (-not [string]::IsNullOrWhiteSpace($svnRev)) { @("-r", $svnRev) } else { @() }
         try {
             $svnDiff = & svn diff --non-interactive @diffArgs $WorkspaceRoot 2>&1
-            if ($LASTEXITCODE -ne 0 -and -not $isGit) {
+            if ($LASTEXITCODE -ne 0) {
                 $vcsFailed = $true
             } elseif ($null -ne $svnDiff) {
                 $filteredSvnDiff = Filter-SvnDiffBlocks -DiffText ($svnDiff | Out-String)
@@ -2281,16 +2335,16 @@ function Get-CoveragePlaceholderWarnings {
                     $svnNum = $ev.sourceCommitSha -replace '^(?:rev|r)', ''
                     if ($svnNum -match '^\d+$') {
                         $currentSvn = (& svn info --non-interactive --show-item revision $carrierWsRoot 2>&1 | Out-String).Trim()
-                        if ($LASTEXITCODE -eq 0 -and $currentSvn -match '^\d+$') {
-                            if ([long]$svnNum -ne [long]$currentSvn) {
-                                $errors.Add("ERROR: executionEvidence sourceCommitSha '$($ev.sourceCommitSha)' does not match current SVN working revision ($currentSvn)")
-                            } else {
-                                $currentDigest = Get-ChangeSetDigest -WorkspaceRoot $carrierWsRoot -Baseline $currentSvn
-                                if ([string]::IsNullOrWhiteSpace($evDigest)) {
-                                    # already added error
-                                } elseif ($evDigest.ToLowerInvariant() -ne $currentDigest.ToLowerInvariant()) {
-                                    $errors.Add("ERROR: executionEvidence workingTreeDigest ('$evDigest') does not match current workspace changeSetDigest ('$currentDigest'). Tests must be re-run on current code state.")
-                                }
+                        if ($LASTEXITCODE -ne 0 -or $currentSvn -notmatch '^\d+$') {
+                            $errors.Add("ERROR: svn info failed in SVN workspace '$carrierWsRoot' (exitCode=$LASTEXITCODE, output=$currentSvn). Corrupted SVN copy or unavailable VCS.")
+                        } elseif ([long]$svnNum -ne [long]$currentSvn) {
+                            $errors.Add("ERROR: executionEvidence sourceCommitSha '$($ev.sourceCommitSha)' does not match current SVN working revision ($currentSvn)")
+                        } else {
+                            $currentDigest = Get-ChangeSetDigest -WorkspaceRoot $carrierWsRoot -Baseline $currentSvn
+                            if ([string]::IsNullOrWhiteSpace($evDigest)) {
+                                # already added error
+                            } elseif ($evDigest.ToLowerInvariant() -ne $currentDigest.ToLowerInvariant()) {
+                                $errors.Add("ERROR: executionEvidence workingTreeDigest ('$evDigest') does not match current workspace changeSetDigest ('$currentDigest'). Tests must be re-run on current code state.")
                             }
                         }
                     } else {
@@ -2425,6 +2479,9 @@ function Invoke-WithFileLock {
             $acquiredStateLock = $true
         }
 
+        # Recover any crashed transactions from prior runs
+        Invoke-RecoverPendingJournal -SpecDir $specDir
+
         & $Action
     } finally {
         if ($acquiredStateLock) {
@@ -2442,6 +2499,70 @@ function Invoke-WithFileLock {
     }
 }
 
+function Invoke-RecoverPendingJournal {
+    param([string]$SpecDir)
+    if ([string]::IsNullOrWhiteSpace($SpecDir) -or -not (Test-Path -LiteralPath $SpecDir)) { return }
+    $journalPath = Join-Path $SpecDir ".commit-journal.json"
+    if (-not (Test-Path -LiteralPath $journalPath -PathType Leaf)) { return }
+
+    try {
+        $raw = [System.IO.File]::ReadAllText($journalPath)
+        $journal = $raw | ConvertFrom-Json
+        if ($null -eq $journal) {
+            Remove-Item -LiteralPath $journalPath -Force -ErrorAction SilentlyContinue
+            return
+        }
+
+        if ($journal.state -eq "PREPARED") {
+            $allTmpExist = $true
+            foreach ($item in $journal.targets) {
+                if (-not [string]::IsNullOrWhiteSpace($item.tmpPath) -and -not (Test-Path -LiteralPath $item.tmpPath)) {
+                    $allTmpExist = $false
+                    break
+                }
+            }
+            if ($allTmpExist) {
+                # Roll-forward
+                foreach ($item in $journal.targets) {
+                    if (-not [string]::IsNullOrWhiteSpace($item.tmpPath) -and (Test-Path -LiteralPath $item.tmpPath)) {
+                        [System.IO.File]::Move($item.tmpPath, $item.path, $true)
+                    }
+                }
+            } else {
+                # Roll-back
+                foreach ($item in $journal.targets) {
+                    if ($item.existed -and -not [string]::IsNullOrWhiteSpace($item.backupPath) -and (Test-Path -LiteralPath $item.backupPath)) {
+                        [System.IO.File]::Copy($item.backupPath, $item.path, $true)
+                    } elseif (-not $item.existed -and (Test-Path -LiteralPath $item.path)) {
+                        [System.IO.File]::Delete($item.path)
+                    }
+                }
+            }
+        } elseif ($journal.state -eq "ROLLED_BACK") {
+            foreach ($item in $journal.targets) {
+                if ($item.existed -and -not [string]::IsNullOrWhiteSpace($item.backupPath) -and (Test-Path -LiteralPath $item.backupPath)) {
+                    [System.IO.File]::Copy($item.backupPath, $item.path, $true)
+                } elseif (-not $item.existed -and (Test-Path -LiteralPath $item.path)) {
+                    [System.IO.File]::Delete($item.path)
+                }
+            }
+        }
+
+        # Cleanup backups and temp files
+        foreach ($item in $journal.targets) {
+            if (-not [string]::IsNullOrWhiteSpace($item.tmpPath) -and (Test-Path -LiteralPath $item.tmpPath)) {
+                Remove-Item -LiteralPath $item.tmpPath -Force -ErrorAction SilentlyContinue
+            }
+            if (-not [string]::IsNullOrWhiteSpace($item.backupPath) -and (Test-Path -LiteralPath $item.backupPath)) {
+                Remove-Item -LiteralPath $item.backupPath -Force -ErrorAction SilentlyContinue
+            }
+        }
+        Remove-Item -LiteralPath $journalPath -Force -ErrorAction SilentlyContinue
+    } catch {
+        Write-Warning "Journal recovery encountered warning: $_"
+    }
+}
+
 function Invoke-AiSopTwoFileAtomicCommit {
     param(
         [string]$PathA,
@@ -2452,6 +2573,15 @@ function Invoke-AiSopTwoFileAtomicCommit {
         [string]$SchemaB,
         [string]$SpecDir
     )
+
+    if ([string]::IsNullOrWhiteSpace($SpecDir)) {
+        throw "SpecDir is mandatory for Invoke-AiSopTwoFileAtomicCommit"
+    }
+    if ([string]::IsNullOrWhiteSpace($PathA) -or [string]::IsNullOrWhiteSpace($ValueA)) {
+        throw "PathA and ValueA are mandatory for Invoke-AiSopTwoFileAtomicCommit"
+    }
+
+    Invoke-RecoverPendingJournal -SpecDir $SpecDir
 
     $jsonA = if ($ValueA -is [string]) { $ValueA } else { $ValueA | ConvertTo-Json -Depth 10 }
     $jsonB = if ($null -ne $PathB -and $null -ne $ValueB) {
@@ -2469,43 +2599,66 @@ function Invoke-AiSopTwoFileAtomicCommit {
         }
     }
 
-    $backupDir = Join-Path $SpecDir ".staging-backup-$([guid]::NewGuid().ToString('N').Substring(0,8))"
-    [System.IO.Directory]::CreateDirectory($backupDir) | Out-Null
-    $backupA = Join-Path $backupDir "backupA.json"
-    $backupB = Join-Path $backupDir "backupB.json"
+    $journalId = [guid]::NewGuid().ToString("N")
+    $journalPath = Join-Path $SpecDir ".commit-journal.json"
+    $backupA = Join-Path $SpecDir ".commit-backupA-$journalId.bak"
+    $backupB = if ($null -ne $PathB) { Join-Path $SpecDir ".commit-backupB-$journalId.bak" } else { $null }
+    $tmpA = $PathA + ".stage.tmp"
+    $tmpB = if ($null -ne $PathB -and $null -ne $jsonB) { $PathB + ".stage.tmp" } else { $null }
+
     $aExisted = Test-Path -LiteralPath $PathA -PathType Leaf
     $bExisted = if ($null -ne $PathB) { Test-Path -LiteralPath $PathB -PathType Leaf } else { $false }
     if ($aExisted) { [System.IO.File]::Copy($PathA, $backupA, $true) }
-    if ($bExisted) { [System.IO.File]::Copy($PathB, $backupB, $true) }
+    if ($bExisted -and $null -ne $backupB) { [System.IO.File]::Copy($PathB, $backupB, $true) }
+
+    [System.IO.File]::WriteAllText($tmpA, $jsonA, $script:WorkflowUtf8NoBom)
+    if ($null -ne $tmpB) {
+        [System.IO.File]::WriteAllText($tmpB, $jsonB, $script:WorkflowUtf8NoBom)
+    }
+
+    $journalObj = [ordered]@{
+        journalId = $journalId
+        state = "PREPARED"
+        timestamp = [DateTimeOffset]::UtcNow.ToString("o")
+        targets = @(
+            [ordered]@{ path = $PathA; tmpPath = $tmpA; existed = $aExisted; backupPath = $backupA }
+        )
+    }
+    if ($null -ne $PathB) {
+        $journalObj.targets += [ordered]@{ path = $PathB; tmpPath = $tmpB; existed = $bExisted; backupPath = $backupB }
+    }
+    [System.IO.File]::WriteAllText($journalPath, ($journalObj | ConvertTo-Json -Depth 10), $script:WorkflowUtf8NoBom)
 
     try {
-        $tmpA = $PathA + ".stage.tmp"
-        [System.IO.File]::WriteAllText($tmpA, $jsonA, $script:WorkflowUtf8NoBom)
-        
-        $tmpB = if ($null -ne $PathB -and $null -ne $jsonB) {
-            $t = $PathB + ".stage.tmp"
-            [System.IO.File]::WriteAllText($t, $jsonB, $script:WorkflowUtf8NoBom)
-            $t
-        } else { $null }
-
         [System.IO.File]::Move($tmpA, $PathA, $true)
         if ($null -ne $tmpB -and $null -ne $PathB) {
             [System.IO.File]::Move($tmpB, $PathB, $true)
         }
+
+        $journalObj.state = "COMMITTED"
+        [System.IO.File]::WriteAllText($journalPath, ($journalObj | ConvertTo-Json -Depth 10), $script:WorkflowUtf8NoBom)
+        Remove-Item -LiteralPath $journalPath -Force -ErrorAction SilentlyContinue
+        if ($aExisted -and (Test-Path -LiteralPath $backupA)) { Remove-Item -LiteralPath $backupA -Force -ErrorAction SilentlyContinue }
+        if ($bExisted -and $null -ne $backupB -and (Test-Path -LiteralPath $backupB)) { Remove-Item -LiteralPath $backupB -Force -ErrorAction SilentlyContinue }
     } catch {
+        $journalObj.state = "ROLLED_BACK"
+        try { [System.IO.File]::WriteAllText($journalPath, ($journalObj | ConvertTo-Json -Depth 10), $script:WorkflowUtf8NoBom) } catch {}
         if ($aExisted -and (Test-Path -LiteralPath $backupA)) {
             [System.IO.File]::Copy($backupA, $PathA, $true)
         } elseif (-not $aExisted -and (Test-Path -LiteralPath $PathA)) {
             [System.IO.File]::Delete($PathA)
         }
-        if ($bExisted -and (Test-Path -LiteralPath $backupB)) {
+        if ($bExisted -and $null -ne $backupB -and (Test-Path -LiteralPath $backupB)) {
             [System.IO.File]::Copy($backupB, $PathB, $true)
         } elseif (-not $bExisted -and $null -ne $PathB -and (Test-Path -LiteralPath $PathB)) {
             [System.IO.File]::Delete($PathB)
         }
+        Remove-Item -LiteralPath $journalPath -Force -ErrorAction SilentlyContinue
+        if (Test-Path -LiteralPath $backupA) { Remove-Item -LiteralPath $backupA -Force -ErrorAction SilentlyContinue }
+        if ($null -ne $backupB -and (Test-Path -LiteralPath $backupB)) { Remove-Item -LiteralPath $backupB -Force -ErrorAction SilentlyContinue }
+        if (Test-Path -LiteralPath $tmpA) { Remove-Item -LiteralPath $tmpA -Force -ErrorAction SilentlyContinue }
+        if ($null -ne $tmpB -and (Test-Path -LiteralPath $tmpB)) { Remove-Item -LiteralPath $tmpB -Force -ErrorAction SilentlyContinue }
         throw "TWO_PHASE_COMMIT_FAILED: $($_.Exception.Message)"
-    } finally {
-        Remove-Item -LiteralPath $backupDir -Recurse -Force -ErrorAction SilentlyContinue
     }
 }
 
@@ -3784,9 +3937,7 @@ switch ($Operation) {
             $checks.Add("[X] 工作区解析失败: spec directory 未位于有效工作区内")
         }
 
-        $specParent2 = Split-Path -Parent (Split-Path -Parent $specFullPath)
-        $specParent4 = Split-Path -Parent (Split-Path -Parent $specParent2)
-        $candidateRoots = @($wsRoot, $specParent2, $specParent4) | Where-Object { -not [string]::IsNullOrWhiteSpace($_) }
+        $candidateRoots = if (-not [string]::IsNullOrWhiteSpace($wsRoot)) { @($wsRoot) } else { @() }
         $compileOk = $false
         foreach ($r in $candidateRoots) {
             if ((Test-Path -LiteralPath (Join-Path $r "build/classes") -PathType Container) -or
@@ -3794,16 +3945,11 @@ switch ($Operation) {
                 (Test-Path -LiteralPath (Join-Path $r "build") -PathType Container) -or
                 (Test-Path -LiteralPath (Join-Path $r "classes") -PathType Container) -or
                 (Test-Path -LiteralPath (Join-Path $r "target/classes") -PathType Container) -or
-                (Test-Path -LiteralPath (Join-Path $r "WebRoot/WEB-INF/classes") -PathType Container)) {
+                (Test-Path -LiteralPath (Join-Path $r "WebRoot/WEB-INF/classes") -PathType Container) -or
+                (Test-Path -LiteralPath (Join-Path $r "bin") -PathType Container) -or
+                (Test-Path -LiteralPath (Join-Path $r "out") -PathType Container)) {
                 $compileOk = $true
                 break
-            }
-            if (Test-Path -LiteralPath $r -PathType Container) {
-                $subClasses = Get-ChildItem -LiteralPath $r -Directory -Depth 4 -Filter "classes" -ErrorAction SilentlyContinue
-                if ($subClasses.Count -gt 0) {
-                    $compileOk = $true
-                    break
-                }
             }
         }
         if ($effectiveTier -eq "T3") {

@@ -69,6 +69,7 @@ try {
     Assert-True ($LASTEXITCODE -ne 0) "DevSubmit during WAITING_REVIEW must fail"
 
     # 4. Test ReviewSubmit - REJECTED (Round 1 -> 2)
+    $sub1Time = if ($data.currentDevSubmission.submittedAt -is [System.DateTime]) { $data.currentDevSubmission.submittedAt.ToString("o") } else { [string]$data.currentDevSubmission.submittedAt }
     $issuesJson = @"
 [
   {
@@ -86,7 +87,10 @@ try {
         -HighestSeverity "HIGH" `
         -Summary "Found 1 high severity lock risk" `
         -IssuesJson $issuesJson `
-        -NextPromptForDev "Please fix the lock timeout in scripts/test.ps1" | Out-Null
+        -NextPromptForDev "Please fix the lock timeout in scripts/test.ps1" `
+        -ExpectedRound 1 `
+        -ExpectedSubmittedAt $sub1Time `
+        -ReviewerIdentity "COPILOT" | Out-Null
 
     $rawJson = [System.IO.File]::ReadAllText($TestMailboxPath, [System.Text.Encoding]::UTF8)
     Assert-True ($rawJson | Test-Json -SchemaFile $MailboxSchema) "Mailbox after ReviewSubmit (REJECT) must satisfy schema"
@@ -111,11 +115,15 @@ try {
     Assert-Equal $data.round 2 "Current round should be 2"
 
     # 6. Test ReviewSubmit - APPROVED (Round 2 Completion)
+    $sub2Time = if ($data.currentDevSubmission.submittedAt -is [System.DateTime]) { $data.currentDevSubmission.submittedAt.ToString("o") } else { [string]$data.currentDevSubmission.submittedAt }
     pwsh -NoProfile -File $ReviewMailboxScript -Operation ReviewSubmit `
         -MailboxPath $TestMailboxPath `
         -Verdict "APPROVED" `
         -HighestSeverity "NONE" `
-        -Summary "Lock timeout verified, all clear" | Out-Null
+        -Summary "Lock timeout verified, all clear" `
+        -ExpectedRound 2 `
+        -ExpectedSubmittedAt $sub2Time `
+        -ReviewerIdentity "COPILOT" | Out-Null
 
     $rawJson = [System.IO.File]::ReadAllText($TestMailboxPath, [System.Text.Encoding]::UTF8)
     Assert-True ($rawJson | Test-Json -SchemaFile $MailboxSchema) "Mailbox after APPROVED must satisfy schema"
@@ -128,6 +136,8 @@ try {
     pwsh -NoProfile -File $ReviewMailboxScript -Operation Init `
         -Feature "MaxRoundTest" `
         -MaxRounds 1 `
+        -DevAgent "ANTIGRAVITY" `
+        -ReviewerAgent "COPILOT" `
         -MailboxPath $maxRoundMailbox | Out-Null
 
     pwsh -NoProfile -File $ReviewMailboxScript -Operation DevSubmit `
@@ -135,10 +145,17 @@ try {
         -Summary "Initial try" `
         -TestGateStatus "PASS" | Out-Null
 
+    $maxRaw = [System.IO.File]::ReadAllText($maxRoundMailbox, [System.Text.Encoding]::UTF8)
+    $maxData = ConvertFrom-Json $maxRaw
+    $maxSubTime = if ($maxData.currentDevSubmission.submittedAt -is [System.DateTime]) { $maxData.currentDevSubmission.submittedAt.ToString("o") } else { [string]$maxData.currentDevSubmission.submittedAt }
+
     pwsh -NoProfile -File $ReviewMailboxScript -Operation ReviewSubmit `
         -MailboxPath $maxRoundMailbox `
         -Verdict "REJECTED" `
-        -Summary "Still has bugs" | Out-Null
+        -Summary "Still has bugs" `
+        -ExpectedRound 1 `
+        -ExpectedSubmittedAt $maxSubTime `
+        -ReviewerIdentity "COPILOT" | Out-Null
 
     $rawJson = [System.IO.File]::ReadAllText($maxRoundMailbox, [System.Text.Encoding]::UTF8)
     $data = ConvertFrom-Json $rawJson
@@ -147,6 +164,79 @@ try {
     # 8. Test Reset
     pwsh -NoProfile -File $ReviewMailboxScript -Operation Reset -MailboxPath $maxRoundMailbox | Out-Null
     Assert-True (-not (Test-Path -LiteralPath $maxRoundMailbox)) "Mailbox file should be deleted on Reset"
+
+    # 9. Negative Test: Path Traversal in FeatureName is rejected
+    $traversalFailed = $false
+    try {
+        pwsh -NoProfile -File $ReviewMailboxScript -Operation Init -Feature "../../traversal" 2>$null
+        if ($LASTEXITCODE -ne 0) { $traversalFailed = $true }
+    } catch {
+        $traversalFailed = $true
+    }
+    Assert-True $traversalFailed "Path traversal in Feature name must be rejected"
+
+    # 10. Negative Test: Duty Separation (Developer reviewing own code is rejected)
+    $dutyMb = Join-Path $TestRoot "duty-mailbox.json"
+    pwsh -NoProfile -File $ReviewMailboxScript -Operation Init `
+        -Feature "DutyTest" `
+        -DevAgent "ANTIGRAVITY" `
+        -ReviewerAgent "ANTIGRAVITY" `
+        -MailboxPath $dutyMb 2>$null
+    
+    pwsh -NoProfile -File $ReviewMailboxScript -Operation DevSubmit `
+        -MailboxPath $dutyMb `
+        -Summary "Dev changes" `
+        -TestGateStatus "PASS" 2>$null
+    
+    $dutyRaw = [System.IO.File]::ReadAllText($dutyMb, [System.Text.Encoding]::UTF8)
+    $dutyData = ConvertFrom-Json $dutyRaw
+    $dutySubTime = if ($dutyData.currentDevSubmission.submittedAt -is [System.DateTime]) { $dutyData.currentDevSubmission.submittedAt.ToString("o") } else { [string]$dutyData.currentDevSubmission.submittedAt }
+
+    $dutyFailed = $false
+    try {
+        $resDuty = pwsh -NoProfile -File $ReviewMailboxScript -Operation ReviewSubmit `
+            -MailboxPath $dutyMb `
+            -Verdict "APPROVED" `
+            -Summary "Self review" `
+            -ExpectedRound 1 `
+            -ExpectedSubmittedAt $dutySubTime `
+            -ReviewerIdentity "ANTIGRAVITY" 2>&1 | Out-String
+        if ($LASTEXITCODE -ne 0 -or $resDuty -match "SEPARATION_OF_DUTIES_VIOLATION") {
+            $dutyFailed = $true
+        }
+    } catch {
+        $dutyFailed = $true
+    }
+    Assert-True $dutyFailed "Developer reviewing their own submission must be rejected with SEPARATION_OF_DUTIES_VIOLATION"
+
+    # 11. Test: DevSubmit on FAIL test gate stays in WAITING_DEV and allows resubmission without deadlock
+    $selfHealMb = Join-Path $TestRoot "self-heal-mailbox.json"
+    pwsh -NoProfile -File $ReviewMailboxScript -Operation Init `
+        -Feature "SelfHealTest" `
+        -DevAgent "ANTIGRAVITY" `
+        -ReviewerAgent "COPILOT" `
+        -MailboxPath $selfHealMb | Out-Null
+    
+    pwsh -NoProfile -File $ReviewMailboxScript -Operation DevSubmit `
+        -MailboxPath $selfHealMb `
+        -Summary "First try with broken code" `
+        -TestGateStatus "FAIL" `
+        -TestOutput "Assertion error in test 1" | Out-Null
+    
+    $healRaw1 = [System.IO.File]::ReadAllText($selfHealMb, [System.Text.Encoding]::UTF8)
+    $healData1 = ConvertFrom-Json $healRaw1
+    Assert-Equal $healData1.status "WAITING_DEV" "DevSubmit with FAIL gate must keep status in WAITING_DEV"
+
+    # Resubmit fix on same round without deadlock
+    pwsh -NoProfile -File $ReviewMailboxScript -Operation DevSubmit `
+        -MailboxPath $selfHealMb `
+        -Summary "Fixed assertion error" `
+        -TestGateStatus "PASS" `
+        -TestOutput "All tests green" | Out-Null
+    
+    $healRaw2 = [System.IO.File]::ReadAllText($selfHealMb, [System.Text.Encoding]::UTF8)
+    $healData2 = ConvertFrom-Json $healRaw2
+    Assert-Equal $healData2.status "WAITING_REVIEW" "DevSubmit with PASS gate transitions to WAITING_REVIEW"
 
     Write-Host "All review mailbox tests passed successfully." -ForegroundColor Green
 }

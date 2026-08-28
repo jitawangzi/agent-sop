@@ -64,18 +64,21 @@ function Resolve-MailboxFilePath {
 
     if (-not [string]::IsNullOrWhiteSpace($CustomPath)) {
         if ([System.IO.Path]::IsPathRooted($CustomPath)) {
-            return $CustomPath
+            return [System.IO.Path]::GetFullPath($CustomPath)
         }
         return [System.IO.Path]::GetFullPath((Join-Path $PWD $CustomPath))
     }
 
     if (-not [string]::IsNullOrWhiteSpace($SpecDir)) {
-        $resolvedSpec = if ([System.IO.Path]::IsPathRooted($SpecDir)) { $SpecDir } else { Join-Path $PWD $SpecDir }
+        $resolvedSpec = if ([System.IO.Path]::IsPathRooted($SpecDir)) { [System.IO.Path]::GetFullPath($SpecDir) } else { [System.IO.Path]::GetFullPath((Join-Path $PWD $SpecDir)) }
         return (Join-Path $resolvedSpec "review-mailbox.json")
     }
 
     if (-not [string]::IsNullOrWhiteSpace($FeatureName)) {
-        $featureDir = Join-Path $PWD ".ai-workspace\specs\features\$FeatureName"
+        if ($FeatureName -match '[\.\/\\:\*\?"<>\|]') {
+            throw "INVALID_FEATURE_NAME: Feature name '$FeatureName' contains illegal characters or path traversal elements."
+        }
+        $featureDir = [System.IO.Path]::GetFullPath((Join-Path $PWD ".ai-workspace\specs\features\$FeatureName"))
         if (Test-Path -LiteralPath $featureDir) {
             return (Join-Path $featureDir "review-mailbox.json")
         }
@@ -83,10 +86,10 @@ function Resolve-MailboxFilePath {
 
     $sopDir = Join-Path $PWD ".ai-sop"
     if (Test-Path -LiteralPath $sopDir) {
-        return (Join-Path $sopDir "review-mailbox.json")
+        return [System.IO.Path]::GetFullPath((Join-Path $sopDir "review-mailbox.json"))
     }
 
-    return (Join-Path $PWD "review-mailbox.json")
+    return [System.IO.Path]::GetFullPath((Join-Path $PWD "review-mailbox.json"))
 }
 
 function Write-AtomicUtf8File {
@@ -364,14 +367,19 @@ switch ($Operation) {
             }
 
             $mailbox.currentDevSubmission = $submission
-            $mailbox.status = "WAITING_REVIEW"
+            if ($gateStatus -eq "PASS") {
+                $mailbox.status = "WAITING_REVIEW"
+                Write-Host "✅ Dev submission recorded for round $($mailbox.round). Status transitioned to WAITING_REVIEW." -ForegroundColor Green
+            } else {
+                $mailbox.status = "WAITING_DEV"
+                Write-Host "⚠️ Dev submission recorded with testGateStatus='$gateStatus'. Status remains WAITING_DEV for self-healing." -ForegroundColor Yellow
+            }
             $mailbox.updatedAt = $now
 
             $jsonStr = ConvertTo-MailboxJson -MailboxObject $mailbox
             Validate-MailboxSchema -Json $jsonStr
             Write-AtomicUtf8File -FilePath $targetMailbox -Content $jsonStr
 
-            Write-Host "✅ Dev submission recorded for round $($mailbox.round). Status transitioned to WAITING_REVIEW." -ForegroundColor Green
             if ($PassThru) { return $mailbox }
         }
     }
@@ -389,13 +397,19 @@ switch ($Operation) {
                 throw "Cannot submit review when mailbox status is '$($mailbox.status)'. Expected WAITING_REVIEW."
             }
 
-            # CAS Check 1: Expected Round
-            if ($ExpectedRound -gt 0 -and [int]$mailbox.round -ne $ExpectedRound) {
+            # Mandatory CAS Check 1: Expected Round
+            if ($ExpectedRound -le 0) {
+                throw "MANDATORY_CAS_REQUIRED: ExpectedRound must be a positive integer for ReviewSubmit."
+            }
+            if ([int]$mailbox.round -ne $ExpectedRound) {
                 throw "MAILBOX_CAS_CONFLICT: Expected round $ExpectedRound but mailbox is currently at round $($mailbox.round)."
             }
 
-            # CAS Check 2: Expected SubmittedAt
-            if (-not [string]::IsNullOrWhiteSpace($ExpectedSubmittedAt) -and $mailbox.currentDevSubmission) {
+            # Mandatory CAS Check 2: Expected SubmittedAt
+            if ([string]::IsNullOrWhiteSpace($ExpectedSubmittedAt)) {
+                throw "MANDATORY_CAS_REQUIRED: ExpectedSubmittedAt is required for ReviewSubmit."
+            }
+            if ($mailbox.currentDevSubmission) {
                 $actualSubStr = if ($mailbox.currentDevSubmission.submittedAt -is [System.DateTime]) { $mailbox.currentDevSubmission.submittedAt.ToString("o") } else { [string]$mailbox.currentDevSubmission.submittedAt }
                 $match = $false
                 try {
@@ -410,13 +424,14 @@ switch ($Operation) {
                 }
             }
 
-            # Duty Separation Check
-            if ($StrictDutySeparation -or -not [string]::IsNullOrWhiteSpace($ReviewerIdentity)) {
-                $effDev = [string]$mailbox.devAgent
-                $effRev = if (-not [string]::IsNullOrWhiteSpace($ReviewerIdentity)) { $ReviewerIdentity } else { $ReviewerAgent }
-                if (-not [string]::IsNullOrWhiteSpace($effDev) -and -not [string]::IsNullOrWhiteSpace($effRev) -and $effDev.ToLowerInvariant() -eq $effRev.ToLowerInvariant()) {
-                    throw "SEPARATION_OF_DUTIES_VIOLATION: Developer agent '$effDev' cannot review their own submission."
-                }
+            # Mandatory Duty Separation Check
+            $effDev = [string]$mailbox.devAgent
+            $effRev = if (-not [string]::IsNullOrWhiteSpace($ReviewerIdentity)) { $ReviewerIdentity } else { [string]$mailbox.reviewerAgent }
+            if ([string]::IsNullOrWhiteSpace($effRev)) {
+                throw "MANDATORY_DUTY_SEPARATION: Reviewer identity must be specified."
+            }
+            if (-not [string]::IsNullOrWhiteSpace($effDev) -and $effDev.ToLowerInvariant() -eq $effRev.ToLowerInvariant()) {
+                throw "SEPARATION_OF_DUTIES_VIOLATION: Developer agent '$effDev' cannot review their own submission."
             }
 
             if ([string]::IsNullOrWhiteSpace($Verdict)) {

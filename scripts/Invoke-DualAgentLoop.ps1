@@ -100,7 +100,12 @@ function Invoke-DevTurn {
         }
         "copilot" {
             Write-Host "Running GitHub Copilot CLI..." -ForegroundColor Gray
-            & gh copilot suggest "$Prompt"
+            $ghExe = Get-Command "gh" -ErrorAction SilentlyContinue
+            if ($ghExe) {
+                & $ghExe.Source copilot suggest -t shell "$Prompt"
+            } else {
+                throw "PROVIDER_UNAVAILABLE: GitHub CLI 'gh' is not found in PATH."
+            }
         }
         "antigravity" {
             Write-Host "Antigravity Dev Agent execution dispatched with prompt: $Prompt" -ForegroundColor Gray
@@ -277,26 +282,30 @@ while ($true) {
 
     # Phase 3: Reviewer Turn
     Write-Host "`n====================== [ ROUND $round / $MaxRounds - REVIEW PHASE ] ======================" -ForegroundColor Magenta
-    $gitDiff = try {
-        $diffStr = git diff HEAD 2>$null | Out-String
-        $untrackedStat = git status --porcelain -uall 2>$null
-        if ($untrackedStat) {
-            $untrackedDiffs = [System.Collections.Generic.List[string]]::new()
-            foreach ($uLine in ($untrackedStat | Out-String -Stream)) {
-                if ($uLine.Trim() -match '^\?\?\s+(.*)$') {
-                    $uPath = $Matches[1].Trim()
-                    if (Test-Path -LiteralPath $uPath -PathType Leaf) {
-                        $content = [System.IO.File]::ReadAllText($uPath)
-                        $untrackedDiffs.Add("=== Untracked File: $uPath ===`n$content")
-                    }
+    $diffStr = git diff HEAD 2>&1 | Out-String
+    if ($LASTEXITCODE -ne 0) {
+        throw "DIFF_CAPTURE_FAILED: git diff HEAD failed with exit code $($LASTEXITCODE): $diffStr"
+    }
+    $untrackedStat = git status --porcelain -uall 2>&1
+    if ($LASTEXITCODE -ne 0) {
+        throw "STATUS_CAPTURE_FAILED: git status failed with exit code $($LASTEXITCODE): $untrackedStat"
+    }
+    if ($untrackedStat) {
+        $untrackedDiffs = [System.Collections.Generic.List[string]]::new()
+        foreach ($uLine in ($untrackedStat | Out-String -Stream)) {
+            if ($uLine.Trim() -match '^\?\?\s+(.*)$') {
+                $uPath = $Matches[1].Trim()
+                if (Test-Path -LiteralPath $uPath -PathType Leaf) {
+                    $content = [System.IO.File]::ReadAllText($uPath)
+                    $untrackedDiffs.Add("=== Untracked File: $uPath ===`n$content")
                 }
             }
-            if ($untrackedDiffs.Count -gt 0) {
-                $diffStr += "`n`n" + ($untrackedDiffs -join "`n`n")
-            }
         }
-        $diffStr
-    } catch { "" }
+        if ($untrackedDiffs.Count -gt 0) {
+            $diffStr += "`n`n" + ($untrackedDiffs -join "`n`n")
+        }
+    }
+    $gitDiff = $diffStr
 
     $reviewResult = Invoke-ReviewerTurn `
         -Provider $ReviewProvider `
@@ -339,7 +348,13 @@ while ($true) {
         if ($AutoCommit) {
             Write-Host "📦 Creating automatic git commit..." -ForegroundColor Gray
             git add -A
-            git commit -m "feat($effectiveFeature): completed via dual-agent loop (round $round)" | Out-Null
+            if ($LASTEXITCODE -ne 0) {
+                throw "AUTO_COMMIT_FAILED: git add -A failed with exit code $($LASTEXITCODE)."
+            }
+            $commitOut = git commit -m "feat($effectiveFeature): completed via dual-agent loop (round $round)" 2>&1 | Out-String
+            if ($LASTEXITCODE -ne 0) {
+                throw "AUTO_COMMIT_FAILED: git commit failed with exit code $($LASTEXITCODE): $commitOut"
+            }
             Write-Host "✅ Committed successfully." -ForegroundColor Green
         }
 

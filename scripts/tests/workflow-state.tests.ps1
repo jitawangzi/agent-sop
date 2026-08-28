@@ -18,6 +18,7 @@ $TestPlanPath = Join-Path $FeatureRoot "05_test_plan.md"
 $CoveragePath = Join-Path $FeatureRoot "05_test_coverage.json"
 $Utf8NoBom = [System.Text.UTF8Encoding]::new($false)
 $env:SERVER_NEW_WORKFLOW_REGISTRY = Join-Path $TestRoot "owner-registry"
+[System.IO.Directory]::CreateDirectory((Join-Path $TestRoot "build/classes")) | Out-Null
 $env:SERVER_NEW_WORKFLOW_SESSION_REGISTRY = Join-Path $TestRoot "session-registry"
 $env:SERVER_NEW_WORKFLOW_COMMAND_GRANT_REGISTRY = Join-Path $TestRoot "grant-registry"
 $env:SERVER_NEW_WORKFLOW_TRANSACTION_REGISTRY = Join-Path $TestRoot "transaction-registry"
@@ -2815,16 +2816,22 @@ try {
       "automationCarrier": "$dirtyCarrierRel#testOne",
       "requirementIds": ["BR-01"],
       "designIds": ["DC-01"],
-      "testTypes": ["UNIT"],
+      "testTypes": ["FUNCTIONAL"],
       "setup": ["init context"],
       "trigger": ["execute test"],
-      "assertions": [
-        {
-          "target": "SampleTest#testOne",
-          "operator": "EQUALS",
-          "expected": "PASS"
-        }
-      ]
+      "cleanup": ["cleanup context"],
+      "assertions": {
+        "protocol": [
+          {
+            "target": "SampleTest#testOne",
+            "operator": "EQ",
+            "expected": "PASS"
+          }
+        ],
+        "serverState": [],
+        "sideEffects": [],
+        "regression": []
+      }
     }
   ],
   "riskExemptions": [],
@@ -2943,6 +2950,55 @@ try {
     
     Assert-Fails -Message "AssessRisk must fail closed with BASELINE_REGISTRY_CORRUPTED when registry is corrupted" -Action {
         & $ScriptPath -Operation AssessRisk -Path $corruptSpec
+    }
+
+    # 8. Negative Test: Cargo.lock and package-lock.json are NOT excluded
+    $cargoFile = Join-Path $spaceGitDir "Cargo.lock"
+    [System.IO.File]::WriteAllText($cargoFile, "version = 1", $Utf8NoBom)
+    $lockRisk1 = & $ScriptPath -Operation AssessRisk -Path $bizSpecDir -Baseline $bizBaseSha 2>&1 | Out-String
+    $lockDigest1 = ($lockRisk1 | ConvertFrom-Json).changeSetDigest
+    [System.IO.File]::WriteAllText($cargoFile, "version = 2", $Utf8NoBom)
+    $lockRisk2 = & $ScriptPath -Operation AssessRisk -Path $bizSpecDir -Baseline $bizBaseSha 2>&1 | Out-String
+    $lockDigest2 = ($lockRisk2 | ConvertFrom-Json).changeSetDigest
+    if ($lockDigest1 -eq $lockDigest2) {
+        throw "Cargo.lock modification must change changeSetDigest. lockDigest1=$lockDigest1, lockDigest2=$lockDigest2"
+    }
+
+    # 9. Test: Space in file path following an internal spec metadata file is NOT skipped
+    $spaceJava = Join-Path $spaceGitDir "src/nested space/Payment Processor.java"
+    [System.IO.Directory]::CreateDirectory((Split-Path -Parent $spaceJava)) | Out-Null
+    [System.IO.File]::WriteAllText($spaceJava, "public enum ShopEnum { BUY, SELL }", $Utf8NoBom)
+    $spaceJavaRisk = & $ScriptPath -Operation AssessRisk -Path $bizSpecDir -Baseline $bizBaseSha 2>&1 | Out-String
+    $spaceJavaObj = $spaceJavaRisk | ConvertFrom-Json
+    if (-not $spaceJavaObj.hasHighRisk) {
+        throw "High-risk enum in path with space ('Payment Processor.java') must be detected and set hasHighRisk=true. Risk output: $spaceJavaRisk"
+    }
+
+    # 10. Test: Crash recovery journal recovers interrupted state
+    $journalTestDir = Join-Path $TestRoot "journal_recovery_spec"
+    [System.IO.Directory]::CreateDirectory($journalTestDir) | Out-Null
+    $fileA = Join-Path $journalTestDir "00_workflow_state.json"
+    $fileTmpA = $fileA + ".stage.tmp"
+    $validStateJson = '{"schemaVersion":"1.0","feature":"JournalRecoveryFeature","requirement":{"artifact":"01_server_rules.md","status":"DRAFT","approvedBy":"","approvedAt":"","sha256":""},"design":{"artifact":"06_design_contract.md","status":"DRAFT","approvedBy":"","approvedAt":"","sha256":""}}'
+    [System.IO.File]::WriteAllText($fileTmpA, $validStateJson, $Utf8NoBom)
+    $journalObj = [ordered]@{
+        journalId = "test-journal-1"
+        state = "PREPARED"
+        timestamp = [DateTimeOffset]::UtcNow.ToString("o")
+        targets = @(
+            [ordered]@{ path = $fileA; tmpPath = $fileTmpA; existed = $false; backupPath = "" }
+        )
+    }
+    $journalFile = Join-Path $journalTestDir ".commit-journal.json"
+    [System.IO.File]::WriteAllText($journalFile, ($journalObj | ConvertTo-Json -Depth 10), $Utf8NoBom)
+    
+    # Run AssessRisk on journalTestDir, which acquires lock and triggers Invoke-RecoverPendingJournal
+    $dummyRisk = & $ScriptPath -Operation AssessRisk -Path $journalTestDir 2>&1 | Out-String
+    if (-not (Test-Path -LiteralPath $fileA)) {
+        throw "Invoke-RecoverPendingJournal must roll forward PREPARED tmp files. File '$fileA' was not found."
+    }
+    if (Test-Path -LiteralPath $journalFile) {
+        throw "Invoke-RecoverPendingJournal must clean up journal file after recovery."
     }
 
     Write-Output "All workflow state tests passed."

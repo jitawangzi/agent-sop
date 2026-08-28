@@ -776,6 +776,29 @@ switch ($Operation) {
                 if ($LASTEXITCODE -ne 0) {
                     throw "INVALID_BASELINE: Git baseline commit '$Baseline' does not exist in repository '$ws'."
                 }
+                & git -C $ws merge-base --is-ancestor "$Baseline" HEAD 2>&1 | Out-Null
+                if ($LASTEXITCODE -ne 0) {
+                    throw "INVALID_BASELINE: Git baseline commit '$Baseline' is not an ancestor of current HEAD in '$ws'."
+                }
+                $forkPoint = (& git -C $ws merge-base HEAD origin/main 2>&1 | Out-String).Trim()
+                if ($LASTEXITCODE -ne 0 -or [string]::IsNullOrWhiteSpace($forkPoint)) {
+                    $forkPoint = (& git -C $ws merge-base HEAD origin/master 2>&1 | Out-String).Trim()
+                }
+                if ($LASTEXITCODE -ne 0 -or [string]::IsNullOrWhiteSpace($forkPoint)) {
+                    $forkPoint = (& git -C $ws merge-base HEAD main 2>&1 | Out-String).Trim()
+                }
+                if ($LASTEXITCODE -ne 0 -or [string]::IsNullOrWhiteSpace($forkPoint)) {
+                    $forkPoint = (& git -C $ws merge-base HEAD master 2>&1 | Out-String).Trim()
+                }
+                if ($LASTEXITCODE -eq 0 -and -not [string]::IsNullOrWhiteSpace($forkPoint) -and $forkPoint.ToLowerInvariant() -ne $Baseline.ToLowerInvariant()) {
+                    & git -C $ws merge-base --is-ancestor "$forkPoint" "$Baseline" 2>&1 | Out-Null
+                    if ($LASTEXITCODE -eq 0) {
+                        & git -C $ws merge-base --is-ancestor "$Baseline" "$forkPoint" 2>&1 | Out-Null
+                        if ($LASTEXITCODE -ne 0) {
+                            throw "BASELINE_MUTATION_DETECTED: Proposed baseline '$Baseline' is ahead of branch fork-point '$forkPoint'. Narrowing review scope is prohibited."
+                        }
+                    }
+                }
             }
             $Baseline
         } else {
@@ -858,6 +881,17 @@ switch ($Operation) {
             }
             [string]$existingOwner.baseline
         } elseif ($PSBoundParameters.ContainsKey("Baseline") -and -not [string]::IsNullOrWhiteSpace($Baseline)) {
+            $ws = Get-OwnerWorkspacePath
+            if (-not [string]::IsNullOrWhiteSpace($ws) -and (Test-Path -LiteralPath (Join-Path $ws ".git"))) {
+                & git -C $ws cat-file -e "$Baseline^{commit}" 2>&1 | Out-Null
+                if ($LASTEXITCODE -ne 0) {
+                    throw "INVALID_BASELINE: Git baseline commit '$Baseline' does not exist in repository '$ws'."
+                }
+                & git -C $ws merge-base --is-ancestor "$Baseline" HEAD 2>&1 | Out-Null
+                if ($LASTEXITCODE -ne 0) {
+                    throw "INVALID_BASELINE: Git baseline commit '$Baseline' is not an ancestor of current HEAD in '$ws'."
+                }
+            }
             $Baseline
         } else {
             Get-VcsBaselineRevision -StartPath $ResolvedSpecDirectory
@@ -1224,7 +1258,6 @@ if (-not [string]::IsNullOrWhiteSpace($ResolvedSpecDirectory)) {
     } finally {
         if ($null -ne $specLockStream) {
             $specLockStream.Dispose()
-            Remove-Item -LiteralPath $specLockPath -Force -ErrorAction SilentlyContinue
         }
     }
 } else {

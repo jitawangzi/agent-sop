@@ -74,7 +74,19 @@ function Invoke-TestSuiteParallel {
 }
 
 function Invoke-Compile {
-    $projectRoot = Split-Path -Parent (Split-Path -Parent $PSScriptRoot)
+    $sopParent = Split-Path -Parent $PSScriptRoot
+    $projectRoot = if (-not [string]::IsNullOrWhiteSpace($sopParent)) {
+        Split-Path -Parent $sopParent
+    } else {
+        ""
+    }
+    if ([string]::IsNullOrWhiteSpace($projectRoot)) {
+        $projectRoot = $sopParent
+    }
+    if ([string]::IsNullOrWhiteSpace($projectRoot)) {
+        Write-Host "gradlew not found; skipping compile." -ForegroundColor Yellow
+        return $true
+    }
     $gradlew = Join-Path $projectRoot "gradlew.bat"
     if (-not (Test-Path -LiteralPath $gradlew)) {
         $gradlew = Join-Path $projectRoot "gradlew"
@@ -99,8 +111,18 @@ function Invoke-Compile {
 $defaultTestRoot = Join-Path $PSScriptRoot "tests"
 $testRoots = @($TestsRoot)
 if ($TestsRoot -eq $defaultTestRoot) {
-    $projectTestRoot = Join-Path (Split-Path -Parent (Split-Path -Parent $PSScriptRoot)) ".ai-workspace\scripts\tests"
-    if (Test-Path -LiteralPath $projectTestRoot) { $testRoots += $projectTestRoot }
+    # Installed layout: <workspace>/.ai-sop/scripts  -> parent/parent is workspace.
+    # This repo layout: <workspace>/scripts -> parent/parent can be empty on some hosts.
+    $sopParent = Split-Path -Parent $PSScriptRoot
+    $projectRoot = if (-not [string]::IsNullOrWhiteSpace($sopParent)) {
+        Split-Path -Parent $sopParent
+    } else {
+        ""
+    }
+    if (-not [string]::IsNullOrWhiteSpace($projectRoot)) {
+        $projectTestRoot = Join-Path $projectRoot ".ai-workspace/scripts/tests"
+        if (Test-Path -LiteralPath $projectTestRoot) { $testRoots += $projectTestRoot }
+    }
 }
 $allFiles = @(
     foreach ($tr in $testRoots) {

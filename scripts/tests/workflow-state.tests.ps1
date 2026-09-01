@@ -2751,7 +2751,7 @@ try {
 
     $extSrc = Join-Path $extDir "src/com/game/ShopEnum.java"
     [System.IO.Directory]::CreateDirectory((Split-Path -Parent $extSrc)) | Out-Null
-    [System.IO.File]::WriteAllText($extSrc, "package com.game; public enum ShopEnum { TYPE_OLD, TYPE_NEW_GIFT }", $Utf8NoBom)
+    [System.IO.File]::WriteAllText($extSrc, "package com.game; public enum ShopEnum { TYPE_OLD, TYPE_MID, TYPE_NEW_GIFT }", $Utf8NoBom)
     $extTestJava = Join-Path $extDir "test/TypeExtTest.java"
     [System.IO.Directory]::CreateDirectory((Split-Path -Parent $extTestJava)) | Out-Null
     [System.IO.File]::WriteAllText($extTestJava, "package test; import org.junit.Test; public class TypeExtTest { @Test public void testLegacyReset() { buy(`"BUY_GIFT`", TYPE_OLD, TYPE_NEW_GIFT); } @Test public void testEmptyChar() {} }", $Utf8NoBom)
@@ -2842,6 +2842,7 @@ try {
 
     $extVariantBlock = @(
         [ordered]@{ typeKey = "TYPE_OLD"; relationToLegacy = "IDENTICAL_TO_LEGACY"; description = "Existing gift type" }
+        [ordered]@{ typeKey = "TYPE_MID"; relationToLegacy = "IDENTICAL_TO_LEGACY"; description = "Sibling that shares the same dispatcher" }
         [ordered]@{ typeKey = "TYPE_NEW_GIFT"; relationToLegacy = "INTENTIONAL_DIFF"; description = "New gift type"; reason = "New billing path" }
     )
     $extInvariantBlock = @(
@@ -2950,8 +2951,36 @@ try {
     $extVerify = & $ScriptPath -Operation VerifyCompletion -Path $extApproval 2>&1
     $extVerifyStr = $extVerify | Out-String
     if ($LASTEXITCODE -ne 0 -or $extVerifyStr -notmatch "VERIFY_COMPLETION_PASS" -or $extVerifyStr -notmatch "类型/路由扩展完成度" -or $extVerifyStr -notmatch "类型/路由扩展覆盖完成度") {
-        throw "VerifyCompletion must pass a complete TYPE_EXTENSION impact and characterization coverage contract. Output: $extVerifyStr"
+        throw "VerifyCompletion must pass a complete TYPE_EXTENSION impact and characterization coverage contract (IDENTICAL siblings may be sampled). Output: $extVerifyStr"
     }
+
+    $extCovOnlyNew = [ordered]@{}
+    foreach ($k in $extCov.Keys) { $extCovOnlyNew[$k] = $extCov[$k] }
+    $extOnlyNewCase = [ordered]@{}
+    foreach ($k in (@($extCov.cases)[0].Keys)) { $extOnlyNewCase[$k] = (@($extCov.cases)[0])[$k] }
+    $extOnlyNewCase["variantKeys"] = @("TYPE_NEW_GIFT")
+    $extCovOnlyNew["cases"] = @($extOnlyNewCase)
+    Write-TestJson -Path $extCovPath -Value $extCovOnlyNew
+    $extVerifyOnlyNew = & $ScriptPath -Operation VerifyCompletion -Path $extApproval 2>&1
+    $extVerifyOnlyNewStr = $extVerifyOnlyNew | Out-String
+    if ($LASTEXITCODE -eq 0 -or $extVerifyOnlyNewStr -notmatch "TYPE_EXTENSION_COVERAGE_INCOMPLETE" -or $extVerifyOnlyNewStr -notmatch "IDENTICAL_TO_LEGACY") {
+        throw "VerifyCompletion must fail when no IDENTICAL_TO_LEGACY key is sampled by a CHARACTERIZATION case. Output: $extVerifyOnlyNewStr"
+    }
+
+    $extCovMissingNew = [ordered]@{}
+    foreach ($k in $extCov.Keys) { $extCovMissingNew[$k] = $extCov[$k] }
+    $extMissingNewCase = [ordered]@{}
+    foreach ($k in (@($extCov.cases)[0].Keys)) { $extMissingNewCase[$k] = (@($extCov.cases)[0])[$k] }
+    $extMissingNewCase["variantKeys"] = @("TYPE_OLD")
+    $extCovMissingNew["cases"] = @($extMissingNewCase)
+    Write-TestJson -Path $extCovPath -Value $extCovMissingNew
+    $extVerifyMissingNew = & $ScriptPath -Operation VerifyCompletion -Path $extApproval 2>&1
+    $extVerifyMissingNewStr = $extVerifyMissingNew | Out-String
+    if ($LASTEXITCODE -eq 0 -or $extVerifyMissingNewStr -notmatch "TYPE_EXTENSION_COVERAGE_INCOMPLETE" -or $extVerifyMissingNewStr -notmatch "INTENTIONAL_DIFF") {
+        throw "VerifyCompletion must fail when an INTENTIONAL_DIFF typeKey is missing from variantKeys. Output: $extVerifyMissingNewStr"
+    }
+
+    Write-TestJson -Path $extCovPath -Value $extCov
 
     $extCovIncomplete = [ordered]@{}
     foreach ($k in $extCov.Keys) { $extCovIncomplete[$k] = $extCov[$k] }

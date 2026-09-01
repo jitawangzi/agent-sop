@@ -33,7 +33,7 @@ description: 独立审计测试计划的条款覆盖、设计方法、断言可�
    - **检查通用五步状态矩阵与冷重载断言**：凡涉及限购、计数、状态变异、购买、消耗、领奖等业务，必须检查是否覆盖了 5 个关键状态切面（全新初始态、达到上限终态、带历史满额数据跨周期冷查询、绕过查询直接写操作自愈重置、幂等与重入）；凡带副作用的协议测试，必须检查断言步骤是否包含重新从 DB/Redis 冷加载实体 (`selectById`) 校验真实持久化字段，拒绝仅断言内存回包 JSON 的假阳性用例。
 4. **检查集合枚举全覆盖**：对"有限集合的逐元素行为"（商店每个商品、奖励每档、任务列表每个任务、活动配置每行等），若元素有独立配置或独立分支，必须枚举全覆盖每个元素；抽样未覆盖的须标为缺口。元素行为同质（同类玩家、同格式配置项校验）仍允许等价类抽样。判定标准：换一个元素可能改变预期结果 → 必须枚举到。
 5. **检查类型扩展差分回归**：若同功能目录存在 `04_change_impact.json` 且含 `behaviorVariants`/`legacyPaths`，则每个 `IDENTICAL_TO_LEGACY` 变体必须有 `legacyPaths[].regressionCaseId`，该 Case 必须出现在 `05_test_plan.md` / `05_test_coverage.json`；`invariants[].invariantId` 必须出现在某个 Case 的 `invariantIds`。缺差分回归不得以“新类型主路径已测”放行。
-   - **表征与入口穷尽**：每个 `IDENTICAL_TO_LEGACY` `typeKey` 必须出现在某条 `testTypes` 含 `CHARACTERIZATION` 且 `variantKeys` 含该键的 Case；每个 `04.entryPoints` 必须出现在某条 `entryPointIds`；`TOUCHED`/`INHERITED` 切面必须出现在某条 `facetIds`；QUERY 仍生效时至少一条 `bypassesPriorQuery=true`。核心 Act 必须是正式协议/正式业务入口，GM 只允许 Arrange/Observe/Cleanup。
+   - **表征与入口覆盖**：共享同一分发的 `IDENTICAL_TO_LEGACY` 必须**至少抽 1 个** `typeKey` 出现在某条 `testTypes` 含 `CHARACTERIZATION` 且 `variantKeys` 含该键的 Case；每个 `INTENTIONAL_DIFF` 必须出现在某条 `variantKeys`；每个 `04.entryPoints` 必须出现在某条 `entryPointIds`；`TOUCHED`/`INHERITED` 切面必须出现在某条 `facetIds`；QUERY 仍生效时至少一条 `bypassesPriorQuery=true`。核心 Act 必须是**已有**正式协议/正式业务入口，GM 只允许 Arrange/Observe/Cleanup。同质兄弟不必每个都有 Case；独立配置/独立分支未抽样 = 缺口。
    - **表征必须打到旧分发**：`CHARACTERIZATION` Case 的 `automationCarrier#method` 方法体必须字面包含该 Case 的 `variantKeys` 与 `entryPointIds`，且含有调用（`(`）。空 `@Test`、只测新类型、或 Act 调 Helper 而不是公共入口 = `FAIL`。
 6. 检查每个 `TC-*` 的前置条件、触发步骤、断言和清理是否可由另一个 AI 直接执行。
 7. 检查四层断言是否都使用 `{ target, operator, expected }`，或以 `operator=N_A` 给出明确不适用原因；拒绝空断言层和“正确”“正常”“符合预期”等自由文本结论。

@@ -1900,33 +1900,40 @@ function Assert-ExtensionCoverageCompleteness {
         throw "${prefix}: 04.entryPoints not covered by any case entryPointIds: $($missingEntries -join ', '). Add protocol-trace cases that invoke each public entry from its formal input, not from a helper class."
     }
 
-    $requiredKeys = New-Object System.Collections.Generic.List[string]
+    $intentionalKeys = New-Object System.Collections.Generic.List[string]
     $identicalKeys = New-Object System.Collections.Generic.List[string]
     foreach ($variant in (Get-JsonObjectArray -Value $Impact.behaviorVariants)) {
         if ($null -eq $variant -or [string]::IsNullOrWhiteSpace($variant.typeKey)) { continue }
         $relation = [string]$variant.relationToLegacy
         if ($relation -eq "N_A") { continue }
         $typeKey = [string]$variant.typeKey
-        $requiredKeys.Add($typeKey)
         if ($relation -eq "IDENTICAL_TO_LEGACY") {
             $identicalKeys.Add($typeKey)
         }
+        elseif ($relation -eq "INTENTIONAL_DIFF") {
+            $intentionalKeys.Add($typeKey)
+        }
     }
 
-    $missingKeys = @()
-    foreach ($typeKey in $requiredKeys) {
-        if (-not $coveredVariants.Contains($typeKey)) { $missingKeys += $typeKey }
+    $missingIntentional = @()
+    foreach ($typeKey in $intentionalKeys) {
+        if (-not $coveredVariants.Contains($typeKey)) { $missingIntentional += $typeKey }
     }
-    if ($missingKeys.Count -gt 0) {
-        throw "${prefix}: behaviorVariants typeKeys not covered by any case variantKeys: $($missingKeys -join ', '). Bind each IDENTICAL_TO_LEGACY and INTENTIONAL_DIFF key as case input."
+    if ($missingIntentional.Count -gt 0) {
+        throw "${prefix}: INTENTIONAL_DIFF typeKeys not covered by any case variantKeys: $($missingIntentional -join ', '). The new type must have its own FUNCTIONAL (or CHARACTERIZATION) case; sampling applies only to IDENTICAL_TO_LEGACY siblings that share one dispatcher."
     }
 
-    $missingCharacterization = @()
-    foreach ($typeKey in $identicalKeys) {
-        if (-not $characterizationKeys.Contains($typeKey)) { $missingCharacterization += $typeKey }
-    }
-    if ($missingCharacterization.Count -gt 0) {
-        throw "${prefix}: IDENTICAL_TO_LEGACY typeKeys lack CHARACTERIZATION coverage: $($missingCharacterization -join ', '). Characterization cases lock legacy behavior on the formal public entry before the new type ships."
+    if ($identicalKeys.Count -gt 0) {
+        $sampledIdentical = $false
+        foreach ($typeKey in $identicalKeys) {
+            if ($characterizationKeys.Contains($typeKey)) {
+                $sampledIdentical = $true
+                break
+            }
+        }
+        if (-not $sampledIdentical) {
+            throw ("${prefix}: none of the IDENTICAL_TO_LEGACY typeKeys ({0}) appear in any CHARACTERIZATION case variantKeys. Sample at least one representative old type that shares the dispatcher; do not require a case per sibling. Independent branches/config still need their own sample (see 04.legacyPaths)." -f ($identicalKeys -join ", "))
+        }
     }
 
     $missingFacets = @()

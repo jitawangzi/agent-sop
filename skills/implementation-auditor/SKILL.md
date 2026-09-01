@@ -98,7 +98,7 @@ description: 实现审计官，负责检查代码是否遵守项目约束、设�
 
 输入：
 - `entry_points`（必填；缺省读取 `04.entryPoints`）
-- 可选：`type_keys`（缺省读取 `behaviorVariants[].typeKey`）
+- 可选：`type_keys`（缺省读取 `behaviorVariants[].typeKey`。协议追踪至少绑全部 `INTENTIONAL_DIFF` + 至少一个共享分发的 `IDENTICAL_TO_LEGACY` 代表；同质兄弟不必每个都走）
 
 审计范围：
 - 每个公共入口的分发、校验、变异、持久化、序列化、补偿

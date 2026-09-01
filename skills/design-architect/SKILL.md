@@ -38,7 +38,7 @@ description: 激活首席架构师模式。强调“能力复用”与“无损�
 
 ### Invocation Mode
 - `NEW`: 新功能首次设计（GREENFIELD）。可先谈新协议与新存储。
-- `INCREMENTAL` / 旧系统扩展（LEGACY_EXTENSION）：在已有类型/分发上加键或加分支。进入 Step 1 数据建模之前，必须先完成遗留考古：列出全部相关公共入口到 `04.entryPoints`，列出全部兄弟 `typeKey` 到 `behaviorVariants`。没有这张表，不得开始画新类型主路径。
+- `INCREMENTAL` / 旧系统扩展（LEGACY_EXTENSION）：在已有类型/分发上加键或加分支。进入 Step 1 数据建模之前，必须先完成遗留考古：把该功能**已经存在**的公共入口列入 `04.entryPoints`（QUERY/MUTATE/RESET/COMPENSATE/观测，不是为此新写协议），把兄弟 `typeKey` 列入 `behaviorVariants`（声明表：同质分发标 `IDENTICAL_TO_LEGACY`，独立分支单独成行，不相关的 `excludedWithReason`）。没有这张 04 表，不得开始画新类型主路径。04 列表 ≠ 每个旧类型一条测试；测试与人工脚本只抽代表旧键。
 - `REVALIDATE`: 业务规则变化后重新核对并收拢设计契约，即使实现方案最终不变也必须重新形成可确认结论
 
 ### Step 1: Data Modeling & Reuse Mapping
@@ -84,9 +84,9 @@ description: 激活首席架构师模式。强调“能力复用”与“无损�
     5.  **Legacy Behavior Invariant Matrix (旧行为保护与差分设计矩阵)**:
         - 凡涉及在已有老系统上新增类型/枚举/配置行，必须在设计契约中列出 **8 维新旧行为差分表**：
           ① 前置条件、② 查询展示（含懒重置）、③ 通用校验链（防 bypass）、④ 扣费逻辑、⑤ 发奖掉落、⑥ 持久化落库、⑦ 跨天重置、⑧ 幂等重试。
-        - 逐项明确标为 `IDENTICAL_TO_LEGACY`（与旧逻辑完全一致，要求旧 Case 回归）、`INTENTIONAL_DIFF`（有意差异，写明理由）、`N_A`。
+        - 逐项明确标为 `IDENTICAL_TO_LEGACY`（与旧逻辑完全一致，要求代表旧键的表征 Case 回归，不是每个同质兄弟一条）、`INTENTIONAL_DIFF`（有意差异，写明理由，新键必须有自己的 FUNCTIONAL Case）、`N_A`。
         - **机器可读投影**：同一张 8 维表必须写入同功能目录的 `04_change_impact.json`（`behaviorVariants` + `lifecycleFacets` + `legacyPaths` + `invariants` + `requiredRegressionCases`）。切面 id 固定为 `INIT`/`QUERY`/`VALIDATE`/`MUTATE`/`PERSIST`/`RESET`/`SERIALIZE`/`COMPENSATE`，覆盖结论只能是 `TOUCHED`/`INHERITED`/`N_A`。实现完成后由 `implementation-engine` 刷新 `changeSetDigest`；`ValidateChangeImpact` / `VerifyCompletion` 在命中类型扩展或公共分发时硬校验此产物，缺切面不得交付。
-        - **公共入口穷尽**：`04.entryPoints` 必须列出该功能所有相关公共入口，而不是只写主写入协议。至少覆盖：QUERY/INFO 展示、MUTATE 写入、会触发 RESET 的入口、COMPENSATE/回放入口、以及用于观测的管理/GM 入口（若存在）。缺 QUERY vs MUTATE 成对入口，等于设计阶段已经丢掉「按协议走查」的输入。
+        - **公共入口穷尽**：`04.entryPoints` 必须列出该功能**已经存在**的所有相关公共入口，而不是只写主写入协议，也不是为此新写一套协议。至少覆盖：QUERY/INFO 展示、MUTATE 写入、会触发 RESET 的入口、COMPENSATE/回放入口、以及用于观测的管理/GM 入口（若存在）。缺 QUERY vs MUTATE 成对入口，等于设计阶段已经丢掉「按协议走查」的输入。
 *   **Boundary Rule**:
     - 本阶段**不负责**输出完整 `05_test_plan.md`，也不负责穷举测试 Case。
     - 本阶段必须确保 QA 拿到设计后，知道“哪些地方必须测、为什么必须测、用什么手段测”。

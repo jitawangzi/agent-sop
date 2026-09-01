@@ -74,15 +74,15 @@
 
   **按协议审查 + 表征覆盖（机器硬门禁）**：class / 版本 diff 审查看不到未改动的旧切面。类型/策略扩展时，审计应从 `04.entryPoints` 的公共入口 + `typeKey` 样例输入往下模拟完整执行（logic-auditor Mode E / implementation-auditor Protocol Trace），而不是从 Helper 类或 `focus_methods` 起审。`VerifyCompletion` 额外要求 `05_test_coverage.json`：
   - 每个 `04.entryPoints` 出现在某条 Case 的 `entryPointIds`
-  - 每个非 `N_A` 的 `typeKey` 出现在某条 Case 的 `variantKeys`
-  - 每个 `IDENTICAL_TO_LEGACY` 的 `typeKey` 出现在某条 `testTypes` 含 `CHARACTERIZATION` 的 Case
+  - 每个 `INTENTIONAL_DIFF` 的 `typeKey` 出现在某条 Case 的 `variantKeys`（新类型自己的 FUNCTIONAL/CHARACTERIZATION Case，抽样本不适用于新键）
+  - 若存在 `IDENTICAL_TO_LEGACY`，**至少抽 1 个**共享同一分发的代表旧键，出现在某条 `testTypes` 含 `CHARACTERIZATION` 的 Case。同质兄弟不必每个都有 Case；有独立配置/独立分支的旧键仍须单独抽样（见 `04.legacyPaths`）
   - 每个 `TOUCHED`/`INHERITED` 切面出现在某条 Case 的 `facetIds`
   - QUERY 切面仍生效时，至少一条 Case `bypassesPriorQuery=true`（不先查询、直接发写入入口）
-  缺任一项报 `TYPE_EXTENSION_COVERAGE_INCOMPLETE`。设计阶段就必须把 QUERY/MUTATE/RESET/COMPENSATE/观测入口写进 `04.entryPoints`，而不是只列主写入协议。
+  缺任一项报 `TYPE_EXTENSION_COVERAGE_INCOMPLETE`。`04.behaviorVariants` 仍须登记兄弟键（或 `excludedWithReason`）——那是声明表，不是“每个旧类型一条测试”。设计阶段就必须把 **已有** QUERY/MUTATE/RESET/COMPENSATE/观测入口写进 `04.entryPoints`，而不是只列主写入协议，也不是为此新写一套协议。
 
   **证据门禁（防 N_A 填空、防空表征 Case）**：`ValidateChangeImpact` 还会拒绝：
   - `lifecycleFacets` / `N_A` 变体的证据是套话（`n/a`、`不适用`、`main path covers`）或短于 24 字、没有 `Class#method` / 源文件 / `typeKey`
-  - 变更文件里的 enum / `TYPE_*` 兄弟常量未全部写入 `behaviorVariants` 或 `excludedWithReason`（只登记新键、漏旧键）
+  - 变更文件里的 enum / `TYPE_*` 兄弟常量未全部写入 `behaviorVariants` 或 `excludedWithReason`（只登记新键、漏旧键）。这是 04 声明表，机器在单文件 ≤32 个候选键时检查；不等于要求每个旧键都有测试或人工点一遍。
   - 8 个必填切面里超过 4 个 `N_A`
   `VerifyCompletion` 还会读 `CHARACTERIZATION` Case 的 `automationCarrier#method` 方法体：空 `@Test`、没有调用、或方法里不出现 `variantKeys`/`entryPointIds` 字面量，一律 `TYPE_EXTENSION_COVERAGE_INCOMPLETE`。这仍不能证明运行时打到了旧分发，但能挡住“JSON 填了、测试是空方法”的假覆盖。
 
@@ -119,19 +119,25 @@
 | **GREENFIELD 全新功能** | 新玩法、新协议、新存储 | 设计和实现通常够用 | 需求没说清、状态机自相矛盾 | 需求/设计人工确认；实现按契约做 |
 | **LEGACY_EXTENSION 旧系统扩展** | 旧功能加新类型、加分支、改公共分发 | 新路径往往是对的 | **没被改到的旧切面**（重置、限购、补偿、不先查询直接写） | **1. 设计考古 2. 旧行为表征测试（实现前就能跑）3. 按协议走查 4. 人工按协议脚本验收** |
 
-**不要把旧系统扩展的主防线放在「人工总体功能审核」。** 人和 AI 在收尾阶段都会盯 diff / 新代码；旧限购击穿、懒重置不在 diff 里。加时长只会更仔细地看错对象。收尾审核要改的是**审查对象**：按 `04.entryPoints` × 旧 `typeKey` 走协议，而不是把整个功能再读一遍。
+**不要把旧系统扩展的主防线放在「人工总体功能审核」。** 人和 AI 在收尾阶段都会盯 diff / 新代码；旧限购击穿、懒重置不在 diff 里。加时长只会更仔细地看错对象。收尾审核要改的是**审查对象**：按 `04.entryPoints` × **抽到的代表旧 typeKey** 走已有协议，而不是把整个功能再读一遍。
+
+**「列出全部」指 04 声明表，不是每个旧类型一条测试。** `behaviorVariants` 把兄弟键标成 `IDENTICAL_TO_LEGACY` / `INTENTIONAL_DIFF` / `N_A`（或 `excludedWithReason`）是 grep 出来的 JSON 表，几分钟能填。测试与人工协议脚本只抽 **1–2 个共享同一分发的代表旧键**；新类型（`INTENTIONAL_DIFF`）必须有自己的 FUNCTIONAL Case。有独立配置或独立分支的旧键，只对那一子集再各抽 1 个，不要把 20 个同质 enum 常量复制成 20 条 Case。
+
+**「协议脚本」不是新写协议。** 不要为此验收去加客户端包。脚本 = 按固定顺序调用 `04.entryPoints` 里**已经存在**的正式入口（QUERY/INFO、MUTATE/买、RESET 触发）。GM 只许 Arrange/Observe（造满额、拨时间、查库），不许当买入 Act。完整步骤见 `SUPERPOWERS_MANUAL.md` 模板 11b。
+
+**「先锁旧限购/重置，再提交新类型代码」锁的是共享分发，不是旧功能清单。** 新类型自己的缺陷用 FUNCTIONAL（可 TDD、可先红后绿）抓。旧类型表征 Case 是共享 dispatcher / 重置 / 限购 /「不先查直接写」上的金丝雀：不改旧 Case 正文，只换/绑一个已有 `typeKey`。线上事故往往是「以为加键不影响旧类型」，表征测的就是这个假设。顺序：先在**当前基线**跑绿（锁的是已有行为），再提交新类型代码，改完还得绿。这不是否认新类型也会写错。
 
 **LEGACY_EXTENSION 的强制顺序（与 GREENFIELD 不同）**：
 
-1. **头脑风暴先考古，再谈新方案。** 前三问必须是：相关公共入口有哪些（QUERY/MUTATE/RESET/COMPENSATE）？已有哪些类型/策略键、哪些必须 `IDENTICAL_TO_LEGACY`？限购/计数/跨天是否会在「不先查询、直接写」时自愈？不要先讨论新类型怎么做酷。
-2. **设计阶段产出 `04_change_impact.json`（8 切面 + 全入口），与 `06` 一起进人工确认。** 旧切面没列进 04，后面的实现、测试、审查都不会去打。这是旧系统扩展**唯一最值钱的人工确认**（比收尾看代码更值钱）。
-3. **表征测试锁旧行为，且必须在改生产代码之前就能在当前基线上跑绿。** 这是对「不前置完整测试计划」的**唯一例外**：`IDENTICAL_TO_LEGACY` 的 CHARACTERIZATION Case（正式协议 Act、冷重载、含 bypass QUERY）描述的是**现在已有**的行为，不依赖尚未实现的新类型。先红后绿是针对新类型；旧限购/重置是金样，先绿再改，改完还得绿。复杂联调环境的噪音会掩盖限购击穿；隔离的表征 Case 不会。
-4. **实现与内审按协议走（Mode E），禁止只审新改的几行。**
-5. **人工总体功能审核 = 执行协议脚本，不是加一轮代码阅读。** 对人：每个旧类型走一遍「满额 → 跨周期 → 不先查直接写 → 看次数是否重置」。对 AI 收尾：`requesting-code-review` / 全功能审计必须带协议追踪表；禁止只交 class/diff 报告。
+1. **头脑风暴先考古，再谈新方案。** 前三问必须是：相关**已有**公共入口有哪些（QUERY/MUTATE/RESET/COMPENSATE）？已有哪些类型/策略键、哪些必须 `IDENTICAL_TO_LEGACY`？限购/计数/跨天是否会在「不先查询、直接写」时自愈？不要先讨论新类型怎么做酷。
+2. **设计阶段产出 `04_change_impact.json`（8 切面 + 已有全入口 + 兄弟键声明表），与 `06` 一起进人工确认。** 旧切面没列进 04，后面的实现、测试、审查都不会去打。这是旧系统扩展**唯一最值钱的人工确认**（比收尾看代码更值钱）。没有这张表，不准开始画新类型主路径。
+3. **表征测试锁旧行为，且必须在改生产代码之前就能在当前基线上跑绿。** 这是对「不前置完整测试计划」的**唯一例外**：抽 1–2 个 `IDENTICAL_TO_LEGACY` 代表（正式协议 Act、冷重载、含 bypass QUERY）。描述的是**现在已有**的行为，不依赖尚未实现的新类型。先红后绿是针对新类型；旧限购/重置是金样，先绿再改，改完还得绿。复杂联调环境的噪音会掩盖限购击穿；隔离的表征 Case 不会。
+4. **实现与内审按协议走（Mode E），禁止只审新改的几行。** 走查绑代表旧键 + 全部新键，不必对每个同质旧键各走一遍。
+5. **人工总体功能审核 = 执行协议脚本，不是加一轮代码阅读。** 对人：用模板 11b，对抽到的代表旧类型走「满额 → 跨周期 → 不先查直接写 → 冷重载看次数」。对 AI 收尾：`requesting-code-review` / 全功能审计必须带协议追踪表；禁止只交 class/diff 报告。
 
 GREENFIELD 仍保持：设计确认后测试计划不构成第三门禁，具体新功能 TC 可在 TDD 中产出。
 
-**人工时间怎么花（旧系统扩展）**：设计确认 `04` 协议清单与 8 切表 > 看表征 Case 是否打旧类型 > 按脚本点协议。不要把同等时间花在读 Helper 新分支或「整体再审一遍」。
+**人工时间怎么花（旧系统扩展）**：设计确认 `04` 已有协议清单、8 切表、兄弟键声明 > 看表征 Case 是否打到代表旧类型 > 按脚本点协议。不要把同等时间花在读 Helper 新分支、为每个同质旧类型复制 Case，或「整体再审一遍」。
 
 ## 人工 review 阶段
 

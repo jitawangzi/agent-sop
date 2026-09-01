@@ -139,7 +139,7 @@ description: 高风险逻辑审计官，专门细查方法级、分支级与链�
 
 输入：
 - `entry_points`（必填；优先取 `04_change_impact.json` 的 `entryPoints`，用户点名的协议/Action/GM/定时钩子可追加）
-- `type_keys`（推荐；取 `behaviorVariants[].typeKey`，至少覆盖每个 `IDENTICAL_TO_LEGACY` 与 `INTENTIONAL_DIFF`）
+- `type_keys`（推荐；缺省取 `behaviorVariants[].typeKey`。走查至少绑定：**全部** `INTENTIONAL_DIFF`，以及 **至少 1 个**共享同一分发的 `IDENTICAL_TO_LEGACY` 代表。同质兄弟不必每个都走；独立配置/独立分支的旧键再各绑 1 个。）
 - **必填**：`04_change_impact.json`
 
 走查方式（不得从 Helper 类起审）：
@@ -151,7 +151,7 @@ description: 高风险逻辑审计官，专门细查方法级、分支级与链�
 6. `N_A` 必须能指出“搜过、不存在”的符号；套话 `n/a` / `不涉及` = `FAIL`。表征结论必须能对上测试方法体里的 `typeKey` 与入口字面量，不能只信 `05_test_coverage.json` 字段。
 
 建议用户口令：
-`按协议审查：从 04_change_impact.json 的 entryPoints 出发，绑定每个 typeKey 的样例输入，走完 QUERY/VALIDATE/MUTATE/PERSIST/RESET/SERIALIZE/COMPENSATE；必须包含「不先走查询、直接发写协议」的表征路径。`
+`按协议审查：从 04_change_impact.json 的 entryPoints 出发，绑定代表旧 typeKey + 全部新 typeKey，走完 QUERY/VALIDATE/MUTATE/PERSIST/RESET/SERIALIZE/COMPENSATE；必须包含「不先走查询、直接发写协议」的表征路径。不要新写协议，不要每个同质旧类型各走一遍。`
 
 ## Mode Selection Rule
 - 若任务属于**在已有系统上新增类型/枚举/配置/分支**或涉及跨模块状态变异，**强制进入 Mode D: Behavior Impact Audit**，并用 **Mode E** 作为走查方式（E 是 D 的走法，不是替代）；

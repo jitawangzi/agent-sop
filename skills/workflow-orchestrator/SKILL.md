@@ -41,7 +41,7 @@ description: 人工手动片段编排器。在 Superpowers 主流程之外，手
    - `implementation-auditor`（实现/契约合规 + 完整性）
    - `logic-auditor`（高风险分支/状态/语义，按风险）
 4. 汇总各专家结论为统一报告（按 `BLOCKER`/`MAJOR`/`MINOR`/`INFO` 分级，见各专家 skill 输出格式）。报告必须含协议追踪表（若走了 Protocol Trace）。
-5. **停止，把报告交人工**。人工总体审核应按协议脚本验收旧类型，而不是再读一遍新代码。
+5. **停止，把报告交人工**。人工总体审核应执行协议脚本（已有入口 × 代表旧 typeKey），而不是再读一遍新代码，也不是每个同质旧类型都点一遍。
 
 ### 人工决定下一步
 - `REPORT_ONLY`：人看报告，决定哪些改、哪些是允许的例外（`[AUDIT-EXEMPT]`，见后）、哪些暂搁。需要修复时手动再走（Superpowers 实现流程或手动调 `implementation-engine`）。

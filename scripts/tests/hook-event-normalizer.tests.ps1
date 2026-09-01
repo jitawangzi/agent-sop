@@ -158,10 +158,17 @@ function Expand-FixtureValue {
         return $null
     }
     if ($Value -is [string]) {
-        return $Value.Replace("__WORKSPACE__", $Workspace).Replace(
+        $expanded = $Value.Replace("__WORKSPACE__", $Workspace).Replace(
             "__TRANSCRIPT__",
             $Transcript
         )
+        if (-not [System.OperatingSystem]::IsWindows()) {
+            $expanded = $expanded.Replace(
+                '\',
+                [string][System.IO.Path]::DirectorySeparatorChar
+            )
+        }
+        return $expanded
     }
     if ($Value -is [System.Collections.IDictionary]) {
         $expanded = [ordered]@{}

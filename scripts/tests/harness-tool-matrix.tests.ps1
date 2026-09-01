@@ -24,6 +24,9 @@ foreach ($f in @($NormalizerScript, $DispatcherScript, $PolicyPath)) {
 
 $TestWorkspace = Join-Path ([System.IO.Path]::GetTempPath()) ("tool-matrix-" + [guid]::NewGuid().ToString("N"))
 New-Item -ItemType Directory -Path $TestWorkspace -Force | Out-Null
+$PreviousDedupRegistry = $env:SERVER_NEW_HOOK_DEDUP_REGISTRY
+$env:SERVER_NEW_HOOK_DEDUP_REGISTRY = Join-Path $TestWorkspace "dedup-registry"
+New-Item -ItemType Directory -Path $env:SERVER_NEW_HOOK_DEDUP_REGISTRY -Force | Out-Null
 
 $PassCount = 0
 $FailCount = 0
@@ -283,6 +286,11 @@ try {
     }
 
 } finally {
+    if ($null -eq $PreviousDedupRegistry) {
+        Remove-Item Env:SERVER_NEW_HOOK_DEDUP_REGISTRY -ErrorAction SilentlyContinue
+    } else {
+        $env:SERVER_NEW_HOOK_DEDUP_REGISTRY = $PreviousDedupRegistry
+    }
     Remove-Item -LiteralPath $TestWorkspace -Recurse -Force -ErrorAction SilentlyContinue
 }
 

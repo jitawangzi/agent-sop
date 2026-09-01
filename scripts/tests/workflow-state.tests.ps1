@@ -2715,6 +2715,28 @@ try {
         throw "VerifyCompletion must block T2 when high-risk semantic trigger is present. Output: $riskVerifyStr"
     }
 
+    # A newly added JUnit file must not look like TYPE_EXTENSION (package/class/@Test only).
+    $plainJavaDir = Join-Path $TestRoot "plain_java_repo"
+    [System.IO.Directory]::CreateDirectory($plainJavaDir) | Out-Null
+    & git -C $plainJavaDir init --quiet
+    & git -C $plainJavaDir config user.name "Tester"
+    & git -C $plainJavaDir config user.email "tester@test.local"
+    $plainDummy = Join-Path $plainJavaDir "dummy.txt"
+    [System.IO.File]::WriteAllText($plainDummy, "dummy", $Utf8NoBom)
+    & git -C $plainJavaDir add .
+    & git -C $plainJavaDir commit -m "init" --quiet
+    $plainBaseSha = (& git -C $plainJavaDir rev-parse HEAD | Out-String).Trim()
+    $plainSpecDir = Join-Path $plainJavaDir ".ai-workspace/specs/features/PlainJavaFeature"
+    [System.IO.Directory]::CreateDirectory($plainSpecDir) | Out-Null
+    [System.IO.File]::WriteAllText((Join-Path $plainSpecDir "feature-state.json"), '{"schemaVersion":"1.0","feature":"PlainJavaFeature","tier":"T3","phase":"DONE","baseline":"' + $plainBaseSha + '","updatedAt":"' + $dynamicRecent + '"}', $Utf8NoBom)
+    $plainSrc = Join-Path $plainJavaDir "test/MyTest.java"
+    [System.IO.Directory]::CreateDirectory((Split-Path -Parent $plainSrc)) | Out-Null
+    [System.IO.File]::WriteAllText($plainSrc, "package test; public class MyTest { @Test public void testProto() {} }", $Utf8NoBom)
+    $plainRisk = & $ScriptPath -Operation AssessRisk -Path $plainSpecDir -Baseline $plainBaseSha 2>&1 | Out-String
+    if ($plainRisk -match "TYPE_EXTENSION") {
+        throw "AssessRisk must not treat a plain JUnit file as TYPE_EXTENSION. Output: $plainRisk"
+    }
+
     # TYPE_EXTENSION / PUBLIC_ROUTING: 04_change_impact.json must be complete, not merely present
     $extDir = Join-Path $TestRoot "type_ext_complete_repo"
     [System.IO.Directory]::CreateDirectory($extDir) | Out-Null

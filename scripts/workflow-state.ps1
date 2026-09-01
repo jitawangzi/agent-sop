@@ -1776,7 +1776,9 @@ function Get-SemanticRiskAssessment {
     $codeDiff = $codeDiffBuilder.ToString()
 
     # Trigger 1: TYPE_EXTENSION (Enums, Enum constants, Handler/Processor/Strategy subclasses)
-    if ($codeDiff -match '(?im)^\+\s*.*?\b(?:(?:public\s+|protected\s+|private\s+)?(?:final\s+|abstract\s+)?enum\s+\w+|public\s+static\s+final\s+int\s+TYPE_|\bTYPE_\w+\b|[A-Z][A-Z0-9_]{2,}\s*(?:\([^)]*\))?\s*[,;])' -or
+    # ALL_CAPS token alternative is case-sensitive: (?i) would treat "package test;" as TYPE_EXTENSION.
+    if ($codeDiff -match '(?im)^\+\s*.*?\b(?:(?:public\s+|protected\s+|private\s+)?(?:final\s+|abstract\s+)?enum\s+\w+|public\s+static\s+final\s+int\s+TYPE_|\bTYPE_\w+\b)' -or
+        $codeDiff -match '(?m)^\+\s*.*?\b[A-Z][A-Z0-9_]{2,}\s*(?:\([^)]*\))?\s*[,;]' -or
         $codeDiff -match '(?im)^\+\s*.*?\b(?:public\s+|protected\s+|private\s+)?(?:final\s+|abstract\s+)?class\s+\w*(?:Processor|Handler|Action|Strategy|Listener|Interceptor|Filter|Controller|Dispatcher|Router)\b' -or
         $codeDiff -match '(?im)^\+\s*.*?\b(?:implements|extends)\s+\w*(?:Handler|Processor|Action|Strategy|Listener|Interceptor|Filter|Controller|Dispatcher|Router)\b') {
         $triggersHit.Add("TYPE_EXTENSION")

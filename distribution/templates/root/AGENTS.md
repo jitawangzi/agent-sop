@@ -72,6 +72,14 @@
   - `lifecycleFacets` 必须对 `INIT`/`QUERY`/`VALIDATE`/`MUTATE`/`PERSIST`/`RESET`/`SERIALIZE`/`COMPENSATE` 逐条给出 `TOUCHED`/`INHERITED`/`N_A`（缺切面不得省略，只能显式 N_A + 证据）
   这防止“只改了新类型主路径、漏掉旧流程切面”的小 diff 高风险缺陷。实现者必须 grep 兄弟类型标识符列出全部分发位点，不得用 `focus_methods` 把审计缩到新改的几行。
 
+  **按协议审查 + 表征覆盖（机器硬门禁）**：class / 版本 diff 审查看不到未改动的旧切面。类型/策略扩展时，审计应从 `04.entryPoints` 的公共入口 + `typeKey` 样例输入往下模拟完整执行（logic-auditor Mode E / implementation-auditor Protocol Trace），而不是从 Helper 类或 `focus_methods` 起审。`VerifyCompletion` 额外要求 `05_test_coverage.json`：
+  - 每个 `04.entryPoints` 出现在某条 Case 的 `entryPointIds`
+  - 每个非 `N_A` 的 `typeKey` 出现在某条 Case 的 `variantKeys`
+  - 每个 `IDENTICAL_TO_LEGACY` 的 `typeKey` 出现在某条 `testTypes` 含 `CHARACTERIZATION` 的 Case
+  - 每个 `TOUCHED`/`INHERITED` 切面出现在某条 Case 的 `facetIds`
+  - QUERY 切面仍生效时，至少一条 Case `bypassesPriorQuery=true`（不先查询、直接发写入入口）
+  缺任一项报 `TYPE_EXTENSION_COVERAGE_INCOMPLETE`。设计阶段就必须把 QUERY/MUTATE/RESET/COMPENSATE/观测入口写进 `04.entryPoints`，而不是只列主写入协议。
+
   Bug 修复不固定为 T3——看变更触及什么（如修一个 -1 语义的数值边界 = T2；修协议字段解析逻辑或状态变异 = T3）。
 - **T2（用户显式"快速修改"）**：跳过 brainstorming/需求确认/design-reviewer/设计确认/writing-plans；保留归属 Claim、编译、验证、回归、文档待更新提醒。仅限**未命中上述高危触发器**的已有行为纯局部单点修复。
 

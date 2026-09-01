@@ -131,12 +131,35 @@ description: 高风险逻辑审计官，专门细查方法级、分支级与链�
 7. **隐式前置校验链**：老系统原有的通用前置防御（`isOverBought`、`beforeRecharge`、资格判断）；
 8. **关联旧单测与回归范围**：现有旧 Case 对旧行为的保护情况。
 
+### Mode E: Protocol / Entry Trace Audit (协议/入口追踪审计)
+适用场景：
+- 用户明确要求「按协议审查」「从入口走一遍」「模拟客户端操作」；
+- 类型/策略扩展：Mode D 已经列出旧切面，但审计必须从**公共入口 + 样例输入**往下走，而不是从被改的 Helper/私有方法往上看；
+- 需要验证「查询入口」与「写入入口」是否共用同一套重置/校验/补偿，以及不先查询直接写是否仍正确。
+
+输入：
+- `entry_points`（必填；优先取 `04_change_impact.json` 的 `entryPoints`，用户点名的协议/Action/GM/定时钩子可追加）
+- `type_keys`（推荐；取 `behaviorVariants[].typeKey`，至少覆盖每个 `IDENTICAL_TO_LEGACY` 与 `INTENTIONAL_DIFF`）
+- **必填**：`04_change_impact.json`
+
+走查方式（不得从 Helper 类起审）：
+1. 绑定一个公共入口 + 一组初始输入（含目标 `typeKey` / 策略键）；
+2. 沿分发 → 校验 → 变异 → 持久化 → 序列化走完整控制流；
+3. 对同一 `typeKey` 再走 `04.entryPoints` 里的其他入口（至少：QUERY vs MUTATE；若切面为 `TOUCHED`/`INHERITED` 还要走 RESET / COMPENSATE / 观测入口）；
+4. 必须包含一条 **不先走 QUERY、直接发写入入口** 的路径（对应覆盖契约 `bypassesPriorQuery=true`）；
+5. 每个入口给出：样例输入、经过的符号、是否碰到未改的旧切面、与 `lifecycleFacets` 的对应关系。
+
+建议用户口令：
+`按协议审查：从 04_change_impact.json 的 entryPoints 出发，绑定每个 typeKey 的样例输入，走完 QUERY/VALIDATE/MUTATE/PERSIST/RESET/SERIALIZE/COMPENSATE；必须包含「不先走查询、直接发写协议」的表征路径。`
+
 ## Mode Selection Rule
-- 若任务属于**在已有系统上新增类型/枚举/配置/分支**或涉及跨模块状态变异，**强制进入 Mode D: Behavior Impact Audit**；
+- 若任务属于**在已有系统上新增类型/枚举/配置/分支**或涉及跨模块状态变异，**强制进入 Mode D: Behavior Impact Audit**，并用 **Mode E** 作为走查方式（E 是 D 的走法，不是替代）；
+- 用户说「按协议审查 / 按入口审查 / 从客户端操作走一遍」或提供 `entry_points` 时，进入 **Mode E**；若同时是类型/策略扩展，Mode D 的产物门禁仍全部生效；
 - Mode D 开始前必须读取并校验同功能目录的 `04_change_impact.json`：缺少文件、`behaviorVariants`/`legacyPaths`/`invariants` 为空、或缺少 8 个生命周期切面（`INIT`/`QUERY`/`VALIDATE`/`MUTATE`/`PERSIST`/`RESET`/`SERIALIZE`/`COMPENSATE`）一律 `FAIL`，并建议补产物后重审。该产物由 `workflow-state.ps1 -Operation ValidateChangeImpact` 做机器门禁，审计不得跳过。
 - 若用户明确提供 `method_anchor`，进入 **Single-Method Audit**；
 - 若用户明确提供 `class_path` 且为全新独立类，进入 **Single-Class Audit**；
 - 若用户明确提供 `feature_start_rev` 或要求累计版本比对，进入 **Feature Diff Audit**；
+- 按类（Mode B）或按版本 diff（Mode C）**不能**作为类型/策略扩展的唯一审计模式：未改动的旧分发/重置/补偿不在 class/diff 视野里。
 - 无论哪种模式，结论都必须区分：本次改动引入/放大的问题、直接耦合风险、`PRE_EXISTING_LEGACY`。
 
 ## Core Responsibilities
@@ -251,8 +274,8 @@ description: 高风险逻辑审计官，专门细查方法级、分支级与链�
 同时必须确认同功能目录的 `00_workflow_state.json` 通过 `.ai-sop/schemas/workflow-state.schema.json` 校验，并验证需求与设计均为有效 `APPROVED` 且 SHA-256 匹配；验证失败属于契约基线阻塞，不得自行推断文档已经人工确认。
 
 并在加载后先确认：
-- 本次审计模式
-- 主审方法 / 主审类 / diff 范围
+- 本次审计模式（含 Mode E 时必须列出将走查的 `entry_points` 与 `type_keys`）
+- 主审方法 / 主审类 / diff 范围 / 公共入口
 - 该逻辑的预期输入、输出、状态变化、持久化责任、回包语义
 - 是否启用了项目专项扩展规则；若已启用，哪些专项项适用
 
@@ -321,8 +344,9 @@ description: 高风险逻辑审计官，专门细查方法级、分支级与链�
 审计时若某发现命中的反模式对应条款带 `[AUDIT-EXEMPT: 原因]`：将该发现降为 `INFO`，不作为 `FAIL`/`BLOCKER` 依据，在报告中说明"命中已声明的例外 + 原因"。无声明的反模式仍按规则判 `FAIL`/`BLOCKER`。与 `[TEST-EXEMPT]` 对称。
 
 报告必须额外包含：
-- **审计模式**（Mode A / B / C / D）
-- **审计对象**：方法 / 类 / diff 范围 / changed symbols
+- **审计模式**（Mode A / B / C / D / E）
+- **审计对象**：方法 / 类 / diff 范围 / changed symbols / public entry points
+- **协议追踪表（Mode E 必填，类型扩展的 Mode D 也必填）**：每行一个 `entryPoint + typeKey`，列出入参样例、是否 bypass QUERY、经过的符号、命中的 `facetIds`、与旧切面是否一致；缺表 = `FAIL`
 - **专项扩展启用情况**：是否启用 `.ai-workspace/context/logic-audit-game-server.md`
 - **逻辑契约摘要**：预期输入、输出、关键状态、关键副作用
 - **行为影响穿透结论（Mode D 必填）**：

@@ -1540,6 +1540,135 @@ function Get-JsonObjectArray {
     return @($Value)
 }
 
+function Get-JsonStringArray {
+    param($Value)
+    $items = @(Get-JsonObjectArray -Value $Value)
+    $result = [System.Collections.Generic.List[string]]::new()
+    foreach ($item in $items) {
+        if ($null -eq $item) { continue }
+        $text = [string]$item
+        if (-not [string]::IsNullOrWhiteSpace($text)) {
+            $result.Add($text.Trim())
+        }
+    }
+    return [string[]]@($result)
+}
+
+function Test-JsonFlagTrue {
+    param($Value)
+    if ($Value -is [bool]) { return [bool]$Value }
+    if ($null -eq $Value) { return $false }
+    $text = [string]$Value
+    return $text -eq "True" -or $text -eq "true"
+}
+
+function Assert-ExtensionCoverageCompleteness {
+    param(
+        $Impact,
+        $Coverage,
+        [string]$WorkspaceRoot,
+        [string]$Baseline,
+        [string]$SpecDir
+    )
+
+    if ([string]::IsNullOrWhiteSpace($WorkspaceRoot)) { return }
+
+    $risk = Get-SemanticRiskAssessment -WorkspaceRoot $WorkspaceRoot -Baseline $Baseline -SpecDir $SpecDir
+    if (-not (Test-IsTypeExtensionRisk -TriggersHit $risk.TriggersHit)) { return }
+
+    $triggerList = (@($risk.TriggersHit) | Where-Object { $_ -in @("TYPE_EXTENSION", "PUBLIC_ROUTING") }) -join ", "
+    $prefix = "TYPE_EXTENSION_COVERAGE_INCOMPLETE"
+
+    $cases = Get-JsonObjectArray -Value $Coverage.cases
+    if ($cases.Count -eq 0) {
+        throw "${prefix}: changeset hits $triggerList but 05_test_coverage.json has no cases."
+    }
+
+    $coveredEntries = [System.Collections.Generic.HashSet[string]]::new([System.StringComparer]::OrdinalIgnoreCase)
+    $coveredVariants = [System.Collections.Generic.HashSet[string]]::new([System.StringComparer]::OrdinalIgnoreCase)
+    $coveredFacets = [System.Collections.Generic.HashSet[string]]::new([System.StringComparer]::OrdinalIgnoreCase)
+    $characterizationKeys = [System.Collections.Generic.HashSet[string]]::new([System.StringComparer]::OrdinalIgnoreCase)
+    $hasQueryBypass = $false
+
+    foreach ($case in $cases) {
+        if ($null -eq $case) { continue }
+        foreach ($entryId in (Get-JsonStringArray -Value $case.entryPointIds)) {
+            [void]$coveredEntries.Add($entryId)
+        }
+        $testTypes = Get-JsonStringArray -Value $case.testTypes
+        $isCharacterization = $false
+        foreach ($testType in $testTypes) {
+            if ($testType -eq "CHARACTERIZATION") { $isCharacterization = $true; break }
+        }
+        foreach ($variantKey in (Get-JsonStringArray -Value $case.variantKeys)) {
+            [void]$coveredVariants.Add($variantKey)
+            if ($isCharacterization) {
+                [void]$characterizationKeys.Add($variantKey)
+            }
+        }
+        foreach ($facetId in (Get-JsonStringArray -Value $case.facetIds)) {
+            [void]$coveredFacets.Add($facetId)
+        }
+        if (Test-JsonFlagTrue -Value $case.bypassesPriorQuery) {
+            $hasQueryBypass = $true
+        }
+    }
+
+    $missingEntries = @()
+    foreach ($entryId in (Get-JsonStringArray -Value $Impact.entryPoints)) {
+        if (-not $coveredEntries.Contains($entryId)) { $missingEntries += $entryId }
+    }
+    if ($missingEntries.Count -gt 0) {
+        throw "${prefix}: 04.entryPoints not covered by any case entryPointIds: $($missingEntries -join ', '). Add protocol-trace cases that invoke each public entry from its formal input, not from a helper class."
+    }
+
+    $requiredKeys = New-Object System.Collections.Generic.List[string]
+    $identicalKeys = New-Object System.Collections.Generic.List[string]
+    foreach ($variant in (Get-JsonObjectArray -Value $Impact.behaviorVariants)) {
+        if ($null -eq $variant -or [string]::IsNullOrWhiteSpace($variant.typeKey)) { continue }
+        $relation = [string]$variant.relationToLegacy
+        if ($relation -eq "N_A") { continue }
+        $typeKey = [string]$variant.typeKey
+        $requiredKeys.Add($typeKey)
+        if ($relation -eq "IDENTICAL_TO_LEGACY") {
+            $identicalKeys.Add($typeKey)
+        }
+    }
+
+    $missingKeys = @()
+    foreach ($typeKey in $requiredKeys) {
+        if (-not $coveredVariants.Contains($typeKey)) { $missingKeys += $typeKey }
+    }
+    if ($missingKeys.Count -gt 0) {
+        throw "${prefix}: behaviorVariants typeKeys not covered by any case variantKeys: $($missingKeys -join ', '). Bind each IDENTICAL_TO_LEGACY and INTENTIONAL_DIFF key as case input."
+    }
+
+    $missingCharacterization = @()
+    foreach ($typeKey in $identicalKeys) {
+        if (-not $characterizationKeys.Contains($typeKey)) { $missingCharacterization += $typeKey }
+    }
+    if ($missingCharacterization.Count -gt 0) {
+        throw "${prefix}: IDENTICAL_TO_LEGACY typeKeys lack CHARACTERIZATION coverage: $($missingCharacterization -join ', '). Characterization cases lock legacy behavior on the formal public entry before the new type ships."
+    }
+
+    $missingFacets = @()
+    $queryFacetActive = $false
+    foreach ($facet in (Get-JsonObjectArray -Value $Impact.lifecycleFacets)) {
+        if ($null -eq $facet -or [string]::IsNullOrWhiteSpace($facet.facetId)) { continue }
+        $coverageKind = [string]$facet.coverage
+        if ($coverageKind -notin @("TOUCHED", "INHERITED")) { continue }
+        $facetId = [string]$facet.facetId
+        if (-not $coveredFacets.Contains($facetId)) { $missingFacets += $facetId }
+        if ($facetId -eq "QUERY") { $queryFacetActive = $true }
+    }
+    if ($missingFacets.Count -gt 0) {
+        throw "${prefix}: TOUCHED/INHERITED lifecycleFacets not covered by any case facetIds: $($missingFacets -join ', ')."
+    }
+    if ($queryFacetActive -and -not $hasQueryBypass) {
+        throw "${prefix}: QUERY facet is TOUCHED/INHERITED but no case sets bypassesPriorQuery=true. Characterization must invoke the mutating public entry without a prior QUERY (lazy-reset / stale-state)."
+    }
+}
+
 function Assert-ExtensionImpactCompleteness {
     param(
         $Impact,
@@ -4149,6 +4278,15 @@ switch ($Operation) {
                                 if (-not $declaredCases.Contains([string]$rc)) {
                                     $failures.Add("Required regression case '$rc' in 04_change_impact.json is missing from 05_test_coverage.json")
                                 }
+                            }
+                        }
+                        if (Test-IsTypeExtensionRisk -TriggersHit $extRisk.TriggersHit) {
+                            try {
+                                Assert-ExtensionCoverageCompleteness -Impact $impact -Coverage $covObj -WorkspaceRoot $wsRoot -Baseline $impact.baseline -SpecDir $specDir
+                                $checks.Add("[v] 类型/路由扩展覆盖完成度(CHARACTERIZATION/entryPointIds/variantKeys/facetIds/bypassesPriorQuery)")
+                            } catch {
+                                $failures.Add($_.Exception.Message)
+                                $checks.Add("[X] 类型/路由扩展覆盖完成度(CHARACTERIZATION/entryPointIds/variantKeys/facetIds/bypassesPriorQuery)")
                             }
                         }
                     }

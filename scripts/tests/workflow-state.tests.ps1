@@ -2905,12 +2905,16 @@ try {
                 title = "Legacy type still resets"
                 status = "VERIFIED"
                 priority = "P1"
-                testTypes = @("FUNCTIONAL", "RECOVERY")
+                testTypes = @("FUNCTIONAL", "RECOVERY", "CHARACTERIZATION")
                 requirementIds = @("BR-01")
                 designIds = @("DC-01")
                 invariantIds = @("INV-01")
+                entryPointIds = @("BUY_GIFT")
+                variantKeys = @("TYPE_OLD", "TYPE_NEW_GIFT")
+                facetIds = @("INIT", "QUERY", "VALIDATE", "MUTATE", "PERSIST", "RESET", "SERIALIZE", "COMPENSATE")
+                bypassesPriorQuery = $true
                 setup = @("Load a player whose legacy type is at the daily cap")
-                trigger = @("Advance clock past reset and invoke the formal buy entry")
+                trigger = @("Advance clock past reset and invoke the formal buy entry without a prior query")
                 assertions = [ordered]@{
                     protocol = @(
                         [ordered]@{ target = "status"; operator = "EQ"; expected = "OK" }
@@ -2945,9 +2949,53 @@ try {
 
     $extVerify = & $ScriptPath -Operation VerifyCompletion -Path $extApproval 2>&1
     $extVerifyStr = $extVerify | Out-String
-    if ($LASTEXITCODE -ne 0 -or $extVerifyStr -notmatch "VERIFY_COMPLETION_PASS" -or $extVerifyStr -notmatch "类型/路由扩展完成度") {
-        throw "VerifyCompletion must pass a complete TYPE_EXTENSION impact contract. Output: $extVerifyStr"
+    if ($LASTEXITCODE -ne 0 -or $extVerifyStr -notmatch "VERIFY_COMPLETION_PASS" -or $extVerifyStr -notmatch "类型/路由扩展完成度" -or $extVerifyStr -notmatch "类型/路由扩展覆盖完成度") {
+        throw "VerifyCompletion must pass a complete TYPE_EXTENSION impact and characterization coverage contract. Output: $extVerifyStr"
     }
+
+    $extCovIncomplete = [ordered]@{}
+    foreach ($k in $extCov.Keys) { $extCovIncomplete[$k] = $extCov[$k] }
+    $extCovIncomplete["cases"] = @(
+        [ordered]@{
+            id = "TC-01"
+            title = "Legacy type still resets"
+            status = "VERIFIED"
+            priority = "P1"
+            testTypes = @("FUNCTIONAL", "RECOVERY")
+            requirementIds = @("BR-01")
+            designIds = @("DC-01")
+            invariantIds = @("INV-01")
+            setup = @("Load a player whose legacy type is at the daily cap")
+            trigger = @("Advance clock past reset and invoke the formal buy entry")
+            assertions = @($extCov.cases)[0].assertions
+            cleanup = @("Delete the isolated test player")
+            automationCarrier = "test/TypeExtTest.java#testLegacyReset"
+        }
+    )
+    Write-TestJson -Path $extCovPath -Value $extCovIncomplete
+    $extVerifyCovIncomplete = & $ScriptPath -Operation VerifyCompletion -Path $extApproval 2>&1
+    $extVerifyCovIncompleteStr = $extVerifyCovIncomplete | Out-String
+    if ($LASTEXITCODE -eq 0 -or $extVerifyCovIncompleteStr -notmatch "TYPE_EXTENSION_COVERAGE_INCOMPLETE") {
+        throw "VerifyCompletion must fail when TYPE_EXTENSION coverage lacks characterization/protocol-trace fields. Output: $extVerifyCovIncompleteStr"
+    }
+
+    $extCompleteCase = @($extCov.cases)[0]
+    $extCovNoBypassCase = [ordered]@{}
+    foreach ($k in $extCompleteCase.Keys) {
+        if ($k -eq "bypassesPriorQuery") { continue }
+        $extCovNoBypassCase[$k] = $extCompleteCase[$k]
+    }
+    $extCovNoBypass = [ordered]@{}
+    foreach ($k in $extCov.Keys) { $extCovNoBypass[$k] = $extCov[$k] }
+    $extCovNoBypass["cases"] = @($extCovNoBypassCase)
+    Write-TestJson -Path $extCovPath -Value $extCovNoBypass
+    $extVerifyNoBypass = & $ScriptPath -Operation VerifyCompletion -Path $extApproval 2>&1
+    $extVerifyNoBypassStr = $extVerifyNoBypass | Out-String
+    if ($LASTEXITCODE -eq 0 -or $extVerifyNoBypassStr -notmatch "TYPE_EXTENSION_COVERAGE_INCOMPLETE" -or $extVerifyNoBypassStr -notmatch "bypassesPriorQuery") {
+        throw "VerifyCompletion must fail TYPE_EXTENSION coverage when QUERY is active but no case bypasses prior query. Output: $extVerifyNoBypassStr"
+    }
+
+    Write-TestJson -Path $extCovPath -Value $extCov
 
     # Incomplete impact must also fail VerifyCompletion (not only ValidateChangeImpact)
     Write-TestJson -Path $extImpactPath -Value $extIncompleteObj

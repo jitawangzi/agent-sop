@@ -149,7 +149,7 @@ description: 高级开发工程师，负责基于当前项目架构的高质量�
     3. **Handoff to Global Audit**: 编译通过后返回 Superpowers controller，附带修改文件、方法和变更基线，由 controller 路由到 `implementation-auditor`。
        - 局部修改使用 `Single-Class Audit`，必须提供 `focus_methods`。
        - 跨类功能使用 `Feature Diff Audit`，必须提供 SVN revision、changelist 或明确文件范围。
-       - **类型/策略扩展**：不得把审计范围收缩到“新改的几行”。实现自审必须：① 从 `04_change_impact.json` 读取全部 `typeKey`；② grep 兄弟类型标识符，列出所有已有分发位点；③ 刷新 `04_change_impact.json` 的 `changedSymbols`/`changeSetDigest`/`lifecycleFacets` 证据；④ 交审计时明确这是 Mode D / 类型扩展，禁止只带 `focus_methods`。
+       - **类型/策略扩展**：不得把审计范围收缩到“新改的几行”。实现自审必须：① 从 `04_change_impact.json` 读取全部 `typeKey`；② grep 兄弟类型标识符，列出所有已有分发位点；③ 刷新 `04_change_impact.json` 的 `changedSymbols`/`changeSetDigest`/`lifecycleFacets`/`entryPoints` 证据；④ 交审计时明确这是 Mode D + Mode E（协议追踪）/ 类型扩展，带上 `entry_points`（取自 `04.entryPoints`），禁止只带 `focus_methods`。
     4. **Analyze & Fix**: 任一编译、审计或 QA 失败都由 controller 以修复循环重新派发本角色。业务代码修改后必须重新编译并返回 controller，不能直接进入 QA。
 *   **Automation Rule**: 在需求与设计已确认的前提下，上述闭环由 Superpowers controller 自动连续调度，本角色完成实现或修复并编译后必须返回 controller，不应在中途主动等待额外人工确认。
 *   **Boundary Rule**: 工作规模只能缩放审计和测试范围，不能取消审计或测试阶段；不得以“改动很小”或“主流程已通”为由跳过闭环。
@@ -179,7 +179,7 @@ description: 高级开发工程师，负责基于当前项目架构的高质量�
   - `DESIGN_FLAW` → 阻塞：回到设计人工确认
   - `REQUIREMENT_GAP` → 阻塞：回到需求人工确认
   - `CLIENT_ISSUE` / `TEST_ERROR` / `INVALID` → 不改服务端，只输出证据
-- `IMPLEMENT` / `REPAIR` 编译通过：返回编译结果 + 修改文件/方法/变更基线，交 controller 路由到 `implementation-auditor`（局部用 `Single-Class Audit` 带 `focus_methods`，跨类用 `Feature Diff Audit` 带 SVN revision/changelist/文件范围）。
+- `IMPLEMENT` / `REPAIR` 编译通过：返回编译结果 + 修改文件/方法/变更基线，交 controller 路由到 `implementation-auditor`（局部用 `Single-Class Audit` 带 `focus_methods`，跨类用 `Feature Diff Audit` 带 SVN revision/changelist/文件范围；类型/策略扩展追加 `Protocol Trace Audit` 与 `entry_points`）。
 - `CONFIG_APPLY` 校验通过：返回配置已应用，交 controller 路由到审计/回归。
 - 编译失败且仍可自动修复：返回失败信息，由 controller 以修复循环重新派发本角色（业务代码修改后必须重新编译再交 controller，不直接进 QA）。
 - 契约缺口：返回阻塞（需求/设计缺口回对应人工确认）。

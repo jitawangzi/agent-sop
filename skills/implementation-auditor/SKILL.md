@@ -91,14 +91,29 @@ description: 实现审计官，负责检查代码是否遵守项目约束、设�
 - 直接耦合链路
 - 若工作区混有其他功能改动，必须结合用户提供的文件范围、`svn changelist` 或 revision 信息主动收紧
 
+### Mode C: Protocol Trace Audit (协议/入口追踪)
+适用场景：
+- 用户要求「按协议审查」或列出了客户端/GM/定时入口；
+- 类型/策略扩展：必须从 `04_change_impact.json` 的 `entryPoints` 往下追踪，而不是只看 `focus_methods` 或 diff 命中的类。
+
+输入：
+- `entry_points`（必填；缺省读取 `04.entryPoints`）
+- 可选：`type_keys`（缺省读取 `behaviorVariants[].typeKey`）
+
+审计范围：
+- 每个公共入口的分发、校验、变异、持久化、序列化、补偿
+- QUERY 入口与 MUTATE 入口是否共用重置/校验；是否存在「不先查询直接写」的旁路
+- 不得把审计起点放在 Helper/私有方法上
+
 ## Mode Selection Rule
 - 若用户明确提供 `class_path`，且未要求 revision diff，默认进入 **Single-Class Audit**
 - 若用户明确提供 `feature_start_rev`、要求“累计 diff 审计”，或明确要求“对比初始提交到当前版本”，进入 **Feature Diff Audit**
+- 若用户要求「按协议审查 / 从入口走一遍」或提供 `entry_points`，进入 **Protocol Trace Audit**
 - 若用户同时提供类路径与 revision diff：
   - 明确说“以某类为主” => 进入 **Single-Class Audit**，diff 仅作辅助证据
   - 明确说“审核整个功能” => 进入 **Feature Diff Audit**，类路径只是主线索
 - 若信息不足，默认优先**收紧范围**，不得自动扩大到整个仓库
-- **类型/策略扩展不得用 focus_methods 收缩视野**：只要本次改动新增业务类型、枚举常量、策略/Handler 子类，或修改了公共分发（switch / Map 路由 / 拦截器），即使调用方给了 `focus_methods`，也必须额外检查 `04_change_impact.json` 中兄弟类型已经出现的分发位点（query/validate/mutate/persist/reset/serialize/compensate）。只审“新改的几行”而漏掉未改的旧切面，记为 `FAIL`。
+- **类型/策略扩展不得用 focus_methods 收缩视野**：只要本次改动新增业务类型、枚举常量、策略/Handler 子类，或修改了公共分发（switch / Map 路由 / 拦截器），即使调用方给了 `focus_methods`，也必须额外按 **Protocol Trace** 检查 `04_change_impact.json` 中兄弟类型已经出现的分发位点（query/validate/mutate/persist/reset/serialize/compensate）。只审“新改的几行”或只审 class/diff，而漏掉未改的旧切面，记为 `FAIL`。
 - 无论哪种模式，结论都必须区分：本次改动引入/放大的问题、直接耦合风险、`PRE_EXISTING_LEGACY`
 
 ## Core Responsibilities
@@ -251,6 +266,7 @@ description: 实现审计官，负责检查代码是否遵守项目约束、设�
 并在加载后先确认本次审计模式与基线：
 - **Single-Class Audit**：确认 `class_path`、直接耦合链路、是否存在需要辅助查看的 diff
 - **Feature Diff Audit**：确认 `feature_start_rev -> WORKING`、文件范围、是否混有其他功能改动
+- **Protocol Trace Audit**：确认 `04.entryPoints`（或用户给出的协议列表）与每个 `typeKey` 的样例输入；类型/策略扩展必须启用本模式
 
 ### Phase 2: Inspect the Implementation
 聚焦本次功能相关代码、协议、DAO、缓存读写链路、定时逻辑、JSP/测试入口，逐项检查：
@@ -263,10 +279,11 @@ description: 实现审计官，负责检查代码是否遵守项目约束、设�
 **执行方式必须升级为“清单式审计”，至少覆盖以下维度：**
 
 1. **范围确认**
-   - 先明确本次审计模式：**Single-Class Audit** 或 **Feature Diff Audit**
+   - 先明确本次审计模式：**Single-Class Audit**、**Feature Diff Audit** 或 **Protocol Trace Audit**
    - 若为 **Feature Diff Audit**，明确本次审计使用的变更基线：`BASE:WORKING`、`feature_start_rev:WORKING`、或用户指定文件集
    - 若为 **Single-Class Audit**，明确主审类、直接耦合链路、必要时辅助查看的 diff 片段
-   - 明确本次审计纳入哪些 **主审类 / diff 文件 / diff 片段 / 直接耦合链路 / 测试入口**
+   - 若为 **Protocol Trace Audit**，明确每个公共入口 + `typeKey` 输入，以及是否覆盖「不先查询直接写」
+   - 明确本次审计纳入哪些 **主审类 / diff 文件 / diff 片段 / 直接耦合链路 / 公共入口 / 测试入口**
    - 范围应覆盖“主审对象的最终实现 + 本功能直接新增/修改代码 + 紧耦合接入点”
    - 不得扩大到整个仓库，也不得缩小到只看最后一次局部改动
    - 必须区分：哪些结论是“本次改动引入/放大”的，哪些只是“历史遗留、范围外观察”
@@ -350,8 +367,9 @@ description: 实现审计官，负责检查代码是否遵守项目约束、设�
 无声明的反模式仍按规则判 `FAIL`/`BLOCKER`。此机制与 `[TEST-EXEMPT]` 对称：一个豁免测试、一个豁免审计，都须经人工确认。
 
 此外，审计报告必须额外包含：
-- **审计模式**：`Single-Class Audit` 或 `Feature Diff Audit`
-- **变更基线**：本次使用的 SVN diff 基线、当前 `WORKING` 单类基线，或用户指定范围
+- **审计模式**：`Single-Class Audit`、`Feature Diff Audit` 或 `Protocol Trace Audit`
+- **变更基线**：本次使用的 SVN diff 基线、当前 `WORKING` 单类基线、公共入口列表，或用户指定范围
+- **协议追踪表（Protocol Trace 必填）**：每行一个 `entryPoint + typeKey`，是否 bypass QUERY、经过的符号、命中切面；缺表且本次为类型/策略扩展 = `FAIL`
 - **审计范围**：本次纳入审计的文件与链路
 - **约束覆盖说明**：列出本次实际检查了哪些规则来源
 - **清单结果摘要**：至少说明 `coding-style.md` 中哪些关键条目已检查，哪些为 `N/A`

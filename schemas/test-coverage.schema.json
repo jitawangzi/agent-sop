@@ -129,7 +129,8 @@
               "CONCURRENCY",
               "RECOVERY",
               "PERFORMANCE",
-              "SECURITY"
+              "SECURITY",
+              "CHARACTERIZATION"
             ]
           }
         },
@@ -156,6 +157,45 @@
             "type": "string",
             "pattern": "^INV-[A-Z0-9][A-Z0-9_-]*$"
           }
+        },
+        "entryPointIds": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": {
+            "type": "string",
+            "minLength": 1
+          },
+          "description": "Public protocol/Action/GM/scheduled entry ids this case actually exercises. When AssessRisk hits TYPE_EXTENSION or PUBLIC_ROUTING, every 04_change_impact.json entryPoints value must appear on at least one case."
+        },
+        "variantKeys": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": {
+            "type": "string",
+            "minLength": 1
+          },
+          "description": "Type/strategy keys this case binds as input (same keys as 04.behaviorVariants[].typeKey)."
+        },
+        "facetIds": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": {
+            "enum": [
+              "INIT",
+              "QUERY",
+              "VALIDATE",
+              "MUTATE",
+              "PERSIST",
+              "RESET",
+              "SERIALIZE",
+              "COMPENSATE"
+            ]
+          },
+          "description": "Lifecycle facets this case actually exercises. TOUCHED/INHERITED facets in 04.lifecycleFacets must appear on at least one case when TYPE_EXTENSION or PUBLIC_ROUTING is hit."
+        },
+        "bypassesPriorQuery": {
+          "type": "boolean",
+          "description": "True if this case invokes a mutating public entry without first invoking the QUERY/INFO entry (lazy-reset / stale-state characterization)."
         },
         "setup": {
           "type": "array",

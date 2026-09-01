@@ -52,7 +52,7 @@
       "items": {
         "type": "string",
         "minLength": 1,
-        "description": "Public protocols, Actions, GM commands or scheduled hooks that trigger this change"
+        "description": "Public protocols, Actions, GM commands or scheduled hooks that trigger this change. For type/strategy extensions list every related public entry (QUERY, MUTATE, RESET trigger, COMPENSATE, admin/GM observe), not only the main write protocol."
       }
     },
     "upstreamCallers": {

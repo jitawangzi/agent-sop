@@ -127,6 +127,8 @@ description: 资深测试开发工程师（SDET），负责自动化测试与质
 - **恢复与兼容**: 重登、重启、缓存失效、跨天、跨轮次、旧数据和旧协议
 - **集合枚举全覆盖**: 对"有限集合的逐元素行为"做枚举全覆盖，而非等价类抽样。适用判定——**集合元素有独立配置或独立分支**时必须枚举每个元素，例如：商店的每个商品（各自价格/限购/条件/奖励不同）、奖励表的每档、任务列表的每个任务、活动配置的每行。反之，元素行为同质（如 1000 个同类玩家、大量同格式配置项的格式校验）仍用等价类抽样。判定标准：若换一个元素可能改变预期结果，就必须枚举到。
 - **旧类型差分回归测试 (Differential Regression on Legacy Types)**: 凡是在已有老系统上新增类型/分支时，测试计划不仅要覆盖新增类型，还必须包含对 **既有旧类型** 的差分回归用例，验证在 8 维切面上旧类型行为未受任何破坏（即旧行为与基线 100% 一致）。这些回归 Case ID 必须写入 `04_change_impact.json` 的 `requiredRegressionCases` 与对应 `legacyPaths[].regressionCaseId`，并把 `INV-*` 填进 `05_test_coverage.json` 的 `invariantIds`。没有机器可追溯的差分回归，不得声称“旧类型不受影响”。
+- **表征测试 (CHARACTERIZATION)**：对每个 `IDENTICAL_TO_LEGACY` 的 `typeKey`，至少一条 `testTypes` 含 `CHARACTERIZATION` 的 Case：用**正式协议/正式业务入口**做 Act（GM 只允许 Arrange/Observe/Cleanup），绑定该 `typeKey` 为 `variantKeys`，覆盖 `TOUCHED`/`INHERITED` 的 `facetIds`，并在 QUERY 仍生效时提供 `bypassesPriorQuery=true`（不先查再写）。断言必须含冷重载，锁的是旧行为而不是新类型主路径。
+- **入口穷尽**：`04.entryPoints` 的每个 id 必须出现在某条 Case 的 `entryPointIds`；每个非 `N_A` 的 `typeKey` 必须出现在某条 Case 的 `variantKeys`。这是 `VerifyCompletion` 的机器门禁（`TYPE_EXTENSION_COVERAGE_INCOMPLETE`），不是口头“已回归”。
 
 不能为了追求 Case 数量机械做笛卡尔积；应以规则分支、状态边和风险组合是否改变预期结果为拆分依据。
 
@@ -154,6 +156,7 @@ description: 资深测试开发工程师（SDET），负责自动化测试与质
 - 保存需求、设计和测试计划文件的 SHA-256
 - 将每个 `TC-*` 映射到至少一个需求条款 ID 和一个设计条款 ID
 - 记录优先级、测试类型、前置准备、正式触发、四层结构化断言、清理和自动化载体
+- 类型/策略扩展时填写 `entryPointIds` / `variantKeys` / `facetIds` / `bypassesPriorQuery`，旧类型锁行为 Case 的 `testTypes` 含 `CHARACTERIZATION`
 - 保证 `05_test_plan.md` 与 JSON 中的 Case ID 集合完全一致
 - `TC-*` 正式声明必须位于 Markdown 顶层标题或顶层列表项开头；正文引用、示例、引用块、注释和代码块不计入 Case 集合
 - 保证全部 `BR-*` / `EX-*` / `AC-*` / `DC-*` / `DR-*` / `TW-*` 均被 Case 覆盖；豁免只允许引用已批准源文档同一条款上的 `[TEST-EXEMPT: 原因]`，原因和批准人必须一致

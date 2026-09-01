@@ -57,7 +57,7 @@ flowchart TD
     T --> U[VCS 提交交付]
 ```
 
-需求与设计是两道独立门禁（默认两道独立确认，仅当符合 T3 小改动合并呈递豁免时允许一次呈递写入两道 SHA）；brainstorming 可连续产出 01→06 后呈递确认。设计产出后由 `design-reviewer` 机器闭环自审自修（不占人工时间），通过后才交人工确认；不前置 QA 测试计划（TC 在 TDD 中产出，覆盖校验在实现后）；`implementation-auditor`/`logic-auditor` 是 subagent 内审执行单元，非实现后独立节点。复杂大功能交付后可**手动**触发全功能审计（见后文）。
+需求与设计是两道独立门禁（默认两道独立确认，仅当符合 T3 小改动合并呈递豁免时允许一次呈递写入两道 SHA）；头脑风暴可连续产出 01→06 后呈递确认。设计产出后由 `design-reviewer` 机器闭环自审自修（不占人工时间），通过后才交人工确认。**GREENFIELD 不前置完整测试计划**（新功能 TC 在 TDD 中产出，覆盖校验在实现后）。**LEGACY_EXTENSION（旧系统加类型/改分发）例外**：`IDENTICAL_TO_LEGACY` 的表征 Case 必须在改生产代码前写好，并能在当前基线上跑绿（锁的是已有限购/重置/补偿，不是尚未实现的新类型）。`implementation-auditor`/`logic-auditor` 是 subagent 内审执行单元，非实现后独立节点。旧系统扩展的人工总体审核按协议脚本走，见后文模板 11b。复杂大功能交付后可**手动**触发全功能审计（见后文）。
 
 ### 执行强度档位（T 档）与提示词指定
 
@@ -284,7 +284,26 @@ Bug 文件位于 <BUGS.md 路径>。
 
 ### 11. 全功能审计（手动，人工把关）
 
-复杂大功能交付后手动触发跨任务全盘审计，查契约一致性与整体游戏状态正确性。`audit_fix_policy` 取 `REPORT_ONLY`（只出报告）或 `AUTO_REPAIR`（自动修复并回归）。完整模板见后文 **"全功能审计"** 段。
+复杂大功能交付后手动触发跨任务全盘审计。旧系统扩展必须按协议走旧类型（见模板 11b），不要只给 class/diff 范围。`audit_fix_policy` 取 `REPORT_ONLY`（只出报告）或 `AUTO_REPAIR`（自动修复并回归）。完整模板见后文 **"全功能审计"** 段。
+
+### 11b. 人工总体功能审核（按协议走旧类型）
+
+旧功能加新类型、改公共分发后，人工总体审核用本模板，不要改成「再把整个功能读一遍」。
+
+```text
+对 <FeatureName> 做人工总体功能审核，按协议走旧类型，不要按类/diff 审查。
+规格目录：.ai-workspace/specs/features/<FeatureName>/。
+
+1. 读取 04_change_impact.json 的 entryPoints 与 behaviorVariants。
+2. 对每个 IDENTICAL_TO_LEGACY 的 typeKey，用正式协议（不要 GM 当 Act）走：
+   - QUERY/INFO
+   - MUTATE 写入（必须包含：不先查询、直接发写）
+   - 会触发 RESET 的入口（跨天/跨周期）
+   - COMPENSATE（若切面不是 N_A）
+3. 断言限购/计数/状态：协议回包 + 冷重载持久化字段。重点抓「看起来成功、次数没重置/限购被击穿」。
+4. AI 收尾：requesting-code-review 与 logic-auditor 必须走 Mode E / Protocol Trace，附协议追踪表。
+5. 人只验收脚本结果与金样差分，不把时间花在阅读新 Handler。
+```
 
 ### 12. 对指定类执行全盘审计
 
@@ -459,6 +478,7 @@ pwsh -NoProfile -File .\.ai-sop\scripts\workflow-state.ps1 -Operation ValidateTe
 提交版本范围：<起始版本/提交> -> <结束版本/提交或 WORKING>。
 
 依次执行 implementation-auditor 和 logic-auditor。
+若 04_change_impact.json 含类型/策略扩展：必须按协议审查（Protocol Trace / Mode E），entry_points 取自 04.entryPoints，禁止只按 class 或 revision diff。
 audit_fix_policy=REPORT_ONLY。
 本轮只审计、不修改代码、不进入 QA，完成后汇总所有发现、风险等级和证据。
 ```
@@ -472,6 +492,7 @@ audit_fix_policy=REPORT_ONLY。
 提交版本范围：<起始版本/提交> -> <结束版本/提交或 WORKING>。
 
 依次执行 implementation-auditor 和 logic-auditor。
+若 04_change_impact.json 含类型/策略扩展：必须按协议审查（Protocol Trace / Mode E），entry_points 取自 04.entryPoints，禁止只按 class 或 revision diff。
 audit_fix_policy=AUTO_REPAIR。
 实现缺陷自动修复，并重新编译、复审和执行目标回归；需求或设计缺口返回对应人工确认。
 ```

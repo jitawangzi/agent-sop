@@ -37,8 +37,8 @@ description: 激活首席架构师模式。强调“能力复用”与“无损�
 ## Core Strategy 2: Iterative Workflow (5-Step Waterfall)
 
 ### Invocation Mode
-- `NEW`: 新功能首次设计
-- `INCREMENTAL`: 技术契约发生增量变化
+- `NEW`: 新功能首次设计（GREENFIELD）。可先谈新协议与新存储。
+- `INCREMENTAL` / 旧系统扩展（LEGACY_EXTENSION）：在已有类型/分发上加键或加分支。进入 Step 1 数据建模之前，必须先完成遗留考古：列出全部相关公共入口到 `04.entryPoints`，列出全部兄弟 `typeKey` 到 `behaviorVariants`。没有这张表，不得开始画新类型主路径。
 - `REVALIDATE`: 业务规则变化后重新核对并收拢设计契约，即使实现方案最终不变也必须重新形成可确认结论
 
 ### Step 1: Data Modeling & Reuse Mapping

@@ -110,6 +110,29 @@
 - **BLOCKED 工具（如 Pi，最高支持 T2）**：实际执行档位 = MIN(用户指定档位, T2)。在 BLOCKED 工具下：若用户未表达流程意图且为已有行为缺陷修复，静默以 T2 执行；若用户消息含“需求/草案/设计/评审/T3”任一词，或变更是新功能/新协议/新存储/用户点名需求，必须提示：“`[SOP 拦截] 工具 <工具名> 因无 subagent（能力准入 BLOCKED），无法执行 T3 独立审查。建议：切换到 STRICT 工具（Claude Code / Antigravity / Cursor / Copilot），或回复‘仍按 T2 实现’。`”
 - 已有行为的单点逻辑修复保持静默 T2，不拦截。
 
+## 两类工作：全新功能 vs 旧系统扩展（隐蔽缺陷投入点）
+
+游戏服务端（以及任何有状态线上系统）的 T3 不要平均加力。按工作种类把力气放在不同阶段：
+
+| 工作种类 | 典型 | AI 目前稳定性 | 隐蔽 bug 主要从哪漏 | **加力点（顺序）** |
+|---|---|---|---|---|
+| **GREENFIELD 全新功能** | 新玩法、新协议、新存储 | 设计和实现通常够用 | 需求没说清、状态机自相矛盾 | 需求/设计人工确认；实现按契约做 |
+| **LEGACY_EXTENSION 旧系统扩展** | 旧功能加新类型、加分支、改公共分发 | 新路径往往是对的 | **没被改到的旧切面**（重置、限购、补偿、不先查询直接写） | **1. 设计考古 2. 旧行为表征测试（实现前就能跑）3. 按协议走查 4. 人工按协议脚本验收** |
+
+**不要把旧系统扩展的主防线放在「人工总体功能审核」。** 人和 AI 在收尾阶段都会盯 diff / 新代码；旧限购击穿、懒重置不在 diff 里。加时长只会更仔细地看错对象。收尾审核要改的是**审查对象**：按 `04.entryPoints` × 旧 `typeKey` 走协议，而不是把整个功能再读一遍。
+
+**LEGACY_EXTENSION 的强制顺序（与 GREENFIELD 不同）**：
+
+1. **头脑风暴先考古，再谈新方案。** 前三问必须是：相关公共入口有哪些（QUERY/MUTATE/RESET/COMPENSATE）？已有哪些类型/策略键、哪些必须 `IDENTICAL_TO_LEGACY`？限购/计数/跨天是否会在「不先查询、直接写」时自愈？不要先讨论新类型怎么做酷。
+2. **设计阶段产出 `04_change_impact.json`（8 切面 + 全入口），与 `06` 一起进人工确认。** 旧切面没列进 04，后面的实现、测试、审查都不会去打。这是旧系统扩展**唯一最值钱的人工确认**（比收尾看代码更值钱）。
+3. **表征测试锁旧行为，且必须在改生产代码之前就能在当前基线上跑绿。** 这是对「不前置完整测试计划」的**唯一例外**：`IDENTICAL_TO_LEGACY` 的 CHARACTERIZATION Case（正式协议 Act、冷重载、含 bypass QUERY）描述的是**现在已有**的行为，不依赖尚未实现的新类型。先红后绿是针对新类型；旧限购/重置是金样，先绿再改，改完还得绿。复杂联调环境的噪音会掩盖限购击穿；隔离的表征 Case 不会。
+4. **实现与内审按协议走（Mode E），禁止只审新改的几行。**
+5. **人工总体功能审核 = 执行协议脚本，不是加一轮代码阅读。** 对人：每个旧类型走一遍「满额 → 跨周期 → 不先查直接写 → 看次数是否重置」。对 AI 收尾：`requesting-code-review` / 全功能审计必须带协议追踪表；禁止只交 class/diff 报告。
+
+GREENFIELD 仍保持：设计确认后测试计划不构成第三门禁，具体新功能 TC 可在 TDD 中产出。
+
+**人工时间怎么花（旧系统扩展）**：设计确认 `04` 协议清单与 8 切表 > 看表征 Case 是否打旧类型 > 按脚本点协议。不要把同等时间花在读 Helper 新分支或「整体再审一遍」。
+
 ## 人工 review 阶段
 
 需求与设计是人工把关阶段，而非单条消息的批准。需求可多轮问题/备选/分段 review，产出 `01_server_rules.md`，等明确批准；设计可多轮架构/兼容/协议/持久化/可测性 review，产出 `06_design_contract.md`，等明确批准。批准后自动连续完成计划/实现/review/测试/修复/回归。除非需求/设计变模糊或环境阻塞，否则**不要增设实现计划、代码 review 或测试结果的批准检查点**。
@@ -131,7 +154,9 @@ AI 可在一次响应内同时呈递 `01_server_rules.md` 与 `06_design_contrac
 
 ## 全功能审计（手动，人工把关）
 
-主流程审查分两层（职责不重叠）：单任务内审（subagent 内 `implementation-auditor`/`logic-auditor`）、整体收尾（`requesting-code-review`）。复杂大功能交付后可**手动触发全功能审计**查跨任务契约一致性与整体游戏状态正确性。`workflow-orchestrator` 是 Superpowers 主流程之外的人工手动片段编排器（`audit_fix_policy` 取 `REPORT_ONLY` 或 `AUTO_REPAIR`），不进主流程必经链。详见 `.ai-sop/SUPERPOWERS_MANUAL.md`。
+主流程审查分两层（职责不重叠）：单任务内审（subagent 内 `implementation-auditor`/`logic-auditor`）、整体收尾（`requesting-code-review`）。复杂大功能交付后可**手动触发全功能审计**。
+
+**旧系统扩展的全功能审计 / 人工总体审核不得按类或按版本 diff 起审。** 必须按协议：读取 `04.entryPoints` 与 `behaviorVariants`，对每个 `IDENTICAL_TO_LEGACY` 的 `typeKey` 走 QUERY/MUTATE（含不先查询直接写）、RESET、COMPENSATE。这是人工总体审核的正确形态——力度来自脚本穷尽，不是来自多花时间看新代码。`workflow-orchestrator` 在存在 `04_change_impact.json` 且含类型/策略扩展时，默认派 **Protocol Trace / Mode E**，禁止只带 `focus_methods` 或 revision diff。详见 `.ai-sop/SUPERPOWERS_MANUAL.md`。
 
 ## AUDIT-EXEMPT（审计例外声明）
 

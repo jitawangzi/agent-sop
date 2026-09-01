@@ -18,7 +18,9 @@ description: 资深测试开发工程师（SDET），负责自动化测试与质
 ## Core Workflow: Targeted Feature Testing
 
 ### Invocation Mode [CRITICAL]
-- `PLAN`: 设计批准后产出**测试范围、覆盖矩阵与风险清单**（`05_test_plan.md` + `05_test_coverage.json`），供 Superpowers `subagent-driven-development` 的 TDD 参考。**不前置产出完整最终用例**——具体 TC 在 TDD 红→绿→重构中随实现产出。PLAN 不得提前编写依赖尚未实现代码的验证结论。
+- `PLAN`: 设计批准后产出**测试范围、覆盖矩阵与风险清单**（`05_test_plan.md` + `05_test_coverage.json`），供 Superpowers `subagent-driven-development` 的 TDD 参考。
+  - **GREENFIELD**：不前置完整最终用例——具体新功能 TC 在 TDD 中随实现产出。PLAN 不得提前编写依赖尚未实现代码的验证结论。
+  - **LEGACY_EXTENSION**（`04` 含类型/策略扩展或 AssessRisk 命中 TYPE_EXTENSION/PUBLIC_ROUTING）：必须在 PLAN 中写出 `IDENTICAL_TO_LEGACY` 的 **CHARACTERIZATION** Case（正式协议 Act、冷重载、含 `bypassesPriorQuery`），并在改生产代码前于当前基线跑绿。这些 Case 描述的是已有限购/重置/补偿，不依赖新类型代码。新类型自己的 FUNCTIONAL Case 仍可在 TDD 中产出。
 - `VERIFY`: 实现审计通过后按项目 context 选择一个或多个验证路径，执行自动化验证与测试编排修复。
 
 ### 测试深度按风险分级（风险自适应）

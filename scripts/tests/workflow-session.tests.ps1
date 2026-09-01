@@ -142,7 +142,6 @@ if ($RecoveryOperation -ceq "Touch") {
     $worker = $null
     try {
         $worker = Start-Process -FilePath (Get-Process -Id $PID).Path `
-            -WindowStyle Hidden `
             -ArgumentList @(
                 "-NoProfile",
                 "-File",
@@ -720,7 +719,6 @@ Invoke-AiSopWorkflowSession `
         [System.Text.UTF8Encoding]::new($false)
     )
     $monotonicProcess = Start-Process -FilePath (Get-Process -Id $PID).Path `
-        -WindowStyle Hidden `
         -ArgumentList @(
             "-NoProfile",
             "-File",
@@ -980,7 +978,6 @@ $result.Record | ConvertTo-Json -Compress
         $raceProcesses[$index - 1] | Add-Member -NotePropertyName Process `
             -NotePropertyValue (
                 Start-Process -FilePath (Get-Process -Id $PID).Path `
-                    -WindowStyle Hidden `
                     -ArgumentList @(
                         "-NoProfile",
                         "-File",

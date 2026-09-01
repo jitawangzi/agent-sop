@@ -1984,7 +1984,6 @@ try {
         $stateRaceOut = Join-Path $TestRoot "state-race.out"
         $stateRaceErr = Join-Path $TestRoot "state-race.err"
         $stateRaceProcess = Start-Process -FilePath (Get-Process -Id $PID).Path `
-            -WindowStyle Hidden `
             -ArgumentList @(
                 "-NoProfile",
                 "-File",
@@ -2024,7 +2023,6 @@ try {
         $completeRaceOut = Join-Path $TestRoot "complete-race.out"
         $completeRaceErr = Join-Path $TestRoot "complete-race.err"
         $completeRaceProcess = Start-Process -FilePath (Get-Process -Id $PID).Path `
-            -WindowStyle Hidden `
             -ArgumentList @(
                 "-NoProfile",
                 "-File",

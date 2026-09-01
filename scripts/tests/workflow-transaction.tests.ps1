@@ -656,7 +656,6 @@ Invoke-AiSopWorkflowTransaction `
         $env:SERVER_NEW_WORKFLOW_TRANSACTION_DEADLINE_MS = '10000'
         $process = Start-Process `
             -FilePath (Get-Process -Id $PID).Path `
-            -WindowStyle Hidden `
             -ArgumentList @(
                 "-NoProfile",
                 "-File",
@@ -773,7 +772,6 @@ Invoke-AiSopWorkflowTransaction `
             $env:SERVER_NEW_WORKFLOW_OWNER_DEADLINE_MS = '10000'
             try {
                 $process = Start-Process -FilePath (Get-Process -Id $PID).Path `
-                    -WindowStyle Hidden `
                     -ArgumentList @(
                         "-NoProfile",
                         "-File",
@@ -923,7 +921,6 @@ Invoke-AiSopWorkflowTransaction `
     $env:SERVER_NEW_WORKFLOW_TRANSACTION_DEADLINE_MS = '10000'
     $unknownProcess = Start-Process `
         -FilePath (Get-Process -Id $PID).Path `
-        -WindowStyle Hidden `
         -ArgumentList @(
             "-NoProfile",
             "-File",

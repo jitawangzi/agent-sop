@@ -211,7 +211,36 @@
         "reason": {
           "type": "string"
         }
-      }
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "relationToLegacy": {
+                "enum": [
+                  "N_A",
+                  "INTENTIONAL_DIFF"
+                ]
+              }
+            },
+            "required": [
+              "relationToLegacy"
+            ]
+          },
+          "then": {
+            "required": [
+              "reason"
+            ],
+            "properties": {
+              "reason": {
+                "type": "string",
+                "minLength": 16,
+                "description": "Required when relationToLegacy is N_A or INTENTIONAL_DIFF. Must name a locatable symbol, not a boilerplate skip."
+              }
+            }
+          }
+        }
+      ]
     },
     "lifecycleFacet": {
       "type": "object",
@@ -237,7 +266,7 @@
         "evidence": {
           "type": "string",
           "minLength": 1,
-          "description": "Symbol, file, method, or reason supporting the coverage verdict. N_A still requires a reason."
+          "description": "Locatable symbol (Class#method, file path, or typeKey) supporting the coverage verdict. N_A/INHERITED/TOUCHED boilerplate such as 'n/a' or 'main path covers' is rejected by ValidateChangeImpact."
         }
       }
     },

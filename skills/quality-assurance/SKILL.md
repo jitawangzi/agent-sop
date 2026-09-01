@@ -129,6 +129,12 @@ description: 资深测试开发工程师（SDET），负责自动化测试与质
 - **旧类型差分回归测试 (Differential Regression on Legacy Types)**: 凡是在已有老系统上新增类型/分支时，测试计划不仅要覆盖新增类型，还必须包含对 **既有旧类型** 的差分回归用例，验证在 8 维切面上旧类型行为未受任何破坏（即旧行为与基线 100% 一致）。这些回归 Case ID 必须写入 `04_change_impact.json` 的 `requiredRegressionCases` 与对应 `legacyPaths[].regressionCaseId`，并把 `INV-*` 填进 `05_test_coverage.json` 的 `invariantIds`。没有机器可追溯的差分回归，不得声称“旧类型不受影响”。
 - **表征测试 (CHARACTERIZATION)**：对每个 `IDENTICAL_TO_LEGACY` 的 `typeKey`，至少一条 `testTypes` 含 `CHARACTERIZATION` 的 Case：用**正式协议/正式业务入口**做 Act（GM 只允许 Arrange/Observe/Cleanup），绑定该 `typeKey` 为 `variantKeys`，覆盖 `TOUCHED`/`INHERITED` 的 `facetIds`，并在 QUERY 仍生效时提供 `bypassesPriorQuery=true`（不先查再写）。断言必须含冷重载，锁的是旧行为而不是新类型主路径。
 - **入口穷尽**：`04.entryPoints` 的每个 id 必须出现在某条 Case 的 `entryPointIds`；每个非 `N_A` 的 `typeKey` 必须出现在某条 Case 的 `variantKeys`。这是 `VerifyCompletion` 的机器门禁（`TYPE_EXTENSION_COVERAGE_INCOMPLETE`），不是口头“已回归”。
+- **表征必须打到分发**：`CHARACTERIZATION` 的 `automationCarrier#method` 方法体必须字面出现 `variantKeys` 与 `entryPointIds`，并含有调用。空方法、只 new 对象、或 Act 调内部 Helper = 未覆盖。
+- **隐蔽缺陷防护（线上有状态服务，流程层能做的）**：
+  1. **差分金样**：同一正式入口，旧 `typeKey` 的协议回包 + 冷重载字段与基线快照比对（`operator=UNCHANGED`），不要只断言新类型 happy path。
+  2. **分发穷尽**：对变更的 enum/策略表，每个兄弟键要么有 Case，要么在 `excludedWithReason`；生产代码 switch 必须有失败闭环（default 打错误码 + 指标），不要静默 fall-through。
+  3. **变异/旁路**：至少一条不先 QUERY 直接 MUTATE；至少一条重登后再 QUERY。这是懒重置/漏落库的最低集。
+  4. **宿主工程叠加**（写入项目 `context/`，不写进本 skill 的业务名）：编译期穷尽 switch、对分发 Helper 做变更检测/变异测试、用采样的生产协议在预发重放、按 `typeKey` 金丝雀。SOP 门禁不能替代这些运行时网。
 
 不能为了追求 Case 数量机械做笛卡尔积；应以规则分支、状态边和风险组合是否改变预期结果为拆分依据。
 

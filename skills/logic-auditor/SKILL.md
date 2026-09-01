@@ -148,6 +148,7 @@ description: 高风险逻辑审计官，专门细查方法级、分支级与链�
 3. 对同一 `typeKey` 再走 `04.entryPoints` 里的其他入口（至少：QUERY vs MUTATE；若切面为 `TOUCHED`/`INHERITED` 还要走 RESET / COMPENSATE / 观测入口）；
 4. 必须包含一条 **不先走 QUERY、直接发写入入口** 的路径（对应覆盖契约 `bypassesPriorQuery=true`）；
 5. 每个入口给出：样例输入、经过的符号、是否碰到未改的旧切面、与 `lifecycleFacets` 的对应关系。
+6. `N_A` 必须能指出“搜过、不存在”的符号；套话 `n/a` / `不涉及` = `FAIL`。表征结论必须能对上测试方法体里的 `typeKey` 与入口字面量，不能只信 `05_test_coverage.json` 字段。
 
 建议用户口令：
 `按协议审查：从 04_change_impact.json 的 entryPoints 出发，绑定每个 typeKey 的样例输入，走完 QUERY/VALIDATE/MUTATE/PERSIST/RESET/SERIALIZE/COMPENSATE；必须包含「不先走查询、直接发写协议」的表征路径。`

@@ -125,6 +125,7 @@ brainstorming（需求 → 确认 → design-architect 产出 06）
 - `06_design_contract.md` 必须含 8 维新旧行为差分表。
 - 同功能目录必须有 `04_change_impact.json`，且 `lifecycleFacets` 覆盖 `INIT`/`QUERY`/`VALIDATE`/`MUTATE`/`PERSIST`/`RESET`/`SERIALIZE`/`COMPENSATE`（缺切面不得用“主路径已覆盖”省略，只能显式 `N_A` + 理由）。
 - `04.entryPoints` 必须列出全部相关公共入口（QUERY、MUTATE、RESET 触发、COMPENSATE、管理/GM 观测），不得只写主写入协议；缺协议清单或缺少 QUERY vs MUTATE 成对入口 = `BLOCKER`。
+- `N_A` / `INHERITED` / `TOUCHED` 必须带可定位证据（`Class#method`、源文件或 `typeKey`）。套话（`n/a`、`不适用`、`主路径已覆盖`）或变更 enum 漏列兄弟键 = `BLOCKER`。
 - 缺表、缺产物或切面未穷尽 = `BLOCKER`。实现期 `VerifyCompletion` 会再次机器校验；设计审查不得把该债留到编码之后才发现。
 
 ## 审查范围 C：已知设计期缺陷模式（逐条对照）

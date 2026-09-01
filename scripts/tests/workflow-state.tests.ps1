@@ -2754,7 +2754,7 @@ try {
     [System.IO.File]::WriteAllText($extSrc, "package com.game; public enum ShopEnum { TYPE_OLD, TYPE_NEW_GIFT }", $Utf8NoBom)
     $extTestJava = Join-Path $extDir "test/TypeExtTest.java"
     [System.IO.Directory]::CreateDirectory((Split-Path -Parent $extTestJava)) | Out-Null
-    [System.IO.File]::WriteAllText($extTestJava, "package test; import org.junit.Test; public class TypeExtTest { @Test public void testLegacyReset() {} }", $Utf8NoBom)
+    [System.IO.File]::WriteAllText($extTestJava, "package test; import org.junit.Test; public class TypeExtTest { @Test public void testLegacyReset() { buy(`"BUY_GIFT`", TYPE_OLD, TYPE_NEW_GIFT); } @Test public void testEmptyChar() {} }", $Utf8NoBom)
     & git -C $extDir add src test
 
     $extSpecDir = Join-Path $extDir ".ai-workspace/specs/features/TypeExtFeature"
@@ -2806,7 +2806,7 @@ try {
     $extLifecycleFacets = @(
         "INIT", "QUERY", "VALIDATE", "MUTATE", "PERSIST", "RESET", "SERIALIZE", "COMPENSATE"
     ) | ForEach-Object {
-        [ordered]@{ facetId = $_; coverage = "INHERITED"; evidence = "legacy dispatcher still covers $_" }
+        [ordered]@{ facetId = $_; coverage = "INHERITED"; evidence = "com.game.ShopEnum#TYPE_OLD inherited $_ via GiftHelper.resetDaily" }
     }
     $extImpactBase = [ordered]@{
         schemaVersion = "1.0"
@@ -2996,6 +2996,50 @@ try {
     }
 
     Write-TestJson -Path $extCovPath -Value $extCov
+
+    $extCovEmptyCarrier = [ordered]@{}
+    foreach ($k in $extCov.Keys) { $extCovEmptyCarrier[$k] = $extCov[$k] }
+    $extEmptyCase = [ordered]@{}
+    $extCompleteCaseForCopy = @($extCov.cases)[0]
+    foreach ($k in $extCompleteCaseForCopy.Keys) { $extEmptyCase[$k] = $extCompleteCaseForCopy[$k] }
+    $extEmptyCase["automationCarrier"] = "test/TypeExtTest.java#testEmptyChar"
+    $extCovEmptyCarrier["cases"] = @($extEmptyCase)
+    Write-TestJson -Path $extCovPath -Value $extCovEmptyCarrier
+    $extVerifyEmptyCarrier = & $ScriptPath -Operation VerifyCompletion -Path $extApproval 2>&1
+    $extVerifyEmptyCarrierStr = $extVerifyEmptyCarrier | Out-String
+    if ($LASTEXITCODE -eq 0 -or $extVerifyEmptyCarrierStr -notmatch "TYPE_EXTENSION_COVERAGE_INCOMPLETE" -or $extVerifyEmptyCarrierStr -notmatch "empty method body") {
+        throw "VerifyCompletion must fail when CHARACTERIZATION carrier method is empty. Output: $extVerifyEmptyCarrierStr"
+    }
+
+    Write-TestJson -Path $extCovPath -Value $extCov
+
+    $extMissingSiblingObj = [ordered]@{}
+    foreach ($k in $extCompleteObj.Keys) { $extMissingSiblingObj[$k] = $extCompleteObj[$k] }
+    $extMissingSiblingObj["behaviorVariants"] = @(
+        [ordered]@{ typeKey = "TYPE_NEW_GIFT"; relationToLegacy = "INTENTIONAL_DIFF"; description = "New gift type"; reason = "New billing path" }
+    )
+    Write-TestJson -Path $extImpactPath -Value $extMissingSiblingObj
+    $extValMissingSibling = try { & $ScriptPath -Operation ValidateChangeImpact -Path $extImpactPath 2>&1 | Out-String } catch { $_.Exception.ToString() }
+    if ($extValMissingSibling -notmatch "TYPE_EXTENSION_IMPACT_INCOMPLETE" -or $extValMissingSibling -notmatch "TYPE_OLD") {
+        throw "ValidateChangeImpact must reject TYPE_EXTENSION that omits sibling enum keys. Output: $extValMissingSibling"
+    }
+
+    $extNaBoilerplateObj = [ordered]@{}
+    foreach ($k in $extCompleteObj.Keys) { $extNaBoilerplateObj[$k] = $extCompleteObj[$k] }
+    $extNaFacets = @(
+        "INIT", "QUERY", "VALIDATE", "MUTATE", "PERSIST", "RESET", "SERIALIZE"
+    ) | ForEach-Object {
+        [ordered]@{ facetId = $_; coverage = "INHERITED"; evidence = "com.game.ShopEnum#TYPE_OLD inherited $_ via GiftHelper.resetDaily" }
+    }
+    $extNaFacets += [ordered]@{ facetId = "COMPENSATE"; coverage = "N_A"; evidence = "n/a" }
+    $extNaBoilerplateObj["lifecycleFacets"] = $extNaFacets
+    Write-TestJson -Path $extImpactPath -Value $extNaBoilerplateObj
+    $extValNaBoilerplate = try { & $ScriptPath -Operation ValidateChangeImpact -Path $extImpactPath 2>&1 | Out-String } catch { $_.Exception.ToString() }
+    if ($extValNaBoilerplate -notmatch "TYPE_EXTENSION_IMPACT_INCOMPLETE" -or $extValNaBoilerplate -notmatch "boilerplate") {
+        throw "ValidateChangeImpact must reject N_A/INHERITED evidence that is boilerplate. Output: $extValNaBoilerplate"
+    }
+
+    Write-TestJson -Path $extImpactPath -Value $extCompleteObj
 
     # Incomplete impact must also fail VerifyCompletion (not only ValidateChangeImpact)
     Write-TestJson -Path $extImpactPath -Value $extIncompleteObj

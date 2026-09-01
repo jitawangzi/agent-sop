@@ -9,6 +9,7 @@
 | 产物 | 契约 |
 |---|---|
 | `01_server_rules.md` | 业务规则，含稳定的 `BR-*`（Business Requirement）、`EX-*`（Exception）、`AC-*`（Acceptance Criteria）声明 |
+| `04_change_impact.json` | 行为影响契约（遵循 `schemas/change-impact.schema.json`）。T3 必填。命中类型/策略扩展或公共分发时，必须含非空 `behaviorVariants`、`legacyPaths`、`invariants` 以及 8 个生命周期切面 |
 | `05_test_plan.md` | 可执行用例，含稳定的 `TC-*`（Test Case）声明 + `<!-- meta: {...} -->` 元数据（供 SyncCoverage 生成 coverage JSON） |
 | `05_test_coverage.json` | 需求/设计到用例的追溯 |
 | `06_design_contract.md` | 技术契约，含稳定的 `DC-*`（Design Contract）、`DR-*`（Design Rule/风险）、`TW-*`（Test/Workflow 约定）声明 |

@@ -1500,7 +1500,113 @@ function Validate-ChangeImpactState {
     if ([string]::IsNullOrWhiteSpace($currentDigest) -or $impact.changeSetDigest.ToLowerInvariant() -ne $currentDigest.ToLowerInvariant()) {
         throw "Change impact analysis is stale: recorded changeSetDigest does not match actual workspace diff against baseline '$($impact.baseline)'. Re-run Behavior Impact Analysis."
     }
+
+    Assert-ExtensionImpactCompleteness -Impact $impact -WorkspaceRoot $wsRoot -Baseline $impact.baseline -SpecDir $specDir
     return $impact
+}
+
+function Get-RequiredLifecycleFacetIds {
+    return @(
+        "INIT",
+        "QUERY",
+        "VALIDATE",
+        "MUTATE",
+        "PERSIST",
+        "RESET",
+        "SERIALIZE",
+        "COMPENSATE"
+    )
+}
+
+function Test-IsTypeExtensionRisk {
+    param($TriggersHit)
+    $extensionTriggers = @("TYPE_EXTENSION", "PUBLIC_ROUTING")
+    foreach ($t in @($TriggersHit)) {
+        if ($extensionTriggers -contains [string]$t) { return $true }
+    }
+    return $false
+}
+
+function Get-JsonObjectArray {
+    # ConvertFrom-Json yields $null for a missing property. @($null).Count is 1 in
+    # PowerShell, which would treat an omitted array as non-empty. Normalize to a
+    # real object array (empty if absent).
+    param($Value)
+    if ($null -eq $Value) { return [object[]]@() }
+    if ($Value -is [string]) { return @($Value) }
+    if ($Value -is [System.Array] -or $Value -is [System.Collections.IList]) {
+        return @($Value | Where-Object { $null -ne $_ })
+    }
+    return @($Value)
+}
+
+function Assert-ExtensionImpactCompleteness {
+    param(
+        $Impact,
+        [string]$WorkspaceRoot,
+        [string]$Baseline,
+        [string]$SpecDir
+    )
+
+    if ([string]::IsNullOrWhiteSpace($WorkspaceRoot)) { return }
+
+    $risk = Get-SemanticRiskAssessment -WorkspaceRoot $WorkspaceRoot -Baseline $Baseline -SpecDir $SpecDir
+    if (-not (Test-IsTypeExtensionRisk -TriggersHit $risk.TriggersHit)) { return }
+
+    $triggerList = (@($risk.TriggersHit) | Where-Object { $_ -in @("TYPE_EXTENSION", "PUBLIC_ROUTING") }) -join ", "
+    $prefix = "TYPE_EXTENSION_IMPACT_INCOMPLETE"
+
+    $variants = Get-JsonObjectArray -Value $Impact.behaviorVariants
+    if ($variants.Count -eq 0) {
+        throw "${prefix}: changeset hits $triggerList but 04_change_impact.json has empty behaviorVariants. Declare every new and legacy type/strategy key as IDENTICAL_TO_LEGACY, INTENTIONAL_DIFF, or N_A."
+    }
+
+    $legacyPaths = Get-JsonObjectArray -Value $Impact.legacyPaths
+    if ($legacyPaths.Count -eq 0) {
+        throw "${prefix}: changeset hits $triggerList but 04_change_impact.json has empty legacyPaths. List old dispatch/entry paths whose protected behavior must not regress."
+    }
+
+    $invariants = Get-JsonObjectArray -Value $Impact.invariants
+    if ($invariants.Count -eq 0) {
+        throw "${prefix}: changeset hits $triggerList but 04_change_impact.json has empty invariants. Add at least one INV-* that 05_test_coverage.json can cover."
+    }
+
+    $facets = Get-JsonObjectArray -Value $Impact.lifecycleFacets
+    $facetIds = [System.Collections.Generic.HashSet[string]]::new([System.StringComparer]::OrdinalIgnoreCase)
+    foreach ($f in $facets) {
+        if ($null -ne $f -and -not [string]::IsNullOrWhiteSpace($f.facetId)) {
+            [void]$facetIds.Add([string]$f.facetId)
+        }
+    }
+    $missingFacets = @()
+    foreach ($required in (Get-RequiredLifecycleFacetIds)) {
+        if (-not $facetIds.Contains($required)) { $missingFacets += $required }
+    }
+    if ($missingFacets.Count -gt 0) {
+        throw "${prefix}: changeset hits $triggerList but lifecycleFacets is missing required ids: $($missingFacets -join ', '). Every type/strategy extension must verdict INIT, QUERY, VALIDATE, MUTATE, PERSIST, RESET, SERIALIZE, and COMPENSATE as TOUCHED, INHERITED, or N_A."
+    }
+
+    $identicalVariants = @($variants | Where-Object { [string]$_.relationToLegacy -eq "IDENTICAL_TO_LEGACY" })
+    if ($identicalVariants.Count -gt 0) {
+        $regressionIds = [System.Collections.Generic.HashSet[string]]::new([System.StringComparer]::OrdinalIgnoreCase)
+        foreach ($lp in $legacyPaths) {
+            if ($null -ne $lp -and -not [string]::IsNullOrWhiteSpace($lp.regressionCaseId)) {
+                [void]$regressionIds.Add([string]$lp.regressionCaseId)
+            }
+        }
+        $requiredCases = [System.Collections.Generic.HashSet[string]]::new([System.StringComparer]::OrdinalIgnoreCase)
+        foreach ($rc in @($Impact.requiredRegressionCases)) {
+            if (-not [string]::IsNullOrWhiteSpace($rc)) { [void]$requiredCases.Add([string]$rc) }
+        }
+        if ($regressionIds.Count -eq 0) {
+            throw "${prefix}: IDENTICAL_TO_LEGACY variants require at least one legacyPaths[].regressionCaseId (differential regression on old types)."
+        }
+        foreach ($rid in $regressionIds) {
+            if (-not $requiredCases.Contains($rid)) {
+                throw "${prefix}: legacyPaths regression case '$rid' is not listed in requiredRegressionCases."
+            }
+        }
+    }
 }
 
 function Get-SemanticRiskAssessment {
@@ -4009,6 +4115,10 @@ switch ($Operation) {
                 try {
                     $impact = Validate-ChangeImpactState -ImpactPath $impactPath
                     $checks.Add("[v] 行为影响分析有效且未过期")
+                    $extRisk = Get-SemanticRiskAssessment -WorkspaceRoot $wsRoot -Baseline $impact.baseline -SpecDir $specDir
+                    if (Test-IsTypeExtensionRisk -TriggersHit $extRisk.TriggersHit) {
+                        $checks.Add("[v] 类型/路由扩展完成度(behaviorVariants/legacyPaths/invariants/8-lifecycleFacets)")
+                    }
 
                     # Cross-validation with 05_test_coverage.json
                     if ($covOk) {

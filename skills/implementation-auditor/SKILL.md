@@ -62,7 +62,8 @@ description: 实现审计官，负责检查代码是否遵守项目约束、设�
 - 若该类本身存在本次功能相关 diff，可将 diff 作为辅助证据，但结论基于当前最终实现
 
 审计范围：
-- **若提供了 `focus_methods`，则必须严格将审计范围限制在指定的方法内部**及其直接调用的最小上下文，无视该类其他未改动方法的规范问题。
+- **若提供了 `focus_methods`，且本次不是类型/策略扩展**：必须严格将审计范围限制在指定的方法内部及其直接调用的最小上下文，无视该类其他未改动方法的规范问题。
+- **若本次是类型/策略扩展**（新增 enum/类型常量/Handler，或改公共分发）：`focus_methods` 只表示主审入口，**不授权忽略**兄弟类型已存在的其他切面。必须对照 `04_change_impact.json` 的 `lifecycleFacets` 与 `behaviorVariants` 检查旧分发位点。
 - 若未提供 `focus_methods`，则审计主审类本身。
 - 直接耦合的最小上下文：所在方法、直接调用点、Action/Help/DAO/JSP/测试入口
 - 不扩大到整个仓库
@@ -97,6 +98,7 @@ description: 实现审计官，负责检查代码是否遵守项目约束、设�
   - 明确说“以某类为主” => 进入 **Single-Class Audit**，diff 仅作辅助证据
   - 明确说“审核整个功能” => 进入 **Feature Diff Audit**，类路径只是主线索
 - 若信息不足，默认优先**收紧范围**，不得自动扩大到整个仓库
+- **类型/策略扩展不得用 focus_methods 收缩视野**：只要本次改动新增业务类型、枚举常量、策略/Handler 子类，或修改了公共分发（switch / Map 路由 / 拦截器），即使调用方给了 `focus_methods`，也必须额外检查 `04_change_impact.json` 中兄弟类型已经出现的分发位点（query/validate/mutate/persist/reset/serialize/compensate）。只审“新改的几行”而漏掉未改的旧切面，记为 `FAIL`。
 - 无论哪种模式，结论都必须区分：本次改动引入/放大的问题、直接耦合风险、`PRE_EXISTING_LEGACY`
 
 ## Core Responsibilities

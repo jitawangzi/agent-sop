@@ -65,6 +65,13 @@
   4. **兼容与并发**：涉及新老数据反序列化兼容、多版本滚更混跑、分布式锁或异步任务；
   5. **多分支入口**：在已有 Action/Help 的主干入口中插入了新的条件分支。
 
+  **类型/策略扩展完成度（机器硬门禁，不只靠审查清单）**：命中触发器 1 或 2 时，`04_change_impact.json` 存在仍不够。`ValidateChangeImpact` / `VerifyCompletion` 会要求：
+  - 非空 `behaviorVariants`（每个新旧类型/策略键标明 `IDENTICAL_TO_LEGACY` / `INTENTIONAL_DIFF` / `N_A`）
+  - 非空 `legacyPaths`（旧分发/入口的受保护行为；`IDENTICAL_TO_LEGACY` 必须带 `regressionCaseId`）
+  - 非空 `invariants`（`INV-*` 必须被 `05_test_coverage.json` 的 `invariantIds` 覆盖）
+  - `lifecycleFacets` 必须对 `INIT`/`QUERY`/`VALIDATE`/`MUTATE`/`PERSIST`/`RESET`/`SERIALIZE`/`COMPENSATE` 逐条给出 `TOUCHED`/`INHERITED`/`N_A`（缺切面不得省略，只能显式 N_A + 证据）
+  这防止“只改了新类型主路径、漏掉旧流程切面”的小 diff 高风险缺陷。实现者必须 grep 兄弟类型标识符列出全部分发位点，不得用 `focus_methods` 把审计缩到新改的几行。
+
   Bug 修复不固定为 T3——看变更触及什么（如修一个 -1 语义的数值边界 = T2；修协议字段解析逻辑或状态变异 = T3）。
 - **T2（用户显式"快速修改"）**：跳过 brainstorming/需求确认/design-reviewer/设计确认/writing-plans；保留归属 Claim、编译、验证、回归、文档待更新提醒。仅限**未命中上述高危触发器**的已有行为纯局部单点修复。
 
@@ -137,7 +144,7 @@ AI 可在一次响应内同时呈递 `01_server_rules.md` 与 `06_design_contrac
 
 ## 规范功能产物
 
-使用 `.ai-workspace/specs/features/<FeatureName>/`：`01_server_rules.md`（需求，含 BR/EX/AC）、`05_test_plan.md`（测试用例，含 TC）、`05_test_coverage.json`（机器可读追溯）、`06_design_contract.md`（设计，含 DC/DR/TW）。遵循 `.ai-sop/workflows/shared-artifacts.md`。Superpowers 常规 plan/ledger 文件是执行产物，不得替代规范功能契约。
+使用 `.ai-workspace/specs/features/<FeatureName>/`：`01_server_rules.md`（需求，含 BR/EX/AC）、`04_change_impact.json`（行为影响；类型/策略扩展时含 8 切面完成度）、`05_test_plan.md`（测试用例，含 TC）、`05_test_coverage.json`（机器可读追溯）、`06_design_contract.md`（设计，含 DC/DR/TW）。遵循 `.ai-sop/workflows/shared-artifacts.md`。Superpowers 常规 plan/ledger 文件是执行产物，不得替代规范功能契约。
 
 **05_test_coverage.json 自动生成（SyncCoverage）**：`05_test_plan.md` 的 TC 块用 HTML 注释元数据标记：`<!-- meta: { "id": "TC-XX", "title": "...", "covers": ["BR-XX", "DC-XX"], "priority": "P1" } -->`。运行 `workflow-state.ps1 -Operation SyncCoverage -Path .../05_test_coverage.json` 从 `05_test_plan.md` 自动生成 coverage JSON（占位字段供 AI/用户细化）。**禁止手写 coverage JSON**——用 SyncCoverage 生成。
 
@@ -154,6 +161,7 @@ AI 可在一次响应内同时呈递 `01_server_rules.md` 与 `06_design_contrac
 | DC | Design Contract（设计契约条款） | 06 |
 | DR | Design Rule（设计规则/风险） | 06 |
 | TW | Test/Workflow（测试/工作流约定） | 06 |
+| INV | Invariant（行为不变量，类型扩展必填） | 04_change_impact + 05_test_coverage |
 
 ## 领域专家 Skills（执行单元，强制绑定项目专家）
 
@@ -273,7 +281,7 @@ pwsh -NoProfile -File .\.ai-sop\scripts\workflow-state.ps1 -Operation ValidateTe
 
 完成条件**按档位分**（`workflow-state.ps1 -Operation Status` 显示当前 tier + 门禁 SHA；`workflow-state.ps1 -Operation CheckCompletion -Path .../00_workflow_state.json` 输出机检 ASCII checklist（门禁 SHA/coverage/编译产物/SVN status）。**机检项 [v]=pass/[X]=fail，人工项 [?]=需 AI 验证**。AI 据下表 + CheckCompletion 结果逐项检查并报告）：
 
-**Complete 前硬门禁（VerifyCompletion 内嵌执行）**：`workflow-owner.ps1 -Operation Complete` 内部已嵌入 `VerifyCompletion` 硬门禁检验。在释放归属锁前，脚本会自动在后台先调用 `VerifyCompletion`：T3 严格校验门禁 APPROVED+SHA / coverage 无占位与 carrier 错误 / feature-state 阶段非初始 / 编译产物；T2 校验编译产物。**若 VerifyCompletion 检验未通过（非 0），Complete 会直接抛出错误并拒绝释放归属锁**。AI 亦可事先调用 `workflow-state.ps1 -Operation VerifyCompletion -Path .../00_workflow_state.json` 提前确认是否达到完成标准。
+**Complete 前硬门禁（VerifyCompletion 内嵌执行）**：`workflow-owner.ps1 -Operation Complete` 内部已嵌入 `VerifyCompletion` 硬门禁检验。在释放归属锁前，脚本会自动在后台先调用 `VerifyCompletion`：T3 严格校验门禁 APPROVED+SHA / coverage 无占位与 carrier 错误 / `04_change_impact.json` 有效且未过期 / 类型或公共分发扩展时 8 切面完成度 / feature-state 阶段非初始 / 编译产物；T2 校验编译产物。**若 VerifyCompletion 检验未通过（非 0），Complete 会直接抛出错误并拒绝释放归属锁**。AI 亦可事先调用 `workflow-state.ps1 -Operation VerifyCompletion -Path .../00_workflow_state.json` 提前确认是否达到完成标准。
 
 **T3（6 项全过）**：
 

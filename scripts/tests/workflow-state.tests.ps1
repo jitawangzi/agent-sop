@@ -2717,6 +2717,226 @@ try {
         throw "VerifyCompletion must block T2 when high-risk semantic trigger is present. Output: $riskVerifyStr"
     }
 
+    # TYPE_EXTENSION / PUBLIC_ROUTING: 04_change_impact.json must be complete, not merely present
+    $extDir = Join-Path $TestRoot "type_ext_complete_repo"
+    [System.IO.Directory]::CreateDirectory($extDir) | Out-Null
+    & git -C $extDir init --quiet
+    & git -C $extDir config user.name "Tester"
+    & git -C $extDir config user.email "tester@test.local"
+    $extDummy = Join-Path $extDir "dummy.txt"
+    [System.IO.File]::WriteAllText($extDummy, "dummy", $Utf8NoBom)
+    & git -C $extDir add .
+    & git -C $extDir commit -m "init" --quiet
+    $extBaseSha = (& git -C $extDir rev-parse HEAD | Out-String).Trim()
+
+    $extSrc = Join-Path $extDir "src/com/game/ShopEnum.java"
+    [System.IO.Directory]::CreateDirectory((Split-Path -Parent $extSrc)) | Out-Null
+    [System.IO.File]::WriteAllText($extSrc, "package com.game; public enum ShopEnum { TYPE_OLD, TYPE_NEW_GIFT }", $Utf8NoBom)
+    $extTestJava = Join-Path $extDir "test/TypeExtTest.java"
+    [System.IO.Directory]::CreateDirectory((Split-Path -Parent $extTestJava)) | Out-Null
+    [System.IO.File]::WriteAllText($extTestJava, "package test; import org.junit.Test; public class TypeExtTest { @Test public void testLegacyReset() {} }", $Utf8NoBom)
+    & git -C $extDir add src test
+
+    $extSpecDir = Join-Path $extDir ".ai-workspace/specs/features/TypeExtFeature"
+    [System.IO.Directory]::CreateDirectory($extSpecDir) | Out-Null
+    $extReq = Join-Path $extSpecDir "01_server_rules.md"
+    $extDes = Join-Path $extSpecDir "06_design_contract.md"
+    $extPlan = Join-Path $extSpecDir "05_test_plan.md"
+    $extApproval = Join-Path $extSpecDir "00_workflow_state.json"
+    $extFeatState = Join-Path $extSpecDir "feature-state.json"
+    $extCovPath = Join-Path $extSpecDir "05_test_coverage.json"
+    $extImpactPath = Join-Path $extSpecDir "04_change_impact.json"
+    [System.IO.File]::WriteAllText($extReq, "# Rules`n- BR-01: New type must not regress legacy dispatch", $Utf8NoBom)
+    [System.IO.File]::WriteAllText($extDes, "# Design`n- DC-01: Extend ShopEnum without bypassing legacy reset", $Utf8NoBom)
+    [System.IO.File]::WriteAllText($extPlan, "# Plan`n- TC-01: Legacy type still resets across day boundary", $Utf8NoBom)
+    [System.IO.File]::WriteAllText($extFeatState, '{"schemaVersion":"1.0","feature":"TypeExtFeature","tier":"T3","phase":"DONE","baseline":"' + $extBaseSha + '","updatedAt":"' + [DateTimeOffset]::UtcNow.ToString("yyyy-MM-ddTHH:mm:ssZ") + '"}', $Utf8NoBom)
+    [System.IO.Directory]::CreateDirectory((Join-Path $extDir "build/classes")) | Out-Null
+
+    $extReqSha = Get-TestArtifactHash -Path $extReq
+    $extDesSha = Get-TestArtifactHash -Path $extDes
+    $extPlanSha = Get-TestArtifactHash -Path $extPlan
+    $extApprovalObj = [ordered]@{
+        schemaVersion = "1.0"
+        feature = "TypeExtFeature"
+        baseline = $extBaseSha
+        requirement = [ordered]@{
+            artifact = "01_server_rules.md"
+            status = "APPROVED"
+            sha256 = $extReqSha
+            approvedAt = "2026-08-23T12:00:00Z"
+            approvedBy = "human:tester"
+        }
+        design = [ordered]@{
+            artifact = "06_design_contract.md"
+            status = "APPROVED"
+            sha256 = $extDesSha
+            approvedAt = "2026-08-23T12:00:00Z"
+            approvedBy = "human:tester"
+        }
+    }
+    Write-TestJson -Path $extApproval -Value $extApprovalObj
+
+    $extRiskRaw = & $ScriptPath -Operation AssessRisk -Path $extSpecDir -Baseline $extBaseSha 2>&1 | Out-String
+    $extRisk = $extRiskRaw | ConvertFrom-Json
+    $extDigest = [string]$extRisk.changeSetDigest
+    if ($extRisk.hasHighRisk -ne $true -or ($extRisk.triggersHit -join ",") -notmatch "TYPE_EXTENSION") {
+        throw "Type-extension fixture must hit TYPE_EXTENSION. Output: $($extRisk | ConvertTo-Json -Depth 6)"
+    }
+
+    $extLifecycleFacets = @(
+        "INIT", "QUERY", "VALIDATE", "MUTATE", "PERSIST", "RESET", "SERIALIZE", "COMPENSATE"
+    ) | ForEach-Object {
+        [ordered]@{ facetId = $_; coverage = "INHERITED"; evidence = "legacy dispatcher still covers $_" }
+    }
+    $extImpactBase = [ordered]@{
+        schemaVersion = "1.0"
+        feature = "TypeExtFeature"
+        baseline = $extBaseSha
+        changeSetDigest = $extDigest
+        changedSymbols = @("com.game.ShopEnum")
+        entryPoints = @("BUY_GIFT")
+        upstreamCallers = @("DispatchServlet")
+        downstreamEffects = @()
+        stateReadsWrites = @()
+        excludedWithReason = @()
+        requiredRegressionCases = @("TC-01")
+    }
+    $extIncompleteObj = [ordered]@{}
+    foreach ($k in $extImpactBase.Keys) { $extIncompleteObj[$k] = $extImpactBase[$k] }
+    $extIncompleteObj["behaviorVariants"] = @()
+    $extIncompleteObj["invariants"] = @()
+    Write-TestJson -Path $extImpactPath -Value $extIncompleteObj
+    $extValIncomplete = try { & $ScriptPath -Operation ValidateChangeImpact -Path $extImpactPath 2>&1 | Out-String } catch { $_.Exception.ToString() }
+    if ($extValIncomplete -notmatch "TYPE_EXTENSION_IMPACT_INCOMPLETE" -or $extValIncomplete -notmatch "behaviorVariants") {
+        throw "ValidateChangeImpact must reject empty behaviorVariants on TYPE_EXTENSION. Output: $extValIncomplete"
+    }
+
+    $extOmittedObj = [ordered]@{}
+    foreach ($k in $extImpactBase.Keys) { $extOmittedObj[$k] = $extImpactBase[$k] }
+    $extOmittedObj["invariants"] = @()
+    Write-TestJson -Path $extImpactPath -Value $extOmittedObj
+    $extValOmitted = try { & $ScriptPath -Operation ValidateChangeImpact -Path $extImpactPath 2>&1 | Out-String } catch { $_.Exception.ToString() }
+    if ($extValOmitted -notmatch "TYPE_EXTENSION_IMPACT_INCOMPLETE" -or $extValOmitted -notmatch "behaviorVariants") {
+        throw "ValidateChangeImpact must reject omitted behaviorVariants on TYPE_EXTENSION. Output: $extValOmitted"
+    }
+
+    $extVariantBlock = @(
+        [ordered]@{ typeKey = "TYPE_OLD"; relationToLegacy = "IDENTICAL_TO_LEGACY"; description = "Existing gift type" }
+        [ordered]@{ typeKey = "TYPE_NEW_GIFT"; relationToLegacy = "INTENTIONAL_DIFF"; description = "New gift type"; reason = "New billing path" }
+    )
+    $extInvariantBlock = @(
+        [ordered]@{ invariantId = "INV-01"; statement = "Legacy types must still reset across day boundary"; violationRisk = "Stale counters" }
+    )
+    $extLegacyBlock = @(
+        [ordered]@{ pathName = "GiftHelper.resetDaily"; protectedBehavior = "Old types reset at day boundary"; regressionCaseId = "TC-01" }
+    )
+
+    $extMissingFacetObj = [ordered]@{}
+    foreach ($k in $extImpactBase.Keys) { $extMissingFacetObj[$k] = $extImpactBase[$k] }
+    $extMissingFacetObj["behaviorVariants"] = $extVariantBlock
+    $extMissingFacetObj["lifecycleFacets"] = @($extLifecycleFacets[0..($extLifecycleFacets.Count - 2)])
+    $extMissingFacetObj["invariants"] = $extInvariantBlock
+    $extMissingFacetObj["legacyPaths"] = $extLegacyBlock
+    Write-TestJson -Path $extImpactPath -Value $extMissingFacetObj
+    $extValMissingFacet = try { & $ScriptPath -Operation ValidateChangeImpact -Path $extImpactPath 2>&1 | Out-String } catch { $_.Exception.ToString() }
+    if ($extValMissingFacet -notmatch "TYPE_EXTENSION_IMPACT_INCOMPLETE" -or $extValMissingFacet -notmatch "COMPENSATE") {
+        throw "ValidateChangeImpact must reject missing COMPENSATE lifecycle facet on TYPE_EXTENSION. Output: $extValMissingFacet"
+    }
+
+    $extNoRegressionObj = [ordered]@{}
+    foreach ($k in $extImpactBase.Keys) { $extNoRegressionObj[$k] = $extImpactBase[$k] }
+    $extNoRegressionObj["behaviorVariants"] = $extVariantBlock
+    $extNoRegressionObj["lifecycleFacets"] = $extLifecycleFacets
+    $extNoRegressionObj["invariants"] = $extInvariantBlock
+    $extNoRegressionObj["legacyPaths"] = @(
+        [ordered]@{ pathName = "GiftHelper.resetDaily"; protectedBehavior = "Old types reset at day boundary" }
+    )
+    Write-TestJson -Path $extImpactPath -Value $extNoRegressionObj
+    $extValNoRegression = try { & $ScriptPath -Operation ValidateChangeImpact -Path $extImpactPath 2>&1 | Out-String } catch { $_.Exception.ToString() }
+    if ($extValNoRegression -notmatch "TYPE_EXTENSION_IMPACT_INCOMPLETE" -or $extValNoRegression -notmatch "regressionCaseId") {
+        throw "ValidateChangeImpact must reject IDENTICAL_TO_LEGACY without legacyPaths regressionCaseId. Output: $extValNoRegression"
+    }
+
+    $extCompleteObj = [ordered]@{}
+    foreach ($k in $extImpactBase.Keys) { $extCompleteObj[$k] = $extImpactBase[$k] }
+    $extCompleteObj["behaviorVariants"] = $extVariantBlock
+    $extCompleteObj["lifecycleFacets"] = $extLifecycleFacets
+    $extCompleteObj["invariants"] = $extInvariantBlock
+    $extCompleteObj["legacyPaths"] = $extLegacyBlock
+    Write-TestJson -Path $extImpactPath -Value $extCompleteObj
+    $extValComplete = & $ScriptPath -Operation ValidateChangeImpact -Path $extImpactPath
+    if ($extValComplete -notcontains "VALID") {
+        throw "ValidateChangeImpact must accept a complete TYPE_EXTENSION impact contract. Output: $($extValComplete | Out-String)"
+    }
+
+    $extRecent = [DateTimeOffset]::UtcNow.AddMinutes(-5).ToString("yyyy-MM-ddTHH:mm:ssZ")
+    $extCov = [ordered]@{
+        schemaVersion = "1.0"
+        feature = "TypeExtFeature"
+        requirementArtifact = "01_server_rules.md"
+        requirementSha256 = $extReqSha
+        designArtifact = "06_design_contract.md"
+        designSha256 = $extDesSha
+        testPlanArtifact = "05_test_plan.md"
+        testPlanSha256 = $extPlanSha
+        cases = @(
+            [ordered]@{
+                id = "TC-01"
+                title = "Legacy type still resets"
+                status = "VERIFIED"
+                priority = "P1"
+                testTypes = @("FUNCTIONAL", "RECOVERY")
+                requirementIds = @("BR-01")
+                designIds = @("DC-01")
+                invariantIds = @("INV-01")
+                setup = @("Load a player whose legacy type is at the daily cap")
+                trigger = @("Advance clock past reset and invoke the formal buy entry")
+                assertions = [ordered]@{
+                    protocol = @(
+                        [ordered]@{ target = "status"; operator = "EQ"; expected = "OK" }
+                    )
+                    serverState = @(
+                        [ordered]@{ target = "buyCount"; operator = "EQ"; expected = "0" }
+                    )
+                    sideEffects = @(
+                        [ordered]@{ target = "persistence.reset"; operator = "EQ"; expected = "true" }
+                    )
+                    regression = @(
+                        [ordered]@{ target = "legacy.reset"; operator = "UNCHANGED"; expected = "true" }
+                    )
+                }
+                cleanup = @("Delete the isolated test player")
+                automationCarrier = "test/TypeExtTest.java#testLegacyReset"
+            }
+        )
+        riskExemptions = @()
+        executionEvidence = [ordered]@{
+            command = "pwsh test"
+            exitCode = 0
+            executedAt = $extRecent
+            sourceCommitSha = $extBaseSha
+            workingTreeDigest = $extDigest
+            testCount = 1
+            passedCount = 1
+            failedCount = 0
+        }
+    }
+    Write-TestJson -Path $extCovPath -Value $extCov
+
+    $extVerify = & $ScriptPath -Operation VerifyCompletion -Path $extApproval 2>&1
+    $extVerifyStr = $extVerify | Out-String
+    if ($LASTEXITCODE -ne 0 -or $extVerifyStr -notmatch "VERIFY_COMPLETION_PASS" -or $extVerifyStr -notmatch "类型/路由扩展完成度") {
+        throw "VerifyCompletion must pass a complete TYPE_EXTENSION impact contract. Output: $extVerifyStr"
+    }
+
+    # Incomplete impact must also fail VerifyCompletion (not only ValidateChangeImpact)
+    Write-TestJson -Path $extImpactPath -Value $extIncompleteObj
+    $extVerifyIncomplete = & $ScriptPath -Operation VerifyCompletion -Path $extApproval 2>&1
+    $extVerifyIncompleteStr = $extVerifyIncomplete | Out-String
+    if ($LASTEXITCODE -eq 0 -or $extVerifyIncompleteStr -notmatch "TYPE_EXTENSION_IMPACT_INCOMPLETE") {
+        throw "VerifyCompletion must fail when TYPE_EXTENSION impact is incomplete. Output: $extVerifyIncompleteStr"
+    }
+
     # Test CSV pure value modification does not trigger structural risk
     $csvTestDir = Join-Path $TestRoot "csv_repo"
     [System.IO.Directory]::CreateDirectory($csvTestDir) | Out-Null

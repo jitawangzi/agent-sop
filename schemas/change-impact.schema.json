@@ -79,19 +79,29 @@
       "type": "array",
       "items": {
         "$ref": "#/$defs/behaviorVariant"
-      }
+      },
+      "description": "New and legacy type/strategy/variant keys and whether each is IDENTICAL_TO_LEGACY, INTENTIONAL_DIFF, or N_A. Machine-required (non-empty) when AssessRisk hits TYPE_EXTENSION or PUBLIC_ROUTING."
+    },
+    "lifecycleFacets": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/lifecycleFacet"
+      },
+      "description": "Per-facet coverage of a type/strategy extension across the existing system's lifecycle. Machine-required to include INIT, QUERY, VALIDATE, MUTATE, PERSIST, RESET, SERIALIZE, and COMPENSATE when AssessRisk hits TYPE_EXTENSION or PUBLIC_ROUTING. Omitting a facet is not allowed; use coverage=N_A with evidence instead."
     },
     "invariants": {
       "type": "array",
       "items": {
         "$ref": "#/$defs/invariant"
-      }
+      },
+      "description": "Must be non-empty when TYPE_EXTENSION or PUBLIC_ROUTING is detected; each INV-* must be referenced by 05_test_coverage.json cases[].invariantIds."
     },
     "legacyPaths": {
       "type": "array",
       "items": {
         "$ref": "#/$defs/legacyPath"
-      }
+      },
+      "description": "Old dispatch/entry paths whose protected behavior must not regress. Machine-required (non-empty) when TYPE_EXTENSION or PUBLIC_ROUTING is detected."
     },
     "excludedWithReason": {
       "type": "array",
@@ -185,7 +195,8 @@
       ],
       "properties": {
         "typeKey": {
-          "type": "string"
+          "type": "string",
+          "minLength": 1
         },
         "relationToLegacy": {
           "enum": [
@@ -199,6 +210,34 @@
         },
         "reason": {
           "type": "string"
+        }
+      }
+    },
+    "lifecycleFacet": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "facetId",
+        "coverage",
+        "evidence"
+      ],
+      "properties": {
+        "facetId": {
+          "type": "string",
+          "pattern": "^[A-Z][A-Z0-9_]*$",
+          "description": "Canonical ids for type-extension gates: INIT, QUERY, VALIDATE, MUTATE, PERSIST, RESET, SERIALIZE, COMPENSATE. Additional project-specific facets are allowed."
+        },
+        "coverage": {
+          "enum": [
+            "TOUCHED",
+            "INHERITED",
+            "N_A"
+          ]
+        },
+        "evidence": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Symbol, file, method, or reason supporting the coverage verdict. N_A still requires a reason."
         }
       }
     },

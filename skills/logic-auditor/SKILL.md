@@ -119,7 +119,7 @@ description: 高风险逻辑审计官，专门细查方法级、分支级与链�
 输入：
 - `changed_symbols`（本次新增/修改的类、方法、枚举或配置 ID）
 - `entry_points`（可触发该逻辑的外部协议/Action/GM）
-- 可选：`04_change_impact.json`
+- **必填**：`04_change_impact.json`（Mode D 无此产物 = `FAIL`，不得用口头“已考虑旧链路”替代）
 
 审计范围（八级行为影响拓扑链穿透）：
 1. **上游入口调用者**：所有触发到达修改点的外部协议与调用者（检查是否可绕过前置查询直接发协议）；
@@ -133,6 +133,7 @@ description: 高风险逻辑审计官，专门细查方法级、分支级与链�
 
 ## Mode Selection Rule
 - 若任务属于**在已有系统上新增类型/枚举/配置/分支**或涉及跨模块状态变异，**强制进入 Mode D: Behavior Impact Audit**；
+- Mode D 开始前必须读取并校验同功能目录的 `04_change_impact.json`：缺少文件、`behaviorVariants`/`legacyPaths`/`invariants` 为空、或缺少 8 个生命周期切面（`INIT`/`QUERY`/`VALIDATE`/`MUTATE`/`PERSIST`/`RESET`/`SERIALIZE`/`COMPENSATE`）一律 `FAIL`，并建议补产物后重审。该产物由 `workflow-state.ps1 -Operation ValidateChangeImpact` 做机器门禁，审计不得跳过。
 - 若用户明确提供 `method_anchor`，进入 **Single-Method Audit**；
 - 若用户明确提供 `class_path` 且为全新独立类，进入 **Single-Class Audit**；
 - 若用户明确提供 `feature_start_rev` 或要求累计版本比对，进入 **Feature Diff Audit**；
@@ -325,9 +326,9 @@ description: 高风险逻辑审计官，专门细查方法级、分支级与链�
 - **专项扩展启用情况**：是否启用 `.ai-workspace/context/logic-audit-game-server.md`
 - **逻辑契约摘要**：预期输入、输出、关键状态、关键副作用
 - **行为影响穿透结论（Mode D 必填）**：
-  1. **Actual Inspected Scope**：实际追溯并检查过的老方法、老分支与老类清单；
-  2. **Excluded With Reason**：排除了哪些关联调用链及其排除理由；
-  3. **Behavior Delta Table**：新旧类型/新旧分支在 8 维切面上的行为差异比对；
+  1. **Actual Inspected Scope**：实际追溯并检查过的老方法、老分支与老类清单；必须能对上 `04_change_impact.json` 里 `lifecycleFacets` 为 `TOUCHED`/`INHERITED` 的切面，并给出 grep/阅读证据（兄弟类型标识符出现过、新类型未出现的位点不得静默跳过）；
+  2. **Excluded With Reason**：排除了哪些关联调用链及其排除理由；排除项必须同时出现在 `excludedWithReason`；
+  3. **Behavior Delta Table**：新旧类型/新旧分支在 8 维切面上的行为差异比对，且与 `behaviorVariants` + `lifecycleFacets` 一致；
   4. **Unverified Blind Spots**：尚未被测试用例完全覆盖的潜在风险盲区。
 - **分支对照摘要**：至少列出高风险分支及其返回/状态变化
 - **边界情况摘要**

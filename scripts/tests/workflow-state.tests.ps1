@@ -3050,6 +3050,128 @@ try {
         & $ScriptPath -Operation AssessRisk -Path $missingBaselineDir
     }
 
+    # 15. Cold-Reload (PERSISTENCE_COLD_RELOAD) Oracle Verification
+    $coldSpecDir = Join-Path $TestRoot ".ai-workspace\specs\features\ColdReloadTest"
+    [System.IO.Directory]::CreateDirectory($coldSpecDir) | Out-Null
+    $testCarrierDir = Join-Path $TestRoot "src\test\java\com\example"
+    [System.IO.Directory]::CreateDirectory($testCarrierDir) | Out-Null
+
+    $carrierOkPath = Join-Path $testCarrierDir "GoodServiceTest.java"
+    @'
+package com.example;
+import org.junit.Test;
+public class GoodServiceTest {
+    @Test
+    public void testMutationAndReload() {
+        Player p = playerDao.selectById(123);
+        assertNotNull(p);
+    }
+}
+'@ | Set-Content -LiteralPath $carrierOkPath -Encoding utf8
+
+    $carrierMissingReloadPath = Join-Path $testCarrierDir "FakeGreenTest.java"
+    @'
+package com.example;
+import org.junit.Test;
+public class FakeGreenTest {
+    @Test
+    public void testMutationWithoutReload() {
+        // purely memory assertions, no selectById or DAO calls
+        Response resp = service.doAction();
+        assertEquals(0, resp.getCode());
+    }
+}
+'@ | Set-Content -LiteralPath $carrierMissingReloadPath -Encoding utf8
+
+    $coldReq = Join-Path $coldSpecDir "01_server_rules.md"
+    $coldDes = Join-Path $coldSpecDir "06_design_contract.md"
+    $coldPlan = Join-Path $coldSpecDir "05_test_plan.md"
+    $coldApproval = Join-Path $coldSpecDir "00_workflow_state.json"
+    $coldFeatState = Join-Path $coldSpecDir "feature-state.json"
+
+    [System.IO.File]::WriteAllText($coldReq, "# Rules`n- BR-01 Buy player gold`n", $Utf8NoBom)
+    [System.IO.File]::WriteAllText($coldDes, "# Design`n- DC-01 Purchase contract`n", $Utf8NoBom)
+    [System.IO.File]::WriteAllText($coldPlan, "# Plan`n- TC-COLD-01 Test reload`n", $Utf8NoBom)
+    [System.IO.File]::WriteAllText($coldFeatState, '{"schemaVersion":"1.0","feature":"ColdReloadTest","tier":"T3","baseline":"0","phase":"QA_VERIFIED","updatedAt":"2026-08-27T00:00:00Z"}', $Utf8NoBom)
+
+    $reqHash = Get-TestArtifactHash -Path $coldReq
+    $desHash = Get-TestArtifactHash -Path $coldDes
+    $planHash = Get-TestArtifactHash -Path $coldPlan
+
+    $appState = [ordered]@{
+        schemaVersion = "1.0"
+        feature = "ColdReloadTest"
+        baseline = "0"
+        requirement = @{ status = "APPROVED"; sha256 = $reqHash; approvedBy = "tester"; approvedAt = "2026-08-23T12:00:00Z"; artifact = "01_server_rules.md" }
+        design = @{ status = "APPROVED"; sha256 = $desHash; approvedBy = "tester"; approvedAt = "2026-08-23T12:00:00Z"; artifact = "06_design_contract.md" }
+    }
+    [System.IO.File]::WriteAllText($coldApproval, ($appState | ConvertTo-Json -Depth 10), $Utf8NoBom)
+
+    $validColdCoverage = [ordered]@{
+        schemaVersion = "1.0"
+        feature = "ColdReloadTest"
+        requirementArtifact = "01_server_rules.md"
+        requirementSha256 = $reqHash
+        designArtifact = "06_design_contract.md"
+        designSha256 = $desHash
+        testPlanArtifact = "05_test_plan.md"
+        testPlanSha256 = $planHash
+        cases = @(
+            [ordered]@{
+                id = "TC-COLD-01"
+                title = "Verify player gold mutation persists to database"
+                status = "VERIFIED"
+                priority = "P0"
+                testTypes = @("FUNCTIONAL", "STATE_TRANSITION")
+                requirementIds = @("BR-01")
+                designIds = @("DC-01")
+                setup = @("Prepare test player with 100 gold")
+                trigger = @("Invoke purchase protocol")
+                assertions = [ordered]@{
+                    protocol = @(
+                        [ordered]@{ target = "code"; operator = "EQ"; expected = 0; assertionKind = "PROTOCOL" }
+                    )
+                    persistenceColdReload = @(
+                        [ordered]@{ target = "player.gold"; operator = "EQ"; expected = 80; assertionKind = "PERSISTENCE_COLD_RELOAD"; coldReloadEntity = "Player" }
+                    )
+                }
+                cleanup = @("Delete test player")
+                automationCarrier = "src/test/java/com/example/GoodServiceTest.java#testMutationAndReload"
+            }
+        )
+        riskExemptions = @()
+        executionEvidence = [ordered]@{
+            command = "pwsh test"
+            exitCode = 0
+            executedAt = [DateTimeOffset]::UtcNow.AddMinutes(-5).ToString("yyyy-MM-ddTHH:mm:ssZ")
+            sourceCommitSha = "abcdef1234567890"
+            workingTreeDigest = ""
+            testCount = 1
+            passedCount = 1
+            failedCount = 0
+        }
+    }
+    $coldCovPath = Join-Path $coldSpecDir "05_test_coverage.json"
+    $coldRisk = & $ScriptPath -Operation AssessRisk -Path (Split-Path -Parent $coldCovPath) 2>&1 | Out-String
+    $coldDigest = ($coldRisk | ConvertFrom-Json).changeSetDigest
+    $validColdCoverage.executionEvidence.workingTreeDigest = $coldDigest
+    [System.IO.File]::WriteAllText($coldCovPath, ($validColdCoverage | ConvertTo-Json -Depth 10), $Utf8NoBom)
+
+    $goodRes = & $ScriptPath -Operation ValidateTestCoverage -Path $coldCovPath -Phase "VERIFY"
+    if ($goodRes -notcontains "VALID") {
+        throw "Good carrier with DAO reload query should pass without cold reload errors: $($goodRes -join ', ')"
+    }
+
+    # Now change carrier to FakeGreenTest.java which lacks storage reload
+    $validColdCoverage.cases[0].automationCarrier = "src/test/java/com/example/FakeGreenTest.java#testMutationWithoutReload"
+    $coldRisk2 = & $ScriptPath -Operation AssessRisk -Path (Split-Path -Parent $coldCovPath) 2>&1 | Out-String
+    $validColdCoverage.executionEvidence.workingTreeDigest = ($coldRisk2 | ConvertFrom-Json).changeSetDigest
+    [System.IO.File]::WriteAllText($coldCovPath, ($validColdCoverage | ConvertTo-Json -Depth 10), $Utf8NoBom)
+    
+    Assert-Fails -Message "Carrier without selectById/DAO reload must fail ValidateTestCoverage in VERIFY phase." -Action {
+        & $ScriptPath -Operation ValidateTestCoverage -Path $coldCovPath -Phase "VERIFY"
+    }
+
     Write-Output "All workflow state tests passed."
 } finally {
     foreach ($name in @(

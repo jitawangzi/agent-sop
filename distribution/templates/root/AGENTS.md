@@ -120,7 +120,7 @@ AI 可在一次响应内同时呈递 `01_server_rules.md` 与 `06_design_contrac
 
 `.ai-workspace/context/` 是所有 Agent 共享的、流程无关的项目知识。
 
-始终阅读：`project-summary.md`、`coding-style.md`、`business-logic-pattern.md`、`project-tooling.md`。
+始终阅读：`project-summary.md`、`coding-style.md`、`business-logic-pattern.md`、`project-tooling.md`、`defect-patterns.md`。
 按需阅读：静态配置 `config-rules.md`、协议 `proto-rules.md`、业务测试/JSP/GM `client-test.md`、活动/任务/事件/条件 `business-patterns/`、高风险游戏状态逻辑 `logic-audit-game-server.md`。
 
 **读取前检测存在性**：上述文件在新项目或 fresh clone 后可能尚未创建。AI 读取前须先检测文件是否存在，不存在则跳过该文件并记一条 INFO（不报错、不中断、不幻觉补内容），继续后续流程。

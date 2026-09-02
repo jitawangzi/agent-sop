@@ -14,6 +14,7 @@ $script:GuardSessionScript = Join-Path $PSScriptRoot "workflow-session.ps1"
 $script:GuardOwnerSchema = Join-Path (
     $script:GuardClaudeRoot
 ) "schemas\workflow-owner.schema.json"
+$script:GuardCodeQualityScript = Join-Path $PSScriptRoot "guard-code-quality.ps1"
 
 if (-not (Get-Command Resolve-PhysicalPathIdentity -ErrorAction SilentlyContinue)) {
     . $script:GuardPathIdentityScript
@@ -448,6 +449,26 @@ function Get-AiSopExactOwnerDecision {
                 [string]$owner.lastTransactionId
         ) {
             throw "OWNER_IDENTITY_MISMATCH"
+        }
+
+        if (Test-Path -LiteralPath $script:GuardCodeQualityScript -PathType Leaf) {
+            $hookTargets = @($HookEvent.targetPaths)
+            $existingTargets = @($hookTargets | Where-Object { $_ -and (Test-Path -LiteralPath ([string]$_) -PathType Leaf) })
+            if ($existingTargets.Count -gt 0) {
+                try {
+                    $scanResult = & $script:GuardCodeQualityScript -Files $existingTargets -WorkspaceRoot $workspace -PassThru
+                    if ($null -ne $scanResult -and -not $scanResult.IsValid) {
+                        return New-AiSopGuardDecision `
+                            -Decision DENY `
+                            -ReasonCode CODE_QUALITY_BLOCKED `
+                            -RequiresExactOwner $true `
+                            -IsProduction (
+                                [string]$HookEvent.toolClass -ceq "FILE_EDIT"
+                            )
+                    }
+                } catch {
+                }
+            }
         }
 
         $snapshotHash = Get-AiSopGuardAuthorizationSnapshot `

@@ -374,6 +374,16 @@ description: 高风险逻辑审计官，专门细查方法级、分支级与链�
 - 单纯注释修改
 - 无业务逻辑的资源/静态文件调整
 
+## Dual-Agent Review Quality Rubric (质量评估矩阵六维度要求)
+当作为 Dual-Agent Reviewer 签署 `APPROVED` 结论时，**必须**对以下 6 个维度提供具体的技术分析（严禁使用 "LGTM" / "OK" / "Pass" 等敷衍占位符，严禁各维度复用相同重复模板）：
+
+1. **`specAlignment` (契约对齐)**: 验证实现是否 100% 满足 `01_server_rules.md` (BR) 与 `06_design_contract.md` (DC)，无漏项无过度设计。
+2. **`persistenceSafety` (持久化安全)**: 验证状态变异后是否紧随 `update(player)` / DAO 落库，无内存与存储状态脱节。
+3. **`backwardCompatibility` (向后兼容)**: 验证存储反序列化、协议增量字段与老客户端兼容性，无破坏性变更。
+4. **`performanceResource` (性能与资源)**: 验证锁粒度、锁超时 (fail-safe)、Redis/DB 访问频次与内存缓存生命周期。
+5. **`edgeCaseHandling` (边界与防御)**: 验证空指针、集合越界、数值溢出、重复请求幂等性防御。
+6. **`testOracleIntegrity` (测试预言机完整性)**: 验证测试用例是否真实断言了冷重载落库 (`PERSISTENCE_COLD_RELOAD`)，杜绝内存伪绿灯。
+
 ## Suggested User Prompts
 
 ### 单方法审计

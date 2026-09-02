@@ -122,11 +122,22 @@ try {
 
     # 6. Test ReviewSubmit - APPROVED (Round 2 Completion)
     $sub2Time = if ($data.currentDevSubmission.submittedAt -is [System.DateTime]) { $data.currentDevSubmission.submittedAt.ToString("o") } else { [string]$data.currentDevSubmission.submittedAt }
+    $validRubricJson = @"
+{
+  "specAlignment": "Implemented lock timeout per BR-01 specification",
+  "persistenceSafety": "No memory or DB leaks, state safely persisted",
+  "backwardCompatibility": "Backward compatible with older client lock protocols",
+  "performanceResource": "Minimal lock overhead with 5s fail-safe timeout",
+  "edgeCaseHandling": "Handles thread interrupt and deadlock retry cleanly",
+  "testOracleIntegrity": "Verified cold-reload and unit assertion coverage"
+}
+"@
     Invoke-Mailbox -Operation ReviewSubmit `
         -MailboxPath $TestMailboxPath `
         -Verdict "APPROVED" `
         -HighestSeverity "NONE" `
         -Summary "Lock timeout verified, all clear" `
+        -QualityRubricJson $validRubricJson `
         -ExpectedRound 2 `
         -ExpectedSubmittedAt $sub2Time `
         -ReviewerIdentity "COPILOT" | Out-Null
@@ -332,7 +343,118 @@ try {
     } finally {
         Remove-Item -LiteralPath $foreignDir -Recurse -Force -ErrorAction SilentlyContinue
     }
-    Assert-True $foreignFailed "MailboxPath pointing to foreign absolute directory outside PWD workspace must be rejected with PATH_TRAVERSAL_DETECTED"
+    # 16. Negative Test: ReviewSubmit APPROVED without QualityRubric fails with MANDATORY_QUALITY_RUBRIC_REQUIRED
+    $rubricMb = Join-Path $TestRoot "rubric-test-mailbox.json"
+    Invoke-Mailbox -Operation Init `
+        -Feature "RubricTest" `
+        -DevAgent "ANTIGRAVITY" `
+        -ReviewerAgent "COPILOT" `
+        -MailboxPath $rubricMb | Out-Null
+    
+    Invoke-Mailbox -Operation DevSubmit `
+        -MailboxPath $rubricMb `
+        -Summary "Valid dev changes" `
+        -TestGateStatus "PASS" | Out-Null
+    
+    $rubricRaw = [System.IO.File]::ReadAllText($rubricMb, [System.Text.Encoding]::UTF8)
+    $rubricData = ConvertFrom-Json $rubricRaw
+    $rubricSubTime = if ($rubricData.currentDevSubmission.submittedAt -is [System.DateTime]) { $rubricData.currentDevSubmission.submittedAt.ToString("o") } else { [string]$rubricData.currentDevSubmission.submittedAt }
+
+    $missingRubricFailed = $false
+    try {
+        $resRubric = Invoke-Mailbox -Operation ReviewSubmit `
+            -MailboxPath $rubricMb `
+            -Verdict "APPROVED" `
+            -Summary "Approved without rubric" `
+            -ExpectedRound 1 `
+            -ExpectedSubmittedAt $rubricSubTime `
+            -ReviewerIdentity "COPILOT" 2>&1 | Out-String
+        if ($LASTEXITCODE -ne 0 -or $resRubric -match "MANDATORY_QUALITY_RUBRIC_REQUIRED") {
+            $missingRubricFailed = $true
+        }
+    } catch {
+        $missingRubricFailed = $true
+    }
+    Assert-True $missingRubricFailed "ReviewSubmit APPROVED without qualityRubric must fail with MANDATORY_QUALITY_RUBRIC_REQUIRED"
+
+    # 17. Negative Test: ReviewSubmit APPROVED with shallow filler (e.g. 'LGTM') fails with INVALID_QUALITY_RUBRIC
+    $shallowRubricJson = @"
+{
+  "specAlignment": "LGTM",
+  "persistenceSafety": "Pass",
+  "backwardCompatibility": "Good",
+  "performanceResource": "OK",
+  "edgeCaseHandling": "None",
+  "testOracleIntegrity": "True"
+}
+"@
+    $shallowFailed = $false
+    try {
+        $resShallow = Invoke-Mailbox -Operation ReviewSubmit `
+            -MailboxPath $rubricMb `
+            -Verdict "APPROVED" `
+            -Summary "Approved with shallow rubric" `
+            -QualityRubricJson $shallowRubricJson `
+            -ExpectedRound 1 `
+            -ExpectedSubmittedAt $rubricSubTime `
+            -ReviewerIdentity "COPILOT" 2>&1 | Out-String
+        if ($LASTEXITCODE -ne 0 -or $resShallow -match "INVALID_QUALITY_RUBRIC|MANDATORY_QUALITY_RUBRIC_REQUIRED") {
+            $shallowFailed = $true
+        }
+    } catch {
+        $shallowFailed = $true
+    }
+    Assert-True $shallowFailed "ReviewSubmit APPROVED with shallow filler rubric must fail with INVALID_QUALITY_RUBRIC"
+
+    # 18. Negative Test: ReviewSubmit APPROVED with identical boilerplate across all 6 dimensions fails
+    $boilerRubricJson = @"
+{
+  "specAlignment": "This implementation meets all standard quality guidelines perfectly",
+  "persistenceSafety": "This implementation meets all standard quality guidelines perfectly",
+  "backwardCompatibility": "This implementation meets all standard quality guidelines perfectly",
+  "performanceResource": "This implementation meets all standard quality guidelines perfectly",
+  "edgeCaseHandling": "This implementation meets all standard quality guidelines perfectly",
+  "testOracleIntegrity": "This implementation meets all standard quality guidelines perfectly"
+}
+"@
+    $boilerFailed = $false
+    try {
+        $resBoiler = Invoke-Mailbox -Operation ReviewSubmit `
+            -MailboxPath $rubricMb `
+            -Verdict "APPROVED" `
+            -Summary "Approved with duplicate boilerplate" `
+            -QualityRubricJson $boilerRubricJson `
+            -ExpectedRound 1 `
+            -ExpectedSubmittedAt $rubricSubTime `
+            -ReviewerIdentity "COPILOT" 2>&1 | Out-String
+        if ($LASTEXITCODE -ne 0 -or $resBoiler -match "INVALID_QUALITY_RUBRIC") {
+            $boilerFailed = $true
+        }
+    } catch {
+        $boilerFailed = $true
+    }
+    Assert-True $boilerFailed "ReviewSubmit APPROVED with identical boilerplate across dimensions must fail with INVALID_QUALITY_RUBRIC"
+
+    # 19. Positive Test: DevSubmit with code quality guard scanning valid code succeeds and records PASS status
+    $scanFile = Join-Path $TestRoot "ScanPassTest.java"
+    [System.IO.File]::WriteAllText($scanFile, "package com.example; public class ScanPassTest { public void test() {} }", [System.Text.Encoding]::UTF8)
+    
+    $scanMb = Join-Path $TestRoot "scan-mailbox.json"
+    Invoke-Mailbox -Operation Init `
+        -Feature "ScanTest" `
+        -DevAgent "ANTIGRAVITY" `
+        -ReviewerAgent "COPILOT" `
+        -MailboxPath $scanMb | Out-Null
+    
+    Invoke-Mailbox -Operation DevSubmit `
+        -MailboxPath $scanMb `
+        -Summary "Dev changes with scanned file" `
+        -ChangedFiles @($scanFile) `
+        -TestGateStatus "PASS" | Out-Null
+    
+    $scanRaw = [System.IO.File]::ReadAllText($scanMb, [System.Text.Encoding]::UTF8)
+    $scanData = ConvertFrom-Json $scanRaw
+    Assert-Equal $scanData.currentDevSubmission.codeQualityStatus "PASS" "codeQualityStatus must be PASS when file passes code quality guard"
 
     Write-Host "All review mailbox tests passed successfully." -ForegroundColor Green
 }

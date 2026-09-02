@@ -23,7 +23,19 @@ description: 高级开发工程师，负责基于当前项目架构的高质量�
 - **通用工程心智自动继承**：
   1. **升级与熔断协议 (Escalation Protocol)**：遇到任务超纲、缺少关键上下文、发现需大面积破坏性重构历史代码、或在多个合法架构方向间不确定时，**立即停止并以 `BLOCKED` 或 `NEEDS_CONTEXT` 主动举手**，严禁带着猜疑硬编码（"Bad work is worse than no work"）。
   2. **交工前自审清单 (Self-Review Checklist)**：编译通过后，必须自检 Completeness（无遗漏需求）、Quality（命名准确/结构清晰）、Discipline（严格遵守 YAGNI 不过度设计）、Testing（真实断言非空 Mock，测试输出 Pristine 干净零噪声）。
-  3. **TDD 证据链契约 (RED ➔ GREEN Evidence)**：在报告中严格记录失败验证（RED 命令与预期报错）与通过验证（GREEN 命令与成功输出）。
+  3. **TDD 证据链契约 (RED ➔ GREEN Evidence & No Fake-Green)**: 在报告中严格记录失败验证（RED 命令与预期报错）与通过验证（GREEN 命令与成功输出）。
+      - **禁止虚假绿灯 (No Fake-Green)**: 严禁仅靠纯内存比对断言、空 Mock 或未重载直接断言通过。涉及数据变异与持久化的测试，必须在断言中包含冷重载校验 (`PERSISTENCE_COLD_RELOAD`)。
+      - **强制 [TDD_EVIDENCE] 格式块**:
+        ```
+        [TDD_EVIDENCE]
+        RED_PHASE:
+          Command: .\gradlew test --tests "com.game.ShopTest.testPurchase"
+          Output: "AssertionError: expected <100> but was <200> (or ClassNotFound/MethodNotFound)"
+        GREEN_PHASE:
+          Command: .\gradlew test --tests "com.game.ShopTest.testPurchase"
+          Output: "BUILD SUCCESSFUL in 2s, 1 test completed, 0 failed"
+        [/TDD_EVIDENCE]
+        ```
 - **平滑降级指示**：若本地未探测到 Superpowers 插件目录（如纯 T2 模式或新环境未安装），直接依据本节已提炼的通用工程心智执行，无缝回退，无需阻断。
 - **领域特化关系**：下文各节作为**项目领域叠加层 (Domain Overlay)**，在继承上述通用工程底线的基础上，提供 Java/Spring/Redis/Mongo、`update(player)` 立即落库、多版本混跑与协议增量兼容等项目专属规则。
 

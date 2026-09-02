@@ -45,6 +45,15 @@ param(
     [string]$ReviewerIdentity = "",
     [switch]$StrictDutySeparation,
 
+    # Quality Rubric parameters (mandatory when Verdict=APPROVED)
+    [string]$QualityRubricJson = "",
+    [string]$SpecAlignment = "",
+    [string]$PersistenceSafety = "",
+    [string]$BackwardCompatibility = "",
+    [string]$PerformanceResource = "",
+    [string]$EdgeCaseHandling = "",
+    [string]$TestOracleIntegrity = "",
+
     [switch]$PassThru
 )
 
@@ -192,44 +201,84 @@ function Validate-MailboxSchema {
     }
 }
 
+function Get-SafeProp {
+    param($Obj, [string]$PropName, $Default = $null)
+    if ($null -eq $Obj) { return $Default }
+    if ($Obj -is [System.Collections.IDictionary]) {
+        if ($Obj.Contains($PropName)) {
+            $val = $Obj[$PropName]
+            if ($null -ne $val) { return $val }
+        }
+        return $Default
+    }
+    if ($Obj.PSObject.Properties.Match($PropName).Count -gt 0) {
+        $val = $Obj.$PropName
+        if ($null -ne $val) { return $val }
+    }
+    return $Default
+}
+
 function ConvertTo-MailboxJson {
     param([Parameter(Mandatory = $true)] $MailboxObject)
 
     $historyArr = @(
         if ($MailboxObject.history) {
             foreach ($h in $MailboxObject.history) {
-                $hDevSub = if ($null -ne $h.devSubmission) {
-                    $hFiles = @(if ($h.devSubmission.changedFiles) { foreach ($f in $h.devSubmission.changedFiles) { [string]$f } })
-                    [ordered]@{
-                        submittedAt = [string]$h.devSubmission.submittedAt
-                        summary = [string]$h.devSubmission.summary
+                $hDevSub = if ($null -ne (Get-SafeProp $h 'devSubmission')) {
+                    $devSubVal = $h.devSubmission
+                    $hFiles = @(if (Get-SafeProp $devSubVal 'changedFiles') { foreach ($f in $devSubVal.changedFiles) { [string]$f } })
+                    $d = [ordered]@{
+                        submittedAt = [string](Get-SafeProp $devSubVal 'submittedAt' '')
+                        summary = [string](Get-SafeProp $devSubVal 'summary' '')
                         changedFiles = $hFiles
-                        testGateStatus = [string]$h.devSubmission.testGateStatus
-                        testOutput = [string]$h.devSubmission.testOutput
-                        gitDiffDigest = [string]$h.devSubmission.gitDiffDigest
+                        testGateStatus = [string](Get-SafeProp $devSubVal 'testGateStatus' '')
+                        testOutput = [string](Get-SafeProp $devSubVal 'testOutput' '')
+                        gitDiffDigest = [string](Get-SafeProp $devSubVal 'gitDiffDigest' '')
                     }
+                    $cqs = Get-SafeProp $devSubVal 'codeQualityStatus'
+                    if (-not [string]::IsNullOrWhiteSpace($cqs)) {
+                        $d["codeQualityStatus"] = [string]$cqs
+                    }
+                    $cqr = Get-SafeProp $devSubVal 'codeQualityReport'
+                    if (-not [string]::IsNullOrWhiteSpace($cqr)) {
+                        $d["codeQualityReport"] = [string]$cqr
+                    }
+                    $d
                 } else { $null }
 
-                $hRevVer = if ($null -ne $h.reviewVerdict) {
-                    $hIssues = @(if ($h.reviewVerdict.issues) {
-                        foreach ($iss in $h.reviewVerdict.issues) {
+                $hRevVer = if ($null -ne (Get-SafeProp $h 'reviewVerdict')) {
+                    $revVerVal = $h.reviewVerdict
+                    $hIssues = @(if (Get-SafeProp $revVerVal 'issues') {
+                        foreach ($iss in $revVerVal.issues) {
                             [ordered]@{
-                                file = [string]$iss.file
-                                lineRange = if ($iss.lineRange) { [string]$iss.lineRange } else { "" }
-                                severity = [string]$iss.severity
-                                problem = [string]$iss.problem
-                                fixSuggestion = [string]$iss.fixSuggestion
+                                file = [string](Get-SafeProp $iss 'file' '')
+                                lineRange = [string](Get-SafeProp $iss 'lineRange' '')
+                                severity = [string](Get-SafeProp $iss 'severity' '')
+                                problem = [string](Get-SafeProp $iss 'problem' '')
+                                fixSuggestion = [string](Get-SafeProp $iss 'fixSuggestion' '')
                             }
                         }
                     })
-                    [ordered]@{
-                        reviewedAt = [string]$h.reviewVerdict.reviewedAt
-                        verdict = [string]$h.reviewVerdict.verdict
-                        highestSeverity = [string]$h.reviewVerdict.highestSeverity
-                        summary = [string]$h.reviewVerdict.summary
-                        issues = $hIssues
-                        nextPromptForDev = [string]$h.reviewVerdict.nextPromptForDev
+                    $r = [ordered]@{
+                        reviewedAt = [string](Get-SafeProp $revVerVal 'reviewedAt' '')
+                        verdict = [string](Get-SafeProp $revVerVal 'verdict' '')
+                        highestSeverity = [string](Get-SafeProp $revVerVal 'highestSeverity' '')
+                        summary = [string](Get-SafeProp $revVerVal 'summary' '')
                     }
+                    $rubric = Get-SafeProp $revVerVal 'qualityRubric'
+                    if ($null -ne $rubric) {
+                        $r["qualityRubric"] = [ordered]@{
+                            specAlignment = [string](Get-SafeProp $rubric 'specAlignment' '')
+                            persistenceSafety = [string](Get-SafeProp $rubric 'persistenceSafety' '')
+                            backwardCompatibility = [string](Get-SafeProp $rubric 'backwardCompatibility' '')
+                            performanceResource = [string](Get-SafeProp $rubric 'performanceResource' '')
+                            edgeCaseHandling = [string](Get-SafeProp $rubric 'edgeCaseHandling' '')
+                            testOracleIntegrity = [string](Get-SafeProp $rubric 'testOracleIntegrity' '')
+                        }
+                    }
+                    $r["issues"] = $hIssues
+                    $r["nextPromptForDev"] = [string](Get-SafeProp $revVerVal 'nextPromptForDev' '')
+                    $r
                 } else { $null }
 
                 [ordered]@{
@@ -241,38 +290,61 @@ function ConvertTo-MailboxJson {
         }
     )
 
-    $devSub = if ($null -ne $MailboxObject.currentDevSubmission) {
-        $cf = @(if ($MailboxObject.currentDevSubmission.changedFiles) { foreach ($f in $MailboxObject.currentDevSubmission.changedFiles) { [string]$f } })
-        [ordered]@{
-            submittedAt = [string]$MailboxObject.currentDevSubmission.submittedAt
-            summary = [string]$MailboxObject.currentDevSubmission.summary
+    $devSub = if ($null -ne (Get-SafeProp $MailboxObject 'currentDevSubmission')) {
+        $curDev = $MailboxObject.currentDevSubmission
+        $cf = @(if (Get-SafeProp $curDev 'changedFiles') { foreach ($f in $curDev.changedFiles) { [string]$f } })
+        $d = [ordered]@{
+            submittedAt = [string](Get-SafeProp $curDev 'submittedAt' '')
+            summary = [string](Get-SafeProp $curDev 'summary' '')
             changedFiles = $cf
-            testGateStatus = [string]$MailboxObject.currentDevSubmission.testGateStatus
-            testOutput = [string]$MailboxObject.currentDevSubmission.testOutput
-            gitDiffDigest = [string]$MailboxObject.currentDevSubmission.gitDiffDigest
+            testGateStatus = [string](Get-SafeProp $curDev 'testGateStatus' '')
+            testOutput = [string](Get-SafeProp $curDev 'testOutput' '')
+            gitDiffDigest = [string](Get-SafeProp $curDev 'gitDiffDigest' '')
         }
+        $cqs = Get-SafeProp $curDev 'codeQualityStatus'
+        if (-not [string]::IsNullOrWhiteSpace($cqs)) {
+            $d["codeQualityStatus"] = [string]$cqs
+        }
+        $cqr = Get-SafeProp $curDev 'codeQualityReport'
+        if (-not [string]::IsNullOrWhiteSpace($cqr)) {
+            $d["codeQualityReport"] = [string]$cqr
+        }
+        $d
     } else { $null }
 
-    $revVerdict = if ($null -ne $MailboxObject.currentReviewVerdict) {
-        $issues = @(if ($MailboxObject.currentReviewVerdict.issues) {
-            foreach ($iss in $MailboxObject.currentReviewVerdict.issues) {
+    $revVerdict = if ($null -ne (Get-SafeProp $MailboxObject 'currentReviewVerdict')) {
+        $curRev = $MailboxObject.currentReviewVerdict
+        $issues = @(if (Get-SafeProp $curRev 'issues') {
+            foreach ($iss in $curRev.issues) {
                 [ordered]@{
-                    file = [string]$iss.file
-                    lineRange = if ($iss.lineRange) { [string]$iss.lineRange } else { "" }
-                    severity = [string]$iss.severity
-                    problem = [string]$iss.problem
-                    fixSuggestion = [string]$iss.fixSuggestion
+                    file = [string](Get-SafeProp $iss 'file' '')
+                    lineRange = [string](Get-SafeProp $iss 'lineRange' '')
+                    severity = [string](Get-SafeProp $iss 'severity' '')
+                    problem = [string](Get-SafeProp $iss 'problem' '')
+                    fixSuggestion = [string](Get-SafeProp $iss 'fixSuggestion' '')
                 }
             }
         })
-        [ordered]@{
-            reviewedAt = [string]$MailboxObject.currentReviewVerdict.reviewedAt
-            verdict = [string]$MailboxObject.currentReviewVerdict.verdict
-            highestSeverity = [string]$MailboxObject.currentReviewVerdict.highestSeverity
-            summary = [string]$MailboxObject.currentReviewVerdict.summary
-            issues = $issues
-            nextPromptForDev = [string]$MailboxObject.currentReviewVerdict.nextPromptForDev
+        $r = [ordered]@{
+            reviewedAt = [string](Get-SafeProp $curRev 'reviewedAt' '')
+            verdict = [string](Get-SafeProp $curRev 'verdict' '')
+            highestSeverity = [string](Get-SafeProp $curRev 'highestSeverity' '')
+            summary = [string](Get-SafeProp $curRev 'summary' '')
         }
+        $rubric = Get-SafeProp $curRev 'qualityRubric'
+        if ($null -ne $rubric) {
+            $r["qualityRubric"] = [ordered]@{
+                specAlignment = [string](Get-SafeProp $rubric 'specAlignment' '')
+                persistenceSafety = [string](Get-SafeProp $rubric 'persistenceSafety' '')
+                backwardCompatibility = [string](Get-SafeProp $rubric 'backwardCompatibility' '')
+                performanceResource = [string](Get-SafeProp $rubric 'performanceResource' '')
+                edgeCaseHandling = [string](Get-SafeProp $rubric 'edgeCaseHandling' '')
+                testOracleIntegrity = [string](Get-SafeProp $rubric 'testOracleIntegrity' '')
+            }
+        }
+        $r["issues"] = $issues
+        $r["nextPromptForDev"] = [string](Get-SafeProp $curRev 'nextPromptForDev' '')
+        $r
     } else { $null }
 
     $canonicalObj = [ordered]@{
@@ -419,6 +491,37 @@ switch ($Operation) {
                 "Git diff unavailable"
             }
 
+            # Run code quality guard
+            $codeQualityScript = Join-Path $PSScriptRoot "guard-code-quality.ps1"
+            $codeQualityStatus = "SKIPPED"
+            $codeQualityReport = ""
+            $wsRoot = if (-not [string]::IsNullOrWhiteSpace($ProjectRoot)) { $ProjectRoot } else { Resolve-AiSopWorkspaceRoot -StartPath $targetMailbox }
+            if ($null -ne $files -and @($files).Length -gt 0 -and (Test-Path -LiteralPath $codeQualityScript -PathType Leaf)) {
+                try {
+                    $guardRes = & $codeQualityScript -Files @($files) -WorkspaceRoot $wsRoot -PassThru
+                    if ($null -ne $guardRes) {
+                        $scannedCount = if ($null -ne $guardRes.ScannedFilesCount) { [int]$guardRes.ScannedFilesCount } else { @($files).Length }
+                        if ($guardRes.IsValid) {
+                            $codeQualityStatus = "PASS"
+                            $codeQualityReport = "Code Quality Guard: 0 violations found across $scannedCount file(s)."
+                            Write-Host "✅ Code Quality Guard passed ($scannedCount files scanned)." -ForegroundColor Green
+                        } else {
+                            $codeQualityStatus = "FAIL"
+                            $violationsArr = @($guardRes.Violations)
+                            $violationCount = $violationsArr.Length
+                            $violationDetails = ($violationsArr | ForEach-Object { "[$($_.RuleId)] $($_.File):$($_.LineNumber) - $($_.Message)" }) -join "`n"
+                            $codeQualityReport = "Code Quality Guard: Found $violationCount violation(s):`n$violationDetails"
+                            Write-Host "❌ Code Quality Guard detected $violationCount violation(s)!" -ForegroundColor Red
+                            throw "CODE_QUALITY_BLOCKED: DevSubmit rejected due to code quality violations:`n$violationDetails"
+                        }
+                    }
+                } catch {
+                    if ($_.Exception.Message -match "CODE_QUALITY_BLOCKED") {
+                        throw
+                    }
+                }
+            }
+
             $now = [DateTime]::UtcNow.ToString("o")
 
             $submission = [ordered]@{
@@ -428,6 +531,8 @@ switch ($Operation) {
                 testGateStatus = $gateStatus
                 testOutput = $testLog
                 gitDiffDigest = $diffDigest
+                codeQualityStatus = $codeQualityStatus
+                codeQualityReport = $codeQualityReport
             }
 
             $mailbox.currentDevSubmission = $submission
@@ -505,13 +610,55 @@ switch ($Operation) {
                 throw "Parameter -Summary is required for ReviewSubmit."
             }
 
-            # Test gate validation for APPROVED verdict
+            # Test gate and quality rubric validation for APPROVED verdict
+            $rubricObj = $null
             if ($Verdict -eq "APPROVED") {
                 $devSub = $mailbox.currentDevSubmission
                 if ($null -eq $devSub -or $devSub.testGateStatus -ne "PASS") {
                     $currStatus = if ($devSub) { [string]$devSub.testGateStatus } else { "NONE" }
                     throw "INVALID_REVIEW_VERDICT: Cannot approve submission when testGateStatus is '$currStatus' (must be PASS)."
                 }
+
+                # Quality Rubric Verification (Mandatory for APPROVED)
+                if (-not [string]::IsNullOrWhiteSpace($QualityRubricJson)) {
+                    try {
+                        $rubricParsed = ConvertFrom-Json $QualityRubricJson -Depth 10
+                        $SpecAlignment = if (-not [string]::IsNullOrWhiteSpace($rubricParsed.specAlignment)) { [string]$rubricParsed.specAlignment } else { $SpecAlignment }
+                        $PersistenceSafety = if (-not [string]::IsNullOrWhiteSpace($rubricParsed.persistenceSafety)) { [string]$rubricParsed.persistenceSafety } else { $PersistenceSafety }
+                        $BackwardCompatibility = if (-not [string]::IsNullOrWhiteSpace($rubricParsed.backwardCompatibility)) { [string]$rubricParsed.backwardCompatibility } else { $BackwardCompatibility }
+                        $PerformanceResource = if (-not [string]::IsNullOrWhiteSpace($rubricParsed.performanceResource)) { [string]$rubricParsed.performanceResource } else { $PerformanceResource }
+                        $EdgeCaseHandling = if (-not [string]::IsNullOrWhiteSpace($rubricParsed.edgeCaseHandling)) { [string]$rubricParsed.edgeCaseHandling } else { $EdgeCaseHandling }
+                        $TestOracleIntegrity = if (-not [string]::IsNullOrWhiteSpace($rubricParsed.testOracleIntegrity)) { [string]$rubricParsed.testOracleIntegrity } else { $TestOracleIntegrity }
+                    } catch {
+                        throw "MANDATORY_QUALITY_RUBRIC_REQUIRED: Failed to parse -QualityRubricJson: $_"
+                    }
+                }
+
+                $rubricFields = [ordered]@{
+                    specAlignment = $SpecAlignment.Trim()
+                    persistenceSafety = $PersistenceSafety.Trim()
+                    backwardCompatibility = $BackwardCompatibility.Trim()
+                    performanceResource = $PerformanceResource.Trim()
+                    edgeCaseHandling = $EdgeCaseHandling.Trim()
+                    testOracleIntegrity = $TestOracleIntegrity.Trim()
+                }
+
+                foreach ($kv in $rubricFields.GetEnumerator()) {
+                    if ([string]::IsNullOrWhiteSpace($kv.Value) -or $kv.Value.Length -lt 5) {
+                        throw "MANDATORY_QUALITY_RUBRIC_REQUIRED: Quality rubric dimension '$($kv.Key)' is missing or too short (must be >= 5 chars)."
+                    }
+                    if ($kv.Value -match '^(?i)(lgtm|ok|pass|passed|good|none|n/a|yes|true|all good|looks good)$') {
+                        throw "INVALID_QUALITY_RUBRIC: Quality rubric dimension '$($kv.Key)' contains shallow filler ('$($kv.Value)'). Detailed technical evaluation is required."
+                    }
+                }
+
+                # Anti-boilerplate: Ensure all 6 dimensions are not identical strings
+                $distinctValues = @($rubricFields.Values | Select-Object -Unique)
+                if ($distinctValues.Count -le 1) {
+                    throw "INVALID_QUALITY_RUBRIC: Quality rubric dimensions cannot all be identical boilerplate. Each dimension requires an independent evaluation."
+                }
+
+                $rubricObj = $rubricFields
             }
 
             $parsedIssues = @()
@@ -541,9 +688,12 @@ switch ($Operation) {
                 verdict = $Verdict
                 highestSeverity = $effectiveSeverity
                 summary = $Summary
-                issues = @($parsedIssues)
-                nextPromptForDev = $NextPromptForDev
             }
+            if ($null -ne $rubricObj) {
+                $verdictObj["qualityRubric"] = $rubricObj
+            }
+            $verdictObj["issues"] = @($parsedIssues)
+            $verdictObj["nextPromptForDev"] = $NextPromptForDev
 
             $mailbox.currentReviewVerdict = $verdictObj
             $mailbox.updatedAt = $now

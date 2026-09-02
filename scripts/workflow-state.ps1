@@ -2273,6 +2273,76 @@ function Get-CoveragePlaceholderWarnings {
                 $errors.Add("ERROR: $caseId (priority=$prio) invalid carrier format ('$carrierTrim') — must specify test file path or Class#method")
             }
         }
+
+        # Cold-Reload (PERSISTENCE_COLD_RELOAD) & Storage Oracle Verification
+        $hasColdReloadAssertion = $false
+        $coldReloadEntities = [System.Collections.Generic.List[string]]::new()
+        if ($null -ne $case.assertions) {
+            foreach ($cat in $case.assertions.PSObject.Properties) {
+                $isColdReloadCat = ($cat.Name -ieq "persistenceColdReload")
+                foreach ($entry in $cat.Value) {
+                    $kind = [string]$entry.assertionKind
+                    $isColdKind = ($kind -ieq "PERSISTENCE_COLD_RELOAD") -or $isColdReloadCat
+                    if ($isColdKind) {
+                        $hasColdReloadAssertion = $true
+                        if (-not [string]::IsNullOrWhiteSpace($entry.coldReloadEntity)) {
+                            $coldReloadEntities.Add([string]$entry.coldReloadEntity)
+                        }
+                    }
+                }
+            }
+        }
+
+        if ($hasColdReloadAssertion -and -not $isPlanPhase) {
+            if ($coldReloadEntities.Count -eq 0) {
+                $errors.Add("ERROR: $caseId specifies PERSISTENCE_COLD_RELOAD assertion but 'coldReloadEntity' is missing or empty")
+            }
+
+            # Check carrier file if path-like and exists
+            if ($isPathLike -and (Test-Path -LiteralPath $resolved -PathType Leaf)) {
+                $carrierSrc = [System.IO.File]::ReadAllText($resolved)
+                $strippedSrc = $carrierSrc -replace '(?s)/\*.*?\*/', ' ' -replace '(?m)//.*$', ' ' -replace '(?s)<!--.*?-->', ' '
+                $storageReloadPattern = '(?i)\b(?:selectById|getById|findById|getAirData|getPlayerData|playerDao|playerMapper|dao\.\w+|mapper\.\w+|repo\.\w+|repository\.\w+|get_by_id|find_one|FindByID|query|select|reload|fetch|load)\b'
+                if ($strippedSrc -notmatch $storageReloadPattern) {
+                    $errors.Add("ERROR: $caseId has PERSISTENCE_COLD_RELOAD assertion on entity '$($coldReloadEntities -join ',')' but test carrier '$filePathPart' lacks storage reload query (e.g. selectById/getById/DAO/Mapper)")
+                }
+            }
+        }
+    }
+
+    # High-risk feature persistence cold reload requirement
+    if (-not $isPlanPhase) {
+        $specDir = Split-Path -Parent $CoveragePath
+        $stateFile = Join-Path $specDir "00_workflow_state.json"
+        $isHighRisk = $false
+        if (Test-Path -LiteralPath $stateFile -PathType Leaf) {
+            try {
+                $st = Get-Content -Raw -LiteralPath $stateFile | ConvertFrom-Json
+                if ($st.riskTier -eq "T3" -and $st.gateMode -ne "DESIGN_ONLY") {
+                    $isHighRisk = $true
+                }
+            } catch {}
+        }
+        if ($isHighRisk) {
+            $totalColdReloadAssertions = 0
+            foreach ($c in $coverage.cases) {
+                if ($null -ne $c.assertions) {
+                    foreach ($cat in $c.assertions.PSObject.Properties) {
+                        $isColdReloadCat = ($cat.Name -ieq "persistenceColdReload")
+                        foreach ($entry in $cat.Value) {
+                            $kind = [string]$entry.assertionKind
+                            if (($kind -ieq "PERSISTENCE_COLD_RELOAD") -or $isColdReloadCat) {
+                                $totalColdReloadAssertions++
+                            }
+                        }
+                    }
+                }
+            }
+            $hasExemption = ($null -ne $coverage.riskExemptions -and @($coverage.riskExemptions).Count -gt 0)
+            if ($totalColdReloadAssertions -eq 0 -and -not $hasExemption) {
+                $errors.Add("ERROR: High-risk feature requires at least one test case with a PERSISTENCE_COLD_RELOAD assertion or an explicit risk exemption")
+            }
+        }
     }
 
     # executionEvidence validation in VERIFY phase or when executionEvidence is present

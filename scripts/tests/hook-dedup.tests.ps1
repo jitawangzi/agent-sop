@@ -810,7 +810,9 @@ try {
             $killAppliedRecord.state "APPLIED" `
             "APPLIED reconcile was not persisted."
     } finally {
-        Remove-Job -Job $killJob -Force -ErrorAction SilentlyContinue
+        try {
+            Remove-Job -Job $killJob -Force -ErrorAction SilentlyContinue
+        } catch {}
     }
 
     $notAppliedPayload = Get-FixtureRaw `
@@ -1262,8 +1264,10 @@ try {
             )
     } finally {
         foreach ($job in $lockJobs) {
-            Stop-Job -Job $job -ErrorAction SilentlyContinue
-            Remove-Job -Job $job -Force -ErrorAction SilentlyContinue
+            try {
+                Stop-Job -Job $job -ErrorAction SilentlyContinue
+                Remove-Job -Job $job -Force -ErrorAction SilentlyContinue
+            } catch {}
         }
     }
 
@@ -1375,7 +1379,9 @@ try {
                 "$($pair.Name) concurrent pair applied multiple side effects."
         } finally {
             foreach ($job in $jobs) {
-                Remove-Job -Job $job -Force -ErrorAction SilentlyContinue
+                try {
+                    Remove-Job -Job $job -Force -ErrorAction SilentlyContinue
+                } catch {}
             }
         }
     }

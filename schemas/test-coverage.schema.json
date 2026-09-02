@@ -184,6 +184,9 @@
             "serverState": {
               "$ref": "#/$defs/assertionList"
             },
+            "persistenceColdReload": {
+              "$ref": "#/$defs/assertionList"
+            },
             "sideEffects": {
               "$ref": "#/$defs/assertionList"
             },
@@ -299,6 +302,18 @@
             "boolean",
             "null"
           ]
+        },
+        "assertionKind": {
+          "type": "string",
+          "enum": [
+            "PROTOCOL",
+            "PERSISTENCE_COLD_RELOAD",
+            "SIDE_EFFECT",
+            "REGRESSION"
+          ]
+        },
+        "coldReloadEntity": {
+          "type": "string"
         }
       },
       "allOf": [
@@ -318,6 +333,29 @@
               "expected": {
                 "type": "string",
                 "minLength": 5
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "assertionKind": {
+                "const": "PERSISTENCE_COLD_RELOAD"
+              }
+            },
+            "required": [
+              "assertionKind"
+            ]
+          },
+          "then": {
+            "required": [
+              "coldReloadEntity"
+            ],
+            "properties": {
+              "coldReloadEntity": {
+                "type": "string",
+                "minLength": 1
               }
             }
           }

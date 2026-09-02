@@ -97,6 +97,13 @@
         },
         "gitDiffDigest": {
           "type": "string"
+        },
+        "codeQualityStatus": {
+          "type": "string",
+          "enum": ["PASS", "FAIL", "SKIPPED"]
+        },
+        "codeQualityReport": {
+          "type": "string"
         }
       }
     },
@@ -127,6 +134,9 @@
           "type": "string",
           "minLength": 1
         },
+        "qualityRubric": {
+          "$ref": "#/$defs/qualityRubric"
+        },
         "issues": {
           "type": "array",
           "items": {
@@ -153,7 +163,20 @@
         "nextPromptForDev": {
           "type": "string"
         }
-      }
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "verdict": { "const": "APPROVED" }
+            },
+            "required": ["verdict"]
+          },
+          "then": {
+            "required": ["qualityRubric"]
+          }
+        }
+      ]
     },
     "history": {
       "type": "array",
@@ -169,6 +192,46 @@
           "round": { "type": "integer", "minimum": 1 },
           "devSubmission": { "type": "object" },
           "reviewVerdict": { "type": "object" }
+        }
+      }
+    }
+  },
+  "$defs": {
+    "qualityRubric": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "specAlignment",
+        "persistenceSafety",
+        "backwardCompatibility",
+        "performanceResource",
+        "edgeCaseHandling",
+        "testOracleIntegrity"
+      ],
+      "properties": {
+        "specAlignment": {
+          "type": "string",
+          "minLength": 5
+        },
+        "persistenceSafety": {
+          "type": "string",
+          "minLength": 5
+        },
+        "backwardCompatibility": {
+          "type": "string",
+          "minLength": 5
+        },
+        "performanceResource": {
+          "type": "string",
+          "minLength": 5
+        },
+        "edgeCaseHandling": {
+          "type": "string",
+          "minLength": 5
+        },
+        "testOracleIntegrity": {
+          "type": "string",
+          "minLength": 5
         }
       }
     }

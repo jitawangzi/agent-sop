@@ -78,13 +78,14 @@
   - 若存在 `IDENTICAL_TO_LEGACY`，**至少抽 1 个**共享同一分发的代表旧键，出现在某条 `testTypes` 含 `CHARACTERIZATION` 的 Case。同质兄弟不必每个都有 Case；有独立配置/独立分支的旧键仍须单独抽样（见 `04.legacyPaths`）
   - 每个 `TOUCHED`/`INHERITED` 切面出现在某条 Case 的 `facetIds`
   - QUERY 切面仍生效时，至少一条 Case `bypassesPriorQuery=true`（不先查询、直接发写入入口）
+  - 每条 `CHARACTERIZATION` Case 必须有非 `N_A` 的 `assertions.persistenceColdReload`（含 `coldReloadEntity`），且载体方法体再读存储
   缺任一项报 `TYPE_EXTENSION_COVERAGE_INCOMPLETE`。`04.behaviorVariants` 仍须登记兄弟键（或 `excludedWithReason`）——那是声明表，不是“每个旧类型一条测试”。设计阶段就必须把 **已有** QUERY/MUTATE/RESET/COMPENSATE/观测入口写进 `04.entryPoints`，而不是只列主写入协议，也不是为此新写一套协议。
 
   **证据门禁（防 N_A 填空、防空表征 Case）**：`ValidateChangeImpact` 还会拒绝：
   - `lifecycleFacets` / `N_A` 变体的证据是套话（`n/a`、`不适用`、`main path covers`）或短于 24 字、没有 `Class#method` / 源文件 / `typeKey`
   - 变更文件里的 enum / `TYPE_*` 兄弟常量未全部写入 `behaviorVariants` 或 `excludedWithReason`（只登记新键、漏旧键）。这是 04 声明表，机器在单文件 ≤32 个候选键时检查；不等于要求每个旧键都有测试或人工点一遍。
   - 8 个必填切面里超过 4 个 `N_A`
-  `VerifyCompletion` 还会读 `CHARACTERIZATION` Case 的 `automationCarrier#method` 方法体：空 `@Test`、没有调用、或方法里不出现 `variantKeys`/`entryPointIds` 字面量，一律 `TYPE_EXTENSION_COVERAGE_INCOMPLETE`。这仍不能证明运行时打到了旧分发，但能挡住“JSON 填了、测试是空方法”的假覆盖。
+  `VerifyCompletion` 还会读 `CHARACTERIZATION` Case 的 `automationCarrier#method` 方法体：空 `@Test`、没有调用、或方法里不出现 `variantKeys`/`entryPointIds` 字面量，一律 `TYPE_EXTENSION_COVERAGE_INCOMPLETE`。同一条表征 Case 还必须有非 `N_A` 的 `assertions.persistenceColdReload`（含 `coldReloadEntity`），且方法体出现 `selectById` / `getById` / `findById` / `reloadFresh` 一类再读存储的调用——只断言协议回包算假绿。这仍不能证明运行时打到了旧分发，但能挡住“JSON 填了、测试是空方法”和“测了入口、没冷读库”的假覆盖。
 
   Bug 修复不固定为 T3——看变更触及什么（如修一个 -1 语义的数值边界 = T2；修协议字段解析逻辑或状态变异 = T3）。
 - **T2（用户显式"快速修改"）**：跳过 brainstorming/需求确认/design-reviewer/设计确认/writing-plans；保留归属 Claim、编译、验证、回归、文档待更新提醒。仅限**未命中上述高危触发器**的已有行为纯局部单点修复。

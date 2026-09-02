@@ -1756,6 +1756,27 @@ function Get-SourceMethodBody {
     return $null
 }
 
+function Test-SourceHasStorageReload {
+    param([string]$Text)
+    if ([string]::IsNullOrWhiteSpace($Text)) { return $false }
+    return [regex]::IsMatch(
+        $Text,
+        '(?i)\b(?:selectById|getById|findById|find_by_id|get_by_id|select_by_id|findOneById|queryById|loadById|reloadFresh\w*|reloadEntity)\s*\('
+    )
+}
+
+function Get-NonNaColdReloadAssertions {
+    param($Case)
+    $hits = New-Object System.Collections.Generic.List[object]
+    if ($null -eq $Case -or $null -eq $Case.assertions) { return [object[]]@($hits) }
+    foreach ($entry in (Get-JsonObjectArray -Value $Case.assertions.persistenceColdReload)) {
+        if ($null -eq $entry) { continue }
+        if ([string]$entry.operator -ceq "N_A") { continue }
+        $hits.Add($entry)
+    }
+    return [object[]]@($hits)
+}
+
 function Assert-ExtensionImpactEvidence {
     param(
         $Impact,
@@ -1986,6 +2007,19 @@ function Assert-ExtensionCoverageCompleteness {
             if (-not [regex]::IsMatch($methodBody, ('\b' + [regex]::Escape($entryId) + '\b'))) {
                 throw "${prefix}: CHARACTERIZATION case '$($case.id)' carrier method does not mention entryPointId '$entryId'. Act must go through that public entry, not a helper class."
             }
+        }
+
+        $coldReloadAssertions = @(Get-NonNaColdReloadAssertions -Case $case)
+        if ($coldReloadAssertions.Count -eq 0) {
+            throw "${prefix}: CHARACTERIZATION case '$($case.id)' has no non-N_A assertions.persistenceColdReload. Protocol JSON is not enough; re-read storage after Act (selectById/getById/findById or equivalent) and assert the persisted fields."
+        }
+        foreach ($entry in $coldReloadAssertions) {
+            if ([string]::IsNullOrWhiteSpace([string]$entry.coldReloadEntity)) {
+                throw "${prefix}: CHARACTERIZATION case '$($case.id)' persistenceColdReload assertion on '$($entry.target)' is missing coldReloadEntity. Name the storage record the test reloads."
+            }
+        }
+        if (-not (Test-SourceHasStorageReload -Text $methodBody)) {
+            throw "${prefix}: CHARACTERIZATION case '$($case.id)' carrier $($carrierInfo.Relative)#$($carrierInfo.Method) never re-reads storage (no selectById/getById/findById/reloadFresh call). In-memory protocol assertions are a false green."
         }
     }
 }
@@ -2832,6 +2866,33 @@ function Get-CoveragePlaceholderWarnings {
                 $warnings.Add("INFO: $caseId (priority=$prio) unknown carrier format ('$carrierTrim')")
             } else {
                 $errors.Add("ERROR: $caseId (priority=$prio) invalid carrier format ('$carrierTrim') — must specify test file path or Class#method")
+            }
+        }
+    }
+
+    if (-not $isPlanPhase) {
+        $coldReloadWsRoot = Resolve-AiSopWorkspaceRoot -StartPath (Split-Path -Parent $CoveragePath)
+        foreach ($case in $coverage.cases) {
+            $caseId = [string]$case.id
+            $coldHits = @(Get-NonNaColdReloadAssertions -Case $case)
+            if ($coldHits.Count -eq 0) { continue }
+            foreach ($entry in $coldHits) {
+                if ([string]::IsNullOrWhiteSpace([string]$entry.coldReloadEntity)) {
+                    $errors.Add("ERROR: COLD_RELOAD_INCOMPLETE: $caseId persistenceColdReload assertion on '$($entry.target)' is missing coldReloadEntity — name the storage record the test reloads")
+                }
+            }
+            $carrierInfo = Resolve-CoverageCarrier -CoveragePath $CoveragePath -Carrier ([string]$case.automationCarrier) -WorkspaceRoot $coldReloadWsRoot
+            if ([string]::IsNullOrWhiteSpace($carrierInfo.Path) -or -not (Test-Path -LiteralPath $carrierInfo.Path -PathType Leaf)) {
+                $errors.Add("ERROR: COLD_RELOAD_INCOMPLETE: $caseId declares persistenceColdReload but automationCarrier '$($case.automationCarrier)' does not resolve to a test file")
+                continue
+            }
+            if ([string]::IsNullOrWhiteSpace($carrierInfo.Method)) {
+                $errors.Add("ERROR: COLD_RELOAD_INCOMPLETE: $caseId declares persistenceColdReload but automationCarrier must include #methodName so the gate can inspect the reload call")
+                continue
+            }
+            $methodBody = Get-SourceMethodBody -FilePath $carrierInfo.Path -MethodName $carrierInfo.Method
+            if (-not (Test-SourceHasStorageReload -Text $methodBody)) {
+                $errors.Add("ERROR: COLD_RELOAD_INCOMPLETE: $caseId carrier $($carrierInfo.Relative)#$($carrierInfo.Method) never re-reads storage (no selectById/getById/findById/reloadFresh call). In-memory protocol assertions are a false green.")
             }
         }
     }
@@ -4606,10 +4667,10 @@ switch ($Operation) {
                         if (Test-IsTypeExtensionRisk -TriggersHit $extRisk.TriggersHit) {
                             try {
                                 Assert-ExtensionCoverageCompleteness -Impact $impact -Coverage $covObj -WorkspaceRoot $wsRoot -Baseline $impact.baseline -SpecDir $specDir
-                                $checks.Add("[v] 类型/路由扩展覆盖完成度(CHARACTERIZATION载体方法体/entryPointIds/variantKeys/facetIds/bypassesPriorQuery)")
+                                $checks.Add("[v] 类型/路由扩展覆盖完成度(CHARACTERIZATION载体方法体/entryPointIds/variantKeys/facetIds/bypassesPriorQuery/persistenceColdReload)")
                             } catch {
                                 $failures.Add($_.Exception.Message)
-                                $checks.Add("[X] 类型/路由扩展覆盖完成度(CHARACTERIZATION载体方法体/entryPointIds/variantKeys/facetIds/bypassesPriorQuery)")
+                                $checks.Add("[X] 类型/路由扩展覆盖完成度(CHARACTERIZATION载体方法体/entryPointIds/variantKeys/facetIds/bypassesPriorQuery/persistenceColdReload)")
                             }
                         }
                     }

@@ -35,6 +35,7 @@ description: 独立审计测试计划的条款覆盖、设计方法、断言可�
 5. **检查类型扩展差分回归**：若同功能目录存在 `04_change_impact.json` 且含 `behaviorVariants`/`legacyPaths`，则每个 `IDENTICAL_TO_LEGACY` 变体必须有 `legacyPaths[].regressionCaseId`，该 Case 必须出现在 `05_test_plan.md` / `05_test_coverage.json`；`invariants[].invariantId` 必须出现在某个 Case 的 `invariantIds`。缺差分回归不得以“新类型主路径已测”放行。
    - **表征与入口覆盖**：共享同一分发的 `IDENTICAL_TO_LEGACY` 必须**至少抽 1 个** `typeKey` 出现在某条 `testTypes` 含 `CHARACTERIZATION` 且 `variantKeys` 含该键的 Case；每个 `INTENTIONAL_DIFF` 必须出现在某条 `variantKeys`；每个 `04.entryPoints` 必须出现在某条 `entryPointIds`；`TOUCHED`/`INHERITED` 切面必须出现在某条 `facetIds`；QUERY 仍生效时至少一条 `bypassesPriorQuery=true`。核心 Act 必须是**已有**正式协议/正式业务入口，GM 只允许 Arrange/Observe/Cleanup。同质兄弟不必每个都有 Case；独立配置/独立分支未抽样 = 缺口。
    - **表征必须打到旧分发**：`CHARACTERIZATION` Case 的 `automationCarrier#method` 方法体必须字面包含该 Case 的 `variantKeys` 与 `entryPointIds`，且含有调用（`(`）。空 `@Test`、只测新类型、或 Act 调 Helper 而不是公共入口 = `FAIL`。
+   - **冷重载不是口头要求**：`CHARACTERIZATION` 必须有非 `N_A` 的 `assertions.persistenceColdReload`（含 `coldReloadEntity`），方法体必须再读存储。只断言回包 JSON = `FAIL`。
 6. 检查每个 `TC-*` 的前置条件、触发步骤、断言和清理是否可由另一个 AI 直接执行。
 7. 检查四层断言是否都使用 `{ target, operator, expected }`，或以 `operator=N_A` 给出明确不适用原因；拒绝空断言层和“正确”“正常”“符合预期”等自由文本结论。
 8. 检查 GM 只承担 Arrange/Observe/Cleanup，核心 Act 使用正式协议或正式业务入口。

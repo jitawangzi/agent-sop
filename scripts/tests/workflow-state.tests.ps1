@@ -2754,7 +2754,7 @@ try {
     [System.IO.File]::WriteAllText($extSrc, "package com.game; public enum ShopEnum { TYPE_OLD, TYPE_MID, TYPE_NEW_GIFT }", $Utf8NoBom)
     $extTestJava = Join-Path $extDir "test/TypeExtTest.java"
     [System.IO.Directory]::CreateDirectory((Split-Path -Parent $extTestJava)) | Out-Null
-    [System.IO.File]::WriteAllText($extTestJava, "package test; import org.junit.Test; public class TypeExtTest { @Test public void testLegacyReset() { buy(`"BUY_GIFT`", TYPE_OLD, TYPE_NEW_GIFT); } @Test public void testEmptyChar() {} }", $Utf8NoBom)
+    [System.IO.File]::WriteAllText($extTestJava, "package test; import org.junit.Test; public class TypeExtTest { @Test public void testLegacyReset() { buy(`"BUY_GIFT`", TYPE_OLD, TYPE_NEW_GIFT); selectById(playerId); } @Test public void testEmptyChar() {} @Test public void testNoReload() { buy(`"BUY_GIFT`", TYPE_OLD, TYPE_NEW_GIFT); } }", $Utf8NoBom)
     & git -C $extDir add src test
 
     $extSpecDir = Join-Path $extDir ".ai-workspace/specs/features/TypeExtFeature"
@@ -2920,6 +2920,9 @@ try {
                     protocol = @(
                         [ordered]@{ target = "status"; operator = "EQ"; expected = "OK" }
                     )
+                    persistenceColdReload = @(
+                        [ordered]@{ target = "buyCount"; operator = "EQ"; expected = "0"; coldReloadEntity = "player.buyRecord" }
+                    )
                     serverState = @(
                         [ordered]@{ target = "buyCount"; operator = "EQ"; expected = "0" }
                     )
@@ -2982,6 +2985,84 @@ try {
 
     Write-TestJson -Path $extCovPath -Value $extCov
 
+    $extCovNoColdLayer = [ordered]@{}
+    foreach ($k in $extCov.Keys) { $extCovNoColdLayer[$k] = $extCov[$k] }
+    $extNoColdCase = [ordered]@{}
+    foreach ($k in (@($extCov.cases)[0].Keys)) { $extNoColdCase[$k] = (@($extCov.cases)[0])[$k] }
+    $extNoColdAssertions = [ordered]@{}
+    foreach ($ak in $extNoColdCase.assertions.Keys) {
+        if ($ak -eq "persistenceColdReload") { continue }
+        $extNoColdAssertions[$ak] = $extNoColdCase.assertions[$ak]
+    }
+    $extNoColdCase["assertions"] = $extNoColdAssertions
+    $extCovNoColdLayer["cases"] = @($extNoColdCase)
+    Write-TestJson -Path $extCovPath -Value $extCovNoColdLayer
+    $extVerifyNoColdLayer = & $ScriptPath -Operation VerifyCompletion -Path $extApproval 2>&1
+    $extVerifyNoColdLayerStr = $extVerifyNoColdLayer | Out-String
+    if ($LASTEXITCODE -eq 0 -or $extVerifyNoColdLayerStr -notmatch "TYPE_EXTENSION_COVERAGE_INCOMPLETE" -or $extVerifyNoColdLayerStr -notmatch "persistenceColdReload") {
+        throw "VerifyCompletion must fail TYPE_EXTENSION characterization without persistenceColdReload assertions. Output: $extVerifyNoColdLayerStr"
+    }
+
+    $extCovNoReloadCall = [ordered]@{}
+    foreach ($k in $extCov.Keys) { $extCovNoReloadCall[$k] = $extCov[$k] }
+    $extNoReloadCase = [ordered]@{}
+    foreach ($k in (@($extCov.cases)[0].Keys)) { $extNoReloadCase[$k] = (@($extCov.cases)[0])[$k] }
+    $extNoReloadCase["automationCarrier"] = "test/TypeExtTest.java#testNoReload"
+    $extCovNoReloadCall["cases"] = @($extNoReloadCase)
+    Write-TestJson -Path $extCovPath -Value $extCovNoReloadCall
+    $extVerifyNoReloadCall = & $ScriptPath -Operation VerifyCompletion -Path $extApproval 2>&1
+    $extVerifyNoReloadCallStr = $extVerifyNoReloadCall | Out-String
+    if ($LASTEXITCODE -eq 0 -or $extVerifyNoReloadCallStr -notmatch "TYPE_EXTENSION_COVERAGE_INCOMPLETE" -or $extVerifyNoReloadCallStr -notmatch "re-reads storage") {
+        throw "VerifyCompletion must fail when CHARACTERIZATION claims cold reload but the carrier never re-reads storage. Output: $extVerifyNoReloadCallStr"
+    }
+
+    $extCovMissingEntity = [ordered]@{}
+    foreach ($k in $extCov.Keys) { $extCovMissingEntity[$k] = $extCov[$k] }
+    $extMissingEntityCase = [ordered]@{}
+    foreach ($k in (@($extCov.cases)[0].Keys)) { $extMissingEntityCase[$k] = (@($extCov.cases)[0])[$k] }
+    $extMissingEntityAssertions = [ordered]@{}
+    foreach ($ak in $extMissingEntityCase.assertions.Keys) { $extMissingEntityAssertions[$ak] = $extMissingEntityCase.assertions[$ak] }
+    $extMissingEntityAssertions["persistenceColdReload"] = @(
+        [ordered]@{ target = "buyCount"; operator = "EQ"; expected = "0" }
+    )
+    $extMissingEntityCase["assertions"] = $extMissingEntityAssertions
+    $extCovMissingEntity["cases"] = @($extMissingEntityCase)
+    Write-TestJson -Path $extCovPath -Value $extCovMissingEntity
+    $extVerifyMissingEntity = & $ScriptPath -Operation VerifyCompletion -Path $extApproval 2>&1
+    $extVerifyMissingEntityStr = $extVerifyMissingEntity | Out-String
+    if ($LASTEXITCODE -eq 0 -or $extVerifyMissingEntityStr -notmatch "TYPE_EXTENSION_COVERAGE_INCOMPLETE" -or $extVerifyMissingEntityStr -notmatch "coldReloadEntity") {
+        throw "VerifyCompletion must fail persistenceColdReload assertions that omit coldReloadEntity. Output: $extVerifyMissingEntityStr"
+    }
+
+    Write-TestJson -Path $extCovPath -Value $extCovNoReloadCall
+    $extValColdReloadVerify = try { & $ScriptPath -Operation ValidateTestCoverage -Path $extCovPath -Phase VERIFY 2>&1 | Out-String } catch { $_.Exception.ToString() }
+    if ($extValColdReloadVerify -notmatch "COLD_RELOAD_INCOMPLETE" -or $extValColdReloadVerify -notmatch "re-reads storage") {
+        throw "ValidateTestCoverage VERIFY must fail COLD_RELOAD_INCOMPLETE when a declared persistenceColdReload carrier never re-reads storage. Output: $extValColdReloadVerify"
+    }
+    $extValColdReloadPlan = try { & $ScriptPath -Operation ValidateTestCoverage -Path $extCovPath -Phase PLAN 2>&1 | Out-String } catch { $_.Exception.ToString() }
+    if ($extValColdReloadPlan -notmatch "VALID" -or $extValColdReloadPlan -match "COLD_RELOAD_INCOMPLETE") {
+        throw "ValidateTestCoverage PLAN must not enforce COLD_RELOAD_INCOMPLETE. Output: $extValColdReloadPlan"
+    }
+
+    $extCovNaCold = [ordered]@{}
+    foreach ($k in $extCov.Keys) { $extCovNaCold[$k] = $extCov[$k] }
+    $extNaColdCase = [ordered]@{}
+    foreach ($k in (@($extCov.cases)[0].Keys)) { $extNaColdCase[$k] = (@($extCov.cases)[0])[$k] }
+    $extNaColdAssertions = [ordered]@{}
+    foreach ($ak in $extNaColdCase.assertions.Keys) { $extNaColdAssertions[$ak] = $extNaColdCase.assertions[$ak] }
+    $extNaColdAssertions["persistenceColdReload"] = @(
+        [ordered]@{ target = "buyCount"; operator = "N_A"; expected = "protocol JSON is treated as persistence evidence" }
+    )
+    $extNaColdCase["assertions"] = $extNaColdAssertions
+    $extCovNaCold["cases"] = @($extNaColdCase)
+    Write-TestJson -Path $extCovPath -Value $extCovNaCold
+    $extVerifyNaCold = & $ScriptPath -Operation VerifyCompletion -Path $extApproval 2>&1
+    $extVerifyNaColdStr = $extVerifyNaCold | Out-String
+    if ($LASTEXITCODE -eq 0 -or $extVerifyNaColdStr -notmatch "TYPE_EXTENSION_COVERAGE_INCOMPLETE" -or $extVerifyNaColdStr -notmatch "persistenceColdReload") {
+        throw "VerifyCompletion must fail TYPE_EXTENSION characterization that only has N_A persistenceColdReload. Output: $extVerifyNaColdStr"
+    }
+
+    Write-TestJson -Path $extCovPath -Value $extCov
     $extCovIncomplete = [ordered]@{}
     foreach ($k in $extCov.Keys) { $extCovIncomplete[$k] = $extCov[$k] }
     $extCovIncomplete["cases"] = @(

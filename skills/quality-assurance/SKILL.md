@@ -132,6 +132,7 @@ description: 资深测试开发工程师（SDET），负责自动化测试与质
 - **表征测试 (CHARACTERIZATION)**：对共享同一分发的 `IDENTICAL_TO_LEGACY` 键，**至少抽 1 个代表**（建议 1–2 个）写成 `testTypes` 含 `CHARACTERIZATION` 的 Case：用**已有正式协议/正式业务入口**做 Act（GM 只允许 Arrange/Observe/Cleanup），绑定该代表 `typeKey` 为 `variantKeys`，覆盖 `TOUCHED`/`INHERITED` 的 `facetIds`，并在 QUERY 仍生效时提供 `bypassesPriorQuery=true`（不先查再写）。断言必须含冷重载，锁的是旧行为而不是新类型主路径。独立配置或独立分支的旧键须再各抽 1 个；同质 enum 不必每个都有 Case。
 - **入口与变体覆盖**：`04.entryPoints` 的每个 id 必须出现在某条 Case 的 `entryPointIds`；每个 `INTENTIONAL_DIFF` 的 `typeKey` 必须出现在某条 Case 的 `variantKeys`。`04.behaviorVariants` 仍须列出兄弟键（声明表），但 VerifyCompletion **不**要求每个 `IDENTICAL_TO_LEGACY` 都出现在 `variantKeys`。这是 `TYPE_EXTENSION_COVERAGE_INCOMPLETE` 机器门禁，不是口头“已回归”。
 - **表征必须打到分发**：`CHARACTERIZATION` 的 `automationCarrier#method` 方法体必须字面出现 `variantKeys` 与 `entryPointIds`，并含有调用。空方法、只 new 对象、或 Act 调内部 Helper = 未覆盖。
+- **冷重载机器门禁**：`CHARACTERIZATION` 还必须声明非 `N_A` 的 `assertions.persistenceColdReload`（每条带 `coldReloadEntity`），且载体方法体含 `selectById` / `getById` / `findById` / `reloadFresh` 一类再读存储调用。只断言协议回包 = `TYPE_EXTENSION_COVERAGE_INCOMPLETE`。`ValidateTestCoverage` 对任何已声明 `persistenceColdReload` 的 Case 同样检查方法体（`COLD_RELOAD_INCOMPLETE`）。
 - **隐蔽缺陷防护（线上有状态服务，流程层能做的）**：
   1. **差分金样**：同一正式入口，旧 `typeKey` 的协议回包 + 冷重载字段与基线快照比对（`operator=UNCHANGED`），不要只断言新类型 happy path。
   2. **分发声明 vs 测试抽样**：对变更的 enum/策略表，每个兄弟键必须出现在 `04.behaviorVariants` 或 `excludedWithReason`（声明表）。测试只抽代表旧键 + 全部新键；生产代码 switch 必须有失败闭环（default 打错误码 + 指标），不要静默 fall-through。
@@ -163,8 +164,8 @@ description: 资深测试开发工程师（SDET），负责自动化测试与质
 
 - 保存需求、设计和测试计划文件的 SHA-256
 - 将每个 `TC-*` 映射到至少一个需求条款 ID 和一个设计条款 ID
-- 记录优先级、测试类型、前置准备、正式触发、四层结构化断言、清理和自动化载体
-- 类型/策略扩展时填写 `entryPointIds` / `variantKeys` / `facetIds` / `bypassesPriorQuery`，旧类型锁行为 Case 的 `testTypes` 含 `CHARACTERIZATION`
+- 记录优先级、测试类型、前置准备、正式触发、结构化断言（含可选 `persistenceColdReload`）、清理和自动化载体
+- 类型/策略扩展时填写 `entryPointIds` / `variantKeys` / `facetIds` / `bypassesPriorQuery`，旧类型锁行为 Case 的 `testTypes` 含 `CHARACTERIZATION`，且必须有非 `N_A` 的 `persistenceColdReload`
 - 保证 `05_test_plan.md` 与 JSON 中的 Case ID 集合完全一致
 - `TC-*` 正式声明必须位于 Markdown 顶层标题或顶层列表项开头；正文引用、示例、引用块、注释和代码块不计入 Case 集合
 - 保证全部 `BR-*` / `EX-*` / `AC-*` / `DC-*` / `DR-*` / `TW-*` 均被 Case 覆盖；豁免只允许引用已批准源文档同一条款上的 `[TEST-EXEMPT: 原因]`，原因和批准人必须一致

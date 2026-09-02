@@ -317,6 +317,7 @@ Bug 文件位于 <BUGS.md 路径>。
 
 通过标准：代表旧类型的限购/重置/「不先查直接写」与基线一致。看起来成功但次数没重置、或满额被击穿 = 失败。
 不要把时间花在阅读新 Handler。新类型缺陷用 FUNCTIONAL Case / 新类型验收抓，不是本脚本的替代。
+机器门禁：`CHARACTERIZATION` Case 的 `05_test_coverage.json` 必须含非 `N_A` 的 `assertions.persistenceColdReload`（带 `coldReloadEntity`），载体方法体须再读存储（`selectById` / `getById` / `findById` 一类）；否则 `VerifyCompletion` 报 `TYPE_EXTENSION_COVERAGE_INCOMPLETE`，已声明该层但方法体未再读存储则 `ValidateTestCoverage` 报 `COLD_RELOAD_INCOMPLETE`。
 AI 收尾：requesting-code-review 与 logic-auditor 必须走 Mode E / Protocol Trace，附协议追踪表。
 ```
 

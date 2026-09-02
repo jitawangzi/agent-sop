@@ -1768,13 +1768,14 @@ function Test-SourceHasStorageReload {
 function Get-NonNaColdReloadAssertions {
     param($Case)
     $hits = New-Object System.Collections.Generic.List[object]
-    if ($null -eq $Case -or $null -eq $Case.assertions) { return [object[]]@($hits) }
+    if ($null -eq $Case -or $null -eq $Case.assertions) { return [object[]]@() }
     foreach ($entry in (Get-JsonObjectArray -Value $Case.assertions.persistenceColdReload)) {
         if ($null -eq $entry) { continue }
         if ([string]$entry.operator -ceq "N_A") { continue }
         $hits.Add($entry)
     }
-    return [object[]]@($hits)
+    if ($hits.Count -eq 0) { return [object[]]@() }
+    return $hits.ToArray()
 }
 
 function Assert-ExtensionImpactEvidence {

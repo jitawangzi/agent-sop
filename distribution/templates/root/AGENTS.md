@@ -65,6 +65,27 @@
   4. **兼容与并发**：涉及新老数据反序列化兼容、多版本滚更混跑、分布式锁或异步任务；
   5. **多分支入口**：在已有 Action/Help 的主干入口中插入了新的条件分支。
 
+  **类型/策略扩展完成度（机器硬门禁，不只靠审查清单）**：命中触发器 1 或 2 时，`04_change_impact.json` 存在仍不够。`ValidateChangeImpact` / `VerifyCompletion` 会要求：
+  - 非空 `behaviorVariants`（每个新旧类型/策略键标明 `IDENTICAL_TO_LEGACY` / `INTENTIONAL_DIFF` / `N_A`）
+  - 非空 `legacyPaths`（旧分发/入口的受保护行为；`IDENTICAL_TO_LEGACY` 必须带 `regressionCaseId`）
+  - 非空 `invariants`（`INV-*` 必须被 `05_test_coverage.json` 的 `invariantIds` 覆盖）
+  - `lifecycleFacets` 必须对 `INIT`/`QUERY`/`VALIDATE`/`MUTATE`/`PERSIST`/`RESET`/`SERIALIZE`/`COMPENSATE` 逐条给出 `TOUCHED`/`INHERITED`/`N_A`（缺切面不得省略，只能显式 N_A + 证据）
+  这防止“只改了新类型主路径、漏掉旧流程切面”的小 diff 高风险缺陷。实现者必须 grep 兄弟类型标识符列出全部分发位点，不得用 `focus_methods` 把审计缩到新改的几行。
+
+  **按协议审查 + 表征覆盖（机器硬门禁）**：class / 版本 diff 审查看不到未改动的旧切面。类型/策略扩展时，审计应从 `04.entryPoints` 的公共入口 + `typeKey` 样例输入往下模拟完整执行（logic-auditor Mode E / implementation-auditor Protocol Trace），而不是从 Helper 类或 `focus_methods` 起审。`VerifyCompletion` 额外要求 `05_test_coverage.json`：
+  - 每个 `04.entryPoints` 出现在某条 Case 的 `entryPointIds`
+  - 每个 `INTENTIONAL_DIFF` 的 `typeKey` 出现在某条 Case 的 `variantKeys`（新类型自己的 FUNCTIONAL/CHARACTERIZATION Case，抽样本不适用于新键）
+  - 若存在 `IDENTICAL_TO_LEGACY`，**至少抽 1 个**共享同一分发的代表旧键，出现在某条 `testTypes` 含 `CHARACTERIZATION` 的 Case。同质兄弟不必每个都有 Case；有独立配置/独立分支的旧键仍须单独抽样（见 `04.legacyPaths`）
+  - 每个 `TOUCHED`/`INHERITED` 切面出现在某条 Case 的 `facetIds`
+  - QUERY 切面仍生效时，至少一条 Case `bypassesPriorQuery=true`（不先查询、直接发写入入口）
+  缺任一项报 `TYPE_EXTENSION_COVERAGE_INCOMPLETE`。`04.behaviorVariants` 仍须登记兄弟键（或 `excludedWithReason`）——那是声明表，不是“每个旧类型一条测试”。设计阶段就必须把 **已有** QUERY/MUTATE/RESET/COMPENSATE/观测入口写进 `04.entryPoints`，而不是只列主写入协议，也不是为此新写一套协议。
+
+  **证据门禁（防 N_A 填空、防空表征 Case）**：`ValidateChangeImpact` 还会拒绝：
+  - `lifecycleFacets` / `N_A` 变体的证据是套话（`n/a`、`不适用`、`main path covers`）或短于 24 字、没有 `Class#method` / 源文件 / `typeKey`
+  - 变更文件里的 enum / `TYPE_*` 兄弟常量未全部写入 `behaviorVariants` 或 `excludedWithReason`（只登记新键、漏旧键）。这是 04 声明表，机器在单文件 ≤32 个候选键时检查；不等于要求每个旧键都有测试或人工点一遍。
+  - 8 个必填切面里超过 4 个 `N_A`
+  `VerifyCompletion` 还会读 `CHARACTERIZATION` Case 的 `automationCarrier#method` 方法体：空 `@Test`、没有调用、或方法里不出现 `variantKeys`/`entryPointIds` 字面量，一律 `TYPE_EXTENSION_COVERAGE_INCOMPLETE`。这仍不能证明运行时打到了旧分发，但能挡住“JSON 填了、测试是空方法”的假覆盖。
+
   Bug 修复不固定为 T3——看变更触及什么（如修一个 -1 语义的数值边界 = T2；修协议字段解析逻辑或状态变异 = T3）。
 - **T2（用户显式"快速修改"）**：跳过 brainstorming/需求确认/design-reviewer/设计确认/writing-plans；保留归属 Claim、编译、验证、回归、文档待更新提醒。仅限**未命中上述高危触发器**的已有行为纯局部单点修复。
 
@@ -89,6 +110,35 @@
 - **BLOCKED 工具（如 Pi，最高支持 T2）**：实际执行档位 = MIN(用户指定档位, T2)。在 BLOCKED 工具下：若用户未表达流程意图且为已有行为缺陷修复，静默以 T2 执行；若用户消息含“需求/草案/设计/评审/T3”任一词，或变更是新功能/新协议/新存储/用户点名需求，必须提示：“`[SOP 拦截] 工具 <工具名> 因无 subagent（能力准入 BLOCKED），无法执行 T3 独立审查。建议：切换到 STRICT 工具（Claude Code / Antigravity / Cursor / Copilot），或回复‘仍按 T2 实现’。`”
 - 已有行为的单点逻辑修复保持静默 T2，不拦截。
 
+## 两类工作：全新功能 vs 旧系统扩展（隐蔽缺陷投入点）
+
+游戏服务端（以及任何有状态线上系统）的 T3 不要平均加力。按工作种类把力气放在不同阶段：
+
+| 工作种类 | 典型 | AI 目前稳定性 | 隐蔽 bug 主要从哪漏 | **加力点（顺序）** |
+|---|---|---|---|---|
+| **GREENFIELD 全新功能** | 新玩法、新协议、新存储 | 设计和实现通常够用 | 需求没说清、状态机自相矛盾 | 需求/设计人工确认；实现按契约做 |
+| **LEGACY_EXTENSION 旧系统扩展** | 旧功能加新类型、加分支、改公共分发 | 新路径往往是对的 | **没被改到的旧切面**（重置、限购、补偿、不先查询直接写） | **1. 设计考古 2. 旧行为表征测试（实现前就能跑）3. 按协议走查 4. 人工按协议脚本验收** |
+
+**不要把旧系统扩展的主防线放在「人工总体功能审核」。** 人和 AI 在收尾阶段都会盯 diff / 新代码；旧限购击穿、懒重置不在 diff 里。加时长只会更仔细地看错对象。收尾审核要改的是**审查对象**：按 `04.entryPoints` × **抽到的代表旧 typeKey** 走已有协议，而不是把整个功能再读一遍。
+
+**「列出全部」指 04 声明表，不是每个旧类型一条测试。** `behaviorVariants` 把兄弟键标成 `IDENTICAL_TO_LEGACY` / `INTENTIONAL_DIFF` / `N_A`（或 `excludedWithReason`）是 grep 出来的 JSON 表，几分钟能填。测试与人工协议脚本只抽 **1–2 个共享同一分发的代表旧键**；新类型（`INTENTIONAL_DIFF`）必须有自己的 FUNCTIONAL Case。有独立配置或独立分支的旧键，只对那一子集再各抽 1 个，不要把 20 个同质 enum 常量复制成 20 条 Case。
+
+**「协议脚本」不是新写协议。** 不要为此验收去加客户端包。脚本 = 按固定顺序调用 `04.entryPoints` 里**已经存在**的正式入口（QUERY/INFO、MUTATE/买、RESET 触发）。GM 只许 Arrange/Observe（造满额、拨时间、查库），不许当买入 Act。完整步骤见 `SUPERPOWERS_MANUAL.md` 模板 11b。
+
+**「先锁旧限购/重置，再提交新类型代码」锁的是共享分发，不是旧功能清单。** 新类型自己的缺陷用 FUNCTIONAL（可 TDD、可先红后绿）抓。旧类型表征 Case 是共享 dispatcher / 重置 / 限购 /「不先查直接写」上的金丝雀：不改旧 Case 正文，只换/绑一个已有 `typeKey`。线上事故往往是「以为加键不影响旧类型」，表征测的就是这个假设。顺序：先在**当前基线**跑绿（锁的是已有行为），再提交新类型代码，改完还得绿。这不是否认新类型也会写错。
+
+**LEGACY_EXTENSION 的强制顺序（与 GREENFIELD 不同）**：
+
+1. **头脑风暴先考古，再谈新方案。** 前三问必须是：相关**已有**公共入口有哪些（QUERY/MUTATE/RESET/COMPENSATE）？已有哪些类型/策略键、哪些必须 `IDENTICAL_TO_LEGACY`？限购/计数/跨天是否会在「不先查询、直接写」时自愈？不要先讨论新类型怎么做酷。
+2. **设计阶段产出 `04_change_impact.json`（8 切面 + 已有全入口 + 兄弟键声明表），与 `06` 一起进人工确认。** 旧切面没列进 04，后面的实现、测试、审查都不会去打。这是旧系统扩展**唯一最值钱的人工确认**（比收尾看代码更值钱）。没有这张表，不准开始画新类型主路径。
+3. **表征测试锁旧行为，且必须在改生产代码之前就能在当前基线上跑绿。** 这是对「不前置完整测试计划」的**唯一例外**：抽 1–2 个 `IDENTICAL_TO_LEGACY` 代表（正式协议 Act、冷重载、含 bypass QUERY）。描述的是**现在已有**的行为，不依赖尚未实现的新类型。先红后绿是针对新类型；旧限购/重置是金样，先绿再改，改完还得绿。复杂联调环境的噪音会掩盖限购击穿；隔离的表征 Case 不会。
+4. **实现与内审按协议走（Mode E），禁止只审新改的几行。** 走查绑代表旧键 + 全部新键，不必对每个同质旧键各走一遍。
+5. **人工总体功能审核 = 执行协议脚本，不是加一轮代码阅读。** 对人：用模板 11b，对抽到的代表旧类型走「满额 → 跨周期 → 不先查直接写 → 冷重载看次数」。对 AI 收尾：`requesting-code-review` / 全功能审计必须带协议追踪表；禁止只交 class/diff 报告。
+
+GREENFIELD 仍保持：设计确认后测试计划不构成第三门禁，具体新功能 TC 可在 TDD 中产出。
+
+**人工时间怎么花（旧系统扩展）**：设计确认 `04` 已有协议清单、8 切表、兄弟键声明 > 看表征 Case 是否打到代表旧类型 > 按脚本点协议。不要把同等时间花在读 Helper 新分支、为每个同质旧类型复制 Case，或「整体再审一遍」。
+
 ## 人工 review 阶段
 
 需求与设计是人工把关阶段，而非单条消息的批准。需求可多轮问题/备选/分段 review，产出 `01_server_rules.md`，等明确批准；设计可多轮架构/兼容/协议/持久化/可测性 review，产出 `06_design_contract.md`，等明确批准。批准后自动连续完成计划/实现/review/测试/修复/回归。除非需求/设计变模糊或环境阻塞，否则**不要增设实现计划、代码 review 或测试结果的批准检查点**。
@@ -110,7 +160,9 @@ AI 可在一次响应内同时呈递 `01_server_rules.md` 与 `06_design_contrac
 
 ## 全功能审计（手动，人工把关）
 
-主流程审查分两层（职责不重叠）：单任务内审（subagent 内 `implementation-auditor`/`logic-auditor`）、整体收尾（`requesting-code-review`）。复杂大功能交付后可**手动触发全功能审计**查跨任务契约一致性与整体游戏状态正确性。`workflow-orchestrator` 是 Superpowers 主流程之外的人工手动片段编排器（`audit_fix_policy` 取 `REPORT_ONLY` 或 `AUTO_REPAIR`），不进主流程必经链。详见 `.ai-sop/SUPERPOWERS_MANUAL.md`。
+主流程审查分两层（职责不重叠）：单任务内审（subagent 内 `implementation-auditor`/`logic-auditor`）、整体收尾（`requesting-code-review`）。复杂大功能交付后可**手动触发全功能审计**。
+
+**旧系统扩展的全功能审计 / 人工总体审核不得按类或按版本 diff 起审。** 必须按协议：读取 `04.entryPoints` 与 `behaviorVariants`，对每个 `IDENTICAL_TO_LEGACY` 的 `typeKey` 走 QUERY/MUTATE（含不先查询直接写）、RESET、COMPENSATE。这是人工总体审核的正确形态——力度来自脚本穷尽，不是来自多花时间看新代码。`workflow-orchestrator` 在存在 `04_change_impact.json` 且含类型/策略扩展时，默认派 **Protocol Trace / Mode E**，禁止只带 `focus_methods` 或 revision diff。详见 `.ai-sop/SUPERPOWERS_MANUAL.md`。
 
 ## AUDIT-EXEMPT（审计例外声明）
 
@@ -137,7 +189,7 @@ AI 可在一次响应内同时呈递 `01_server_rules.md` 与 `06_design_contrac
 
 ## 规范功能产物
 
-使用 `.ai-workspace/specs/features/<FeatureName>/`：`01_server_rules.md`（需求，含 BR/EX/AC）、`05_test_plan.md`（测试用例，含 TC）、`05_test_coverage.json`（机器可读追溯）、`06_design_contract.md`（设计，含 DC/DR/TW）。遵循 `.ai-sop/workflows/shared-artifacts.md`。Superpowers 常规 plan/ledger 文件是执行产物，不得替代规范功能契约。
+使用 `.ai-workspace/specs/features/<FeatureName>/`：`01_server_rules.md`（需求，含 BR/EX/AC）、`04_change_impact.json`（行为影响；类型/策略扩展时含 8 切面完成度）、`05_test_plan.md`（测试用例，含 TC）、`05_test_coverage.json`（机器可读追溯）、`06_design_contract.md`（设计，含 DC/DR/TW）。遵循 `.ai-sop/workflows/shared-artifacts.md`。Superpowers 常规 plan/ledger 文件是执行产物，不得替代规范功能契约。
 
 **05_test_coverage.json 自动生成（SyncCoverage）**：`05_test_plan.md` 的 TC 块用 HTML 注释元数据标记：`<!-- meta: { "id": "TC-XX", "title": "...", "covers": ["BR-XX", "DC-XX"], "priority": "P1" } -->`。运行 `workflow-state.ps1 -Operation SyncCoverage -Path .../05_test_coverage.json` 从 `05_test_plan.md` 自动生成 coverage JSON（占位字段供 AI/用户细化）。**禁止手写 coverage JSON**——用 SyncCoverage 生成。
 
@@ -154,6 +206,7 @@ AI 可在一次响应内同时呈递 `01_server_rules.md` 与 `06_design_contrac
 | DC | Design Contract（设计契约条款） | 06 |
 | DR | Design Rule（设计规则/风险） | 06 |
 | TW | Test/Workflow（测试/工作流约定） | 06 |
+| INV | Invariant（行为不变量，类型扩展必填） | 04_change_impact + 05_test_coverage |
 
 ## 领域专家 Skills（执行单元，强制绑定项目专家）
 
@@ -273,7 +326,7 @@ pwsh -NoProfile -File .\.ai-sop\scripts\workflow-state.ps1 -Operation ValidateTe
 
 完成条件**按档位分**（`workflow-state.ps1 -Operation Status` 显示当前 tier + 门禁 SHA；`workflow-state.ps1 -Operation CheckCompletion -Path .../00_workflow_state.json` 输出机检 ASCII checklist（门禁 SHA/coverage/编译产物/SVN status）。**机检项 [v]=pass/[X]=fail，人工项 [?]=需 AI 验证**。AI 据下表 + CheckCompletion 结果逐项检查并报告）：
 
-**Complete 前硬门禁（VerifyCompletion 内嵌执行）**：`workflow-owner.ps1 -Operation Complete` 内部已嵌入 `VerifyCompletion` 硬门禁检验。在释放归属锁前，脚本会自动在后台先调用 `VerifyCompletion`：T3 严格校验门禁 APPROVED+SHA / coverage 无占位与 carrier 错误 / feature-state 阶段非初始 / 编译产物；T2 校验编译产物。**若 VerifyCompletion 检验未通过（非 0），Complete 会直接抛出错误并拒绝释放归属锁**。AI 亦可事先调用 `workflow-state.ps1 -Operation VerifyCompletion -Path .../00_workflow_state.json` 提前确认是否达到完成标准。
+**Complete 前硬门禁（VerifyCompletion 内嵌执行）**：`workflow-owner.ps1 -Operation Complete` 内部已嵌入 `VerifyCompletion` 硬门禁检验。在释放归属锁前，脚本会自动在后台先调用 `VerifyCompletion`：T3 严格校验门禁 APPROVED+SHA / coverage 无占位与 carrier 错误 / `04_change_impact.json` 有效且未过期 / 类型或公共分发扩展时 8 切面完成度 / feature-state 阶段非初始 / 编译产物；T2 校验编译产物。**若 VerifyCompletion 检验未通过（非 0），Complete 会直接抛出错误并拒绝释放归属锁**。AI 亦可事先调用 `workflow-state.ps1 -Operation VerifyCompletion -Path .../00_workflow_state.json` 提前确认是否达到完成标准。
 
 **T3（6 项全过）**：
 

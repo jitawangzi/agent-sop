@@ -120,6 +120,15 @@ brainstorming（需求 → 确认 → design-architect 产出 06）
 ### B5 测试性
 - 是否提供了"哪些地方必须测、为什么、用什么手段"（供 TDD 与 QA），而非本阶段产出完整测试计划。
 
+### B6 类型/策略扩展完成度（机器门禁对齐）
+当方案是在已有系统上新增类型、枚举、策略处理器或改公共分发时：
+- `06_design_contract.md` 必须含 8 维新旧行为差分表。
+- 同功能目录必须有 `04_change_impact.json`，且 `lifecycleFacets` 覆盖 `INIT`/`QUERY`/`VALIDATE`/`MUTATE`/`PERSIST`/`RESET`/`SERIALIZE`/`COMPENSATE`（缺切面不得用“主路径已覆盖”省略，只能显式 `N_A` + 理由）。
+- `04.entryPoints` 必须列出该功能**已经存在**的全部相关公共入口（QUERY、MUTATE、RESET 触发、COMPENSATE、管理/GM 观测），不得只写主写入协议，也不是要求为此新设计一套包；缺协议清单或缺少 QUERY vs MUTATE 成对入口 = `BLOCKER`。
+- `behaviorVariants` 必须登记兄弟键（或 `excludedWithReason`）。这是声明表。同质共享一条分发的旧键可都标 `IDENTICAL_TO_LEGACY`；测试计划只抽 1–2 个代表即可，缺声明表或变更 enum 漏列兄弟键 = `BLOCKER`。新类型 `INTENTIONAL_DIFF` 不得用“旧类型抽样”代替自己的主路径 Case。
+- `N_A` / `INHERITED` / `TOUCHED` 必须带可定位证据（`Class#method`、源文件或 `typeKey`）。套话（`n/a`、`不适用`、`主路径已覆盖`）或变更 enum 漏列兄弟键 = `BLOCKER`。
+- 缺表、缺产物或切面未穷尽 = `BLOCKER`。实现期 `VerifyCompletion` 会再次机器校验；设计审查不得把该债留到编码之后才发现。
+
 ## 审查范围 C：已知设计期缺陷模式（逐条对照）
 
 以下是游戏服务端历史缺陷沉淀的**设计期**模式。逐条对照方案，命中即按对应级别报告。这些是实现审计未必能在设计期拦住的、且方案阶段就该避免的：

@@ -1500,7 +1500,565 @@ function Validate-ChangeImpactState {
     if ([string]::IsNullOrWhiteSpace($currentDigest) -or $impact.changeSetDigest.ToLowerInvariant() -ne $currentDigest.ToLowerInvariant()) {
         throw "Change impact analysis is stale: recorded changeSetDigest does not match actual workspace diff against baseline '$($impact.baseline)'. Re-run Behavior Impact Analysis."
     }
+
+    Assert-ExtensionImpactCompleteness -Impact $impact -WorkspaceRoot $wsRoot -Baseline $impact.baseline -SpecDir $specDir
     return $impact
+}
+
+function Get-RequiredLifecycleFacetIds {
+    return @(
+        "INIT",
+        "QUERY",
+        "VALIDATE",
+        "MUTATE",
+        "PERSIST",
+        "RESET",
+        "SERIALIZE",
+        "COMPENSATE"
+    )
+}
+
+function Test-IsTypeExtensionRisk {
+    param($TriggersHit)
+    $extensionTriggers = @("TYPE_EXTENSION", "PUBLIC_ROUTING")
+    foreach ($t in @($TriggersHit)) {
+        if ($extensionTriggers -contains [string]$t) { return $true }
+    }
+    return $false
+}
+
+function Get-JsonObjectArray {
+    # ConvertFrom-Json yields $null for a missing property. @($null).Count is 1 in
+    # PowerShell, which would treat an omitted array as non-empty. Normalize to a
+    # real object array (empty if absent).
+    param($Value)
+    if ($null -eq $Value) { return [object[]]@() }
+    if ($Value -is [string]) { return @($Value) }
+    if ($Value -is [System.Array] -or $Value -is [System.Collections.IList]) {
+        return @($Value | Where-Object { $null -ne $_ })
+    }
+    return @($Value)
+}
+
+function Get-JsonStringArray {
+    param($Value)
+    $items = @(Get-JsonObjectArray -Value $Value)
+    $result = [System.Collections.Generic.List[string]]::new()
+    foreach ($item in $items) {
+        if ($null -eq $item) { continue }
+        $text = [string]$item
+        if (-not [string]::IsNullOrWhiteSpace($text)) {
+            $result.Add($text.Trim())
+        }
+    }
+    return [string[]]@($result)
+}
+
+function Test-JsonFlagTrue {
+    param($Value)
+    if ($Value -is [bool]) { return [bool]$Value }
+    if ($null -eq $Value) { return $false }
+    $text = [string]$Value
+    return $text -eq "True" -or $text -eq "true"
+}
+
+function Test-IsWeakEvidence {
+    param([string]$Text)
+    if ([string]::IsNullOrWhiteSpace($Text)) { return $true }
+    $t = $Text.Trim()
+    if ($t.Length -lt 24) { return $true }
+    if ($t -match '(?is)^(n/?a|n\.a\.|na|none|no|not applicable|不适用|不涉及|无|skip|no impact|不影响|not needed|none needed|main path covers|already covered|no change)[\s.]*$') {
+        return $true
+    }
+    if ($t -match '(?i)^legacy dispatcher still covers\b') { return $true }
+    return $false
+}
+
+function Test-EvidenceHasLocator {
+    param(
+        [string]$Text,
+        [string[]]$TypeKeys
+    )
+    if ([string]::IsNullOrWhiteSpace($Text)) { return $false }
+    if ($Text -match '[A-Za-z_][\w./]*#[A-Za-z_][\w]*') { return $true }
+    if ($Text -match '(?i)[\w./\\-]+\.(?:java|kt|kts|groovy|cs|go|py|xml|json)\b') { return $true }
+    foreach ($k in @($TypeKeys)) {
+        if ([string]::IsNullOrWhiteSpace($k)) { continue }
+        if ([regex]::IsMatch($Text, ('\b' + [regex]::Escape($k) + '\b'))) { return $true }
+    }
+    return $false
+}
+
+function Get-WorkspaceChangedRelativePaths {
+    param(
+        [string]$WorkspaceRoot,
+        [string]$Baseline
+    )
+    $paths = [System.Collections.Generic.HashSet[string]]::new([System.StringComparer]::OrdinalIgnoreCase)
+    if ([string]::IsNullOrWhiteSpace($WorkspaceRoot) -or -not (Test-Path -LiteralPath $WorkspaceRoot)) {
+        return [string[]]@()
+    }
+    $hasGit = Test-Path -LiteralPath (Join-Path $WorkspaceRoot ".git")
+    $hasSvn = Test-Path -LiteralPath (Join-Path $WorkspaceRoot ".svn")
+    if ($hasGit) {
+        $diffTarget = if (-not [string]::IsNullOrWhiteSpace($Baseline) -and $Baseline -match '^[0-9a-fA-F]{7,64}$') {
+            $Baseline
+        } else {
+            "HEAD"
+        }
+        foreach ($cmd in @(
+            @("diff", "--name-only", $diffTarget, "--", "."),
+            @("diff", "--cached", "--name-only", $diffTarget, "--", "."),
+            @("ls-files", "--others", "--exclude-standard")
+        )) {
+            $lines = & git -C $WorkspaceRoot -c core.quotepath=false @cmd 2>&1
+            if ($LASTEXITCODE -ne 0) { continue }
+            foreach ($line in @($lines | Out-String -Stream)) {
+                $rel = Unquote-GitPath -Path ([string]$line).Trim()
+                if ([string]::IsNullOrWhiteSpace($rel)) { continue }
+                if (Test-IsAiSopInternalSpecMetadata -RelativePath $rel) { continue }
+                [void]$paths.Add($rel.Replace('\', '/'))
+            }
+        }
+    }
+    if ($hasSvn) {
+        $svnRev = if (-not [string]::IsNullOrWhiteSpace($Baseline) -and ($Baseline -replace '^(?:rev|r)', '') -match '^\d+$') {
+            $Baseline -replace '^(?:rev|r)', ''
+        } else {
+            $null
+        }
+        $sumArgs = @("diff", "--summarize", "--non-interactive")
+        if (-not [string]::IsNullOrWhiteSpace($svnRev)) { $sumArgs += @("-r", $svnRev) }
+        $sumArgs += $WorkspaceRoot
+        $sumLines = & svn @sumArgs 2>&1
+        if ($LASTEXITCODE -eq 0) {
+            foreach ($line in @($sumLines | Out-String -Stream)) {
+                if ($line -match '^\s*[A-Z]\s+(.*)$') {
+                    $full = $Matches[1].Trim()
+                    $rel = $full
+                    if ($full.StartsWith($WorkspaceRoot, [System.StringComparison]::OrdinalIgnoreCase)) {
+                        $rel = $full.Substring($WorkspaceRoot.Length).TrimStart([char[]]@('\', '/'))
+                    }
+                    if (-not [string]::IsNullOrWhiteSpace($rel) -and -not (Test-IsAiSopInternalSpecMetadata -RelativePath $rel)) {
+                        [void]$paths.Add($rel.Replace('\', '/'))
+                    }
+                }
+            }
+        }
+        $statLines = & svn status --non-interactive --ignore-externals $WorkspaceRoot 2>&1
+        if ($LASTEXITCODE -eq 0) {
+            foreach ($line in @($statLines | Out-String -Stream)) {
+                if ($line -match '^\s*[?ACMR]\s+(.*)$') {
+                    $full = $Matches[1].Trim()
+                    $rel = $full
+                    if ($full.StartsWith($WorkspaceRoot, [System.StringComparison]::OrdinalIgnoreCase)) {
+                        $rel = $full.Substring($WorkspaceRoot.Length).TrimStart([char[]]@('\', '/'))
+                    }
+                    if (-not [string]::IsNullOrWhiteSpace($rel) -and -not (Test-IsAiSopInternalSpecMetadata -RelativePath $rel)) {
+                        [void]$paths.Add($rel.Replace('\', '/'))
+                    }
+                }
+            }
+        }
+    }
+    return [string[]]@($paths)
+}
+
+function Get-JavaTypeKeyCandidates {
+    param([string]$Source)
+    $names = [System.Collections.Generic.HashSet[string]]::new([System.StringComparer]::Ordinal)
+    if ([string]::IsNullOrWhiteSpace($Source)) { return [string[]]@() }
+    foreach ($em in [regex]::Matches($Source, '(?s)\benum\s+\w+[^{]*\{(?<body>.*?)\}')) {
+        $body = $em.Groups['body'].Value
+        $semi = $body.IndexOf(';')
+        $constRegion = if ($semi -ge 0) { $body.Substring(0, $semi) } else { $body }
+        foreach ($m in [regex]::Matches($constRegion, '\b([A-Z][A-Z0-9_]{2,})\b')) {
+            [void]$names.Add($m.Groups[1].Value)
+        }
+    }
+    foreach ($m in [regex]::Matches($Source, '\bstatic\s+final\s+int\s+(TYPE_[A-Z0-9_]{2,})\b')) {
+        [void]$names.Add($m.Groups[1].Value)
+    }
+    return [string[]]@($names)
+}
+
+function Resolve-CoverageCarrier {
+    param(
+        [string]$CoveragePath,
+        [string]$Carrier,
+        [string]$WorkspaceRoot
+    )
+    $carrierTrim = ([string]$Carrier).Trim()
+    $filePathPart = $carrierTrim
+    $methodName = $null
+    if ($filePathPart -match '^([^#]+)#(.*)$') {
+        $filePathPart = $Matches[1].Trim()
+        $methodName = $Matches[2].Trim()
+    }
+    $resolved = $filePathPart
+    if (-not [System.IO.Path]::IsPathRooted($resolved)) {
+        $candidateWs = if (-not [string]::IsNullOrWhiteSpace($WorkspaceRoot)) { Join-Path $WorkspaceRoot $filePathPart } else { $null }
+        $candidateSpec = if (-not [string]::IsNullOrWhiteSpace($CoveragePath)) {
+            Join-Path (Split-Path -Parent $CoveragePath) $filePathPart
+        } else {
+            $null
+        }
+        if ($candidateWs -and (Test-Path -LiteralPath $candidateWs -PathType Leaf)) {
+            $resolved = $candidateWs
+        } elseif ($candidateSpec -and (Test-Path -LiteralPath $candidateSpec -PathType Leaf)) {
+            $resolved = $candidateSpec
+        } elseif ($candidateWs) {
+            $resolved = $candidateWs
+        } elseif ($candidateSpec) {
+            $resolved = $candidateSpec
+        }
+    }
+    return [pscustomobject]@{
+        Path = $resolved
+        Method = $methodName
+        Relative = $filePathPart
+    }
+}
+
+function Get-SourceMethodBody {
+    param(
+        [string]$FilePath,
+        [string]$MethodName
+    )
+    if ([string]::IsNullOrWhiteSpace($FilePath) -or -not (Test-Path -LiteralPath $FilePath -PathType Leaf)) {
+        return $null
+    }
+    if ([string]::IsNullOrWhiteSpace($MethodName)) { return $null }
+    $source = [System.IO.File]::ReadAllText($FilePath)
+    $sig = [regex]::Match(
+        $source,
+        '(?s)\b(?:void|fun|func|function|def)\s+' + [regex]::Escape($MethodName) + '\s*\([^)]*\)\s*\{'
+    )
+    if (-not $sig.Success) {
+        $sig = [regex]::Match(
+            $source,
+            '(?s)\b(?:public|protected|private|static|\s)+\s+\w+\s+' + [regex]::Escape($MethodName) + '\s*\([^)]*\)\s*\{'
+        )
+    }
+    if (-not $sig.Success) { return $null }
+    $open = $sig.Index + $sig.Length - 1
+    $depth = 0
+    for ($i = $open; $i -lt $source.Length; $i++) {
+        $ch = $source[$i]
+        if ($ch -eq [char]'{') { $depth++ }
+        elseif ($ch -eq [char]'}') {
+            $depth--
+            if ($depth -eq 0) {
+                return $source.Substring($open, $i - $open + 1)
+            }
+        }
+    }
+    return $null
+}
+
+function Assert-ExtensionImpactEvidence {
+    param(
+        $Impact,
+        [string]$WorkspaceRoot,
+        [string]$Baseline,
+        [string]$SpecDir
+    )
+    if ([string]::IsNullOrWhiteSpace($WorkspaceRoot)) { return }
+
+    $prefix = "TYPE_EXTENSION_IMPACT_INCOMPLETE"
+    $variants = Get-JsonObjectArray -Value $Impact.behaviorVariants
+    $typeKeys = @()
+    $declaredKeys = [System.Collections.Generic.HashSet[string]]::new([System.StringComparer]::Ordinal)
+    $excludedKeys = [System.Collections.Generic.HashSet[string]]::new([System.StringComparer]::Ordinal)
+    foreach ($variant in $variants) {
+        if ($null -eq $variant -or [string]::IsNullOrWhiteSpace($variant.typeKey)) { continue }
+        $typeKey = [string]$variant.typeKey
+        $typeKeys += $typeKey
+        [void]$declaredKeys.Add($typeKey)
+        $relation = [string]$variant.relationToLegacy
+        if ($relation -eq "N_A") {
+            $reason = [string]$variant.reason
+            if (Test-IsWeakEvidence -Text $reason) {
+                throw "${prefix}: behaviorVariants typeKey '$typeKey' is N_A but reason is boilerplate or shorter than 24 characters. Name the grep/symbol that proves this key is out of scope."
+            }
+            if (-not (Test-EvidenceHasLocator -Text $reason -TypeKeys $typeKeys)) {
+                throw "${prefix}: behaviorVariants typeKey '$typeKey' is N_A but reason has no locatable symbol (Class#method, file path, or typeKey)."
+            }
+        }
+    }
+    foreach ($ex in (Get-JsonObjectArray -Value $Impact.excludedWithReason)) {
+        if ($null -ne $ex -and -not [string]::IsNullOrWhiteSpace($ex.symbol)) {
+            [void]$excludedKeys.Add([string]$ex.symbol)
+        }
+    }
+
+    $highRiskNaFacets = @("QUERY", "VALIDATE", "RESET", "COMPENSATE")
+    $requiredFacetSet = [System.Collections.Generic.HashSet[string]]::new([System.StringComparer]::OrdinalIgnoreCase)
+    foreach ($id in (Get-RequiredLifecycleFacetIds)) { [void]$requiredFacetSet.Add($id) }
+    $naRequiredCount = 0
+    foreach ($facet in (Get-JsonObjectArray -Value $Impact.lifecycleFacets)) {
+        if ($null -eq $facet -or [string]::IsNullOrWhiteSpace($facet.facetId)) { continue }
+        $facetId = [string]$facet.facetId
+        $coverageKind = [string]$facet.coverage
+        $evidence = [string]$facet.evidence
+        if (Test-IsWeakEvidence -Text $evidence) {
+            throw "${prefix}: lifecycleFacets '$facetId' evidence is boilerplate or shorter than 24 characters. Cite Class#method, file, or typeKey — not 'n/a' / 'main path covers'."
+        }
+        if (-not (Test-EvidenceHasLocator -Text $evidence -TypeKeys $typeKeys)) {
+            throw "${prefix}: lifecycleFacets '$facetId' evidence has no locatable symbol (Class#method, source file, or typeKey)."
+        }
+        if ($coverageKind -eq "N_A" -and $requiredFacetSet.Contains($facetId)) {
+            $naRequiredCount++
+            if ($highRiskNaFacets -contains $facetId -and $evidence.Trim().Length -lt 40) {
+                throw "${prefix}: lifecycleFacets '$facetId' is N_A but QUERY/VALIDATE/RESET/COMPENSATE require >= 40 characters of locatable evidence (grep the missing entry; do not N_A a live facet)."
+            }
+        }
+    }
+    if ($naRequiredCount -gt 4) {
+        throw "${prefix}: $naRequiredCount of the 8 required lifecycle facets are N_A. Type/strategy extensions may N_A at most 4; extra N_A usually hides QUERY/RESET/COMPENSATE."
+    }
+
+    $siblingKeys = [System.Collections.Generic.HashSet[string]]::new([System.StringComparer]::Ordinal)
+    $changedRels = Get-WorkspaceChangedRelativePaths -WorkspaceRoot $WorkspaceRoot -Baseline $Baseline
+    foreach ($rel in $changedRels) {
+        if ($rel -notmatch '\.(?:java|kt|kts|groovy)$') { continue }
+        $full = Join-Path $WorkspaceRoot ($rel -replace '/', [IO.Path]::DirectorySeparatorChar)
+        if (-not (Test-Path -LiteralPath $full -PathType Leaf)) { continue }
+        $source = [System.IO.File]::ReadAllText($full)
+        $candidates = Get-JavaTypeKeyCandidates -Source $source
+        if ($candidates.Count -eq 0 -or $candidates.Count -gt 32) { continue }
+        foreach ($c in $candidates) { [void]$siblingKeys.Add($c) }
+    }
+    $missingSiblings = @()
+    foreach ($sibling in $siblingKeys) {
+        if ($declaredKeys.Contains($sibling)) { continue }
+        if ($excludedKeys.Contains($sibling)) { continue }
+        $missingSiblings += $sibling
+    }
+    if ($missingSiblings.Count -gt 0) {
+        throw "${prefix}: changed enum/TYPE_ constants are not all declared in behaviorVariants or excludedWithReason: $($missingSiblings -join ', '). Listing only the new key hides IDENTICAL_TO_LEGACY siblings."
+    }
+}
+
+function Assert-ExtensionCoverageCompleteness {
+    param(
+        $Impact,
+        $Coverage,
+        [string]$WorkspaceRoot,
+        [string]$Baseline,
+        [string]$SpecDir
+    )
+
+    if ([string]::IsNullOrWhiteSpace($WorkspaceRoot)) { return }
+
+    $risk = Get-SemanticRiskAssessment -WorkspaceRoot $WorkspaceRoot -Baseline $Baseline -SpecDir $SpecDir
+    if (-not (Test-IsTypeExtensionRisk -TriggersHit $risk.TriggersHit)) { return }
+
+    $triggerList = (@($risk.TriggersHit) | Where-Object { $_ -in @("TYPE_EXTENSION", "PUBLIC_ROUTING") }) -join ", "
+    $prefix = "TYPE_EXTENSION_COVERAGE_INCOMPLETE"
+
+    $cases = Get-JsonObjectArray -Value $Coverage.cases
+    if ($cases.Count -eq 0) {
+        throw "${prefix}: changeset hits $triggerList but 05_test_coverage.json has no cases."
+    }
+
+    $coveredEntries = [System.Collections.Generic.HashSet[string]]::new([System.StringComparer]::OrdinalIgnoreCase)
+    $coveredVariants = [System.Collections.Generic.HashSet[string]]::new([System.StringComparer]::OrdinalIgnoreCase)
+    $coveredFacets = [System.Collections.Generic.HashSet[string]]::new([System.StringComparer]::OrdinalIgnoreCase)
+    $characterizationKeys = [System.Collections.Generic.HashSet[string]]::new([System.StringComparer]::OrdinalIgnoreCase)
+    $hasQueryBypass = $false
+
+    foreach ($case in $cases) {
+        if ($null -eq $case) { continue }
+        foreach ($entryId in (Get-JsonStringArray -Value $case.entryPointIds)) {
+            [void]$coveredEntries.Add($entryId)
+        }
+        $testTypes = Get-JsonStringArray -Value $case.testTypes
+        $isCharacterization = $false
+        foreach ($testType in $testTypes) {
+            if ($testType -eq "CHARACTERIZATION") { $isCharacterization = $true; break }
+        }
+        foreach ($variantKey in (Get-JsonStringArray -Value $case.variantKeys)) {
+            [void]$coveredVariants.Add($variantKey)
+            if ($isCharacterization) {
+                [void]$characterizationKeys.Add($variantKey)
+            }
+        }
+        foreach ($facetId in (Get-JsonStringArray -Value $case.facetIds)) {
+            [void]$coveredFacets.Add($facetId)
+        }
+        if (Test-JsonFlagTrue -Value $case.bypassesPriorQuery) {
+            $hasQueryBypass = $true
+        }
+    }
+
+    $missingEntries = @()
+    foreach ($entryId in (Get-JsonStringArray -Value $Impact.entryPoints)) {
+        if (-not $coveredEntries.Contains($entryId)) { $missingEntries += $entryId }
+    }
+    if ($missingEntries.Count -gt 0) {
+        throw "${prefix}: 04.entryPoints not covered by any case entryPointIds: $($missingEntries -join ', '). Add protocol-trace cases that invoke each public entry from its formal input, not from a helper class."
+    }
+
+    $intentionalKeys = New-Object System.Collections.Generic.List[string]
+    $identicalKeys = New-Object System.Collections.Generic.List[string]
+    foreach ($variant in (Get-JsonObjectArray -Value $Impact.behaviorVariants)) {
+        if ($null -eq $variant -or [string]::IsNullOrWhiteSpace($variant.typeKey)) { continue }
+        $relation = [string]$variant.relationToLegacy
+        if ($relation -eq "N_A") { continue }
+        $typeKey = [string]$variant.typeKey
+        if ($relation -eq "IDENTICAL_TO_LEGACY") {
+            $identicalKeys.Add($typeKey)
+        }
+        elseif ($relation -eq "INTENTIONAL_DIFF") {
+            $intentionalKeys.Add($typeKey)
+        }
+    }
+
+    $missingIntentional = @()
+    foreach ($typeKey in $intentionalKeys) {
+        if (-not $coveredVariants.Contains($typeKey)) { $missingIntentional += $typeKey }
+    }
+    if ($missingIntentional.Count -gt 0) {
+        throw "${prefix}: INTENTIONAL_DIFF typeKeys not covered by any case variantKeys: $($missingIntentional -join ', '). The new type must have its own FUNCTIONAL (or CHARACTERIZATION) case; sampling applies only to IDENTICAL_TO_LEGACY siblings that share one dispatcher."
+    }
+
+    if ($identicalKeys.Count -gt 0) {
+        $sampledIdentical = $false
+        foreach ($typeKey in $identicalKeys) {
+            if ($characterizationKeys.Contains($typeKey)) {
+                $sampledIdentical = $true
+                break
+            }
+        }
+        if (-not $sampledIdentical) {
+            throw ("${prefix}: none of the IDENTICAL_TO_LEGACY typeKeys ({0}) appear in any CHARACTERIZATION case variantKeys. Sample at least one representative old type that shares the dispatcher; do not require a case per sibling. Independent branches/config still need their own sample (see 04.legacyPaths)." -f ($identicalKeys -join ", "))
+        }
+    }
+
+    $missingFacets = @()
+    $queryFacetActive = $false
+    foreach ($facet in (Get-JsonObjectArray -Value $Impact.lifecycleFacets)) {
+        if ($null -eq $facet -or [string]::IsNullOrWhiteSpace($facet.facetId)) { continue }
+        $coverageKind = [string]$facet.coverage
+        if ($coverageKind -notin @("TOUCHED", "INHERITED")) { continue }
+        $facetId = [string]$facet.facetId
+        if (-not $coveredFacets.Contains($facetId)) { $missingFacets += $facetId }
+        if ($facetId -eq "QUERY") { $queryFacetActive = $true }
+    }
+    if ($missingFacets.Count -gt 0) {
+        throw "${prefix}: TOUCHED/INHERITED lifecycleFacets not covered by any case facetIds: $($missingFacets -join ', ')."
+    }
+    if ($queryFacetActive -and -not $hasQueryBypass) {
+        throw "${prefix}: QUERY facet is TOUCHED/INHERITED but no case sets bypassesPriorQuery=true. Characterization must invoke the mutating public entry without a prior QUERY (lazy-reset / stale-state)."
+    }
+
+    $coveragePath = Join-Path $SpecDir "05_test_coverage.json"
+    foreach ($case in $cases) {
+        if ($null -eq $case) { continue }
+        $testTypes = Get-JsonStringArray -Value $case.testTypes
+        $isCharacterization = $false
+        foreach ($testType in $testTypes) {
+            if ($testType -eq "CHARACTERIZATION") { $isCharacterization = $true; break }
+        }
+        if (-not $isCharacterization) { continue }
+
+        $carrierInfo = Resolve-CoverageCarrier -CoveragePath $coveragePath -Carrier ([string]$case.automationCarrier) -WorkspaceRoot $WorkspaceRoot
+        if ([string]::IsNullOrWhiteSpace($carrierInfo.Path) -or -not (Test-Path -LiteralPath $carrierInfo.Path -PathType Leaf)) {
+            throw "${prefix}: CHARACTERIZATION case '$($case.id)' automationCarrier '$($case.automationCarrier)' does not resolve to a test file. Characterization cannot be a JSON-only claim."
+        }
+        if ([string]::IsNullOrWhiteSpace($carrierInfo.Method)) {
+            throw "${prefix}: CHARACTERIZATION case '$($case.id)' automationCarrier must include #methodName so the gate can inspect the method body."
+        }
+        $methodBody = Get-SourceMethodBody -FilePath $carrierInfo.Path -MethodName $carrierInfo.Method
+        if ([string]::IsNullOrWhiteSpace($methodBody) -or $methodBody -match '^\{\s*\}$') {
+            throw "${prefix}: CHARACTERIZATION case '$($case.id)' carrier $($carrierInfo.Relative)#$($carrierInfo.Method) has an empty method body. Bind the typeKey and public entry as literals/calls; an empty @Test does not lock legacy dispatch."
+        }
+        if ($methodBody -notmatch '\(') {
+            throw "${prefix}: CHARACTERIZATION case '$($case.id)' carrier method body has no call. Act must invoke a formal public entry, not only mention identifiers."
+        }
+        foreach ($variantKey in (Get-JsonStringArray -Value $case.variantKeys)) {
+            if (-not [regex]::IsMatch($methodBody, ('\b' + [regex]::Escape($variantKey) + '\b'))) {
+                throw "${prefix}: CHARACTERIZATION case '$($case.id)' carrier method does not mention variantKey '$variantKey'. The test must bind that legacy/new key in the method that actually runs."
+            }
+        }
+        foreach ($entryId in (Get-JsonStringArray -Value $case.entryPointIds)) {
+            if (-not [regex]::IsMatch($methodBody, ('\b' + [regex]::Escape($entryId) + '\b'))) {
+                throw "${prefix}: CHARACTERIZATION case '$($case.id)' carrier method does not mention entryPointId '$entryId'. Act must go through that public entry, not a helper class."
+            }
+        }
+    }
+}
+
+function Assert-ExtensionImpactCompleteness {
+    param(
+        $Impact,
+        [string]$WorkspaceRoot,
+        [string]$Baseline,
+        [string]$SpecDir
+    )
+
+    if ([string]::IsNullOrWhiteSpace($WorkspaceRoot)) { return }
+
+    $risk = Get-SemanticRiskAssessment -WorkspaceRoot $WorkspaceRoot -Baseline $Baseline -SpecDir $SpecDir
+    if (-not (Test-IsTypeExtensionRisk -TriggersHit $risk.TriggersHit)) { return }
+
+    $triggerList = (@($risk.TriggersHit) | Where-Object { $_ -in @("TYPE_EXTENSION", "PUBLIC_ROUTING") }) -join ", "
+    $prefix = "TYPE_EXTENSION_IMPACT_INCOMPLETE"
+
+    $variants = Get-JsonObjectArray -Value $Impact.behaviorVariants
+    if ($variants.Count -eq 0) {
+        throw "${prefix}: changeset hits $triggerList but 04_change_impact.json has empty behaviorVariants. Declare every new and legacy type/strategy key as IDENTICAL_TO_LEGACY, INTENTIONAL_DIFF, or N_A."
+    }
+
+    $legacyPaths = Get-JsonObjectArray -Value $Impact.legacyPaths
+    if ($legacyPaths.Count -eq 0) {
+        throw "${prefix}: changeset hits $triggerList but 04_change_impact.json has empty legacyPaths. List old dispatch/entry paths whose protected behavior must not regress."
+    }
+
+    $invariants = Get-JsonObjectArray -Value $Impact.invariants
+    if ($invariants.Count -eq 0) {
+        throw "${prefix}: changeset hits $triggerList but 04_change_impact.json has empty invariants. Add at least one INV-* that 05_test_coverage.json can cover."
+    }
+
+    $facets = Get-JsonObjectArray -Value $Impact.lifecycleFacets
+    $facetIds = [System.Collections.Generic.HashSet[string]]::new([System.StringComparer]::OrdinalIgnoreCase)
+    foreach ($f in $facets) {
+        if ($null -ne $f -and -not [string]::IsNullOrWhiteSpace($f.facetId)) {
+            [void]$facetIds.Add([string]$f.facetId)
+        }
+    }
+    $missingFacets = @()
+    foreach ($required in (Get-RequiredLifecycleFacetIds)) {
+        if (-not $facetIds.Contains($required)) { $missingFacets += $required }
+    }
+    if ($missingFacets.Count -gt 0) {
+        throw "${prefix}: changeset hits $triggerList but lifecycleFacets is missing required ids: $($missingFacets -join ', '). Every type/strategy extension must verdict INIT, QUERY, VALIDATE, MUTATE, PERSIST, RESET, SERIALIZE, and COMPENSATE as TOUCHED, INHERITED, or N_A."
+    }
+
+    $identicalVariants = @($variants | Where-Object { [string]$_.relationToLegacy -eq "IDENTICAL_TO_LEGACY" })
+    if ($identicalVariants.Count -gt 0) {
+        $regressionIds = [System.Collections.Generic.HashSet[string]]::new([System.StringComparer]::OrdinalIgnoreCase)
+        foreach ($lp in $legacyPaths) {
+            if ($null -ne $lp -and -not [string]::IsNullOrWhiteSpace($lp.regressionCaseId)) {
+                [void]$regressionIds.Add([string]$lp.regressionCaseId)
+            }
+        }
+        $requiredCases = [System.Collections.Generic.HashSet[string]]::new([System.StringComparer]::OrdinalIgnoreCase)
+        foreach ($rc in @($Impact.requiredRegressionCases)) {
+            if (-not [string]::IsNullOrWhiteSpace($rc)) { [void]$requiredCases.Add([string]$rc) }
+        }
+        if ($regressionIds.Count -eq 0) {
+            throw "${prefix}: IDENTICAL_TO_LEGACY variants require at least one legacyPaths[].regressionCaseId (differential regression on old types)."
+        }
+        foreach ($rid in $regressionIds) {
+            if (-not $requiredCases.Contains($rid)) {
+                throw "${prefix}: legacyPaths regression case '$rid' is not listed in requiredRegressionCases."
+            }
+        }
+    }
+
+    Assert-ExtensionImpactEvidence -Impact $Impact -WorkspaceRoot $WorkspaceRoot -Baseline $Baseline -SpecDir $SpecDir
 }
 
 function Get-SemanticRiskAssessment {
@@ -1670,7 +2228,10 @@ function Get-SemanticRiskAssessment {
     $codeDiff = $codeDiffBuilder.ToString()
 
     # Trigger 1: TYPE_EXTENSION (Enums, Enum constants, Handler/Processor/Strategy subclasses)
-    if ($codeDiff -match '(?im)^\+\s*.*?\b(?:(?:public\s+|protected\s+|private\s+)?(?:final\s+|abstract\s+)?enum\s+\w+|public\s+static\s+final\s+int\s+TYPE_|\bTYPE_\w+\b|[A-Z][A-Z0-9_]{2,}\s*(?:\([^)]*\))?\s*[,;])' -or
+    # ALL_CAPS token alternative must use -cmatch: PowerShell -match is case-insensitive
+    # even with a case-sensitive character class, so "package test;" would look like TYPE_EXTENSION.
+    if ($codeDiff -match '(?im)^\+\s*.*?\b(?:(?:public\s+|protected\s+|private\s+)?(?:final\s+|abstract\s+)?enum\s+\w+|public\s+static\s+final\s+int\s+TYPE_|\bTYPE_\w+\b)' -or
+        $codeDiff -cmatch '(?m)^\+\s*.*?\b[A-Z][A-Z0-9_]{2,}\s*(?:\([^)]*\))?\s*[,;]' -or
         $codeDiff -match '(?im)^\+\s*.*?\b(?:public\s+|protected\s+|private\s+)?(?:final\s+|abstract\s+)?class\s+\w*(?:Processor|Handler|Action|Strategy|Listener|Interceptor|Filter|Controller|Dispatcher|Router)\b' -or
         $codeDiff -match '(?im)^\+\s*.*?\b(?:implements|extends)\s+\w*(?:Handler|Processor|Action|Strategy|Listener|Interceptor|Filter|Controller|Dispatcher|Router)\b') {
         $triggersHit.Add("TYPE_EXTENSION")
@@ -4009,6 +4570,10 @@ switch ($Operation) {
                 try {
                     $impact = Validate-ChangeImpactState -ImpactPath $impactPath
                     $checks.Add("[v] 行为影响分析有效且未过期")
+                    $extRisk = Get-SemanticRiskAssessment -WorkspaceRoot $wsRoot -Baseline $impact.baseline -SpecDir $specDir
+                    if (Test-IsTypeExtensionRisk -TriggersHit $extRisk.TriggersHit) {
+                        $checks.Add("[v] 类型/路由扩展完成度(behaviorVariants/legacyPaths/invariants/8-lifecycleFacets/证据与兄弟键)")
+                    }
 
                     # Cross-validation with 05_test_coverage.json
                     if ($covOk) {
@@ -4036,6 +4601,15 @@ switch ($Operation) {
                                 if (-not $declaredCases.Contains([string]$rc)) {
                                     $failures.Add("Required regression case '$rc' in 04_change_impact.json is missing from 05_test_coverage.json")
                                 }
+                            }
+                        }
+                        if (Test-IsTypeExtensionRisk -TriggersHit $extRisk.TriggersHit) {
+                            try {
+                                Assert-ExtensionCoverageCompleteness -Impact $impact -Coverage $covObj -WorkspaceRoot $wsRoot -Baseline $impact.baseline -SpecDir $specDir
+                                $checks.Add("[v] 类型/路由扩展覆盖完成度(CHARACTERIZATION载体方法体/entryPointIds/variantKeys/facetIds/bypassesPriorQuery)")
+                            } catch {
+                                $failures.Add($_.Exception.Message)
+                                $checks.Add("[X] 类型/路由扩展覆盖完成度(CHARACTERIZATION载体方法体/entryPointIds/variantKeys/facetIds/bypassesPriorQuery)")
                             }
                         }
                     }

@@ -18,7 +18,9 @@ description: 资深测试开发工程师（SDET），负责自动化测试与质
 ## Core Workflow: Targeted Feature Testing
 
 ### Invocation Mode [CRITICAL]
-- `PLAN`: 设计批准后产出**测试范围、覆盖矩阵与风险清单**（`05_test_plan.md` + `05_test_coverage.json`），供 Superpowers `subagent-driven-development` 的 TDD 参考。**不前置产出完整最终用例**——具体 TC 在 TDD 红→绿→重构中随实现产出。PLAN 不得提前编写依赖尚未实现代码的验证结论。
+- `PLAN`: 设计批准后产出**测试范围、覆盖矩阵与风险清单**（`05_test_plan.md` + `05_test_coverage.json`），供 Superpowers `subagent-driven-development` 的 TDD 参考。
+  - **GREENFIELD**：不前置完整最终用例——具体新功能 TC 在 TDD 中随实现产出。PLAN 不得提前编写依赖尚未实现代码的验证结论。
+  - **LEGACY_EXTENSION**（`04` 含类型/策略扩展或 AssessRisk 命中 TYPE_EXTENSION/PUBLIC_ROUTING）：必须在 PLAN 中写出 **至少 1 个**共享同一分发的 `IDENTICAL_TO_LEGACY` **CHARACTERIZATION** Case（正式协议 Act、冷重载、含 `bypassesPriorQuery`），并在改生产代码前于当前基线跑绿。同质兄弟不必每个都有 Case；独立配置/独立分支的旧键再各抽 1 个。这些 Case 描述的是已有限购/重置/补偿，不依赖新类型代码。每个 `INTENTIONAL_DIFF` 新键必须有自己的 FUNCTIONAL Case（可在 TDD 中产出）。
 - `VERIFY`: 实现审计通过后按项目 context 选择一个或多个验证路径，执行自动化验证与测试编排修复。
 
 ### 测试深度按风险分级（风险自适应）
@@ -126,7 +128,15 @@ description: 资深测试开发工程师（SDET），负责自动化测试与质
 - **并发与顺序**: 共享资源、排行、限量奖励、乱序事件和竞争写入
 - **恢复与兼容**: 重登、重启、缓存失效、跨天、跨轮次、旧数据和旧协议
 - **集合枚举全覆盖**: 对"有限集合的逐元素行为"做枚举全覆盖，而非等价类抽样。适用判定——**集合元素有独立配置或独立分支**时必须枚举每个元素，例如：商店的每个商品（各自价格/限购/条件/奖励不同）、奖励表的每档、任务列表的每个任务、活动配置的每行。反之，元素行为同质（如 1000 个同类玩家、大量同格式配置项的格式校验）仍用等价类抽样。判定标准：若换一个元素可能改变预期结果，就必须枚举到。
-- **旧类型差分回归测试 (Differential Regression on Legacy Types)**: 凡是在已有老系统上新增类型/分支时，测试计划不仅要覆盖新增类型，还必须包含对 **既有旧类型** 的差分回归用例，验证在 8 维切面上旧类型行为未受任何破坏（即旧行为与基线 100% 一致）。
+- **旧类型差分回归测试 (Differential Regression on Legacy Types)**: 凡是在已有老系统上新增类型/分支时，测试计划不仅要覆盖新增类型，还必须包含对 **既有旧类型** 的差分回归用例，验证在 8 维切面上旧类型行为未受任何破坏（即旧行为与基线 100% 一致）。这些回归 Case ID 必须写入 `04_change_impact.json` 的 `requiredRegressionCases` 与对应 `legacyPaths[].regressionCaseId`，并把 `INV-*` 填进 `05_test_coverage.json` 的 `invariantIds`。没有机器可追溯的差分回归，不得声称“旧类型不受影响”。
+- **表征测试 (CHARACTERIZATION)**：对共享同一分发的 `IDENTICAL_TO_LEGACY` 键，**至少抽 1 个代表**（建议 1–2 个）写成 `testTypes` 含 `CHARACTERIZATION` 的 Case：用**已有正式协议/正式业务入口**做 Act（GM 只允许 Arrange/Observe/Cleanup），绑定该代表 `typeKey` 为 `variantKeys`，覆盖 `TOUCHED`/`INHERITED` 的 `facetIds`，并在 QUERY 仍生效时提供 `bypassesPriorQuery=true`（不先查再写）。断言必须含冷重载，锁的是旧行为而不是新类型主路径。独立配置或独立分支的旧键须再各抽 1 个；同质 enum 不必每个都有 Case。
+- **入口与变体覆盖**：`04.entryPoints` 的每个 id 必须出现在某条 Case 的 `entryPointIds`；每个 `INTENTIONAL_DIFF` 的 `typeKey` 必须出现在某条 Case 的 `variantKeys`。`04.behaviorVariants` 仍须列出兄弟键（声明表），但 VerifyCompletion **不**要求每个 `IDENTICAL_TO_LEGACY` 都出现在 `variantKeys`。这是 `TYPE_EXTENSION_COVERAGE_INCOMPLETE` 机器门禁，不是口头“已回归”。
+- **表征必须打到分发**：`CHARACTERIZATION` 的 `automationCarrier#method` 方法体必须字面出现 `variantKeys` 与 `entryPointIds`，并含有调用。空方法、只 new 对象、或 Act 调内部 Helper = 未覆盖。
+- **隐蔽缺陷防护（线上有状态服务，流程层能做的）**：
+  1. **差分金样**：同一正式入口，旧 `typeKey` 的协议回包 + 冷重载字段与基线快照比对（`operator=UNCHANGED`），不要只断言新类型 happy path。
+  2. **分发声明 vs 测试抽样**：对变更的 enum/策略表，每个兄弟键必须出现在 `04.behaviorVariants` 或 `excludedWithReason`（声明表）。测试只抽代表旧键 + 全部新键；生产代码 switch 必须有失败闭环（default 打错误码 + 指标），不要静默 fall-through。
+  3. **变异/旁路**：至少一条不先 QUERY 直接 MUTATE；至少一条重登后再 QUERY。这是懒重置/漏落库的最低集。
+  4. **宿主工程叠加**（写入项目 `context/`，不写进本 skill 的业务名）：编译期穷尽 switch、对分发 Helper 做变更检测/变异测试、用采样的生产协议在预发重放、按 `typeKey` 金丝雀。SOP 门禁不能替代这些运行时网。
 
 不能为了追求 Case 数量机械做笛卡尔积；应以规则分支、状态边和风险组合是否改变预期结果为拆分依据。
 
@@ -154,6 +164,7 @@ description: 资深测试开发工程师（SDET），负责自动化测试与质
 - 保存需求、设计和测试计划文件的 SHA-256
 - 将每个 `TC-*` 映射到至少一个需求条款 ID 和一个设计条款 ID
 - 记录优先级、测试类型、前置准备、正式触发、四层结构化断言、清理和自动化载体
+- 类型/策略扩展时填写 `entryPointIds` / `variantKeys` / `facetIds` / `bypassesPriorQuery`，旧类型锁行为 Case 的 `testTypes` 含 `CHARACTERIZATION`
 - 保证 `05_test_plan.md` 与 JSON 中的 Case ID 集合完全一致
 - `TC-*` 正式声明必须位于 Markdown 顶层标题或顶层列表项开头；正文引用、示例、引用块、注释和代码块不计入 Case 集合
 - 保证全部 `BR-*` / `EX-*` / `AC-*` / `DC-*` / `DR-*` / `TW-*` 均被 Case 覆盖；豁免只允许引用已批准源文档同一条款上的 `[TEST-EXEMPT: 原因]`，原因和批准人必须一致

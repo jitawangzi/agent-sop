@@ -156,8 +156,12 @@ try {
         (Join-Path $SopRoot "skills"),
         (Join-Path $SopRoot "docs")
     )
-    # Root-level SOP md projections (SVN-ignored personal config, but still SOP surface).
+    # Root-level SOP md projections. When this repo is the workspace itself,
+    # parent of SopRoot can be empty on some Linux hosts.
     $workspaceRoot = Split-Path -Parent $SopRoot
+    if ([string]::IsNullOrWhiteSpace($workspaceRoot)) {
+        $workspaceRoot = $SopRoot
+    }
     $rootSopMds = @(
         (Join-Path $workspaceRoot "AGENTS.md"),
         (Join-Path $workspaceRoot "AI_SOP_使用指南.md")

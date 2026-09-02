@@ -1349,7 +1349,6 @@ Invoke-AiSopWorkflowSession `
     try {
         $killEndProcess = Start-Process `
             -FilePath (Get-Process -Id $PID).Path `
-            -WindowStyle Hidden `
             -ArgumentList @(
                 "-NoProfile",
                 "-File",

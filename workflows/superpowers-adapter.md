@@ -30,7 +30,8 @@ claim feature ownership (SUPERPOWERS)
 **流程关键点**：
 - 需求与设计在同一轮 `brainstorming` skill 调用中连续产出，但分两次独立呈递人工确认（先确认 01 需求再确认 06 设计，不可合并确认）。
 - 设计产出后由 `design-reviewer` 做**机器闭环自审自修**（宏观规范守门 + 设计完整性自检 + 已知缺陷模式对照），不进人工门禁、不占人工时间；存在 `BLOCKER`/`MAJOR` 未修复时不交人工确认。机器闭环**最多 2 轮**（审查→修正→重审）；第 2 轮后仅剩 `MINOR`/`INFO` → 自动豁免通过（`PASS_WITH_WARNINGS`）；仍有 `BLOCKER`/`MAJOR` → 交人工确认。`design-reviewer` 阻断级（`BLOCKER`/`MAJOR`）可判 `NEEDS_FIX`，建议级（`MINOR`/`INFO`）不得判 `NEEDS_FIX`（防挑刺震荡）。**硬证据约束**：进入 `writing-plans` 前必须附 `design-reviewer` 审查报告（含 PASS/NEEDS_FIX/PASS_WITH_WARNINGS、发现分级、专项覆盖、循环轮次）；无报告不得进 writing-plans，快通道除外。**独立派发约束**：`design-reviewer` 必须用 Agent 工具作为独立 subagent 派发（`subagent_type=design-reviewer`），禁止用 `Skill()` 内联自审；NEEDS_FIX 时由 controller 回派独立的 `design-architect`（Agent 派发）修正，禁止 design-reviewer 自改方案。
-- **不前置** QA 测试计划：具体 TC 在 TDD 中产出；`ValidateTestCoverage` 在实现后做覆盖完整性校验。
+- **不前置**完整新功能测试计划（GREENFIELD）：具体新 TC 在 TDD 中产出；`ValidateTestCoverage` 在实现后做覆盖完整性校验。
+- **LEGACY_EXTENSION 例外**：旧系统加类型/改分发时，抽 1–2 个共享同一分发的 `IDENTICAL_TO_LEGACY` 表征 Case，必须在改生产代码前写好，并能在当前基线上跑绿。锁的是已有行为，不是尚未实现的新类型，也不是每个旧类型一条 Case。
 - `implementation-auditor`/`logic-auditor` 是 subagent **内审执行单元**，不作实现后的独立流程节点（其全盘视角由可选的全功能审计覆盖，见下）。
 
 ## 人机交互

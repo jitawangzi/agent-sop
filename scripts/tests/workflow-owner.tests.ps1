@@ -485,7 +485,6 @@ try {
     $env:SERVER_NEW_WORKFLOW_OWNER_PAUSE_RELEASE = $raceRelease
     try {
         $raceProcess = Start-Process -FilePath (Get-Process -Id $PID).Path `
-            -WindowStyle Hidden `
             -ArgumentList @(
                 "-NoProfile",
                 "-File",

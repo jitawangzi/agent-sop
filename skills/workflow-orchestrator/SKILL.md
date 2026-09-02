@@ -31,16 +31,17 @@ description: 人工手动片段编排器。在 Superpowers 主流程之外，手
 ### 输入
 - `feature_name` + `spec_directory`（规格目录，提供业务规则与技术契约依据）
 - 审计范围类型：`audit_scope_type` = `FEATURE` / `CLASS` / `METHOD`
-- 范围参数：`target_classes` / `focus_methods`（CLASS/METHOD 时）；`change_baseline` / `change_set`（FEATURE 时，SVN revision 范围或文件集）
+- 范围参数：`target_classes` / `focus_methods`（CLASS/METHOD 时）；`change_baseline` / `change_set`（FEATURE 时，SVN revision 范围或文件集）；旧系统扩展时用 `entry_points`（取 `04.entryPoints`），不要用 `focus_methods` 收缩
 - `audit_fix_policy`：`REPORT_ONLY`（只出报告，**默认**）/ `AUTO_REPAIR`（自动修复并回归）
 
 ### 执行流程（人工驱动）
 1. 确认归属（若审计范围触及生产代码或功能规格，需 ACTIVE 归属；只读审计可豁免）。
-2. 按序调专家 skill：
+2. 若规格目录存在 `04_change_impact.json` 且含 `behaviorVariants` / 类型扩展，**默认 Protocol Trace**：派 `implementation-auditor` Mode C 与 `logic-auditor` Mode E，输入 `entry_points`=`04.entryPoints`。禁止只按 class 或 revision diff 起审。
+3. 否则按序调专家 skill：
    - `implementation-auditor`（实现/契约合规 + 完整性）
    - `logic-auditor`（高风险分支/状态/语义，按风险）
-3. 汇总各专家结论为统一报告（按 `BLOCKER`/`MAJOR`/`MINOR`/`INFO` 分级，见各专家 skill 输出格式）。
-4. **停止，把报告交人工**。
+4. 汇总各专家结论为统一报告（按 `BLOCKER`/`MAJOR`/`MINOR`/`INFO` 分级，见各专家 skill 输出格式）。报告必须含协议追踪表（若走了 Protocol Trace）。
+5. **停止，把报告交人工**。人工总体审核应执行协议脚本（已有入口 × 代表旧 typeKey），而不是再读一遍新代码，也不是每个同质旧类型都点一遍。
 
 ### 人工决定下一步
 - `REPORT_ONLY`：人看报告，决定哪些改、哪些是允许的例外（`[AUDIT-EXEMPT]`，见后）、哪些暂搁。需要修复时手动再走（Superpowers 实现流程或手动调 `implementation-engine`）。

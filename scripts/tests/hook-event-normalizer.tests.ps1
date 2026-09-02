@@ -158,10 +158,17 @@ function Expand-FixtureValue {
         return $null
     }
     if ($Value -is [string]) {
-        return $Value.Replace("__WORKSPACE__", $Workspace).Replace(
+        $expanded = $Value.Replace("__WORKSPACE__", $Workspace).Replace(
             "__TRANSCRIPT__",
             $Transcript
         )
+        if (-not [System.OperatingSystem]::IsWindows()) {
+            $expanded = $expanded.Replace(
+                '\',
+                [string][System.IO.Path]::DirectorySeparatorChar
+            )
+        }
+        return $expanded
     }
     if ($Value -is [System.Collections.IDictionary]) {
         $expanded = [ordered]@{}
@@ -1742,12 +1749,13 @@ try {
     [System.IO.Directory]::CreateDirectory((Join-Path $Workspace "src")) | Out-Null
     $lexicalProductionJunction = Join-Path $Workspace "src\com"
     $lexicalSafeJunction = Join-Path $Workspace ".claude\production-link"
+    $linkType = if ([System.OperatingSystem]::IsWindows()) { "Junction" } else { "SymbolicLink" }
     New-Item `
-        -ItemType Junction `
+        -ItemType $linkType `
         -Path $lexicalProductionJunction `
         -Target $safePhysicalDirectory | Out-Null
     New-Item `
-        -ItemType Junction `
+        -ItemType $linkType `
         -Path $lexicalSafeJunction `
         -Target $productionPhysicalDirectory | Out-Null
     $CreatedJunctions = @($lexicalProductionJunction, $lexicalSafeJunction)
@@ -1789,30 +1797,32 @@ try {
             "Target hash did not use canonical physical identity."
     }
 
-    $casePathLower = Join-Path $Workspace ".claude\case-target.txt"
-    $casePathUpper = $casePathLower.ToUpperInvariant()
-    $caseEvents = @(
-        foreach ($casePath in @($casePathLower, $casePathUpper)) {
-            $casePayload = New-ClaudeToolPayload `
-                -ToolName "Edit" `
-                -ToolInput ([ordered]@{
-                    file_path = $casePath
-                    old_string = "a"
-                    new_string = "b"
-                }) `
-                -Workspace $Workspace -Transcript $Transcript `
-                -Occurrence "toolu_case_insensitive"
-            ConvertTo-AiSopHookEvent `
-                -RawPayload (ConvertTo-RawPayload $casePayload) `
-                -EventHint "PRE_TOOL_USE" `
-                -TrustedWorkspaceRoot $Workspace `
-                -AcceptedAt $AcceptedAt
-        }
-    )
-    Assert-Equal `
-        $caseEvents[0].canonicalTargetsSha256 `
-        $caseEvents[1].canonicalTargetsSha256 `
-        "Windows path case changed physical target identity."
+    if ([System.OperatingSystem]::IsWindows()) {
+        $casePathLower = Join-Path $Workspace ".claude\case-target.txt"
+        $casePathUpper = $casePathLower.ToUpperInvariant()
+        $caseEvents = @(
+            foreach ($casePath in @($casePathLower, $casePathUpper)) {
+                $casePayload = New-ClaudeToolPayload `
+                    -ToolName "Edit" `
+                    -ToolInput ([ordered]@{
+                        file_path = $casePath
+                        old_string = "a"
+                        new_string = "b"
+                    }) `
+                    -Workspace $Workspace -Transcript $Transcript `
+                    -Occurrence "toolu_case_insensitive"
+                ConvertTo-AiSopHookEvent `
+                    -RawPayload (ConvertTo-RawPayload $casePayload) `
+                    -EventHint "PRE_TOOL_USE" `
+                    -TrustedWorkspaceRoot $Workspace `
+                    -AcceptedAt $AcceptedAt
+            }
+        )
+        Assert-Equal `
+            $caseEvents[0].canonicalTargetsSha256 `
+            $caseEvents[1].canonicalTargetsSha256 `
+            "Windows path case changed physical target identity."
+    }
 
     $mixedPayload = New-ClaudeToolPayload `
         -ToolName "MultiEdit" `

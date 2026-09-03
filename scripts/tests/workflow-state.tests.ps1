@@ -3,6 +3,7 @@ param()
 
 $ErrorActionPreference = "Stop"
 
+. (Join-Path (Split-Path -Parent $PSScriptRoot) "hidden-process.ps1")
 $ScriptPath = Join-Path (Split-Path -Parent $PSScriptRoot) "workflow-state.ps1"
 $OwnerScriptPath = Join-Path (Split-Path -Parent $PSScriptRoot) "workflow-owner.ps1"
 $SessionScriptPath = Join-Path (Split-Path -Parent $PSScriptRoot) "workflow-session.ps1"
@@ -1983,7 +1984,7 @@ try {
     try {
         $stateRaceOut = Join-Path $TestRoot "state-race.out"
         $stateRaceErr = Join-Path $TestRoot "state-race.err"
-        $stateRaceProcess = Start-Process -FilePath (Get-Process -Id $PID).Path `
+        $stateRaceProcess = Start-AiSopHiddenProcess -FilePath (Get-Process -Id $PID).Path `
             -ArgumentList @(
                 "-NoProfile",
                 "-File",
@@ -2022,7 +2023,7 @@ try {
 
         $completeRaceOut = Join-Path $TestRoot "complete-race.out"
         $completeRaceErr = Join-Path $TestRoot "complete-race.err"
-        $completeRaceProcess = Start-Process -FilePath (Get-Process -Id $PID).Path `
+        $completeRaceProcess = Start-AiSopHiddenProcess -FilePath (Get-Process -Id $PID).Path `
             -ArgumentList @(
                 "-NoProfile",
                 "-File",

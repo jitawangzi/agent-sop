@@ -6,6 +6,7 @@ param()
 $ErrorActionPreference = "Stop"
 
 $ScriptsRoot = Split-Path -Parent $PSScriptRoot
+. (Join-Path $ScriptsRoot "hidden-process.ps1")
 $SessionScript = Join-Path $ScriptsRoot "workflow-session.ps1"
 $SessionSchema = Join-Path (
     Split-Path -Parent $ScriptsRoot
@@ -141,7 +142,7 @@ if ($RecoveryOperation -ceq "Touch") {
 
     $worker = $null
     try {
-        $worker = Start-Process -FilePath (Get-Process -Id $PID).Path `
+        $worker = Start-AiSopHiddenProcess -FilePath (Get-Process -Id $PID).Path `
             -ArgumentList @(
                 "-NoProfile",
                 "-File",
@@ -718,7 +719,7 @@ Invoke-AiSopWorkflowSession `
 '@,
         [System.Text.UTF8Encoding]::new($false)
     )
-    $monotonicProcess = Start-Process -FilePath (Get-Process -Id $PID).Path `
+    $monotonicProcess = Start-AiSopHiddenProcess -FilePath (Get-Process -Id $PID).Path `
         -ArgumentList @(
             "-NoProfile",
             "-File",
@@ -977,7 +978,7 @@ $result.Record | ConvertTo-Json -Compress
         }
         $raceProcesses[$index - 1] | Add-Member -NotePropertyName Process `
             -NotePropertyValue (
-                Start-Process -FilePath (Get-Process -Id $PID).Path `
+                Start-AiSopHiddenProcess -FilePath (Get-Process -Id $PID).Path `
                     -ArgumentList @(
                         "-NoProfile",
                         "-File",

@@ -31,40 +31,52 @@ param(
 
 $ErrorActionPreference = "Stop"
 
+. (Join-Path $PSScriptRoot "hidden-process.ps1")
+
 function Invoke-TestSuiteSerial {
     param([string]$File)
 
-    $output = & {
-        $ErrorActionPreference = 'Continue'
-        pwsh -NoProfile -File $File 2>&1
-    }
-    return [pscustomobject]@{
-        Name     = [System.IO.Path]::GetFileNameWithoutExtension($File)
-        File     = $File
-        ExitCode = $LASTEXITCODE
-        Passed   = ($LASTEXITCODE -eq 0)
-        Output   = $output
+    $outFile = [System.IO.Path]::GetTempFileName()
+    $errFile = [System.IO.Path]::GetTempFileName()
+    try {
+        $proc = Start-AiSopHiddenProcess `
+            -FilePath (Get-Process -Id $PID).Path `
+            -ArgumentList @("-NoProfile", "-File", $File) `
+            -RedirectStandardOutput $outFile `
+            -RedirectStandardError $errFile `
+            -PassThru
+        $proc.WaitForExit()
+        $stdout = @(Get-Content -LiteralPath $outFile -ErrorAction SilentlyContinue)
+        $stderr = @(Get-Content -LiteralPath $errFile -ErrorAction SilentlyContinue)
+        $output = @($stdout + $stderr)
+        return [pscustomobject]@{
+            Name     = [System.IO.Path]::GetFileNameWithoutExtension($File)
+            File     = $File
+            ExitCode = $proc.ExitCode
+            Passed   = ($proc.ExitCode -eq 0)
+            Output   = $output
+        }
+    } finally {
+        Remove-Item -LiteralPath $outFile -Force -ErrorAction SilentlyContinue
+        Remove-Item -LiteralPath $errFile -Force -ErrorAction SilentlyContinue
     }
 }
 
 function Invoke-TestSuiteParallel {
-    # Launches one pwsh subprocess per suite, writing combined output to a temp
-    # file; returns jobs to await. -WindowStyle Hidden is Windows-only and is
-    # omitted so the runner works on Linux/macOS PowerShell 7.
+    # Launches one hidden pwsh subprocess per suite, writing combined output
+    # to a temp file; returns jobs to await. CreateNoWindow (not WindowStyle)
+    # is what actually suppresses the Windows console when stdout is redirected.
     param(
         [string]$File,
         [string]$OutFile
     )
     $errFile = [System.IO.Path]::ChangeExtension($OutFile, ".err")
-    $startParams = @{
-        FilePath               = (Get-Process -Id $PID).Path
-        ArgumentList           = @("-NoProfile", "-File", $File)
-        RedirectStandardOutput = $OutFile
-        RedirectStandardError  = $errFile
-        PassThru               = $true
-    }
-    if ($IsWindows) { $startParams.WindowStyle = "Hidden" }
-    $p = Start-Process @startParams
+    $p = Start-AiSopHiddenProcess `
+        -FilePath (Get-Process -Id $PID).Path `
+        -ArgumentList @("-NoProfile", "-File", $File) `
+        -RedirectStandardOutput $OutFile `
+        -RedirectStandardError $errFile `
+        -PassThru
     return [pscustomobject]@{
         Name    = [System.IO.Path]::GetFileNameWithoutExtension($File)
         File    = $File

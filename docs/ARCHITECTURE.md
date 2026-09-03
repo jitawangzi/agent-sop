@@ -160,7 +160,7 @@ AI 编码工具百花齐放（Claude Code、Copilot、Cursor、Antigravity、Pi�
 
 **为什么这么设计**：
 - `run-all-tests.ps1` 默认串行（时序测试安全），`-Parallel` 可选（快但可能 flake）。
-- 所有 `Start-Process` 加 `-WindowStyle Hidden`（不弹窗）。
+- 所有测试子进程用 `CreateNoWindow`（不要用 `Start-Process -WindowStyle Hidden`：一旦重定向 stdout，该参数会被忽略，Windows 仍会弹 pwsh 窗口）。
 - deadline 用 env 可覆盖（`SERVER_NEW_WORKFLOW_TRANSACTION_DEADLINE_MS`、`SERVER_NEW_WORKFLOW_OWNER_DEADLINE_MS`），strong-kill 子进程设宽值。
 
 **考虑过的替代**：

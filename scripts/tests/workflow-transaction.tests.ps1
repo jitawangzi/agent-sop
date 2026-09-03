@@ -6,6 +6,7 @@ param()
 $ErrorActionPreference = "Stop"
 
 $ScriptsRoot = Split-Path -Parent $PSScriptRoot
+. (Join-Path $ScriptsRoot "hidden-process.ps1")
 $TransactionScript = Join-Path $ScriptsRoot "workflow-transaction.ps1"
 $OwnerScript = Join-Path $ScriptsRoot "workflow-owner.ps1"
 $SessionScript = Join-Path $ScriptsRoot "workflow-session.ps1"
@@ -654,7 +655,7 @@ Invoke-AiSopWorkflowTransaction `
         # Cold-started transaction worker under load needs a wider deadline to
         # reach its pause point; only recovery semantics are under test.
         $env:SERVER_NEW_WORKFLOW_TRANSACTION_DEADLINE_MS = '10000'
-        $process = Start-Process `
+        $process = Start-AiSopHiddenProcess `
             -FilePath (Get-Process -Id $PID).Path `
             -ArgumentList @(
                 "-NoProfile",
@@ -771,7 +772,7 @@ Invoke-AiSopWorkflowTransaction `
             # recovery semantics under test, so widen it for this launch only.
             $env:SERVER_NEW_WORKFLOW_OWNER_DEADLINE_MS = '10000'
             try {
-                $process = Start-Process -FilePath (Get-Process -Id $PID).Path `
+                $process = Start-AiSopHiddenProcess -FilePath (Get-Process -Id $PID).Path `
                     -ArgumentList @(
                         "-NoProfile",
                         "-File",
@@ -919,7 +920,7 @@ Invoke-AiSopWorkflowTransaction `
         $Utf8NoBom
     )
     $env:SERVER_NEW_WORKFLOW_TRANSACTION_DEADLINE_MS = '10000'
-    $unknownProcess = Start-Process `
+    $unknownProcess = Start-AiSopHiddenProcess `
         -FilePath (Get-Process -Id $PID).Path `
         -ArgumentList @(
             "-NoProfile",

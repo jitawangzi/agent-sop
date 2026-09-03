@@ -6,6 +6,7 @@ param()
 $ErrorActionPreference = "Stop"
 
 $ScriptsRoot = Split-Path -Parent $PSScriptRoot
+. (Join-Path $ScriptsRoot "hidden-process.ps1")
 $OwnerScript = Join-Path $ScriptsRoot "workflow-owner.ps1"
 $SessionScript = Join-Path $ScriptsRoot "workflow-session.ps1"
 $GrantScript = Join-Path $ScriptsRoot "workflow-command-grant.ps1"
@@ -484,7 +485,7 @@ try {
     $env:SERVER_NEW_WORKFLOW_OWNER_PAUSE_MARKER = $raceMarker
     $env:SERVER_NEW_WORKFLOW_OWNER_PAUSE_RELEASE = $raceRelease
     try {
-        $raceProcess = Start-Process -FilePath (Get-Process -Id $PID).Path `
+        $raceProcess = Start-AiSopHiddenProcess -FilePath (Get-Process -Id $PID).Path `
             -ArgumentList @(
                 "-NoProfile",
                 "-File",

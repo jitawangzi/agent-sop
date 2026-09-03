@@ -6,6 +6,7 @@ param()
 $ErrorActionPreference = "Stop"
 
 $ScriptsRoot = Split-Path -Parent $PSScriptRoot
+. (Join-Path $ScriptsRoot "hidden-process.ps1")
 $SessionScript = Join-Path $ScriptsRoot "workflow-session.ps1"
 $GrantScript = Join-Path $ScriptsRoot "workflow-command-grant.ps1"
 $ClaudeRoot = Split-Path -Parent $ScriptsRoot
@@ -1347,7 +1348,7 @@ Invoke-AiSopWorkflowSession `
         [System.IO.FileShare]::None
     )
     try {
-        $killEndProcess = Start-Process `
+        $killEndProcess = Start-AiSopHiddenProcess `
             -FilePath (Get-Process -Id $PID).Path `
             -ArgumentList @(
                 "-NoProfile",

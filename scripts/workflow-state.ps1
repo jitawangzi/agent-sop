@@ -896,6 +896,13 @@ function Assert-CoverageHash {
     }
 }
 
+function Test-AiSopPathIsInsideWorkspaceLayer {
+    param([string]$Path)
+    if ([string]::IsNullOrWhiteSpace($Path)) { return $false }
+    $norm = $Path.Replace('\', '/').TrimEnd('/')
+    return $norm -match '(?i)(?:^|/)\.ai-workspace(?:/|$)'
+}
+
 function Resolve-AiSopWorkspaceRoot {
     param([string]$StartPath)
     if ([string]::IsNullOrWhiteSpace($StartPath)) { return $null }
@@ -905,10 +912,18 @@ function Resolve-AiSopWorkspaceRoot {
         Split-Path -Parent ([System.IO.Path]::GetFullPath($StartPath))
     }
     while (-not [string]::IsNullOrWhiteSpace($curDir)) {
-        if ((Test-Path -LiteralPath (Join-Path $curDir ".ai-workspace")) -or 
-            (Test-Path -LiteralPath (Join-Path $curDir ".git")) -or 
-            (Test-Path -LiteralPath (Join-Path $curDir ".svn"))) {
+        # Canonical project root: the directory that owns `.ai-workspace`.
+        if (Test-Path -LiteralPath (Join-Path $curDir ".ai-workspace")) {
             return $curDir
+        }
+        # Nested git/svn under `.ai-workspace` is a spec-store, not the project.
+        if (-not (Test-AiSopPathIsInsideWorkspaceLayer -Path $curDir)) {
+            if ((Test-Path -LiteralPath (Join-Path $curDir ".ai-sop")) -or
+                (Test-Path -LiteralPath (Join-Path $curDir "tools\ai-sop\ai-sop.lock.json")) -or
+                (Test-Path -LiteralPath (Join-Path $curDir ".git")) -or
+                (Test-Path -LiteralPath (Join-Path $curDir ".svn"))) {
+                return $curDir
+            }
         }
         $parent = Split-Path -Parent $curDir
         if ($parent -eq $curDir) { break }
@@ -922,7 +937,8 @@ function Get-VcsBaselineRevision {
     if ([string]::IsNullOrWhiteSpace($StartPath)) { return $null }
     $cur = if (Test-Path -LiteralPath $StartPath -PathType Container) { [System.IO.Path]::GetFullPath($StartPath) } else { Split-Path -Parent ([System.IO.Path]::GetFullPath($StartPath)) }
     while (-not [string]::IsNullOrWhiteSpace($cur)) {
-        if (Test-Path -LiteralPath (Join-Path $cur ".git")) {
+        $insideWorkspaceLayer = Test-AiSopPathIsInsideWorkspaceLayer -Path $cur
+        if (-not $insideWorkspaceLayer -and (Test-Path -LiteralPath (Join-Path $cur ".git"))) {
             try {
                 $headSha = (& git -C $cur rev-parse HEAD 2>&1 | Out-String).Trim()
                 if ($LASTEXITCODE -eq 0 -and $headSha -match '^[0-9a-fA-F]{7,64}$') {
@@ -931,7 +947,7 @@ function Get-VcsBaselineRevision {
             } catch {}
             break
         }
-        if (Test-Path -LiteralPath (Join-Path $cur ".svn")) {
+        if (-not $insideWorkspaceLayer -and (Test-Path -LiteralPath (Join-Path $cur ".svn"))) {
             try {
                 $svnRev = (& svn info --non-interactive --show-item revision $cur 2>&1 | Out-String).Trim()
                 if ($LASTEXITCODE -eq 0 -and $svnRev -match '^\d+$') {

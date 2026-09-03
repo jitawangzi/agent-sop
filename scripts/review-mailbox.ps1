@@ -61,6 +61,13 @@ function Get-MailboxSchemaPath {
     return (Join-Path $root "schemas\review-mailbox.schema.json")
 }
 
+function Test-AiSopPathIsInsideWorkspaceLayer {
+    param([string]$Path)
+    if ([string]::IsNullOrWhiteSpace($Path)) { return $false }
+    $norm = $Path.Replace('\', '/').TrimEnd('/')
+    return $norm -match '(?i)(?:^|/)\.ai-workspace(?:/|$)'
+}
+
 function Resolve-AiSopWorkspaceRoot {
     param([string]$StartPath)
     if ([string]::IsNullOrWhiteSpace($StartPath)) { return $null }
@@ -70,11 +77,16 @@ function Resolve-AiSopWorkspaceRoot {
         Split-Path -Parent ([System.IO.Path]::GetFullPath($StartPath))
     }
     while (-not [string]::IsNullOrWhiteSpace($curDir)) {
-        if ((Test-Path -LiteralPath (Join-Path $curDir ".ai-workspace")) -or 
-            (Test-Path -LiteralPath (Join-Path $curDir ".ai-sop")) -or 
-            (Test-Path -LiteralPath (Join-Path $curDir ".git")) -or 
-            (Test-Path -LiteralPath (Join-Path $curDir ".svn"))) {
+        if (Test-Path -LiteralPath (Join-Path $curDir ".ai-workspace")) {
             return $curDir
+        }
+        if (-not (Test-AiSopPathIsInsideWorkspaceLayer -Path $curDir)) {
+            if ((Test-Path -LiteralPath (Join-Path $curDir ".ai-sop")) -or
+                (Test-Path -LiteralPath (Join-Path $curDir "tools\ai-sop\ai-sop.lock.json")) -or
+                (Test-Path -LiteralPath (Join-Path $curDir ".git")) -or
+                (Test-Path -LiteralPath (Join-Path $curDir ".svn"))) {
+                return $curDir
+            }
         }
         $parent = Split-Path -Parent $curDir
         if ($parent -eq $curDir) { break }

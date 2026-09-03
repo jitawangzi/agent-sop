@@ -3330,6 +3330,52 @@ try {
         Remove-Item -LiteralPath $isolatedDir -Recurse -Force -ErrorAction SilentlyContinue
     }
 
+    # 4b. Nested git inside `.ai-workspace/specs` must not steal the project root.
+    # Host layout: overlay `.git` + production `.svn` at project root, plus a
+    # spec-store git under `.ai-workspace/specs`. Walking from a feature spec
+    # must land on the project root (compile artifacts / SVN src live there).
+    $hybridRoot = Join-Path $TestRoot "hybrid_host_workspace"
+    $hybridSpec = Join-Path $hybridRoot ".ai-workspace\specs\features\HybridFeat"
+    $hybridSpecsGit = Join-Path $hybridRoot ".ai-workspace\specs"
+    [System.IO.Directory]::CreateDirectory($hybridSpec) | Out-Null
+    [System.IO.Directory]::CreateDirectory((Join-Path $hybridRoot "WebRoot\WEB-INF\classes")) | Out-Null
+    [System.IO.Directory]::CreateDirectory((Join-Path $hybridRoot ".svn")) | Out-Null
+    [System.IO.File]::WriteAllText((Join-Path $hybridRoot "WebRoot\WEB-INF\classes\dummy.txt"), "ok", $Utf8NoBom)
+    & git -C $hybridRoot init --quiet
+    & git -C $hybridRoot config user.name "Tester"
+    & git -C $hybridRoot config user.email "tester@test.local"
+    [System.IO.File]::WriteAllText((Join-Path $hybridRoot "README.md"), "hybrid", $Utf8NoBom)
+    & git -C $hybridRoot add README.md
+    & git -C $hybridRoot commit -m "overlay git" --quiet
+    $hybridBaseSha = (& git -C $hybridRoot rev-parse HEAD | Out-String).Trim()
+    & git -C $hybridSpecsGit init --quiet
+    & git -C $hybridSpecsGit config user.name "Tester"
+    & git -C $hybridSpecsGit config user.email "tester@test.local"
+    [System.IO.File]::WriteAllText((Join-Path $hybridSpecsGit "README.md"), "specs store", $Utf8NoBom)
+    & git -C $hybridSpecsGit add README.md
+    & git -C $hybridSpecsGit commit -m "nested specs git" --quiet
+    [System.IO.File]::WriteAllText(
+        (Join-Path $hybridSpec "feature-state.json"),
+        '{"schemaVersion":"1.0","feature":"HybridFeat","baseline":"' + $hybridBaseSha + '","tier":"T2","phase":"CLAIMED"}',
+        $Utf8NoBom
+    )
+    $hybridRiskRaw = $null
+    try {
+        $hybridRiskRaw = & $ScriptPath -Operation AssessRisk -Path $hybridSpec -Baseline $hybridBaseSha 2>&1 | Out-String
+        $hybridRisk = $hybridRiskRaw | ConvertFrom-Json
+    } catch {
+        throw "AssessRisk must resolve workspace root to the project that owns .ai-workspace, not nested spec git. Error: $($_.Exception.Message)"
+    }
+    $expectedHybridRoot = [System.IO.Path]::GetFullPath($hybridRoot).TrimEnd('\','/')
+    $actualHybridRoot = [string]$hybridRisk.workspaceRoot
+    if ([string]::IsNullOrWhiteSpace($actualHybridRoot)) {
+        throw "AssessRisk workspaceRoot is empty for nested-git host layout. Output: $hybridRiskRaw"
+    }
+    $actualHybridRoot = [System.IO.Path]::GetFullPath($actualHybridRoot).TrimEnd('\','/')
+    if (-not $actualHybridRoot.Equals($expectedHybridRoot, [System.StringComparison]::OrdinalIgnoreCase)) {
+        throw "AssessRisk must resolve workspace root to the project that owns .ai-workspace (expected $expectedHybridRoot), not nested spec git (actual $actualHybridRoot)."
+    }
+
     # 5. Negative Test: 带空格路径 src/foo bar.txt 修改前后的 changeSetDigest 严格变异
     $spaceGitDir = Join-Path $TestRoot "space_git_repo"
     [System.IO.Directory]::CreateDirectory($spaceGitDir) | Out-Null

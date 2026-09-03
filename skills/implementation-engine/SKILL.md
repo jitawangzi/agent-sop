@@ -112,7 +112,7 @@ description: 高级开发工程师，负责基于当前项目架构的高质量�
 
 *   **Fix & Verify (修复与验证，仅针对 [IMPL_FAILURE])**：
     *   **Code**: 执行外科手术式修改，只修复当前缺陷及其直接耦合问题，不扩大改动面。
-    *   **Test**: 必须编写或运行一个直接覆盖该 Bug 的测试用例（Regression Test）；若已有测试缺失断言，则应补足断言。
+    *   **Test**: 必须编写或运行一个直接覆盖该 Bug 的测试用例（Regression Test）；若已有测试缺失断言，则应补足断言。若覆盖矩阵声明了 `assertions.persistenceColdReload`，断言必须针对 Act 之后再读存储得到的字段，禁止用协议回包或请求期内的内存对象冒充落库。
     *   **Criterion**: 测试结果必须体现从 `Failed` 到 `Passed` 的变化，才能判定该 Bug 完成闭环。
     *   **Requirement**: 不允许只凭代码阅读声称“理论上已修复”；必须以可复现、可回归的验证结果作为完成标准。
     *   **Regression Scope**: 回归测试优先覆盖 Bug 的核心入口与边界条件；如果 Bug 出现在已有稳定流程中，还应确认本次修复未破坏原有主路径。

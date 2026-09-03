@@ -224,6 +224,10 @@
             "serverState": {
               "$ref": "#/$defs/assertionList"
             },
+            "persistenceColdReload": {
+              "$ref": "#/$defs/assertionList",
+              "description": "Assertions against a freshly loaded persistence record after the Act (not the in-memory object from the request). TYPE_EXTENSION CHARACTERIZATION cases must include at least one non-N_A item."
+            },
             "sideEffects": {
               "$ref": "#/$defs/assertionList"
             },
@@ -339,6 +343,11 @@
             "boolean",
             "null"
           ]
+        },
+        "coldReloadEntity": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Storage entity/table/record the test re-reads after Act (generic locator, not a host-specific class). Required on non-N_A persistenceColdReload assertions."
         }
       },
       "allOf": [

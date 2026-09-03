@@ -248,6 +248,18 @@ function Repair-LegacyTestCoverageJson {
         protocolResponse = "protocol"
         response = "protocol"
     }
+    $operatorAlias = @{
+        NOT_EXISTS = "EMPTY"
+        EXISTS = "NOT_EMPTY"
+        MISSING = "EMPTY"
+        PRESENT = "NOT_EMPTY"
+        IS_NULL = "EMPTY"
+        IS_NOT_NULL = "NOT_EMPTY"
+        EQUALS = "EQ"
+        EQUAL = "EQ"
+        NOT_EQUALS = "NE"
+        NOTEQUALS = "NE"
+    }
     $knownAssert = [System.Collections.Generic.HashSet[string]]::new(
         [string[]]@("protocol", "serverState", "persistenceColdReload", "sideEffects", "regression"),
         [System.StringComparer]::Ordinal
@@ -327,6 +339,19 @@ function Repair-LegacyTestCoverageJson {
                 }
                 $case['assertions'] = $mapped
                 $assertions = $mapped
+                foreach ($ak in [string[]]@($mapped.AsObject().Keys)) {
+                    $arr = $mapped[$ak]
+                    if ($null -eq $arr -or $arr -isnot [System.Text.Json.Nodes.JsonArray]) { continue }
+                    foreach ($item in $arr) {
+                        if ($null -eq $item) { continue }
+                        $op = (Get-JsonNodeText -Node $item['operator']).Trim()
+                        if ([string]::IsNullOrWhiteSpace($op)) { continue }
+                        $opKey = $op.ToUpperInvariant()
+                        if ($operatorAlias.ContainsKey($opKey)) {
+                            $item['operator'] = $operatorAlias[$opKey]
+                        }
+                    }
+                }
             }
 
             if ($needSteps.Contains($st)) {

@@ -4097,6 +4097,7 @@ try {
                 assertions = @{
                     database = @(
                         @{ target = "Helper.getLevel"; operator = "EQ"; expected = "3" }
+                        @{ target = "rankList[2].skinLevel"; operator = "NOT_EXISTS"; expected = $null }
                     )
                 }
                 cleanup = @("Cleanup")

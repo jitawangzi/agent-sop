@@ -191,7 +191,7 @@ AI 编码工具百花齐放（Claude Code、Copilot、Cursor、Antigravity、Pi�
 - 风险看不清则 fail-closed 仍要 04：`WORKSPACE_UNRESOLVED`、`VCS_ERROR`、`VCS_UNAVAILABLE`、以及 overlay git + `.svn` 但 SVN 工作副本不可用（`HYBRID_PRODUCTION_VCS_UNSCANNED`）。
 - 混合工作区（根上 overlay git 管 SOP、SVN 管 `src/`）：语义触发只扫 SVN，不用 overlay git 证明「没有类型扩展」。全数字 baseline 不当成 git SHA，避免 SVN 修订号被 git 吃掉。已有功能若只记下 overlay git SHA 且该 SHA 已不在 overlay 仓里、或根本没有 baseline，只要 SVN 工作副本可用，就按 SVN 工作副本评估风险，不因 `INVALID_BASELINE` / `BASELINE_MISSING` 中断。Git-only 或 SVN 不可用时仍 fail-closed。
 - AssessRisk 按功能收窄：只把规格里能定位到的 Class/源文件（01/06/05/04 的路径、`Class#method`、PascalCase 类型名、带扩展名的源文件）与工作区 diff 求交。小写噪声词（`false`/`stock`）和 camelCase 方法名不进定位表。脏工作副本里别人的 enum 不记到本功能头上。规格没有任何定位且工作区有生产源码 diff 时 fail-closed（`FEATURE_SCOPE_UNRESOLVED`），仍要 04。
-- 宿主存量产物兼容（读入时规范化，不改文件）：`05_test_coverage.json` 的 `COVERED`→`VERIFIED`、缺 `status`→`PLANNED`、缺 setup/assertions 的 AUTOMATED 补占位、`assertions.database` 映射到 `serverState`；条款 ID 允许 `BR-1.3` 并与扁平写法 `BR-13` 视为同一条款，父级标题在有子条款时不要求单独覆盖。`feature-state.phase` 接受宿主常用的 `COMPLETED` / `IMPLEMENTATION_DONE`，避免 AssessRisk 回写被 schema 拒掉。
+- 宿主存量产物兼容（读入时规范化，不改文件）：`05_test_coverage.json` 的 `COVERED`→`VERIFIED`、缺 `status`→`PLANNED`、缺 setup/assertions 的 AUTOMATED 补占位、`assertions.database` 映射到 `serverState`、`NOT_EXISTS` 等操作符别名映射到 schema 枚举；条款 ID 允许 `BR-1.3` 并与扁平写法 `BR-13` 视为同一条款，父级标题在有子条款时不要求单独覆盖。`feature-state.phase` 接受宿主常用的 `COMPLETED` / `IMPLEMENTATION_DONE`，避免 AssessRisk 回写被 schema 拒掉。
 
 **考虑过的替代**：
 - 全 T3 强制 04：绿场造假材料——否决。

@@ -79,6 +79,57 @@ function Write-TestJson {
     )
 }
 
+function Write-TestDesignReview {
+    param(
+        [string]$SpecDir,
+        [string]$Status = "PASS"
+    )
+    [System.IO.Directory]::CreateDirectory($SpecDir) | Out-Null
+    $md = @"
+## 设计方案审查结论
+审查对象：06_design_contract.md
+审查状态：$Status
+### 发现（按级别）
+BLOCKER:
+MAJOR:
+MINOR:
+INFO:
+### 专项检查覆盖
+- fixture
+### 结论
+- $Status
+### 独立派发证据
+- subagent_type：design-reviewer
+- subagent session/run id：test-run
+- transcript 路径或证据引用：fixture
+"@
+    [System.IO.File]::WriteAllText((Join-Path $SpecDir "07_design_review.md"), $md, $Utf8NoBom)
+}
+
+function Write-TestCompileEvidence {
+    param(
+        [string]$SpecDir,
+        [int]$ExitCode = 0,
+        [string]$Command = "gradlew compileJava"
+    )
+    [System.IO.Directory]::CreateDirectory($SpecDir) | Out-Null
+    Write-TestJson -Path (Join-Path $SpecDir "compile-evidence.json") -Value ([ordered]@{
+        schemaVersion = "1.0"
+        exitCode = $ExitCode
+        command = $Command
+        executedAt = [DateTimeOffset]::UtcNow.ToString("yyyy-MM-ddTHH:mm:ssZ")
+    })
+}
+
+function Write-TestT3Evidence {
+    param(
+        [string]$SpecDir,
+        [string]$ReviewStatus = "PASS"
+    )
+    Write-TestDesignReview -SpecDir $SpecDir -Status $ReviewStatus
+    Write-TestCompileEvidence -SpecDir $SpecDir
+}
+
 function ConvertTo-SvnFileUri {
     param([string]$Path)
     $full = [System.IO.Path]::GetFullPath($Path).Replace('\', '/')
@@ -847,6 +898,7 @@ function Assert-NoRuntimeCoverageApprovalState {
         [System.IO.File]::WriteAllText($featState, '{"feature":"' + $feature + '","tier":"T3","phase":"DONE"}', $Utf8NoBom)
         $buildDir = Join-Path (Split-Path -Parent (Split-Path -Parent $specDirectory)) "build"
         [System.IO.Directory]::CreateDirectory($buildDir) | Out-Null
+        Write-TestT3Evidence -SpecDir $specDirectory
         
         $verifyNoImpact = & $ScriptPath -Operation VerifyCompletion -Path $approvalPath 2>&1
         $verifyNoImpactOut = $verifyNoImpact | Out-String
@@ -2121,8 +2173,11 @@ try {
 "@
     [System.IO.File]::WriteAllText($syncTestPlan, $testPlanText, $Utf8NoBom)
     $syncCovPath = Join-Path $syncSpec "05_test_coverage.json"
-    & $ScriptPath -Operation SyncCoverage -Path $syncCovPath
+    $syncOut = & $ScriptPath -Operation SyncCoverage -Path $syncCovPath 2>&1 | Out-String
     if (-not (Test-Path -LiteralPath $syncCovPath)) { throw "SyncCoverage must generate 05_test_coverage.json" }
+    if ($syncOut -notmatch "MISSING:.*TC-01\.automationCarrier") {
+        throw "SyncCoverage without carrier must list MISSING automationCarrier. Output: $syncOut"
+    }
     $covObj = Get-Content -LiteralPath $syncCovPath -Raw | ConvertFrom-Json
     if ($covObj.cases.Count -ne 2) { throw "SyncCoverage must parse 2 cases, got $($covObj.cases.Count)" }
     if ($covObj.cases[0].priority -ne "P1") { throw "Default case priority must be P1, got $($covObj.cases[0].priority)" }
@@ -2287,6 +2342,7 @@ try {
     # Create dummy classes dir so compile verification passes
     $doBuild = Join-Path $designOnlyDir "build/classes"
     [System.IO.Directory]::CreateDirectory($doBuild) | Out-Null
+    Write-TestT3Evidence -SpecDir $doSpecDir
     $doVerify = & $ScriptPath -Operation VerifyCompletion -Path $doApproval
     $doVerifyStr = $doVerify | Out-String
     if ($doVerify -notcontains "VERIFY_COMPLETION_PASS" -or $doVerifyStr -notmatch "需求门禁\(豁免: 仅技术契约\)") {
@@ -2989,6 +3045,7 @@ try {
     }
     [System.IO.File]::WriteAllText($extImpactPath, $extImpactBackup, $Utf8NoBom)
 
+    Write-TestT3Evidence -SpecDir $extSpecDir
     $extVerify = & $ScriptPath -Operation VerifyCompletion -Path $extApproval 2>&1
     $extVerifyStr = $extVerify | Out-String
     if ($LASTEXITCODE -ne 0 -or $extVerifyStr -notmatch "VERIFY_COMPLETION_PASS" -or $extVerifyStr -notmatch "类型/路由扩展完成度" -or $extVerifyStr -notmatch "类型/路由扩展覆盖完成度") {
@@ -4218,6 +4275,156 @@ try {
     }
     if ($noiseRaw -match '(?i)checkInitData' -or $noiseRaw -match '(?:, |\()false(?:,|\))' -or $noiseRaw -match '(?:, |\()stock(?:,|\))') {
         throw "Locator scan must drop false/stock/checkInitData noise. Output: $noiseRaw"
+    }
+
+    # 16. SpecLint, design-reviewer gate, compile-evidence, inferred SyncCoverage, T2 test-evidence
+    $p0Spec = Join-Path $TestRoot ".ai-workspace\specs\features\QualityGateP0"
+    [System.IO.Directory]::CreateDirectory($p0Spec) | Out-Null
+    $p0Req = Join-Path $p0Spec "01_server_rules.md"
+    $p0Des = Join-Path $p0Spec "06_design_contract.md"
+    [System.IO.File]::WriteAllText($p0Req, "# Rules`n- BR-01 buy`n", $Utf8NoBom)
+    [System.IO.File]::WriteAllText($p0Des, "# Design`n- DC-01 buy design`n", $Utf8NoBom)
+    $lintNo00 = & $ScriptPath -Operation LintSpecs -Path $p0Spec -Phase PLAN 2>&1 | Out-String
+    if ($LASTEXITCODE -eq 0 -or $lintNo00 -notmatch "LINT_SPECS_FAIL" -or $lintNo00 -notmatch "00_workflow_state\.json missing") {
+        throw "LintSpecs must fail when 01/06 exist without 00_workflow_state.json. Output: $lintNo00"
+    }
+
+    $p0Plan = Join-Path $p0Spec "05_test_plan.md"
+    [System.IO.File]::WriteAllText($p0Plan, @"
+# Plan
+- TC-01 Buy
+
+<!-- meta: { "id": "TC-01", "title": "Buy", "covers": ["BR-01", "DC-01"], "priority": "P1" } -->
+Given:
+- isolated player with stock
+When:
+- invoke buy
+Then:
+- remaining stock is zero
+载体: test/quality/BuyTest.java#testBuy
+"@, $Utf8NoBom)
+    $p0Cov = Join-Path $p0Spec "05_test_coverage.json"
+    $p0Sync = & $ScriptPath -Operation SyncCoverage -Path $p0Cov 2>&1 | Out-String
+    if ($p0Sync -notmatch "INFERRED:.*TC-01\.automationCarrier" -or $p0Sync -notmatch "INFERRED:.*TC-01\.setup") {
+        throw "SyncCoverage must infer carrier and Given setup from the plan body. Output: $p0Sync"
+    }
+    if ($p0Sync -match "MISSING:.*TC-01\.automationCarrier") {
+        throw "SyncCoverage must not list inferred carrier as MISSING. Output: $p0Sync"
+    }
+    $p0CovObj = Get-Content -LiteralPath $p0Cov -Raw | ConvertFrom-Json
+    if ([string]$p0CovObj.cases[0].automationCarrier -ne "test/quality/BuyTest.java#testBuy") {
+        throw "Synced carrier must come from 载体 line, got $($p0CovObj.cases[0].automationCarrier)"
+    }
+    if (@($p0CovObj.cases[0].setup)[0] -notmatch "isolated player") {
+        throw "Synced setup must come from Given bullets. Got: $($p0CovObj.cases[0].setup | Out-String)"
+    }
+    if (@($p0CovObj.cases[0].assertions.protocol)[0].target -notmatch "remaining stock") {
+        throw "Synced assertions must come from Then bullets. Got: $($p0CovObj.cases[0].assertions | ConvertTo-Json -Depth 6)"
+    }
+
+    $p0ReqSha = Get-TestArtifactHash -Path $p0Req
+    $p0DesSha = Get-TestArtifactHash -Path $p0Des
+    Write-TestJson -Path (Join-Path $p0Spec "00_workflow_state.json") -Value ([ordered]@{
+        schemaVersion = "1.0"
+        feature = "QualityGateP0"
+        baseline = "0"
+        requirement = @{ status = "APPROVED"; sha256 = $p0ReqSha; approvedBy = "tester"; approvedAt = "2026-09-03T00:00:00Z"; artifact = "01_server_rules.md" }
+        design = @{ status = "APPROVED"; sha256 = $p0DesSha; approvedBy = "tester"; approvedAt = "2026-09-03T00:00:00Z"; artifact = "06_design_contract.md" }
+    })
+    $p0CovObj.requirementSha256 = $p0ReqSha
+    $p0CovObj.designSha256 = $p0DesSha
+    $p0CovObj.testPlanSha256 = Get-TestArtifactHash -Path $p0Plan
+    [System.IO.File]::WriteAllText($p0Cov, ($p0CovObj | ConvertTo-Json -Depth 10), $Utf8NoBom)
+    Write-TestJson -Path (Join-Path $p0Spec "feature-state.json") -Value ([ordered]@{
+        schemaVersion = "1.0"
+        feature = "QualityGateP0"
+        tier = "T3"
+        phase = "DONE"
+        baseline = "0"
+        updatedAt = "2026-09-03T00:00:00Z"
+    })
+
+    $lintPlan = & $ScriptPath -Operation LintSpecs -Path $p0Spec -Phase PLAN 2>&1 | Out-String
+    if ($LASTEXITCODE -ne 0 -or $lintPlan -notmatch "LINT_SPECS_PASS") {
+        throw "LintSpecs PLAN must pass after 00 + inferred coverage. Output: $lintPlan"
+    }
+    if ($lintPlan -notmatch "MISSING:.*07_design_review") {
+        throw "LintSpecs PLAN must list missing design-reviewer report. Output: $lintPlan"
+    }
+
+    [System.IO.Directory]::CreateDirectory((Join-Path $p0Spec "build/classes")) | Out-Null
+    $verifyNoReview = & $ScriptPath -Operation VerifyCompletion -Path (Join-Path $p0Spec "00_workflow_state.json") 2>&1 | Out-String
+    if ($LASTEXITCODE -eq 0 -or $verifyNoReview -notmatch "07_design_review\.md missing") {
+        throw "VerifyCompletion T3 must fail without design-reviewer report even if build/classes exists. Output: $verifyNoReview"
+    }
+    if ($verifyNoReview -notmatch "compile-evidence\.json" -or $verifyNoReview -notmatch "not compile proof") {
+        throw "VerifyCompletion T3 must reject build/classes as compile proof. Output: $verifyNoReview"
+    }
+
+    Write-TestDesignReview -SpecDir $p0Spec -Status "NEEDS_FIX"
+    Write-TestCompileEvidence -SpecDir $p0Spec
+    $p0JavaDir = Join-Path $TestRoot "test\quality"
+    [System.IO.Directory]::CreateDirectory($p0JavaDir) | Out-Null
+    [System.IO.File]::WriteAllText(
+        (Join-Path $p0JavaDir "BuyTest.java"),
+        "package quality; import org.junit.Test; public class BuyTest { @Test public void testBuy() {} }",
+        $Utf8NoBom
+    )
+    $p0CovFix = Get-Content -LiteralPath $p0Cov -Raw | ConvertFrom-Json -AsHashtable
+    $p0Risk = & $ScriptPath -Operation AssessRisk -Path $p0Spec 2>&1 | Out-String
+    $p0Digest = ($p0Risk | ConvertFrom-Json).changeSetDigest
+    $p0CovFix.cases[0].status = "VERIFIED"
+    $p0CovFix["executionEvidence"] = [ordered]@{
+        command = "pwsh test"
+        exitCode = 0
+        executedAt = [DateTimeOffset]::UtcNow.AddMinutes(-2).ToString("yyyy-MM-ddTHH:mm:ssZ")
+        sourceCommitSha = "abcdef1234567890"
+        workingTreeDigest = $p0Digest
+        testCount = 1
+        passedCount = 1
+        failedCount = 0
+    }
+    [System.IO.File]::WriteAllText($p0Cov, ($p0CovFix | ConvertTo-Json -Depth 10), $Utf8NoBom)
+    $verifyNeedsFix = & $ScriptPath -Operation VerifyCompletion -Path (Join-Path $p0Spec "00_workflow_state.json") 2>&1 | Out-String
+    if ($LASTEXITCODE -eq 0 -or $verifyNeedsFix -notmatch "NEEDS_FIX") {
+        throw "VerifyCompletion T3 must fail on NEEDS_FIX design-reviewer report. Output: $verifyNeedsFix"
+    }
+
+    Write-TestDesignReview -SpecDir $p0Spec -Status "PASS_WITH_WARNINGS"
+    $verifyWarn = & $ScriptPath -Operation VerifyCompletion -Path (Join-Path $p0Spec "00_workflow_state.json") 2>&1 | Out-String
+    if ($LASTEXITCODE -ne 0 -or $verifyWarn -notmatch "VERIFY_COMPLETION_PASS" -or $verifyWarn -notmatch "PASS_WITH_WARNINGS") {
+        throw "VerifyCompletion T3 must pass with PASS_WITH_WARNINGS + compile-evidence.json. Output: $verifyWarn"
+    }
+
+    # Isolated workspace: shared $TestRoot later contains nested git fixtures whose
+    # source would otherwise be attributed to this T2 feature on a non-VCS scan.
+    $t2Ws = Join-Path $TestRoot "quality_t2_ws"
+    $t2EvSpec = Join-Path $t2Ws ".ai-workspace\specs\features\QualityGateT2"
+    [System.IO.Directory]::CreateDirectory($t2EvSpec) | Out-Null
+    Write-TestJson -Path (Join-Path $t2EvSpec "feature-state.json") -Value ([ordered]@{
+        schemaVersion = "1.0"
+        feature = "QualityGateT2"
+        tier = "T2"
+        phase = "IMPLEMENTING"
+        baseline = "0"
+        updatedAt = "2026-09-03T00:00:00Z"
+    })
+    $t2NoEv = & $ScriptPath -Operation VerifyCompletion -Path (Join-Path $t2EvSpec "workflow-state.json") 2>&1 | Out-String
+    if ($LASTEXITCODE -ne 0 -or $t2NoEv -notmatch "VERIFY_COMPLETION_PASS") {
+        throw "T2 VerifyCompletion must pass without test-evidence.json. Output: $t2NoEv"
+    }
+    Write-TestJson -Path (Join-Path $t2EvSpec "test-evidence.json") -Value ([ordered]@{
+        schemaVersion = "1.0"
+        exitCode = 1
+        command = "gradlew test"
+        executedAt = [DateTimeOffset]::UtcNow.ToString("yyyy-MM-ddTHH:mm:ssZ")
+        testCount = 2
+        passedCount = 1
+        failedCount = 1
+    })
+    $t2FailEv = & $ScriptPath -Operation VerifyCompletion -Path (Join-Path $t2EvSpec "workflow-state.json") 2>&1 | Out-String
+    if ($LASTEXITCODE -eq 0 -or $t2FailEv -notmatch "test-evidence\.json") {
+        throw "T2 VerifyCompletion must fail when test-evidence.json records failures. Output: $t2FailEv"
     }
 
     Write-Output "All workflow state tests passed."

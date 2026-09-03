@@ -13,6 +13,9 @@
 | `05_test_plan.md` | 可执行用例，含稳定的 `TC-*`（Test Case）声明 + `<!-- meta: {...} -->` 元数据（供 SyncCoverage 生成 coverage JSON） |
 | `05_test_coverage.json` | 需求/设计到用例的追溯。类型/策略扩展时 Case 须机读声明 `CHARACTERIZATION`、`entryPointIds`、`variantKeys`、`facetIds`、`bypassesPriorQuery`；表征载体方法体须含这些字面量与调用，并含 `persistenceColdReload` 与再读存储调用 |
 | `06_design_contract.md` | 技术契约，含稳定的 `DC-*`（Design Contract）、`DR-*`（Design Rule/风险）、`TW-*`（Test/Workflow 约定）声明 |
+| `07_design_review.md` | design-reviewer 机器审查结论。T3 `VerifyCompletion` 读取 `审查状态：PASS` 或 `PASS_WITH_WARNINGS`；缺文件或 `NEEDS_FIX` 不能 Complete |
+| `compile-evidence.json` | 最近一次编译记录（`command` / `exitCode` / `executedAt`）。T3 Complete 必填；`build/classes` 目录存在不算编译过 |
+| `test-evidence.json` | T2 可选测试记录。文件存在则 `VerifyCompletion` 要求 exitCode=0 |
 | `review-mailbox.json` | 跨 Agent 协同审查信箱（遵循 `schemas/review-mailbox.schema.json`） |
 | `.workflow-owner.json` | 机器级活动归属的可读镜像 |
 

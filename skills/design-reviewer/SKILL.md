@@ -169,13 +169,13 @@ brainstorming（需求 → 确认 → design-architect 产出 06）
 
 ## 输出格式
 
-审查结论返回给 Superpowers controller（不写 runtime 文件）：
+审查结论必须写入功能目录 `07_design_review.md`（`VerifyCompletion` 读取此文件；无文件或状态不是 PASS / PASS_WITH_WARNINGS 则 T3 不能 Complete）。同时把同一份结论返回给 Superpowers controller（不写 `.ai-sop/runtime/`）。
 
 ```
 ## 设计方案审查结论
 
 审查对象：<06_design_contract.md 路径>
-审查状态：PASS | NEEDS_FIX
+审查状态：PASS | PASS_WITH_WARNINGS | NEEDS_FIX
 
 ### 发现（按级别）
 BLOCKER:
@@ -193,6 +193,7 @@ INFO:
 
 ### 结论
 - PASS：无 BLOCKER/MAJOR/MINOR，可交人工确认。
+- PASS_WITH_WARNINGS：仅剩 MINOR/INFO，可交人工确认。
 - NEEDS_FIX：<需回 design-architect 修正的具体问题清单>，修正后重审。
 
 ### 独立派发证据（STRICT 工具跑 T3 时必填，防自审冒充独立审查）

@@ -21,6 +21,7 @@ param(
         "AssessRisk",
         "ValidateTransitions",
         "SyncCoverage",
+        "LintSpecs",
         "CheckCompletion",
         "VerifyCompletion"
     )]
@@ -1339,7 +1340,13 @@ function Test-IsAiSopInternalSpecMetadata {
     }
     
     # 2. .ai-workspace spec tree internal state files and their specific lock/temp/backup files
-    if ($norm -match '^\.ai-workspace/specs/features/[^/]+/(?:04_change_impact\.json|00_workflow_state\.json|workflow-state\.json|feature-state\.json|05_test_coverage\.json|\.workflow-owner\.json|\.workflow-mutation\.lock|\.commit-journal\.json)(?:\.(?:lock|bak|stage\.tmp))?$') {
+    if ($norm -match '^\.ai-workspace/specs/features/[^/]+/(?:04_change_impact\.json|00_workflow_state\.json|workflow-state\.json|feature-state\.json|05_test_coverage\.json|07_design_review\.md|design-review\.md|compile-evidence\.json|test-evidence\.json|\.workflow-owner\.json|\.workflow-mutation\.lock|\.commit-journal\.json)(?:\.(?:lock|bak|stage\.tmp))?$') {
+        return $true
+    }
+    if ($norm -match '^\.ai-workspace/specs/features/[^/]+/reviews/') {
+        return $true
+    }
+    if ($norm -match '^\.ai-workspace/(?:compile-evidence|test-evidence)\.json$') {
         return $true
     }
     
@@ -2794,6 +2801,11 @@ function Get-SemanticRiskAssessment {
         $triggersHit.Add("FEATURE_SCOPE_UNRESOLVED")
         $details.Add("Feature specs cite no Class/file locators while the workspace has production source diffs; failing closed rather than attributing unrelated dirt to this feature.")
         $scopedDiff = ""
+    } elseif (-not [string]::IsNullOrWhiteSpace($SpecDir) -and -not $isGit -and -not $isSvn) {
+        # T2/T1 with only feature-state: a non-VCS tree has no changeset. Do not treat
+        # every nested fixture/source file under the workspace as this feature's risk.
+        $scopedDiff = ""
+        $details.Add("Feature-scoped semantic scan: non-VCS workspace with no spec locators; not attributing the entire tree to this feature.")
     }
     
     # 3. Precision Semantic Trigger detection
@@ -3567,6 +3579,299 @@ function Get-CoveragePlaceholderWarnings {
         }
     }
     return [pscustomobject]@{ Warnings = $warnings; Errors = $errors }
+}
+
+function Resolve-LintSpecDirectory {
+    param(
+        [string]$PathValue,
+        [string]$SpecDirectoryValue,
+        [string]$FeatureValue
+    )
+    if (-not [string]::IsNullOrWhiteSpace($PathValue)) {
+        $full = [System.IO.Path]::GetFullPath($PathValue)
+        if (Test-Path -LiteralPath $full -PathType Container) { return $full }
+        return Split-Path -Parent $full
+    }
+    if (-not [string]::IsNullOrWhiteSpace($SpecDirectoryValue)) {
+        return [System.IO.Path]::GetFullPath($SpecDirectoryValue)
+    }
+    if (-not [string]::IsNullOrWhiteSpace($FeatureValue)) {
+        $start = if (-not [string]::IsNullOrWhiteSpace($SpecDirectoryValue)) { $SpecDirectoryValue } else { (Get-Location).Path }
+        $ws = Resolve-AiSopWorkspaceRoot -StartPath $start
+        if ([string]::IsNullOrWhiteSpace($ws)) { $ws = $start }
+        return [System.IO.Path]::GetFullPath((Join-Path $ws ".ai-workspace\specs\features\$FeatureValue"))
+    }
+    throw "Missing required argument: -Path, -SpecDirectory, or -Feature"
+}
+
+function Find-DesignReviewReportPath {
+    param([string]$SpecDir)
+    $names = @(
+        "07_design_review.md",
+        "design-review.md",
+        (Join-Path "reviews" "design-reviewer.md"),
+        (Join-Path "reviews" "07_design_review.md")
+    )
+    foreach ($n in $names) {
+        $p = Join-Path $SpecDir $n
+        if (Test-Path -LiteralPath $p -PathType Leaf) { return $p }
+    }
+    return $null
+}
+
+function Read-ReviewReportStatus {
+    param([string]$ReportPath)
+    if ([string]::IsNullOrWhiteSpace($ReportPath) -or -not (Test-Path -LiteralPath $ReportPath -PathType Leaf)) {
+        return $null
+    }
+    $text = [System.IO.File]::ReadAllText($ReportPath)
+    if ($text -match '(?im)(?:审查状态|status)\s*[:：]\s*PASS_WITH_WARNINGS\b') { return "PASS_WITH_WARNINGS" }
+    if ($text -match '(?im)(?:审查状态|status)\s*[:：]\s*NEEDS_FIX\b') { return "NEEDS_FIX" }
+    if ($text -match '(?im)(?:审查状态|status)\s*[:：]\s*PASS\b') { return "PASS" }
+    return $null
+}
+
+function Test-DesignReviewGate {
+    param([string]$SpecDir)
+    $path = Find-DesignReviewReportPath -SpecDir $SpecDir
+    if ([string]::IsNullOrWhiteSpace($path)) {
+        return [pscustomobject]@{
+            Ok = $false
+            Status = $null
+            Path = $null
+            Problem = "07_design_review.md missing — T3 requires a design-reviewer report (PASS or PASS_WITH_WARNINGS)"
+        }
+    }
+    $status = Read-ReviewReportStatus -ReportPath $path
+    if ($status -in @("PASS", "PASS_WITH_WARNINGS")) {
+        return [pscustomobject]@{ Ok = $true; Status = $status; Path = $path; Problem = $null }
+    }
+    if ([string]::IsNullOrWhiteSpace($status)) {
+        return [pscustomobject]@{
+            Ok = $false
+            Status = $null
+            Path = $path
+            Problem = "design-reviewer report '$path' has no 审查状态/status line (PASS | PASS_WITH_WARNINGS | NEEDS_FIX)"
+        }
+    }
+    return [pscustomobject]@{
+        Ok = $false
+        Status = $status
+        Path = $path
+        Problem = "design-reviewer report status=$status (need PASS or PASS_WITH_WARNINGS)"
+    }
+}
+
+function Find-CommandEvidencePath {
+    param(
+        [string]$SpecDir,
+        [string]$WorkspaceRoot,
+        [string]$FileName
+    )
+    $candidates = [System.Collections.Generic.List[string]]::new()
+    if (-not [string]::IsNullOrWhiteSpace($SpecDir)) {
+        [void]$candidates.Add((Join-Path $SpecDir $FileName))
+    }
+    if (-not [string]::IsNullOrWhiteSpace($WorkspaceRoot)) {
+        [void]$candidates.Add((Join-Path $WorkspaceRoot (Join-Path ".ai-workspace" $FileName)))
+        [void]$candidates.Add((Join-Path $WorkspaceRoot $FileName))
+    }
+    foreach ($p in $candidates) {
+        if (Test-Path -LiteralPath $p -PathType Leaf) { return $p }
+    }
+    return $null
+}
+
+function Get-CommandEvidenceProblem {
+    param(
+        [string]$EvidencePath,
+        [int]$MaxAgeDays = 7,
+        [switch]$RequireTestCounts
+    )
+    if ([string]::IsNullOrWhiteSpace($EvidencePath) -or -not (Test-Path -LiteralPath $EvidencePath -PathType Leaf)) {
+        return "missing"
+    }
+    try {
+        $obj = Get-Content -LiteralPath $EvidencePath -Raw | ConvertFrom-Json
+    } catch {
+        return "invalid JSON: $($_.Exception.Message)"
+    }
+    if ($null -eq $obj) { return "empty JSON" }
+    $names = @($obj.PSObject.Properties.Name)
+    if ($names -notcontains "exitCode") { return "exitCode missing" }
+    if ([int]$obj.exitCode -ne 0) { return "exitCode=$($obj.exitCode)" }
+    if ([string]::IsNullOrWhiteSpace([string]$obj.command)) { return "command missing" }
+    $rawAt = [string]$obj.executedAt
+    if ([string]::IsNullOrWhiteSpace($rawAt)) { return "executedAt missing" }
+    $parsed = [datetimeoffset]::MinValue
+    if (-not [DateTimeOffset]::TryParse($rawAt, [ref]$parsed)) { return "executedAt is not a timestamp" }
+    if ($parsed -gt [DateTimeOffset]::UtcNow.AddMinutes(5)) { return "executedAt is in the future" }
+    if (([DateTimeOffset]::UtcNow - $parsed).TotalDays -gt $MaxAgeDays) {
+        return "stale (older than $MaxAgeDays days)"
+    }
+    if ($RequireTestCounts -and ($names -contains "failedCount") -and [int]$obj.failedCount -gt 0) {
+        return "failedCount=$($obj.failedCount)"
+    }
+    if ($RequireTestCounts -and ($names -contains "testCount") -and [int]$obj.testCount -lt 1) {
+        return "testCount=$($obj.testCount)"
+    }
+    return $null
+}
+
+function Get-MarkdownSectionBullets {
+    param(
+        [string]$Body,
+        [string[]]$Headings
+    )
+    if ([string]::IsNullOrWhiteSpace($Body) -or $null -eq $Headings -or $Headings.Count -eq 0) {
+        return @()
+    }
+    $headingAlt = ($Headings | ForEach-Object { [regex]::Escape($_) }) -join "|"
+    $rx = "(?im)^\s*(?:#{1,6}\s+)?(?:$headingAlt)\s*[:：]?\s*$"
+    $m = [regex]::Match($Body, $rx)
+    if (-not $m.Success) { return @() }
+    $after = $Body.Substring($m.Index + $m.Length)
+    $stopRx = '(?im)^\s*(?:#{1,6}\s+)?(?:Given|When|Then|Setup|Trigger|Cleanup|前置|触发|断言|清理|载体|carrier|automationCarrier)\s*[:：]?'
+    $bullets = [System.Collections.Generic.List[string]]::new()
+    foreach ($line in ($after -split "`r?`n")) {
+        if ($line -match '^\s*$') {
+            if ($bullets.Count -gt 0) { break }
+            continue
+        }
+        if ($line -match $stopRx) { break }
+        if ($line -match '^\s*[-*+]\s+(.+)$') {
+            [void]$bullets.Add($Matches[1].Trim())
+            continue
+        }
+        if ($line -match '^\s*\d+\.\s+(.+)$') {
+            [void]$bullets.Add($Matches[1].Trim())
+            continue
+        }
+        break
+    }
+    return @($bullets)
+}
+
+function Get-TestPlanCarrierFromBody {
+    param([string]$Body)
+    if ([string]::IsNullOrWhiteSpace($Body)) { return "" }
+    $m = [regex]::Match($Body, '(?im)^\s*(?:载体|carrier|automationCarrier)\s*[:：]\s*(\S+)\s*$')
+    if ($m.Success) { return $m.Groups[1].Value.Trim() }
+    return ""
+}
+
+function Test-CoverageSkeletonCase {
+    param($Case)
+    $setup0 = ""
+    if ($null -ne $Case.setup) {
+        $arr = @($Case.setup)
+        if ($arr.Count -gt 0) { $setup0 = [string]$arr[0] }
+    }
+    $trig0 = ""
+    if ($null -ne $Case.trigger) {
+        $arrT = @($Case.trigger)
+        if ($arrT.Count -gt 0) { $trig0 = [string]$arrT[0] }
+    }
+    $protoTarget = ""
+    $protoOp = ""
+    $protoExp = ""
+    if ($null -ne $Case.assertions -and $null -ne $Case.assertions.protocol) {
+        $p0 = @($Case.assertions.protocol) | Select-Object -First 1
+        if ($null -ne $p0) {
+            $protoTarget = [string]$p0.target
+            $protoOp = [string]$p0.operator
+            $protoExp = [string]$p0.expected
+        }
+    }
+    $setupSkeleton = $setup0 -match '(?i)^Execute test according to 05_test_plan\.md$'
+    $trigSkeleton = $trig0 -match '(?i)^Trigger test case\s+'
+    $assertSkeleton = ($protoTarget -eq "status" -and $protoOp -eq "EQ" -and $protoExp -eq "VALID")
+    return ($setupSkeleton -or $trigSkeleton -or $assertSkeleton)
+}
+
+function Invoke-SpecLint {
+    param(
+        [string]$SpecDir,
+        [string]$LintPhase = "PLAN"
+    )
+    $failures = [System.Collections.Generic.List[string]]::new()
+    $missing = [System.Collections.Generic.List[string]]::new()
+    $warnings = [System.Collections.Generic.List[string]]::new()
+    $isVerify = ($LintPhase -ieq "VERIFY")
+
+    $wf00 = Join-Path $SpecDir "00_workflow_state.json"
+    $wfAlt = Join-Path $SpecDir "workflow-state.json"
+    $has00 = (Test-Path -LiteralPath $wf00 -PathType Leaf) -or (Test-Path -LiteralPath $wfAlt -PathType Leaf)
+    $has01 = Test-Path -LiteralPath (Join-Path $SpecDir "01_server_rules.md") -PathType Leaf
+    $has06 = Test-Path -LiteralPath (Join-Path $SpecDir "06_design_contract.md") -PathType Leaf
+    $has05plan = Test-Path -LiteralPath (Join-Path $SpecDir "05_test_plan.md") -PathType Leaf
+    $covPath = Join-Path $SpecDir "05_test_coverage.json"
+    $has05cov = Test-Path -LiteralPath $covPath -PathType Leaf
+
+    if (($has01 -or $has06) -and -not $has00) {
+        [void]$failures.Add("00_workflow_state.json missing while 01/06 exist — InitApproval before covering clauses")
+    }
+    if ($has01 -and -not $has05plan) {
+        [void]$missing.Add("05_test_plan.md")
+    }
+    if ($has05plan -and -not $has05cov) {
+        [void]$missing.Add("05_test_coverage.json (run SyncCoverage)")
+    }
+
+    if ($has05cov -and $has00) {
+        try {
+            Validate-TestCoverageState -CoveragePath $covPath -Runtime $null | Out-Null
+        } catch {
+            [void]$failures.Add("coverage contract: $($_.Exception.Message)")
+        }
+        $ph = Get-CoveragePlaceholderWarnings -CoveragePath $covPath -Phase $LintPhase
+        foreach ($e in @($ph.Errors)) { [void]$failures.Add([string]$e) }
+        foreach ($w in @($ph.Warnings)) { [void]$warnings.Add([string]$w) }
+        try {
+            $covObj = Read-JsonObject -FilePath $covPath -SchemaPath (Join-Path $SchemaRoot "test-coverage.schema.json")
+            foreach ($case in @($covObj.cases)) {
+                $cid = [string]$case.id
+                $carrier = [string]$case.automationCarrier
+                if ([string]::IsNullOrWhiteSpace($carrier) -or $carrier -in @("__TODO__", "TODO", "see plan")) {
+                    [void]$missing.Add("${cid}.automationCarrier")
+                }
+                if (Test-CoverageSkeletonCase -Case $case) {
+                    [void]$missing.Add("${cid}.assertions (SyncCoverage skeleton)")
+                }
+            }
+        } catch {
+            [void]$warnings.Add("could not inspect coverage cases: $($_.Exception.Message)")
+        }
+    }
+
+    $review = Test-DesignReviewGate -SpecDir $SpecDir
+    if ($has06) {
+        if ($review.Ok) {
+            [void]$warnings.Add("design-reviewer $($review.Status) ($($review.Path))")
+        } elseif ($isVerify) {
+            [void]$failures.Add([string]$review.Problem)
+        } else {
+            [void]$missing.Add("07_design_review.md")
+        }
+    }
+
+    $wsRoot = Resolve-AiSopWorkspaceRoot -StartPath $SpecDir
+    $compilePath = Find-CommandEvidencePath -SpecDir $SpecDir -WorkspaceRoot $wsRoot -FileName "compile-evidence.json"
+    $compileProblem = Get-CommandEvidenceProblem -EvidencePath $compilePath
+    if ($isVerify) {
+        if ($compileProblem) {
+            [void]$failures.Add("compile-evidence.json: $compileProblem — build/classes directory is not compile proof")
+        }
+    } elseif ($compileProblem) {
+        [void]$missing.Add("compile-evidence.json ($compileProblem)")
+    }
+
+    return [pscustomobject]@{
+        Failures = $failures
+        Missing = $missing
+        Warnings = $warnings
+        Pass = ($failures.Count -eq 0)
+    }
 }
 
 function Assert-DurableTestCoverage {
@@ -4924,8 +5229,12 @@ switch ($Operation) {
         }
         $raw = [System.IO.File]::ReadAllText($testPlanPath)
         $cases = [System.Collections.Generic.List[hashtable]]::new()
+        $inferredNotes = [System.Collections.Generic.List[string]]::new()
+        $missingNotes = [System.Collections.Generic.List[string]]::new()
         $pattern = '<!--\s*meta:\s*(\{.*?\})\s*-->'
-        foreach ($m in [regex]::Matches($raw, $pattern, [System.Text.RegularExpressions.RegexOptions]::Singleline)) {
+        $metaMatches = [regex]::Matches($raw, $pattern, [System.Text.RegularExpressions.RegexOptions]::Singleline)
+        for ($mi = 0; $mi -lt $metaMatches.Count; $mi++) {
+            $m = $metaMatches[$mi]
             try {
                 $meta = $m.Groups[1].Value | ConvertFrom-Json
                 $tcId = [string]$meta.id
@@ -4934,7 +5243,81 @@ switch ($Operation) {
                 $desIds = @($covers | Where-Object { $_ -match '^(DC|DR|TW)-' })
                 if ($reqIds.Count -eq 0 -and $desIds.Count -eq 0) {
                     $desIds = @("DC-PLACEHOLDER")
+                    [void]$missingNotes.Add("${tcId}.covers")
                 }
+                $bodyStart = $m.Index + $m.Length
+                $bodyEnd = if ($mi + 1 -lt $metaMatches.Count) { $metaMatches[$mi + 1].Index } else { $raw.Length }
+                $body = $raw.Substring($bodyStart, [Math]::Max(0, $bodyEnd - $bodyStart))
+
+                $setupFromMeta = @()
+                if ($null -ne $meta.setup) { $setupFromMeta = @($meta.setup | ForEach-Object { [string]$_ }) | Where-Object { -not [string]::IsNullOrWhiteSpace($_) } }
+                $triggerFromMeta = @()
+                if ($null -ne $meta.trigger) { $triggerFromMeta = @($meta.trigger | ForEach-Object { [string]$_ }) | Where-Object { -not [string]::IsNullOrWhiteSpace($_) } }
+                $cleanupFromMeta = @()
+                if ($null -ne $meta.cleanup) { $cleanupFromMeta = @($meta.cleanup | ForEach-Object { [string]$_ }) | Where-Object { -not [string]::IsNullOrWhiteSpace($_) } }
+
+                $setup = $setupFromMeta
+                if ($setup.Count -eq 0) { $setup = @(Get-MarkdownSectionBullets -Body $body -Headings @("Given", "Setup", "前置")) }
+                $trigger = $triggerFromMeta
+                if ($trigger.Count -eq 0) { $trigger = @(Get-MarkdownSectionBullets -Body $body -Headings @("When", "Trigger", "触发")) }
+                $thenBullets = @(Get-MarkdownSectionBullets -Body $body -Headings @("Then", "Assertions", "断言"))
+                $cleanup = $cleanupFromMeta
+                if ($cleanup.Count -eq 0) { $cleanup = @(Get-MarkdownSectionBullets -Body $body -Headings @("Cleanup", "清理")) }
+
+                $usedSkeleton = $false
+                if ($setup.Count -eq 0) {
+                    $setup = @("Execute test according to 05_test_plan.md")
+                    $usedSkeleton = $true
+                } else {
+                    [void]$inferredNotes.Add("${tcId}.setup")
+                }
+                if ($trigger.Count -eq 0) {
+                    $trigger = @("Trigger test case $tcId")
+                    $usedSkeleton = $true
+                } else {
+                    [void]$inferredNotes.Add("${tcId}.trigger")
+                }
+                if ($cleanup.Count -eq 0) {
+                    $cleanup = @("Clean up test fixture")
+                }
+
+                $assertions = [ordered]@{
+                    protocol = @(
+                        [ordered]@{
+                            target = "status"
+                            operator = "EQ"
+                            expected = "VALID"
+                        }
+                    )
+                }
+                if ($thenBullets.Count -gt 0) {
+                    $protocol = [System.Collections.Generic.List[object]]::new()
+                    foreach ($b in $thenBullets) {
+                        $tgt = $b
+                        if ($tgt.Length -gt 80) { $tgt = $tgt.Substring(0, 80) }
+                        [void]$protocol.Add([ordered]@{
+                            target = $tgt
+                            operator = "EQ"
+                            expected = "true"
+                        })
+                    }
+                    $assertions = [ordered]@{ protocol = @($protocol) }
+                    [void]$inferredNotes.Add("${tcId}.assertions")
+                } else {
+                    [void]$missingNotes.Add("${tcId}.assertions (skeleton)")
+                }
+
+                $carrier = ""
+                if ($meta.carrier) { $carrier = [string]$meta.carrier }
+                if ([string]::IsNullOrWhiteSpace($carrier)) { $carrier = Get-TestPlanCarrierFromBody -Body $body }
+                if ([string]::IsNullOrWhiteSpace($carrier)) {
+                    $carrier = "__TODO__"
+                    [void]$missingNotes.Add("${tcId}.automationCarrier")
+                } else {
+                    [void]$inferredNotes.Add("${tcId}.automationCarrier")
+                }
+                if ($usedSkeleton) { }
+
                 $cases.Add([ordered]@{
                     id = $tcId
                     status = "PLANNED"
@@ -4943,19 +5326,11 @@ switch ($Operation) {
                     testTypes = @("FUNCTIONAL")
                     requirementIds = $reqIds
                     designIds = $desIds
-                    setup = @("Execute test according to 05_test_plan.md")
-                    trigger = @("Trigger test case $tcId")
-                    assertions = [ordered]@{
-                        protocol = @(
-                            [ordered]@{
-                                target = "status"
-                                operator = "EQ"
-                                expected = "VALID"
-                            }
-                        )
-                    }
-                    cleanup = @("Clean up test fixture")
-                    automationCarrier = if ($meta.carrier) { [string]$meta.carrier } else { "__TODO__" }
+                    setup = @($setup)
+                    trigger = @($trigger)
+                    assertions = $assertions
+                    cleanup = @($cleanup)
+                    automationCarrier = $carrier
                 })
             } catch {
                 Write-Host "WARN: skipped bad meta block: $($m.Groups[1].Value)" -ForegroundColor Yellow
@@ -4988,6 +5363,34 @@ switch ($Operation) {
         [System.IO.File]::WriteAllText($Path, $json, $Utf8NoBom)
         Sync-FeatureStateTierToT3 -StatePath $Path
         Write-Output "Synced $Path ($($cases.Count) test cases from 05_test_plan.md)"
+        if ($inferredNotes.Count -gt 0) {
+            Write-Output ("INFERRED: " + (($inferredNotes | Select-Object -Unique) -join "; "))
+        }
+        if ($missingNotes.Count -gt 0) {
+            Write-Output ("MISSING: " + (($missingNotes | Select-Object -Unique) -join "; "))
+        } else {
+            Write-Output "MISSING: none"
+        }
+    }
+    "LintSpecs" {
+        $specDir = Resolve-LintSpecDirectory -PathValue $Path -SpecDirectoryValue $SpecDirectory -FeatureValue $Feature
+        if (-not (Test-Path -LiteralPath $specDir -PathType Container)) {
+            Write-Output "LINT_SPECS_FAIL"
+            Write-Output "FAIL: spec directory not found: $specDir"
+            exit 1
+        }
+        $lintPhase = if ([string]::IsNullOrWhiteSpace($Phase)) { "PLAN" } else { $Phase }
+        $lint = Invoke-SpecLint -SpecDir $specDir -LintPhase $lintPhase
+        Write-Output "spec=$specDir phase=$lintPhase"
+        foreach ($f in @($lint.Failures)) { Write-Output "FAIL: $f" }
+        foreach ($m in @($lint.Missing)) { Write-Output "MISSING: $m" }
+        foreach ($w in @($lint.Warnings)) { Write-Output "WARN: $w" }
+        if ($lint.Pass) {
+            Write-Output "LINT_SPECS_PASS"
+            exit 0
+        }
+        Write-Output "LINT_SPECS_FAIL"
+        exit 1
     }
     "CheckCompletion" {
         # Machine-checkable completion conditions per tier. Outputs ASCII checklist.
@@ -5253,6 +5656,16 @@ switch ($Operation) {
             if (-not $phaseOk) { $failures.Add("feature-state phase is initial/unknown ($phase)") }
             $checks.Add("[$(if($phaseOk){'v'}else{'X'})] feature-state 阶段非初始($phase)")
             $checks.Add("[v] 语义风险分档: T3已纳管")
+            $hasDesignArtifact = Test-Path -LiteralPath (Join-Path $specDir "06_design_contract.md") -PathType Leaf
+            if ($hasDesignArtifact) {
+                $reviewGate = Test-DesignReviewGate -SpecDir $specDir
+                if ($reviewGate.Ok) {
+                    $checks.Add("[v] design-reviewer 报告 $($reviewGate.Status)")
+                } else {
+                    $failures.Add([string]$reviewGate.Problem)
+                    $checks.Add("[X] design-reviewer 报告")
+                }
+            }
         } elseif ($effectiveTier -in @("T1", "T2", "FAST_TRACK")) {
             # Machine-enforced semantic risk tiering check
             $risk = Get-SemanticRiskAssessment -WorkspaceRoot $wsRoot -DeclaredTier $effectiveTier -SpecDir $specDir
@@ -5266,7 +5679,18 @@ switch ($Operation) {
             # T1/T2/FAST_TRACK: compile artifact check is non-blocking (advisory); Claim validity is workflow-owner.ps1 Validate's job
             if ($effectiveTier -eq "T2") {
                 $checks.Add("[?] 归属 Validate(owner.ps1 -Operation Validate,另跑)")
-                $checks.Add("[?] 相关测试/回归(AI 据定向 JUnit 结果自报)")
+                $testEvPath = Find-CommandEvidencePath -SpecDir $specDir -WorkspaceRoot $wsRoot -FileName "test-evidence.json"
+                if ([string]::IsNullOrWhiteSpace($testEvPath)) {
+                    $checks.Add("[?] 相关测试/回归(无 test-evidence.json，AI 自报)")
+                } else {
+                    $testEvProblem = Get-CommandEvidenceProblem -EvidencePath $testEvPath -RequireTestCounts
+                    if ($testEvProblem) {
+                        $failures.Add("test-evidence.json: $testEvProblem")
+                        $checks.Add("[X] 相关测试/回归(test-evidence.json: $testEvProblem)")
+                    } else {
+                        $checks.Add("[v] 相关测试/回归(test-evidence.json exitCode=0)")
+                    }
+                }
             } elseif ($effectiveTier -eq "FAST_TRACK") {
                 $hasSourceCodeChanges = $false
                 if (Test-Path -LiteralPath (Join-Path $wsRoot ".git")) {
@@ -5305,8 +5729,27 @@ switch ($Operation) {
             $failures.Add("tier unknown — feature-state.json missing or tier not set")
             $checks.Add("[X] tier 未知(feature-state.json 缺失或未设 tier)")
         }
-        $checks.Add("[$(if($compileOk){'v'}else{'?'})] 编译产物存在(以构建/测试命令执行结果为准)")
-        if (-not $compileOk -and $effectiveTier -eq "T3") { $failures.Add("compile verification failed — no build artifacts found") }
+        $compileEvPath = Find-CommandEvidencePath -SpecDir $specDir -WorkspaceRoot $wsRoot -FileName "compile-evidence.json"
+        $compileEvProblem = Get-CommandEvidenceProblem -EvidencePath $compileEvPath
+        if ($effectiveTier -eq "T3") {
+            if ($compileEvProblem) {
+                $failures.Add("compile-evidence.json: $compileEvProblem — build/classes directory is not compile proof")
+                $checks.Add("[X] 编译证据(compile-evidence.json: $compileEvProblem)")
+            } else {
+                $checks.Add("[v] 编译证据(compile-evidence.json exitCode=0)")
+            }
+        } elseif ($effectiveTier -eq "T2") {
+            if ([string]::IsNullOrWhiteSpace($compileEvPath)) {
+                $checks.Add("[?] 编译证据(无 compile-evidence.json)")
+            } elseif ($compileEvProblem) {
+                $failures.Add("compile-evidence.json: $compileEvProblem")
+                $checks.Add("[X] 编译证据(compile-evidence.json: $compileEvProblem)")
+            } else {
+                $checks.Add("[v] 编译证据(compile-evidence.json exitCode=0)")
+            }
+        } else {
+            $checks.Add("[$(if($compileOk){'v'}else{'?'})] 编译产物目录(advisory)")
+        }
 
         # VCS unversioned/missing file detection (hard blocker for code/config files).
         $untrackedFiles = [System.Collections.Generic.List[string]]::new()

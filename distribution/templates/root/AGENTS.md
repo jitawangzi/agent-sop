@@ -192,9 +192,9 @@ AI 可在一次响应内同时呈递 `01_server_rules.md` 与 `06_design_contrac
 
 ## 规范功能产物
 
-使用 `.ai-workspace/specs/features/<FeatureName>/`：`01_server_rules.md`（需求，含 BR/EX/AC）、`04_change_impact.json`（行为影响；类型/策略扩展时含 8 切面完成度）、`05_test_plan.md`（测试用例，含 TC）、`05_test_coverage.json`（机器可读追溯）、`06_design_contract.md`（设计，含 DC/DR/TW）。遵循 `.ai-sop/workflows/shared-artifacts.md`。Superpowers 常规 plan/ledger 文件是执行产物，不得替代规范功能契约。
+使用 `.ai-workspace/specs/features/<FeatureName>/`：`01_server_rules.md`（需求，含 BR/EX/AC）、`04_change_impact.json`（行为影响；类型/策略扩展时含 8 切面完成度）、`05_test_plan.md`（测试用例，含 TC）、`05_test_coverage.json`（机器可读追溯）、`06_design_contract.md`（设计，含 DC/DR/TW）、`07_design_review.md`（design-reviewer 结论，T3 Complete 必读）、`compile-evidence.json`（最近一次编译 exitCode=0）、T2 可选 `test-evidence.json`。遵循 `.ai-sop/workflows/shared-artifacts.md`。Superpowers 常规 plan/ledger 文件是执行产物，不得替代规范功能契约。
 
-**05_test_coverage.json 自动生成（SyncCoverage）**：`05_test_plan.md` 的 TC 块用 HTML 注释元数据标记：`<!-- meta: { "id": "TC-XX", "title": "...", "covers": ["BR-XX", "DC-XX"], "priority": "P1" } -->`。运行 `workflow-state.ps1 -Operation SyncCoverage -Path .../05_test_coverage.json` 从 `05_test_plan.md` 自动生成 coverage JSON（占位字段供 AI/用户细化）。**禁止手写 coverage JSON**——用 SyncCoverage 生成。
+**05_test_coverage.json 自动生成（SyncCoverage）**：`05_test_plan.md` 的 TC 块用 HTML 注释元数据标记：`<!-- meta: { "id": "TC-XX", "title": "...", "covers": ["BR-XX", "DC-XX"], "priority": "P1", "carrier": "test/Foo.java#testBar" } -->`。也可在 meta 后写 Given/When/Then（或前置/触发/断言）列表与 `载体:` 行，`SyncCoverage` 会填进 setup/trigger/assertions/automationCarrier。运行 `workflow-state.ps1 -Operation SyncCoverage -Path .../05_test_coverage.json` 后看 `INFERRED:` / `MISSING:` 清单；禁止把 `__TODO__` 骨架留到 VERIFY。**禁止手写 coverage JSON**——用 SyncCoverage 生成后再细化。
 
 **原生计划产物双向宽容**：允许 AI 在 IDE 原生 Artifact 区生成计划文件供 UI 交互（如 Antigravity 的 `implementation_plan.md`）；但**持久化阶段**，AI 必须将核心技术契约同步/镜像写入 `.ai-workspace/specs/features/<FeatureName>/06_design_contract.md`。规范路径 `06` 是 `ValidateTestCoverage` 校验的唯一真源；根目录散落的临时计划文件不作为契约，交付前清理。
 
@@ -319,6 +319,8 @@ pwsh -NoProfile -File ./.ai-sop/scripts/feature-state.ps1 -Operation Get -Featur
 pwsh -NoProfile -File .\.ai-sop\scripts\run-all-tests.ps1 -IncludeCompile
 pwsh -NoProfile -File .\.ai-sop\scripts\workflow-state.ps1 -Operation ValidateTestCoverage `
   -Path ".ai-workspace\specs\features\<FeatureName>\05_test_coverage.json"
+pwsh -NoProfile -File .\.ai-sop\scripts\workflow-state.ps1 -Operation LintSpecs `
+  -Path ".ai-workspace\specs\features\<FeatureName>" -Phase PLAN
 ```
 
 `run-all-tests.ps1` 默认跑工作流脚本测试；`-IncludeCompile` 额外跑 `gradlew compileJava`。全过 exit 0。最后由 `verification-before-completion` 复查。
@@ -329,7 +331,7 @@ pwsh -NoProfile -File .\.ai-sop\scripts\workflow-state.ps1 -Operation ValidateTe
 
 完成条件**按档位分**（`workflow-state.ps1 -Operation Status` 显示当前 tier + 门禁 SHA；`workflow-state.ps1 -Operation CheckCompletion -Path .../00_workflow_state.json` 输出机检 ASCII checklist（门禁 SHA/coverage/编译产物/SVN status）。**机检项 [v]=pass/[X]=fail，人工项 [?]=需 AI 验证**。AI 据下表 + CheckCompletion 结果逐项检查并报告）：
 
-**Complete 前硬门禁（VerifyCompletion 内嵌执行）**：`workflow-owner.ps1 -Operation Complete` 内部已嵌入 `VerifyCompletion` 硬门禁检验。在释放归属锁前，脚本会自动在后台先调用 `VerifyCompletion`：T3 严格校验门禁 APPROVED+SHA / coverage 无占位与 carrier 错误；仅当 AssessRisk 命中 TYPE_EXTENSION/PUBLIC_ROUTING 或风险无法评估时才要求 `04_change_impact.json` 有效且未过期；类型或公共分发扩展时再校验 8 切面完成度 / feature-state 阶段非初始 / 编译产物；T2 校验编译产物。**若 VerifyCompletion 检验未通过（非 0），Complete 会直接抛出错误并拒绝释放归属锁**。AI 亦可事先调用 `workflow-state.ps1 -Operation VerifyCompletion -Path .../00_workflow_state.json` 提前确认是否达到完成标准。
+**Complete 前硬门禁（VerifyCompletion 内嵌执行）**：`workflow-owner.ps1 -Operation Complete` 内部已嵌入 `VerifyCompletion` 硬门禁检验。在释放归属锁前，脚本会自动在后台先调用 `VerifyCompletion`：T3 严格校验门禁 APPROVED+SHA / coverage 无占位与 carrier 错误 / `07_design_review.md` 审查状态为 PASS 或 PASS_WITH_WARNINGS / `compile-evidence.json`（exitCode=0，有 `build/classes` 不算编译过）；仅当 AssessRisk 命中 TYPE_EXTENSION/PUBLIC_ROUTING 或风险无法评估时才要求 `04_change_impact.json` 有效且未过期；类型或公共分发扩展时再校验 8 切面完成度 / feature-state 阶段非初始。T2：无 `test-evidence.json` 时测试项仍为自报；若该文件存在则必须 exitCode=0。实现中途用 `LintSpecs -Phase PLAN` 提前看缺 00/未覆盖条款/MISSING 载体。**若 VerifyCompletion 检验未通过（非 0），Complete 会直接抛出错误并拒绝释放归属锁**。AI 亦可事先调用 `workflow-state.ps1 -Operation VerifyCompletion -Path .../00_workflow_state.json` 提前确认是否达到完成标准。
 
 **T3（6 项全过）**：
 
@@ -337,7 +339,7 @@ pwsh -NoProfile -File .\.ai-sop\scripts\workflow-state.ps1 -Operation ValidateTe
 |---|---|---|---|---|
 | 1 | 需求与设计已确认 | `workflow-state.ps1 -Operation Status -Path .../00_workflow_state.json` | `gate=requirement status=APPROVED` + `gate=design status=APPROVED` + `hashMatch=MATCH` | `ResetApproval` + 修改 + `Approve` |
 | 2 | 测试计划与覆盖矩阵已创建/更新 | `workflow-state.ps1 -Operation ValidateTestCoverage -Path .../05_test_coverage.json` | `VALID` | 补 05_test_plan.md + 05_test_coverage.json |
-| 3 | 代码编译通过 | `gradlew compileJava` | `BUILD SUCCESSFUL` exit 0 | 修编译错误 |
+| 3 | 代码编译通过 | 功能目录 `compile-evidence.json`（command + exitCode=0 + executedAt） | `VERIFY_COMPLETION_PASS` 含编译证据 | 重跑编译并写入证据，目录存在不算 |
 | 4 | 必要全局审计与逻辑审计通过 | `implementation-auditor` + `logic-auditor` 报告 PASS | 审查报告 PASS | 修复发现 + 重审 |
 | 5 | 目标自动化场景通过 | `run-all-tests.ps1 -IncludeCompile` + 定向 JUnit | exit 0 | 修测试 + 重跑 |
 | 6 | 中途失败已修复、复审和回归 | 检查无未解决发现 | 无未解决发现 | 补修复 + 回归 |
@@ -348,7 +350,7 @@ pwsh -NoProfile -File .\.ai-sop\scripts\workflow-state.ps1 -Operation ValidateTe
 |---|---|---|---|
 | 1 | 归属 Claim | `workflow-owner.ps1 -Operation Validate` | `VALID` |
 | 2 | 代码编译通过 | `gradlew compileJava` | `BUILD SUCCESSFUL` exit 0 |
-| 3 | 相关测试通过（路径 A JUnit 或路径 B JSP） | 定向 JUnit | exit 0 |
+| 3 | 相关测试通过（路径 A JUnit 或路径 B JSP） | 可选 `test-evidence.json`（存在则必须 exitCode=0）或定向 JUnit | exit 0 / 证据文件 |
 | 4 | 相关回归（定向 JUnit，或写明无自动化及原因） | 定向 JUnit 或说明 | 有测试或说明 |
 | 5 | **文档待更新提醒** | AI 输出提醒 | 提醒已输出 |
 

@@ -29,7 +29,10 @@ try { [Console]::OutputEncoding = [System.Text.Encoding]::UTF8 } catch {}
 function Invoke-Doctor {
     $doctorScript = Join-Path $WorkspaceRoot ".ai-sop/scripts/doctor.ps1"
     if (Test-Path -LiteralPath $doctorScript -PathType Leaf) {
-        & $doctorScript
+        $doctorArgs = @{}
+        if (-not [string]::IsNullOrWhiteSpace($Feature)) { $doctorArgs.Feature = $Feature }
+        if (-not [string]::IsNullOrWhiteSpace($SpecDirectory)) { $doctorArgs.SpecDirectory = $SpecDirectory }
+        & $doctorScript @doctorArgs
         exit $LASTEXITCODE
     }
     # Submodule not initialized — run a minimal self-check that doesn't depend on .ai-sop.

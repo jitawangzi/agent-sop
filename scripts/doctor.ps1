@@ -3,11 +3,16 @@
 # AI SOP environment self-check ("doctor").
 # Run after install-ai-sop.ps1 to verify the local environment is ready:
 #   pwsh -NoProfile -File ./.ai-sop/scripts/doctor.ps1
+#   pwsh -NoProfile -File ./.ai-sop/scripts/doctor.ps1 -Feature ShopExchange
 # Checks: PowerShell version, Git, SVN, JDK 8, Gradle wrapper, hook injection,
-# submodule init, current harness capability. Exits 0 if all pass, 1 if any fail.
+# submodule init, current harness capability. Optional -Feature runs LintSpecs.
+# Exits 0 if all pass, 1 if any fail.
 
 [CmdletBinding()]
-param()
+param(
+    [string]$Feature = "",
+    [string]$SpecDirectory = ""
+)
 
 $ErrorActionPreference = "Stop"
 $SopRoot = Split-Path -Parent $PSScriptRoot
@@ -239,6 +244,27 @@ if ((Test-Path -LiteralPath $rootAiSop -PathType Leaf) -and (Test-Path -LiteralP
         Add-Check "ai-sop.ps1 Projection" $true "WARN: 根目录 ai-sop.ps1 与真源模板不一致 (请运行 'ai-sop.ps1 Update' 刷新)"
     } else {
         Add-Check "ai-sop.ps1 Projection" $true "up to date"
+    }
+}
+
+# 14. Optional current-feature SpecLint
+if (-not [string]::IsNullOrWhiteSpace($Feature) -or -not [string]::IsNullOrWhiteSpace($SpecDirectory)) {
+    $stateScript = Join-Path $SopRoot "scripts/workflow-state.ps1"
+    $specDir = if (-not [string]::IsNullOrWhiteSpace($SpecDirectory)) {
+        $SpecDirectory
+    } else {
+        Join-Path $WorkspaceRoot ".ai-workspace/specs/features/$Feature"
+    }
+    if (-not (Test-Path -LiteralPath $stateScript -PathType Leaf)) {
+        Add-Check "SpecLint" $false "workflow-state.ps1 not found"
+    } elseif (-not (Test-Path -LiteralPath $specDir -PathType Container)) {
+        Add-Check "SpecLint $Feature" $false "spec directory not found: $specDir"
+    } else {
+        $lintOut = & $stateScript -Operation LintSpecs -Path $specDir -Phase PLAN 2>&1 | Out-String
+        $lintOk = ($LASTEXITCODE -eq 0)
+        $detail = ($lintOut.Trim() -replace "\s+", " ")
+        if ($detail.Length -gt 240) { $detail = $detail.Substring(0, 240) + "..." }
+        Add-Check "SpecLint $Feature" $lintOk $detail
     }
 }
 

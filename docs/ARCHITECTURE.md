@@ -181,6 +181,23 @@ AI 编码工具百花齐放（Claude Code、Copilot、Cursor、Antigravity、Pi�
 
 **价值**：Superpowers 插件更新后，项目专家 Skill **零成本自动持续获得最新通用工程与审查能力**，永不分叉、永不落后。
 
+### 决策11：04 只对旧系统扩展强制（绿场 T3 不造假材料）
+
+**问题**：`VerifyCompletion` 曾对所有 T3 强制 `04_change_impact.json`。绿场（新玩法/新协议/新存储）没有 8 切面可填，AI 只能写 `N_A` 套话；证据门禁再拒套话，结果是假绿或卡死。宿主已交付功能往往没有 04，一装新 SOP 就全过不了 Complete。
+
+**为什么这么设计**：
+- 命中 `TYPE_EXTENSION` / `PUBLIC_ROUTING` 才强制完整 04（兄弟键、8 切面、表征、冷重载）——这是旧分发加类型的真防线。
+- 绿场 T3 不交 04 也可 Complete（01/06 + 覆盖矩阵照旧）。
+- 风险看不清则 fail-closed 仍要 04：`WORKSPACE_UNRESOLVED`、`VCS_ERROR`、`VCS_UNAVAILABLE`、以及 overlay git + `.svn` 但 SVN 工作副本不可用（`HYBRID_PRODUCTION_VCS_UNSCANNED`）。
+- 混合工作区（根上 overlay git 管 SOP、SVN 管 `src/`）：语义触发只扫 SVN，不用 overlay git 证明「没有类型扩展」。全数字 baseline 不当成 git SHA，避免 SVN 修订号被 git 吃掉。
+
+**考虑过的替代**：
+- 全 T3 强制 04：绿场造假材料——否决。
+- 04 全面可选：旧系统加类型回到审查清单说说而已——否决。
+- 另做一份「轻量 04」schema：复杂度 + 假 N_A——否决。
+
+**价值**：门禁对准旧切面漏检，而不是逼绿场填空。
+
 ---
 
 ## 三、关键不变量（设计契约的核心约束）

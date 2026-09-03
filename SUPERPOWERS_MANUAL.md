@@ -546,7 +546,7 @@ pwsh -NoProfile -File .\.ai-sop\scripts\run-all-tests.ps1
 ### 交付闭环时序（硬时序约束）
 
 ```text
-阶段 1（验证）：AI 运行 VerifyCompletion（硬门禁 100% 校验门禁 APPROVED、SHA、测试覆盖矩阵无占位、04_change_impact 有效；类型/公共分发扩展时再校验 8 切面完成度、证据/兄弟键与表征方法体，编译产物）
+阶段 1（验证）：AI 运行 VerifyCompletion（硬门禁 100% 校验门禁 APPROVED、SHA、测试覆盖矩阵无占位；仅类型/公共分发扩展或风险无法评估时要求 04_change_impact 有效；类型/公共分发扩展时再校验 8 切面完成度、证据/兄弟键与表征方法体，编译产物）
   ↓
 阶段 2（释放锁）：AI 运行 workflow-owner.ps1 -Operation Complete 释放工作流开发锁
   ↓

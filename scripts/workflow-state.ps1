@@ -903,6 +903,42 @@ function Test-AiSopPathIsInsideWorkspaceLayer {
     return $norm -match '(?i)(?:^|/)\.ai-workspace(?:/|$)'
 }
 
+function Test-IsSvnRevisionBaseline {
+    param([string]$Baseline)
+    if ([string]::IsNullOrWhiteSpace($Baseline)) { return $false }
+    return ($Baseline -match '^(?:rev|r)?\d+$')
+}
+
+function Test-IsGitCommitBaseline {
+    param([string]$Baseline)
+    if ([string]::IsNullOrWhiteSpace($Baseline)) { return $false }
+    # All-digit values are SVN revisions even when they match hex length (7+).
+    if (Test-IsSvnRevisionBaseline -Baseline $Baseline) { return $false }
+    return ($Baseline -match '^[0-9a-fA-F]{7,64}$')
+}
+
+function Test-SvnWorkingCopyUsable {
+    param([string]$WorkspaceRoot)
+    if ([string]::IsNullOrWhiteSpace($WorkspaceRoot)) { return $false }
+    if (-not (Test-Path -LiteralPath (Join-Path $WorkspaceRoot ".svn"))) { return $false }
+    try {
+        $svnRev = (& svn info --non-interactive --show-item revision $WorkspaceRoot 2>&1 | Out-String).Trim()
+        if ($LASTEXITCODE -eq 0 -and $svnRev -match '^\d+$') { return $true }
+        $svnInfo = (& svn info --non-interactive $WorkspaceRoot 2>&1 | Out-String)
+        return [bool]($svnInfo -match '(?m)^Revision:\s*(\d+)')
+    } catch {
+        return $false
+    }
+}
+
+function Test-IsHybridGitSvnWorkspace {
+    param([string]$WorkspaceRoot)
+    if ([string]::IsNullOrWhiteSpace($WorkspaceRoot)) { return $false }
+    $hasGit = Test-Path -LiteralPath (Join-Path $WorkspaceRoot ".git")
+    $hasSvn = Test-Path -LiteralPath (Join-Path $WorkspaceRoot ".svn")
+    return [bool]($hasGit -and $hasSvn)
+}
+
 function Resolve-AiSopWorkspaceRoot {
     param([string]$StartPath)
     if ([string]::IsNullOrWhiteSpace($StartPath)) { return $null }
@@ -936,33 +972,39 @@ function Get-VcsBaselineRevision {
     param([string]$StartPath)
     if ([string]::IsNullOrWhiteSpace($StartPath)) { return $null }
     $cur = if (Test-Path -LiteralPath $StartPath -PathType Container) { [System.IO.Path]::GetFullPath($StartPath) } else { Split-Path -Parent ([System.IO.Path]::GetFullPath($StartPath)) }
+    $gitRoot = $null
+    $svnRoot = $null
     while (-not [string]::IsNullOrWhiteSpace($cur)) {
         $insideWorkspaceLayer = Test-AiSopPathIsInsideWorkspaceLayer -Path $cur
-        if (-not $insideWorkspaceLayer -and (Test-Path -LiteralPath (Join-Path $cur ".git"))) {
-            try {
-                $headSha = (& git -C $cur rev-parse HEAD 2>&1 | Out-String).Trim()
-                if ($LASTEXITCODE -eq 0 -and $headSha -match '^[0-9a-fA-F]{7,64}$') {
-                    return $headSha
-                }
-            } catch {}
-            break
+        if (-not $insideWorkspaceLayer) {
+            if ([string]::IsNullOrWhiteSpace($gitRoot) -and (Test-Path -LiteralPath (Join-Path $cur ".git"))) {
+                $gitRoot = $cur
+            }
+            if ([string]::IsNullOrWhiteSpace($svnRoot) -and (Test-Path -LiteralPath (Join-Path $cur ".svn"))) {
+                $svnRoot = $cur
+            }
         }
-        if (-not $insideWorkspaceLayer -and (Test-Path -LiteralPath (Join-Path $cur ".svn"))) {
-            try {
-                $svnRev = (& svn info --non-interactive --show-item revision $cur 2>&1 | Out-String).Trim()
-                if ($LASTEXITCODE -eq 0 -and $svnRev -match '^\d+$') {
-                    return $svnRev
-                }
-                $svnInfo = (& svn info --non-interactive $cur 2>&1 | Out-String)
-                if ($svnInfo -match '(?m)^Revision:\s*(\d+)') {
-                    return $Matches[1]
-                }
-            } catch {}
-            break
-        }
+        if (-not [string]::IsNullOrWhiteSpace($gitRoot) -and -not [string]::IsNullOrWhiteSpace($svnRoot)) { break }
         $parent = Split-Path -Parent $cur
         if ($parent -eq $cur) { break }
         $cur = $parent
+    }
+    # Overlay git + production SVN: the production changeset identity is the SVN revision.
+    if (-not [string]::IsNullOrWhiteSpace($svnRoot) -and (Test-SvnWorkingCopyUsable -WorkspaceRoot $svnRoot)) {
+        try {
+            $svnRev = (& svn info --non-interactive --show-item revision $svnRoot 2>&1 | Out-String).Trim()
+            if ($LASTEXITCODE -eq 0 -and $svnRev -match '^\d+$') { return $svnRev }
+            $svnInfo = (& svn info --non-interactive $svnRoot 2>&1 | Out-String)
+            if ($svnInfo -match '(?m)^Revision:\s*(\d+)') { return $Matches[1] }
+        } catch {}
+    }
+    if (-not [string]::IsNullOrWhiteSpace($gitRoot)) {
+        try {
+            $headSha = (& git -C $gitRoot rev-parse HEAD 2>&1 | Out-String).Trim()
+            if ($LASTEXITCODE -eq 0 -and (Test-IsGitCommitBaseline -Baseline $headSha)) {
+                return $headSha
+            }
+        } catch {}
     }
     return $null
 }
@@ -1013,7 +1055,7 @@ function Assert-VcsCommitExists {
     if ($Baseline -eq "0") { return }
     $hasGit = Test-Path -LiteralPath (Join-Path $WorkspaceRoot ".git")
     if ($hasGit) {
-        if ($Baseline -match '^[0-9a-fA-F]{7,64}$') {
+        if (Test-IsGitCommitBaseline -Baseline $Baseline) {
             try {
                 & git -C $WorkspaceRoot cat-file -e "$Baseline^{commit}" 2>&1 | Out-Null
                 if ($LASTEXITCODE -ne 0) {
@@ -1356,7 +1398,7 @@ function Get-ChangeSetDigest {
     # 1. Git diff + status
     if ($hasGit) {
         $gitTarget = $null
-        if (-not [string]::IsNullOrWhiteSpace($Baseline) -and $Baseline -match '^[0-9a-fA-F]{7,64}$') {
+        if (Test-IsGitCommitBaseline -Baseline $Baseline) {
             $gitTarget = $Baseline
             $verifyRef = & git -C $WorkspaceRoot rev-parse --verify --quiet "$gitTarget^{commit}" 2>&1
             if ($LASTEXITCODE -ne 0) {
@@ -1543,6 +1585,21 @@ function Test-IsTypeExtensionRisk {
     return $false
 }
 
+function Test-IsFailClosedRisk {
+    param($TriggersHit)
+    $opaque = @("WORKSPACE_UNRESOLVED", "VCS_ERROR", "VCS_UNAVAILABLE", "HYBRID_PRODUCTION_VCS_UNSCANNED")
+    foreach ($t in @($TriggersHit)) {
+        if ($opaque -contains [string]$t) { return $true }
+    }
+    return $false
+}
+
+function Test-ChangeImpactRequired {
+    param($TriggersHit)
+    if (Test-IsTypeExtensionRisk -TriggersHit $TriggersHit) { return $true }
+    return (Test-IsFailClosedRisk -TriggersHit $TriggersHit)
+}
+
 function Get-JsonObjectArray {
     # ConvertFrom-Json yields $null for a missing property. @($null).Count is 1 in
     # PowerShell, which would treat an omitted array as non-empty. Normalize to a
@@ -1617,7 +1674,7 @@ function Get-WorkspaceChangedRelativePaths {
     $hasGit = Test-Path -LiteralPath (Join-Path $WorkspaceRoot ".git")
     $hasSvn = Test-Path -LiteralPath (Join-Path $WorkspaceRoot ".svn")
     if ($hasGit) {
-        $diffTarget = if (-not [string]::IsNullOrWhiteSpace($Baseline) -and $Baseline -match '^[0-9a-fA-F]{7,64}$') {
+        $diffTarget = if (Test-IsGitCommitBaseline -Baseline $Baseline) {
             $Baseline
         } else {
             "HEAD"
@@ -2134,6 +2191,7 @@ function Get-SemanticRiskAssessment {
 
     $isGit = Test-Path -LiteralPath (Join-Path $WorkspaceRoot ".git")
     $isSvn = Test-Path -LiteralPath (Join-Path $WorkspaceRoot ".svn")
+    $isHybrid = $isGit -and $isSvn
 
     # 1. Resolve baseline from authoritative state or VCS
     $effectiveBaseline = if (-not [string]::IsNullOrWhiteSpace($Baseline)) {
@@ -2144,11 +2202,13 @@ function Get-SemanticRiskAssessment {
         Get-VcsBaselineRevision -StartPath $WorkspaceRoot
     }
 
-    # 2. Collect full diff string against baseline
+    # 2. Collect full diff string against baseline.
+    # Hybrid overlay git + production SVN: semantic triggers come from SVN only.
+    # Overlay git (SOP files, gitignored src/) must not prove "no TYPE_EXTENSION".
     $fullDiff = ""
     $vcsFailed = $false
-    if ($isGit) {
-        $diffTarget = if (-not [string]::IsNullOrWhiteSpace($effectiveBaseline) -and $effectiveBaseline -match '^[0-9a-fA-F]{7,64}$') {
+    if ($isGit -and -not $isHybrid) {
+        $diffTarget = if (Test-IsGitCommitBaseline -Baseline $effectiveBaseline) {
             $effectiveBaseline
         } else {
             $mb = (& git -C $WorkspaceRoot merge-base HEAD origin/main 2>&1 | Out-String).Trim()
@@ -2201,7 +2261,7 @@ function Get-SemanticRiskAssessment {
         }
     }
     if ($isSvn) {
-        $svnRev = if (-not [string]::IsNullOrWhiteSpace($effectiveBaseline) -and ($effectiveBaseline -replace '^(?:rev|r)', '') -match '^\d+$') {
+        $svnRev = if (Test-IsSvnRevisionBaseline -Baseline $effectiveBaseline) {
             $effectiveBaseline -replace '^(?:rev|r)', ''
         } else {
             $infoRev = (& svn info --non-interactive --show-item revision $WorkspaceRoot 2>&1 | Out-String).Trim()
@@ -2240,7 +2300,15 @@ function Get-SemanticRiskAssessment {
                 }
             }
         } catch {
-            if (-not $isGit) { $vcsFailed = $true }
+            $vcsFailed = $true
+        }
+    }
+    if ($isHybrid) {
+        $details.Add("Hybrid overlay git + SVN: semantic triggers scanned from SVN working copy, not overlay git")
+        if (-not (Test-SvnWorkingCopyUsable -WorkspaceRoot $WorkspaceRoot)) {
+            $triggersHit.Add("HYBRID_PRODUCTION_VCS_UNSCANNED")
+            $details.Add("Overlay git + .svn present but SVN working copy is unusable; production src may be gitignored. Failing closed.")
+            $vcsFailed = $true
         }
     }
     if (-not $isGit -and -not $isSvn) {
@@ -2969,33 +3037,10 @@ function Get-CoveragePlaceholderWarnings {
                 $carrierWsRoot = Resolve-AiSopWorkspaceRoot -StartPath $specDir
                 if (-not $carrierWsRoot) {
                     $errors.Add("ERROR: executionEvidence verification failed — unable to resolve workspace root (.ai-workspace / .git / .svn) for spec directory '$specDir'")
-                } elseif (Test-Path -LiteralPath (Join-Path $carrierWsRoot ".git")) {
-                    if ($ev.sourceCommitSha -match '^[0-9a-fA-F]{7,64}$') {
-                        $verifyRef = & git -C $carrierWsRoot rev-parse --verify --quiet "$($ev.sourceCommitSha)^{commit}" 2>&1
-                        if ($LASTEXITCODE -ne 0) {
-                            $errors.Add("ERROR: executionEvidence sourceCommitSha '$($ev.sourceCommitSha)' does not exist in git repository history")
-                        } else {
-                            $headSha = (& git -C $carrierWsRoot rev-parse HEAD 2>&1 | Out-String).Trim()
-                            if ($LASTEXITCODE -eq 0 -and -not [string]::IsNullOrWhiteSpace($headSha)) {
-                                $isCleanHead = $headSha.Equals($ev.sourceCommitSha, [System.StringComparison]::OrdinalIgnoreCase) -or
-                                               ($headSha.StartsWith($ev.sourceCommitSha, [System.StringComparison]::OrdinalIgnoreCase) -and $ev.sourceCommitSha.Length -ge 7)
-                                if (-not $isCleanHead) {
-                                    $errors.Add("ERROR: executionEvidence sourceCommitSha '$($ev.sourceCommitSha)' is an older ancestor commit and does not match current repository HEAD ($headSha). Tests must be executed against current HEAD.")
-                                } else {
-                                    # Verify working tree digest against current HEAD
-                                    $currentDigest = Get-ChangeSetDigest -WorkspaceRoot $carrierWsRoot -Baseline $headSha
-                                    if ([string]::IsNullOrWhiteSpace($evDigest)) {
-                                        # already added error
-                                    } elseif ($evDigest.ToLowerInvariant() -ne $currentDigest.ToLowerInvariant()) {
-                                        $errors.Add("ERROR: executionEvidence workingTreeDigest ('$evDigest') does not match current workspace changeSetDigest ('$currentDigest'). Tests must be re-run on current code state.")
-                                    }
-                                }
-                            }
-                        }
-                    } else {
-                        $errors.Add("ERROR: executionEvidence sourceCommitSha '$($ev.sourceCommitSha)' is not a valid git commit SHA in git workspace")
-                    }
-                } elseif (Test-Path -LiteralPath (Join-Path $carrierWsRoot ".svn")) {
+                } else {
+                    $hasGit = Test-Path -LiteralPath (Join-Path $carrierWsRoot ".git")
+                    $hasSvn = Test-Path -LiteralPath (Join-Path $carrierWsRoot ".svn")
+                    if ($hasSvn -and (Test-IsSvnRevisionBaseline -Baseline $ev.sourceCommitSha)) {
                     $svnNum = $ev.sourceCommitSha -replace '^(?:rev|r)', ''
                     if ($svnNum -match '^\d+$') {
                         $currentSvn = (& svn info --non-interactive --show-item revision $carrierWsRoot 2>&1 | Out-String).Trim()
@@ -3014,13 +3059,39 @@ function Get-CoveragePlaceholderWarnings {
                     } else {
                         $errors.Add("ERROR: executionEvidence sourceCommitSha '$($ev.sourceCommitSha)' is not a valid SVN revision in SVN workspace")
                     }
-                } else {
+                    } elseif ($hasGit -and (Test-IsGitCommitBaseline -Baseline $ev.sourceCommitSha)) {
+                        $verifyRef = & git -C $carrierWsRoot rev-parse --verify --quiet "$($ev.sourceCommitSha)^{commit}" 2>&1
+                        if ($LASTEXITCODE -ne 0) {
+                            $errors.Add("ERROR: executionEvidence sourceCommitSha '$($ev.sourceCommitSha)' does not exist in git repository history")
+                        } else {
+                            $headSha = (& git -C $carrierWsRoot rev-parse HEAD 2>&1 | Out-String).Trim()
+                            if ($LASTEXITCODE -eq 0 -and -not [string]::IsNullOrWhiteSpace($headSha)) {
+                                $isCleanHead = $headSha.Equals($ev.sourceCommitSha, [System.StringComparison]::OrdinalIgnoreCase) -or
+                                               ($headSha.StartsWith($ev.sourceCommitSha, [System.StringComparison]::OrdinalIgnoreCase) -and $ev.sourceCommitSha.Length -ge 7)
+                                if (-not $isCleanHead) {
+                                    $errors.Add("ERROR: executionEvidence sourceCommitSha '$($ev.sourceCommitSha)' is an older ancestor commit and does not match current repository HEAD ($headSha). Tests must be executed against current HEAD.")
+                                } else {
+                                    $currentDigest = Get-ChangeSetDigest -WorkspaceRoot $carrierWsRoot -Baseline $headSha
+                                    if ([string]::IsNullOrWhiteSpace($evDigest)) {
+                                        # already added error
+                                    } elseif ($evDigest.ToLowerInvariant() -ne $currentDigest.ToLowerInvariant()) {
+                                        $errors.Add("ERROR: executionEvidence workingTreeDigest ('$evDigest') does not match current workspace changeSetDigest ('$currentDigest'). Tests must be re-run on current code state.")
+                                    }
+                                }
+                            }
+                        }
+                    } elseif ($hasSvn) {
+                        $errors.Add("ERROR: executionEvidence sourceCommitSha '$($ev.sourceCommitSha)' is not a valid SVN revision in SVN workspace")
+                    } elseif ($hasGit) {
+                        $errors.Add("ERROR: executionEvidence sourceCommitSha '$($ev.sourceCommitSha)' is not a valid git commit SHA in git workspace")
+                    } else {
                     $nonVcsBaseline = Get-AuthoritativeFeatureBaseline -SpecDir $specDir
                     $currentDigest = Get-ChangeSetDigest -WorkspaceRoot $carrierWsRoot -Baseline $nonVcsBaseline
                     if ([string]::IsNullOrWhiteSpace($evDigest)) {
                         # already added error
                     } elseif ($evDigest.ToLowerInvariant() -ne $currentDigest.ToLowerInvariant()) {
                         $errors.Add("ERROR: executionEvidence workingTreeDigest ('$evDigest') does not match current workspace changeSetDigest ('$currentDigest'). Tests must be re-run on current code state.")
+                    }
                     }
                 }
             }
@@ -4275,12 +4346,12 @@ switch ($Operation) {
             try {
                 $changeSetDigest = Get-ChangeSetDigest -WorkspaceRoot $wsRoot -Baseline $effectiveBaseline
             } catch {
-                if (-not $risk.HasHighRisk) {
-                    $risk.HasHighRisk = $true
-                    $risk.MinRequiredTier = "T3"
+                $risk.HasHighRisk = $true
+                $risk.MinRequiredTier = "T3"
+                if (@($risk.TriggersHit) -notcontains "VCS_UNAVAILABLE") {
                     $risk.TriggersHit = @($risk.TriggersHit + "VCS_UNAVAILABLE")
-                    $risk.Details = @($risk.Details + "Failed to calculate changeSetDigest: $($_.Exception.Message)")
                 }
+                $risk.Details = @($risk.Details + "Failed to calculate changeSetDigest: $($_.Exception.Message)")
             }
         }
         if ([string]::IsNullOrWhiteSpace($changeSetDigest)) {
@@ -4638,13 +4709,25 @@ switch ($Operation) {
             } else {
                 $failures.Add("coverage matrix missing")
             }
-            # Change impact verification (mandatory for T3 mode)
+            # Change impact: required for TYPE_EXTENSION/PUBLIC_ROUTING, or when risk cannot be assessed.
             $impactPath = Join-Path $specDir "04_change_impact.json"
             $impactOk = Test-Path -LiteralPath $impactPath -PathType Leaf
-            $checks.Add("[$(if($impactOk){'v'}else{'X'})] 行为影响分析产物(04_change_impact.json)存在")
+            $extRisk = Get-SemanticRiskAssessment -WorkspaceRoot $wsRoot -SpecDir $specDir
+            $impactRequired = Test-ChangeImpactRequired -TriggersHit $extRisk.TriggersHit
             if (-not $impactOk) {
-                $failures.Add("04_change_impact.json is mandatory for T3 features but missing at $impactPath")
+                if ($impactRequired) {
+                    $triggerList = (@($extRisk.TriggersHit) | Where-Object { -not [string]::IsNullOrWhiteSpace($_) }) -join ", "
+                    if (Test-IsTypeExtensionRisk -TriggersHit $extRisk.TriggersHit) {
+                        $failures.Add("04_change_impact.json is mandatory for TYPE_EXTENSION/PUBLIC_ROUTING but missing at $impactPath")
+                    } else {
+                        $failures.Add("04_change_impact.json is mandatory because semantic risk could not be assessed ($triggerList) but missing at $impactPath")
+                    }
+                    $checks.Add("[X] 行为影响分析产物(04_change_impact.json)缺失(类型/路由扩展或风险无法评估)")
+                } else {
+                    $checks.Add("[v] 行为影响分析产物(04_change_impact.json)未要求(非类型/路由扩展且风险可评估)")
+                }
             } else {
+                $checks.Add("[v] 行为影响分析产物(04_change_impact.json)存在")
                 try {
                     $impact = Validate-ChangeImpactState -ImpactPath $impactPath
                     $checks.Add("[v] 行为影响分析有效且未过期")

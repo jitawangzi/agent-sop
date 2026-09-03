@@ -817,7 +817,7 @@ function Assert-NoRuntimeCoverageApprovalState {
         if ($LASTEXITCODE -eq 0) { throw "VerifyCompletion must fail (non-zero) when feature-state.json is missing. Output: $verifyNoStateOut" }
         if ($verifyNoStateOut -notmatch "VERIFY_COMPLETION_FAIL") { throw "VerifyCompletion must emit VERIFY_COMPLETION_FAIL on missing feature-state. Output: $verifyNoStateOut" }
 
-        # VerifyCompletion: T3 feature without 04_change_impact.json must FAIL
+        # VerifyCompletion: greenfield T3 without 04_change_impact.json may PASS
         $featState = Join-Path $specDirectory "feature-state.json"
         [System.IO.File]::WriteAllText($featState, '{"feature":"' + $feature + '","tier":"T3","phase":"DONE"}', $Utf8NoBom)
         $buildDir = Join-Path (Split-Path -Parent (Split-Path -Parent $specDirectory)) "build"
@@ -825,8 +825,11 @@ function Assert-NoRuntimeCoverageApprovalState {
         
         $verifyNoImpact = & $ScriptPath -Operation VerifyCompletion -Path $approvalPath 2>&1
         $verifyNoImpactOut = $verifyNoImpact | Out-String
-        if ($LASTEXITCODE -eq 0 -or $verifyNoImpactOut -notmatch "04_change_impact\.json is mandatory for T3") {
-            throw "VerifyCompletion must fail when 04_change_impact.json is missing for T3 feature. Output: $verifyNoImpactOut"
+        if ($LASTEXITCODE -ne 0 -or $verifyNoImpactOut -notmatch "VERIFY_COMPLETION_PASS") {
+            throw "VerifyCompletion must pass greenfield T3 without 04_change_impact.json. Output: $verifyNoImpactOut"
+        }
+        if ($verifyNoImpactOut -notmatch "04_change_impact\.json\)未要求") {
+            throw "VerifyCompletion must report 04 as not required for greenfield T3. Output: $verifyNoImpactOut"
         }
 
         $noRuntimeImpactPath = Join-Path $specDirectory "04_change_impact.json"
@@ -2952,6 +2955,15 @@ try {
     }
     Write-TestJson -Path $extCovPath -Value $extCov
 
+    $extImpactBackup = [System.IO.File]::ReadAllText($extImpactPath)
+    Remove-Item -LiteralPath $extImpactPath -Force
+    $extVerifyNo04 = & $ScriptPath -Operation VerifyCompletion -Path $extApproval 2>&1
+    $extVerifyNo04Str = $extVerifyNo04 | Out-String
+    if ($LASTEXITCODE -eq 0 -or $extVerifyNo04Str -notmatch "04_change_impact\.json is mandatory for TYPE_EXTENSION/PUBLIC_ROUTING") {
+        throw "VerifyCompletion must fail TYPE_EXTENSION T3 when 04_change_impact.json is missing. Output: $extVerifyNo04Str"
+    }
+    [System.IO.File]::WriteAllText($extImpactPath, $extImpactBackup, $Utf8NoBom)
+
     $extVerify = & $ScriptPath -Operation VerifyCompletion -Path $extApproval 2>&1
     $extVerifyStr = $extVerify | Out-String
     if ($LASTEXITCODE -ne 0 -or $extVerifyStr -notmatch "VERIFY_COMPLETION_PASS" -or $extVerifyStr -notmatch "类型/路由扩展完成度" -or $extVerifyStr -notmatch "类型/路由扩展覆盖完成度") {
@@ -3375,6 +3387,145 @@ try {
     $actualHybridRoot = [System.IO.Path]::GetFullPath($actualHybridRoot).TrimEnd('\','/')
     if (-not $actualHybridRoot.Equals($expectedHybridRoot, [System.StringComparison]::OrdinalIgnoreCase)) {
         throw "AssessRisk must resolve workspace root to the project that owns .ai-workspace (expected $expectedHybridRoot), not nested spec git (actual $actualHybridRoot)."
+    }
+    $hybridTriggers = @($hybridRisk.triggersHit)
+    if (($hybridTriggers -join ",") -notmatch "HYBRID_PRODUCTION_VCS_UNSCANNED") {
+        throw "AssessRisk must fail closed with HYBRID_PRODUCTION_VCS_UNSCANNED when overlay git sits beside an unusable .svn. Output: $hybridRiskRaw"
+    }
+
+    # Overlay git + dummy .svn + gitignored src/: production enum is invisible to git.
+    # Risk must not be treated as greenfield (no 04). VerifyCompletion T3 without 04 fails closed.
+    $hybridGitIgnore = Join-Path $hybridRoot ".gitignore"
+    [System.IO.File]::WriteAllText($hybridGitIgnore, "src/`n", $Utf8NoBom)
+    $hybridSrc = Join-Path $hybridRoot "src\com\game\ShopEnum.java"
+    [System.IO.Directory]::CreateDirectory((Split-Path -Parent $hybridSrc)) | Out-Null
+    [System.IO.File]::WriteAllText($hybridSrc, "package com.game; public enum ShopEnum { TYPE_OLD, TYPE_NEW }", $Utf8NoBom)
+    $hybridT3Spec = Join-Path $hybridRoot ".ai-workspace\specs\features\HybridT3Feat"
+    [System.IO.Directory]::CreateDirectory($hybridT3Spec) | Out-Null
+    [System.IO.Directory]::CreateDirectory((Join-Path $hybridRoot "build\classes")) | Out-Null
+    $hybridT3Req = Join-Path $hybridT3Spec "01_server_rules.md"
+    $hybridT3Des = Join-Path $hybridT3Spec "06_design_contract.md"
+    $hybridT3Plan = Join-Path $hybridT3Spec "05_test_plan.md"
+    $hybridT3Cov = Join-Path $hybridT3Spec "05_test_coverage.json"
+    $hybridT3Approval = Join-Path $hybridT3Spec "00_workflow_state.json"
+    [System.IO.File]::WriteAllText($hybridT3Req, "# Rules`n- BR-01: hybrid fail closed", $Utf8NoBom)
+    [System.IO.File]::WriteAllText($hybridT3Des, "# Design`n- DC-01: do not skip 04 when SVN unscanned", $Utf8NoBom)
+    [System.IO.File]::WriteAllText($hybridT3Plan, "# Plan`n- TC-01: fail closed", $Utf8NoBom)
+    [System.IO.File]::WriteAllText(
+        (Join-Path $hybridT3Spec "feature-state.json"),
+        '{"schemaVersion":"1.0","feature":"HybridT3Feat","baseline":"' + $hybridBaseSha + '","tier":"T3","phase":"DONE"}',
+        $Utf8NoBom
+    )
+    $hybridT3ReqSha = Get-TestArtifactHash -Path $hybridT3Req
+    $hybridT3DesSha = Get-TestArtifactHash -Path $hybridT3Des
+    $hybridT3PlanSha = Get-TestArtifactHash -Path $hybridT3Plan
+    Write-TestJson -Path $hybridT3Approval -Value ([ordered]@{
+        schemaVersion = "1.0"
+        feature = "HybridT3Feat"
+        baseline = $hybridBaseSha
+        requirement = [ordered]@{
+            artifact = "01_server_rules.md"
+            status = "APPROVED"
+            sha256 = $hybridT3ReqSha
+            approvedAt = "2026-08-23T12:00:00Z"
+            approvedBy = "human:tester"
+        }
+        design = [ordered]@{
+            artifact = "06_design_contract.md"
+            status = "APPROVED"
+            sha256 = $hybridT3DesSha
+            approvedAt = "2026-08-23T12:00:00Z"
+            approvedBy = "human:tester"
+        }
+    })
+    $hybridT3RiskRaw = & $ScriptPath -Operation AssessRisk -Path $hybridT3Spec -Baseline $hybridBaseSha 2>&1 | Out-String
+    $hybridT3Risk = $hybridT3RiskRaw | ConvertFrom-Json
+    $hybridT3Digest = [string]$hybridT3Risk.changeSetDigest
+    if (($hybridT3Risk.triggersHit -join ",") -notmatch "HYBRID_PRODUCTION_VCS_UNSCANNED") {
+        throw "Gitignored src beside dummy .svn must fail closed as HYBRID_PRODUCTION_VCS_UNSCANNED. Output: $hybridT3RiskRaw"
+    }
+    Write-TestJson -Path $hybridT3Cov -Value ([ordered]@{
+        schemaVersion = "1.0"
+        feature = "HybridT3Feat"
+        requirementArtifact = "01_server_rules.md"
+        requirementSha256 = $hybridT3ReqSha
+        designArtifact = "06_design_contract.md"
+        designSha256 = $hybridT3DesSha
+        testPlanArtifact = "05_test_plan.md"
+        testPlanSha256 = $hybridT3PlanSha
+        cases = @(
+            [ordered]@{
+                id = "TC-01"
+                title = "Fail closed"
+                status = "VERIFIED"
+                priority = "P1"
+                testTypes = @("FUNCTIONAL")
+                requirementIds = @("BR-01")
+                designIds = @("DC-01")
+                setup = @("Create an isolated player")
+                trigger = @("Invoke the formal entry")
+                assertions = [ordered]@{
+                    protocol = @(
+                        [ordered]@{ target = "status"; operator = "EQ"; expected = "OK" }
+                    )
+                    serverState = @(
+                        [ordered]@{ target = "ok"; operator = "EQ"; expected = $true }
+                    )
+                    sideEffects = @(
+                        [ordered]@{ target = "none"; operator = "EQ"; expected = $true }
+                    )
+                    regression = @(
+                        [ordered]@{ target = "legacy"; operator = "UNCHANGED"; expected = $true }
+                    )
+                }
+                cleanup = @("Delete the isolated player")
+                automationCarrier = "TestRunner.ps1"
+            }
+        )
+        riskExemptions = @()
+        executionEvidence = [ordered]@{
+            command = "pwsh test"
+            exitCode = 0
+            executedAt = [DateTimeOffset]::UtcNow.AddMinutes(-5).ToString("yyyy-MM-ddTHH:mm:ssZ")
+            sourceCommitSha = $hybridBaseSha
+            workingTreeDigest = $hybridT3Digest
+            testCount = 1
+            passedCount = 1
+            failedCount = 0
+        }
+    })
+    [System.IO.File]::WriteAllText((Join-Path $hybridT3Spec "TestRunner.ps1"), "# test", $Utf8NoBom)
+    $hybridVerify = & $ScriptPath -Operation VerifyCompletion -Path $hybridT3Approval 2>&1
+    $hybridVerifyStr = $hybridVerify | Out-String
+    if ($LASTEXITCODE -eq 0 -or $hybridVerifyStr -notmatch "04_change_impact\.json is mandatory because semantic risk could not be assessed") {
+        throw "VerifyCompletion must require 04 when hybrid production SVN cannot be scanned. Output: $hybridVerifyStr"
+    }
+
+    # All-digit baseline must not be treated as a git SHA (SVN revisions can be 7+ digits).
+    $digitGitDir = Join-Path $TestRoot "digit_baseline_git"
+    [System.IO.Directory]::CreateDirectory($digitGitDir) | Out-Null
+    & git -C $digitGitDir init --quiet
+    & git -C $digitGitDir config user.name "Tester"
+    & git -C $digitGitDir config user.email "tester@test.local"
+    [System.IO.File]::WriteAllText((Join-Path $digitGitDir "README.md"), "digit", $Utf8NoBom)
+    & git -C $digitGitDir add README.md
+    & git -C $digitGitDir commit -m "init" --quiet
+    [System.IO.File]::WriteAllText((Join-Path $digitGitDir "README.md"), "digit-2", $Utf8NoBom)
+    & git -C $digitGitDir add README.md
+    & git -C $digitGitDir commit -m "second" --quiet
+    $digitSpec = Join-Path $digitGitDir ".ai-workspace\specs\features\DigitBaseline"
+    [System.IO.Directory]::CreateDirectory($digitSpec) | Out-Null
+    [System.IO.File]::WriteAllText(
+        (Join-Path $digitSpec "feature-state.json"),
+        '{"schemaVersion":"1.0","feature":"DigitBaseline","tier":"T2","phase":"CLAIMED","baseline":"1234567"}',
+        $Utf8NoBom
+    )
+    $digitRiskRaw = $null
+    try {
+        $digitRiskRaw = & $ScriptPath -Operation AssessRisk -Path $digitSpec -Baseline "1234567" 2>&1 | Out-String
+        $null = $digitRiskRaw | ConvertFrom-Json
+    } catch {
+        throw "AssessRisk must not treat all-digit baseline 1234567 as a missing git commit. Output: $digitRiskRaw Error: $($_.Exception.Message)"
     }
 
     # 5. Negative Test: 带空格路径 src/foo bar.txt 修改前后的 changeSetDigest 严格变异

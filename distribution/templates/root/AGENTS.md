@@ -65,6 +65,8 @@
   4. **兼容与并发**：涉及新老数据反序列化兼容、多版本滚更混跑、分布式锁或异步任务；
   5. **多分支入口**：在已有 Action/Help 的主干入口中插入了新的条件分支。
 
+  **04 强制范围**：`04_change_impact.json` 不是所有 T3 的必交件。仅当 `AssessRisk` 命中 `TYPE_EXTENSION` 或 `PUBLIC_ROUTING`（旧系统扩展），或风险无法评估（`WORKSPACE_UNRESOLVED` / `VCS_ERROR` / `VCS_UNAVAILABLE` / overlay git+SVN 但生产 SVN 扫不到）时，`VerifyCompletion` 才强制 04。绿场 T3 有 01/06 + 覆盖矩阵即可 Complete；缺 04 不失败。若 04 已存在，仍会校验有效且未过期。
+
   **类型/策略扩展完成度（机器硬门禁，不只靠审查清单）**：命中触发器 1 或 2 时，`04_change_impact.json` 存在仍不够。`ValidateChangeImpact` / `VerifyCompletion` 会要求：
   - 非空 `behaviorVariants`（每个新旧类型/策略键标明 `IDENTICAL_TO_LEGACY` / `INTENTIONAL_DIFF` / `N_A`）
   - 非空 `legacyPaths`（旧分发/入口的受保护行为；`IDENTICAL_TO_LEGACY` 必须带 `regressionCaseId`）
@@ -327,7 +329,7 @@ pwsh -NoProfile -File .\.ai-sop\scripts\workflow-state.ps1 -Operation ValidateTe
 
 完成条件**按档位分**（`workflow-state.ps1 -Operation Status` 显示当前 tier + 门禁 SHA；`workflow-state.ps1 -Operation CheckCompletion -Path .../00_workflow_state.json` 输出机检 ASCII checklist（门禁 SHA/coverage/编译产物/SVN status）。**机检项 [v]=pass/[X]=fail，人工项 [?]=需 AI 验证**。AI 据下表 + CheckCompletion 结果逐项检查并报告）：
 
-**Complete 前硬门禁（VerifyCompletion 内嵌执行）**：`workflow-owner.ps1 -Operation Complete` 内部已嵌入 `VerifyCompletion` 硬门禁检验。在释放归属锁前，脚本会自动在后台先调用 `VerifyCompletion`：T3 严格校验门禁 APPROVED+SHA / coverage 无占位与 carrier 错误 / `04_change_impact.json` 有效且未过期 / 类型或公共分发扩展时 8 切面完成度 / feature-state 阶段非初始 / 编译产物；T2 校验编译产物。**若 VerifyCompletion 检验未通过（非 0），Complete 会直接抛出错误并拒绝释放归属锁**。AI 亦可事先调用 `workflow-state.ps1 -Operation VerifyCompletion -Path .../00_workflow_state.json` 提前确认是否达到完成标准。
+**Complete 前硬门禁（VerifyCompletion 内嵌执行）**：`workflow-owner.ps1 -Operation Complete` 内部已嵌入 `VerifyCompletion` 硬门禁检验。在释放归属锁前，脚本会自动在后台先调用 `VerifyCompletion`：T3 严格校验门禁 APPROVED+SHA / coverage 无占位与 carrier 错误；仅当 AssessRisk 命中 TYPE_EXTENSION/PUBLIC_ROUTING 或风险无法评估时才要求 `04_change_impact.json` 有效且未过期；类型或公共分发扩展时再校验 8 切面完成度 / feature-state 阶段非初始 / 编译产物；T2 校验编译产物。**若 VerifyCompletion 检验未通过（非 0），Complete 会直接抛出错误并拒绝释放归属锁**。AI 亦可事先调用 `workflow-state.ps1 -Operation VerifyCompletion -Path .../00_workflow_state.json` 提前确认是否达到完成标准。
 
 **T3（6 项全过）**：
 

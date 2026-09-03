@@ -41,6 +41,8 @@
         "READY_TO_DELIVER",
         "DELIVERED",
         "DONE",
+        "COMPLETED",
+        "IMPLEMENTATION_DONE",
         "BLOCKED"
       ]
     },

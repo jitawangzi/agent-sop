@@ -71,7 +71,7 @@
     },
     "clauseId": {
       "type": "string",
-      "pattern": "^(BR|EX|AC|DC|DR|TW)-[A-Z0-9][A-Z0-9_-]*$"
+      "pattern": "^(BR|EX|AC|DC|DR|TW)-[A-Z0-9]+(?:[._-][A-Z0-9]+)*$"
     },
     "testCase": {
       "type": "object",
@@ -139,7 +139,7 @@
           "uniqueItems": true,
           "items": {
             "type": "string",
-            "pattern": "^(BR|EX|AC)-[A-Z0-9][A-Z0-9_-]*$"
+            "pattern": "^(BR|EX|AC)-[A-Z0-9]+(?:[._-][A-Z0-9]+)*$"
           }
         },
         "designIds": {
@@ -147,7 +147,7 @@
           "uniqueItems": true,
           "items": {
             "type": "string",
-            "pattern": "^(DC|DR|TW)-[A-Z0-9][A-Z0-9_-]*$"
+            "pattern": "^(DC|DR|TW)-[A-Z0-9]+(?:[._-][A-Z0-9]+)*$"
           }
         },
         "invariantIds": {

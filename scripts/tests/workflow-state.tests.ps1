@@ -4024,6 +4024,201 @@ try {
         & $ScriptPath -Operation AssessRisk -Path $missingBaselineDir
     }
 
+    # 15. Legacy host coverage / phase / locator compatibility.
+    $legacySpec = Join-Path $TestRoot ".ai-workspace\specs\features\LegacyCoverageCompat"
+    [System.IO.Directory]::CreateDirectory($legacySpec) | Out-Null
+    $legacyReq = Join-Path $legacySpec "01_server_rules.md"
+    $legacyDes = Join-Path $legacySpec "06_design_contract.md"
+    $legacyPlan = Join-Path $legacySpec "05_test_plan.md"
+    $legacyCov = Join-Path $legacySpec "05_test_coverage.json"
+    $legacyApproval = Join-Path $legacySpec "00_workflow_state.json"
+    [System.IO.File]::WriteAllText(
+        $legacyReq,
+        @"
+# Rules
+### BR-1 parent group
+- **BR-1.1** first child
+- **BR-1.3** dotted child
+"@,
+        $Utf8NoBom
+    )
+    [System.IO.File]::WriteAllText(
+        $legacyDes,
+        @"
+# Design
+### DC-1 parent group
+- **DC-1.1** child contract
+"@,
+        $Utf8NoBom
+    )
+    [System.IO.File]::WriteAllText($legacyPlan, "# Plan`n- TC-01 covered`n- TC-02 automated`n- TC-03 planned`n", $Utf8NoBom)
+    $legacyReqSha = Get-TestArtifactHash -Path $legacyReq
+    $legacyDesSha = Get-TestArtifactHash -Path $legacyDes
+    $legacyPlanSha = Get-TestArtifactHash -Path $legacyPlan
+    Write-TestJson -Path $legacyApproval -Value ([ordered]@{
+        schemaVersion = "1.0"
+        feature = "LegacyCoverageCompat"
+        baseline = "0"
+        requirement = @{
+            artifact = "01_server_rules.md"
+            status = "APPROVED"
+            approvedBy = "tester"
+            approvedAt = "2026-09-03T00:00:00Z"
+            sha256 = $legacyReqSha
+        }
+        design = @{
+            artifact = "06_design_contract.md"
+            status = "APPROVED"
+            approvedBy = "tester"
+            approvedAt = "2026-09-03T00:00:00Z"
+            sha256 = $legacyDesSha
+        }
+    })
+    $legacyRawCoverage = @{
+        schemaVersion = "1.0"
+        feature = "LegacyCoverageCompat"
+        requirementArtifact = "01_server_rules.md"
+        requirementSha256 = $legacyReqSha
+        designArtifact = "06_design_contract.md"
+        designSha256 = $legacyDesSha
+        testPlanArtifact = "05_test_plan.md"
+        testPlanSha256 = $legacyPlanSha
+        cases = @(
+            @{
+                id = "TC-01"
+                title = "dotted ids and COVERED"
+                status = "COVERED"
+                priority = "P1"
+                testTypes = @("FUNCTIONAL")
+                requirementIds = @("BR-11")
+                designIds = @("DC-11")
+                setup = @("Arrange dotted clause")
+                trigger = @("Act")
+                assertions = @{
+                    database = @(
+                        @{ target = "Helper.getLevel"; operator = "EQ"; expected = "3" }
+                    )
+                }
+                cleanup = @("Cleanup")
+                automationCarrier = "LegacyCarrier.ps1"
+            }
+            @{
+                id = "TC-02"
+                title = "AUTOMATED without steps"
+                status = "AUTOMATED"
+                priority = "P1"
+                testTypes = @("FUNCTIONAL")
+                requirementIds = @("BR-13")
+                designIds = @("DC-11")
+                automationCarrier = "test.legacy.TestLegacy#testTc02"
+            }
+            @{
+                id = "TC-03"
+                title = "missing status"
+                priority = "P2"
+                testTypes = @("FUNCTIONAL")
+                requirementIds = @("BR-13")
+                designIds = @("DC-11")
+                setup = @("Arrange")
+                trigger = @("Act")
+                assertions = @{
+                    protocol = @(
+                        @{ target = "ok"; operator = "EQ"; expected = "1" }
+                    )
+                }
+                cleanup = @("Cleanup")
+                automationCarrier = "LegacyCarrier.ps1"
+            }
+        )
+    }
+    Write-TestJson -Path $legacyCov -Value $legacyRawCoverage
+    $legacyPlanVal = & $ScriptPath -Operation ValidateTestCoverage -Path $legacyCov -Phase PLAN 2>&1
+    $legacyPlanStr = $legacyPlanVal | Out-String
+    if ($legacyPlanVal -notcontains "VALID") {
+        throw "Legacy coverage (COVERED/database/missing status/AUTOMATED/flattened BR-13) must ValidateTestCoverage PLAN. Output: $legacyPlanStr"
+    }
+
+    $phaseSpec = Join-Path $TestRoot ".ai-workspace\specs\features\LegacyPhaseCompat"
+    [System.IO.Directory]::CreateDirectory($phaseSpec) | Out-Null
+    Write-TestJson -Path (Join-Path $phaseSpec "feature-state.json") -Value ([ordered]@{
+        schemaVersion = "1.0"
+        feature = "LegacyPhaseCompat"
+        tier = "T3"
+        phase = "COMPLETED"
+        baseline = "0"
+        updatedAt = "2026-09-03T00:00:00Z"
+    })
+    $phaseRiskRaw = $null
+    try {
+        $phaseRiskRaw = & $ScriptPath -Operation AssessRisk -Path $phaseSpec 2>&1 | Out-String
+        $null = $phaseRiskRaw | ConvertFrom-Json
+    } catch {
+        throw "AssessRisk must persist feature-state phase=COMPLETED. Output: $phaseRiskRaw Error: $($_.Exception.Message)"
+    }
+    $phaseAfter = Get-Content -LiteralPath (Join-Path $phaseSpec "feature-state.json") -Raw | ConvertFrom-Json
+    if ([string]$phaseAfter.phase -ne "COMPLETED") {
+        throw "AssessRisk must keep phase COMPLETED, got '$($phaseAfter.phase)'"
+    }
+
+    $implSpec = Join-Path $TestRoot ".ai-workspace\specs\features\LegacyImplPhaseCompat"
+    [System.IO.Directory]::CreateDirectory($implSpec) | Out-Null
+    Write-TestJson -Path (Join-Path $implSpec "feature-state.json") -Value ([ordered]@{
+        schemaVersion = "1.0"
+        feature = "LegacyImplPhaseCompat"
+        tier = "T3"
+        phase = "IMPLEMENTATION_DONE"
+        baseline = "0"
+        updatedAt = "2026-09-03T00:00:00Z"
+    })
+    $implRiskRaw = $null
+    try {
+        $implRiskRaw = & $ScriptPath -Operation AssessRisk -Path $implSpec 2>&1 | Out-String
+        $null = $implRiskRaw | ConvertFrom-Json
+    } catch {
+        throw "AssessRisk must persist feature-state phase=IMPLEMENTATION_DONE. Output: $implRiskRaw Error: $($_.Exception.Message)"
+    }
+
+    $noiseSpec = Join-Path $TestRoot ".ai-workspace\specs\features\LocatorNoiseCompat"
+    [System.IO.Directory]::CreateDirectory($noiseSpec) | Out-Null
+    [System.IO.File]::WriteAllText(
+        (Join-Path $noiseSpec "01_server_rules.md"),
+        "# Rules`n- BR-01 WidgetHelper only`n",
+        $Utf8NoBom
+    )
+    [System.IO.File]::WriteAllText(
+        (Join-Path $noiseSpec "06_design_contract.md"),
+        @"
+# Design
+- DC-01 WidgetHelper
+``````java
+    return false;
+    int stock = 1;
+    checkInitData();
+``````
+"@,
+        $Utf8NoBom
+    )
+    Write-TestJson -Path (Join-Path $noiseSpec "04_change_impact.json") -Value ([ordered]@{
+        changedSymbols = @("false", "stock", "checkInitData", "WidgetHelper")
+        entryPoints = @("checkInitData")
+        upstreamCallers = @()
+    })
+    Write-TestJson -Path (Join-Path $noiseSpec "feature-state.json") -Value ([ordered]@{
+        schemaVersion = "1.0"
+        feature = "LocatorNoiseCompat"
+        tier = "T2"
+        phase = "CLAIMED"
+        baseline = "0"
+        updatedAt = "2026-09-03T00:00:00Z"
+    })
+    $noiseRaw = & $ScriptPath -Operation AssessRisk -Path $noiseSpec 2>&1 | Out-String
+    if ($noiseRaw -notmatch "WidgetHelper") {
+        throw "Locator scan must keep PascalCase WidgetHelper. Output: $noiseRaw"
+    }
+    if ($noiseRaw -match '(?i)checkInitData' -or $noiseRaw -match '(?:, |\()false(?:,|\))' -or $noiseRaw -match '(?:, |\()stock(?:,|\))') {
+        throw "Locator scan must drop false/stock/checkInitData noise. Output: $noiseRaw"
+    }
+
     Write-Output "All workflow state tests passed."
 } finally {
     foreach ($name in @(

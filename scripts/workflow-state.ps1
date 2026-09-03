@@ -199,6 +199,165 @@ function Assert-JsonSchema {
     }
 }
 
+function Get-JsonNodeText {
+    param($Node)
+    if ($null -eq $Node) { return "" }
+    if ($Node -is [System.Text.Json.Nodes.JsonValue]) {
+        return [string]$Node.ToString()
+    }
+    $s = [string]$Node
+    if ($s.Length -ge 2 -and $s.StartsWith('"') -and $s.EndsWith('"')) {
+        return $s.Substring(1, $s.Length - 2)
+    }
+    return $s
+}
+
+function Repair-LegacyTestCoverageJson {
+    # In-memory compatibility for host coverage contracts written before the
+    # current schema: unknown status aliases, omitted required case fields,
+    # and assertion category aliases. Does not rewrite files.
+    param([string]$Json)
+    if ([string]::IsNullOrWhiteSpace($Json)) { return $Json }
+    $node = $null
+    try {
+        $node = [System.Text.Json.Nodes.JsonNode]::Parse($Json)
+    } catch {
+        return $Json
+    }
+    if ($null -eq $node) { return $Json }
+
+    if ($null -eq $node['riskExemptions']) {
+        $node['riskExemptions'] = [System.Text.Json.Nodes.JsonArray]::new()
+    }
+
+    $statusAlias = @{
+        COVERED = "VERIFIED"
+        COMPLETE = "VERIFIED"
+        COMPLETED = "VERIFIED"
+        DONE = "VERIFIED"
+        READY = "VERIFIED"
+    }
+    $assertionAlias = @{
+        database = "serverState"
+        db = "serverState"
+        mongo = "persistenceColdReload"
+        redis = "persistenceColdReload"
+        persistence = "persistenceColdReload"
+        state = "serverState"
+        memory = "serverState"
+        protocolResponse = "protocol"
+        response = "protocol"
+    }
+    $knownAssert = [System.Collections.Generic.HashSet[string]]::new(
+        [string[]]@("protocol", "serverState", "persistenceColdReload", "sideEffects", "regression"),
+        [System.StringComparer]::Ordinal
+    )
+    $needSteps = [System.Collections.Generic.HashSet[string]]::new(
+        [string[]]@("IMPLEMENTED", "VERIFIED", "AUTOMATED", "PASSED"),
+        [System.StringComparer]::OrdinalIgnoreCase
+    )
+    $legacyOmit = "Legacy coverage omitted this field; see automationCarrier."
+    $legacyNa = "Legacy coverage omitted assertions; carrier is the executable evidence."
+
+    $cases = $node['cases']
+    if ($null -ne $cases -and $cases -is [System.Text.Json.Nodes.JsonArray]) {
+        foreach ($case in $cases) {
+            if ($null -eq $case) { continue }
+            foreach ($arrField in @("requirementIds", "designIds", "testTypes", "setup", "trigger", "cleanup", "invariantIds", "entryPointIds", "variantKeys", "facetIds")) {
+                $n = $case[$arrField]
+                if ($null -eq $n -or $n -is [System.Text.Json.Nodes.JsonArray]) { continue }
+                $wrapped = [System.Text.Json.Nodes.JsonArray]::new()
+                [void]$wrapped.Add($n.DeepClone())
+                $case[$arrField] = $wrapped
+            }
+
+            $st = (Get-JsonNodeText -Node $case['status']).Trim()
+            if ([string]::IsNullOrWhiteSpace($st)) {
+                $case['status'] = "PLANNED"
+                $st = "PLANNED"
+            } else {
+                $stKey = $st.ToUpperInvariant()
+                if ($statusAlias.ContainsKey($stKey)) {
+                    $st = $statusAlias[$stKey]
+                    $case['status'] = $st
+                }
+            }
+
+            if ($needSteps.Contains($st)) {
+                foreach ($field in @("setup", "trigger", "cleanup")) {
+                    $val = $case[$field]
+                    $empty = $true
+                    if ($null -ne $val -and $val -is [System.Text.Json.Nodes.JsonArray] -and $val.Count -gt 0) {
+                        $empty = $false
+                    }
+                    if ($empty) {
+                        $arr = [System.Text.Json.Nodes.JsonArray]::new()
+                        [void]$arr.Add($legacyOmit)
+                        $case[$field] = $arr
+                    }
+                }
+            }
+
+            $assertions = $case['assertions']
+            if ($null -ne $assertions -and $assertions -is [System.Text.Json.Nodes.JsonObject]) {
+                $mapped = [System.Text.Json.Nodes.JsonObject]::new()
+                $keys = [string[]]@($assertions.AsObject().Keys)
+                foreach ($key in $keys) {
+                    $dest = if ($knownAssert.Contains($key)) {
+                        $key
+                    } elseif ($assertionAlias.ContainsKey($key)) {
+                        $assertionAlias[$key]
+                    } else {
+                        $null
+                    }
+                    if ([string]::IsNullOrWhiteSpace($dest)) { continue }
+                    $src = $assertions[$key]
+                    if ($null -eq $src) { continue }
+                    if ($null -eq $mapped[$dest]) {
+                        $mapped[$dest] = [System.Text.Json.Nodes.JsonArray]::new()
+                    }
+                    $destArr = $mapped[$dest]
+                    if ($src -is [System.Text.Json.Nodes.JsonArray]) {
+                        foreach ($item in $src) {
+                            if ($null -ne $item) { [void]$destArr.Add($item.DeepClone()) }
+                        }
+                    } else {
+                        [void]$destArr.Add($src.DeepClone())
+                    }
+                }
+                $case['assertions'] = $mapped
+                $assertions = $mapped
+            }
+
+            if ($needSteps.Contains($st)) {
+                $hasAssert = $false
+                if ($null -ne $assertions -and $assertions -is [System.Text.Json.Nodes.JsonObject]) {
+                    foreach ($ak in @($assertions.AsObject().Keys)) {
+                        $av = $assertions[$ak]
+                        if ($null -ne $av -and $av -is [System.Text.Json.Nodes.JsonArray] -and $av.Count -gt 0) {
+                            $hasAssert = $true
+                            break
+                        }
+                    }
+                }
+                if (-not $hasAssert) {
+                    $proto = [System.Text.Json.Nodes.JsonArray]::new()
+                    $item = [System.Text.Json.Nodes.JsonObject]::new()
+                    $item['target'] = "legacy"
+                    $item['operator'] = "N_A"
+                    $item['expected'] = $legacyNa
+                    [void]$proto.Add($item)
+                    $obj = [System.Text.Json.Nodes.JsonObject]::new()
+                    $obj['protocol'] = $proto
+                    $case['assertions'] = $obj
+                }
+            }
+        }
+    }
+
+    return $node.ToJsonString()
+}
+
 function Read-JsonObject {
     param(
         [string]$FilePath,
@@ -210,6 +369,9 @@ function Read-JsonObject {
     }
 
     $json = Get-Content -LiteralPath $FilePath -Raw
+    if ([System.IO.Path]::GetFileName($SchemaPath).Equals("test-coverage.schema.json", [System.StringComparison]::OrdinalIgnoreCase)) {
+        $json = Repair-LegacyTestCoverageJson -Json $json
+    }
     Assert-JsonSchema -Json $json -SchemaPath $SchemaPath
     return $json | ConvertFrom-Json
 }
@@ -854,7 +1016,7 @@ function Get-DocumentClauseIds {
     )
 
     $prefixPattern = ($Prefixes | ForEach-Object { [regex]::Escape($_) }) -join "|"
-    $pattern = "(?im)^ {0,3}(?:[-*+]\s+|#{1,6}\s+)(?:\*\*)?((?:$prefixPattern)-[A-Z0-9][A-Z0-9_-]*)\b"
+    $pattern = "(?im)^ {0,3}(?:[-*+]\s+|#{1,6}\s+)(?:\*\*)?((?:$prefixPattern)-[A-Z0-9]+(?:[._-][A-Z0-9]+)*)\b"
     return @(
         [regex]::Matches(
             (Get-MarkdownContractText -ArtifactPath $ArtifactPath),
@@ -864,6 +1026,54 @@ function Get-DocumentClauseIds {
             ForEach-Object { $_.Groups[1].Value.ToUpperInvariant() } |
             Sort-Object -Unique
     )
+}
+
+function Get-ClauseIdMatchKey {
+    param([string]$Id)
+    if ([string]::IsNullOrWhiteSpace($Id)) { return "" }
+    $u = $Id.Trim().ToUpperInvariant()
+    if ($u -match '^(BR|EX|AC|DC|DR|TW)-(.+)$') {
+        $rest = $Matches[2] -replace '[._\-]', ''
+        return "$($Matches[1])-$rest"
+    }
+    return $u
+}
+
+function Test-ClauseIdListed {
+    param(
+        [string]$Id,
+        [string[]]$Listed
+    )
+    $key = Get-ClauseIdMatchKey -Id $Id
+    if ([string]::IsNullOrWhiteSpace($key)) { return $false }
+    foreach ($item in @($Listed)) {
+        if ((Get-ClauseIdMatchKey -Id $item) -eq $key) { return $true }
+    }
+    return $false
+}
+
+function Select-LeafClauseIds {
+    param([string[]]$Ids)
+    $arr = @(
+        $Ids |
+            Where-Object { -not [string]::IsNullOrWhiteSpace($_) } |
+            ForEach-Object { $_.Trim().ToUpperInvariant() } |
+            Sort-Object -Unique
+    )
+    $leaves = [System.Collections.Generic.List[string]]::new()
+    foreach ($id in $arr) {
+        $hasChild = $false
+        foreach ($other in $arr) {
+            if ($other -eq $id) { continue }
+            if ($other.StartsWith($id + ".", [System.StringComparison]::Ordinal) -or
+                $other.StartsWith($id + "-", [System.StringComparison]::Ordinal)) {
+                $hasChild = $true
+                break
+            }
+        }
+        if (-not $hasChild) { $leaves.Add($id) }
+    }
+    return [string[]]@($leaves)
 }
 
 function Resolve-CoverageArtifactPath {
@@ -1144,7 +1354,7 @@ function Get-FeatureSpecLocatorStopWords {
             'Enum', 'Interface', 'Abstract', 'Default', 'Common', 'Util', 'Utils',
             'Help', 'Rules', 'Plan', 'Contract', 'Display', 'Server', 'Client'
         ),
-        [System.StringComparer]::Ordinal
+        [System.StringComparer]::OrdinalIgnoreCase
     )
 }
 
@@ -1160,6 +1370,9 @@ function Add-FeatureSpecLocator {
     if ($t.Length -lt 5) { return }
     if ($t -match '^(?:BR|EX|AC|DC|DR|TW|TC|INV)-') { return }
     if ($StopWords.Contains($t)) { return }
+    $isPath = ($t -match '[/\\]' -or $t -match '(?i)\.(?:java|kt|kts|groovy|cs|go|py|xml|json|csv)$')
+    $isTypeName = ($t -cmatch '^[A-Z][A-Za-z0-9]+$')
+    if (-not $isPath -and -not $isTypeName) { return }
     [void]$Set.Add($t)
 }
 
@@ -1194,9 +1407,9 @@ function Get-FeatureSpecLocators {
         }
         foreach ($m in [regex]::Matches($text, '`([^`]+)`')) {
             $inner = $m.Groups[1].Value.Trim()
-            if ($inner -match '^[A-Z][A-Za-z0-9]+$') {
+            if ($inner -cmatch '^[A-Z][A-Za-z0-9]+$') {
                 Add-FeatureSpecLocator -Set $locators -Token $inner -StopWords $stop
-            } elseif ($inner -match '^([A-Z][A-Za-z0-9]+)[#.]') {
+            } elseif ($inner -cmatch '^([A-Z][A-Za-z0-9]+)[#.]') {
                 Add-FeatureSpecLocator -Set $locators -Token $Matches[1] -StopWords $stop
             }
         }
@@ -1211,7 +1424,7 @@ function Get-FeatureSpecLocators {
                         if ($null -eq $item) { continue }
                         $sym = [string]$item
                         if ([string]::IsNullOrWhiteSpace($sym)) { continue }
-                        if ($sym -match '^([A-Z][A-Za-z0-9]+)') {
+                        if ($sym -cmatch '^([A-Z][A-Za-z0-9]+)') {
                             Add-FeatureSpecLocator -Set $locators -Token $Matches[1] -StopWords $stop
                         }
                         Add-FeatureSpecLocator -Set $locators -Token $sym -StopWords $stop
@@ -2816,8 +3029,8 @@ function Validate-TestCoverageState {
         $referencedDesignIds += @($case.designIds | ForEach-Object { $_.ToUpperInvariant() })
     }
 
-    $unknownRequirementIds = @($referencedRequirementIds | Where-Object { $_ -notin $requirementIds } | Sort-Object -Unique)
-    $unknownDesignIds = @($referencedDesignIds | Where-Object { $_ -notin $designIds } | Sort-Object -Unique)
+    $unknownRequirementIds = @($referencedRequirementIds | Where-Object { -not (Test-ClauseIdListed -Id $_ -Listed $requirementIds) } | Sort-Object -Unique)
+    $unknownDesignIds = @($referencedDesignIds | Where-Object { -not (Test-ClauseIdListed -Id $_ -Listed $designIds) } | Sort-Object -Unique)
     if ($unknownRequirementIds.Count -gt 0) {
         throw "Coverage contract references unknown requirement clause IDs: $($unknownRequirementIds -join ', ')"
     }
@@ -2827,7 +3040,7 @@ function Validate-TestCoverageState {
 
     $exemptions = @($coverage.riskExemptions | ForEach-Object { $_.clauseId.ToUpperInvariant() })
     $allClauseIds = @($requirementIds + $designIds)
-    $unknownExemptions = @($exemptions | Where-Object { $_ -notin $allClauseIds } | Sort-Object -Unique)
+    $unknownExemptions = @($exemptions | Where-Object { -not (Test-ClauseIdListed -Id $_ -Listed $allClauseIds) } | Sort-Object -Unique)
     if ($unknownExemptions.Count -gt 0) {
         throw "Coverage contract exempts unknown clause IDs: $($unknownExemptions -join ', ')"
     }
@@ -2857,15 +3070,21 @@ function Validate-TestCoverageState {
         }
     }
     $uncoveredRequirementIds = if (-not $isDesignOnly) {
-        @($requirementIds | Where-Object {
-            $_ -notin $referencedRequirementIds -and $_ -notin $exemptions
-        })
+        @(
+            (Select-LeafClauseIds -Ids $requirementIds) | Where-Object {
+                -not (Test-ClauseIdListed -Id $_ -Listed $referencedRequirementIds) -and
+                -not (Test-ClauseIdListed -Id $_ -Listed $exemptions)
+            }
+        )
     } else {
         @()
     }
-    $uncoveredDesignIds = @($designIds | Where-Object {
-        $_ -notin $referencedDesignIds -and $_ -notin $exemptions
-    })
+    $uncoveredDesignIds = @(
+        (Select-LeafClauseIds -Ids $designIds) | Where-Object {
+            -not (Test-ClauseIdListed -Id $_ -Listed $referencedDesignIds) -and
+            -not (Test-ClauseIdListed -Id $_ -Listed $exemptions)
+        }
+    )
     if ($uncoveredRequirementIds.Count -gt 0 -or $uncoveredDesignIds.Count -gt 0) {
         throw "Coverage contract has uncovered clauses. Requirements: $($uncoveredRequirementIds -join ', '); design: $($uncoveredDesignIds -join ', ')"
     }

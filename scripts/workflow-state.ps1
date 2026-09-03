@@ -939,6 +939,31 @@ function Test-IsHybridGitSvnWorkspace {
     return [bool]($hasGit -and $hasSvn)
 }
 
+function Test-GitCommitExists {
+    param(
+        [string]$WorkspaceRoot,
+        [string]$Baseline
+    )
+    if ([string]::IsNullOrWhiteSpace($WorkspaceRoot) -or [string]::IsNullOrWhiteSpace($Baseline)) { return $false }
+    if (-not (Test-IsGitCommitBaseline -Baseline $Baseline)) { return $false }
+    if (-not (Test-Path -LiteralPath (Join-Path $WorkspaceRoot ".git"))) { return $false }
+    try {
+        $spec = $Baseline + '^{commit}'
+        & git -C $WorkspaceRoot cat-file -e $spec 2>&1 | Out-Null
+        return ($LASTEXITCODE -eq 0)
+    } catch {
+        return $false
+    }
+}
+
+function Test-CanFailSoftStaleOverlayGitBaseline {
+    param([string]$WorkspaceRoot)
+    # Overlay git SHAs are not production identity. When the SVN working copy
+    # can be scanned, a missing overlay commit must not abort risk assessment.
+    if ([string]::IsNullOrWhiteSpace($WorkspaceRoot)) { return $false }
+    return (Test-SvnWorkingCopyUsable -WorkspaceRoot $WorkspaceRoot)
+}
+
 function Resolve-AiSopWorkspaceRoot {
     param([string]$StartPath)
     if ([string]::IsNullOrWhiteSpace($StartPath)) { return $null }
@@ -1053,19 +1078,11 @@ function Assert-VcsCommitExists {
     )
     if ([string]::IsNullOrWhiteSpace($WorkspaceRoot) -or [string]::IsNullOrWhiteSpace($Baseline)) { return }
     if ($Baseline -eq "0") { return }
-    $hasGit = Test-Path -LiteralPath (Join-Path $WorkspaceRoot ".git")
-    if ($hasGit) {
-        if (Test-IsGitCommitBaseline -Baseline $Baseline) {
-            try {
-                & git -C $WorkspaceRoot cat-file -e "$Baseline^{commit}" 2>&1 | Out-Null
-                if ($LASTEXITCODE -ne 0) {
-                    throw "INVALID_BASELINE: Git baseline commit '$Baseline' does not exist in repository '$WorkspaceRoot'."
-                }
-            } catch {
-                if ($_.Exception.Message -match "INVALID_BASELINE") { throw }
-            }
-        }
-    }
+    if (-not (Test-IsGitCommitBaseline -Baseline $Baseline)) { return }
+    if (-not (Test-Path -LiteralPath (Join-Path $WorkspaceRoot ".git"))) { return }
+    if (Test-GitCommitExists -WorkspaceRoot $WorkspaceRoot -Baseline $Baseline) { return }
+    if (Test-CanFailSoftStaleOverlayGitBaseline -WorkspaceRoot $WorkspaceRoot) { return }
+    throw "INVALID_BASELINE: Git baseline commit '$Baseline' does not exist in repository '$WorkspaceRoot'."
 }
 
 function Get-FileRawSha256 {
@@ -1307,6 +1324,12 @@ function Get-AuthoritativeFeatureBaseline {
 
     if ($hasExistingState) {
         if ([string]::IsNullOrWhiteSpace($resolvedStateBaseline)) {
+            if (-not [string]::IsNullOrWhiteSpace($effectiveWs) -and (Test-SvnWorkingCopyUsable -WorkspaceRoot $effectiveWs)) {
+                $detectedFromSvn = Get-VcsBaselineRevision -StartPath $effectiveWs
+                if (-not [string]::IsNullOrWhiteSpace($detectedFromSvn)) {
+                    return $detectedFromSvn
+                }
+            }
             throw "BASELINE_MISSING: Existing feature state in '$specDirFull' lacks an authoritative baseline. Cannot evaluate risk against arbitrary commit."
         }
         if (-not [string]::IsNullOrWhiteSpace($effectiveWs)) {
@@ -1398,10 +1421,14 @@ function Get-ChangeSetDigest {
     # 1. Git diff + status
     if ($hasGit) {
         $gitTarget = $null
+        $skipOverlayGitRange = $false
         if (Test-IsGitCommitBaseline -Baseline $Baseline) {
-            $gitTarget = $Baseline
-            $verifyRef = & git -C $WorkspaceRoot rev-parse --verify --quiet "$gitTarget^{commit}" 2>&1
-            if ($LASTEXITCODE -ne 0) {
+            if (Test-GitCommitExists -WorkspaceRoot $WorkspaceRoot -Baseline $Baseline) {
+                $gitTarget = $Baseline
+            } elseif (Test-CanFailSoftStaleOverlayGitBaseline -WorkspaceRoot $WorkspaceRoot) {
+                # Stale overlay git SHA: production changeset is the SVN working copy.
+                $skipOverlayGitRange = $true
+            } else {
                 throw "Baseline commit '$Baseline' does not exist in git workspace: $WorkspaceRoot"
             }
         } else {
@@ -1409,6 +1436,7 @@ function Get-ChangeSetDigest {
             $gitTarget = if ($LASTEXITCODE -eq 0 -and -not [string]::IsNullOrWhiteSpace($mb)) { $mb } else { "HEAD~1" }
         }
 
+        if (-not $skipOverlayGitRange -and -not [string]::IsNullOrWhiteSpace($gitTarget)) {
         $gitDiff = & git -C $WorkspaceRoot -c core.quotepath=false diff $gitTarget -- . 2>&1
         if ($LASTEXITCODE -ne 0) {
             throw "git diff failed against target '$gitTarget' in workspace: $WorkspaceRoot"
@@ -1458,6 +1486,7 @@ function Get-ChangeSetDigest {
                     }
                 }
             }
+        }
         }
     }
     
@@ -1674,11 +1703,20 @@ function Get-WorkspaceChangedRelativePaths {
     $hasGit = Test-Path -LiteralPath (Join-Path $WorkspaceRoot ".git")
     $hasSvn = Test-Path -LiteralPath (Join-Path $WorkspaceRoot ".svn")
     if ($hasGit) {
-        $diffTarget = if (Test-IsGitCommitBaseline -Baseline $Baseline) {
-            $Baseline
+        $skipGitNameScan = $false
+        $diffTarget = $null
+        if (Test-IsGitCommitBaseline -Baseline $Baseline) {
+            if (Test-GitCommitExists -WorkspaceRoot $WorkspaceRoot -Baseline $Baseline) {
+                $diffTarget = $Baseline
+            } elseif (Test-CanFailSoftStaleOverlayGitBaseline -WorkspaceRoot $WorkspaceRoot) {
+                $skipGitNameScan = $true
+            } else {
+                $diffTarget = $Baseline
+            }
         } else {
-            "HEAD"
+            $diffTarget = "HEAD"
         }
+        if (-not $skipGitNameScan -and -not [string]::IsNullOrWhiteSpace($diffTarget)) {
         foreach ($cmd in @(
             @("diff", "--name-only", $diffTarget, "--", "."),
             @("diff", "--cached", "--name-only", $diffTarget, "--", "."),
@@ -1692,6 +1730,7 @@ function Get-WorkspaceChangedRelativePaths {
                 if (Test-IsAiSopInternalSpecMetadata -RelativePath $rel) { continue }
                 [void]$paths.Add($rel.Replace('\', '/'))
             }
+        }
         }
     }
     if ($hasSvn) {
@@ -2200,6 +2239,13 @@ function Get-SemanticRiskAssessment {
         Get-AuthoritativeFeatureBaseline -SpecDir $SpecDir -WorkspaceRoot $WorkspaceRoot
     } else {
         Get-VcsBaselineRevision -StartPath $WorkspaceRoot
+    }
+    if (
+        (Test-IsGitCommitBaseline -Baseline $effectiveBaseline) -and
+        -not (Test-GitCommitExists -WorkspaceRoot $WorkspaceRoot -Baseline $effectiveBaseline) -and
+        (Test-CanFailSoftStaleOverlayGitBaseline -WorkspaceRoot $WorkspaceRoot)
+    ) {
+        $details.Add("Overlay git baseline '$effectiveBaseline' is not in this repository; production risk is assessed from the SVN working copy.")
     }
 
     # 2. Collect full diff string against baseline.

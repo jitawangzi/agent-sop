@@ -189,7 +189,7 @@ AI 编码工具百花齐放（Claude Code、Copilot、Cursor、Antigravity、Pi�
 - 命中 `TYPE_EXTENSION` / `PUBLIC_ROUTING` 才强制完整 04（兄弟键、8 切面、表征、冷重载）——这是旧分发加类型的真防线。
 - 绿场 T3 不交 04 也可 Complete（01/06 + 覆盖矩阵照旧）。
 - 风险看不清则 fail-closed 仍要 04：`WORKSPACE_UNRESOLVED`、`VCS_ERROR`、`VCS_UNAVAILABLE`、以及 overlay git + `.svn` 但 SVN 工作副本不可用（`HYBRID_PRODUCTION_VCS_UNSCANNED`）。
-- 混合工作区（根上 overlay git 管 SOP、SVN 管 `src/`）：语义触发只扫 SVN，不用 overlay git 证明「没有类型扩展」。全数字 baseline 不当成 git SHA，避免 SVN 修订号被 git 吃掉。
+- 混合工作区（根上 overlay git 管 SOP、SVN 管 `src/`）：语义触发只扫 SVN，不用 overlay git 证明「没有类型扩展」。全数字 baseline 不当成 git SHA，避免 SVN 修订号被 git 吃掉。已有功能若只记下 overlay git SHA 且该 SHA 已不在 overlay 仓里、或根本没有 baseline，只要 SVN 工作副本可用，就按 SVN 工作副本评估风险，不因 `INVALID_BASELINE` / `BASELINE_MISSING` 中断。Git-only 或 SVN 不可用时仍 fail-closed。
 
 **考虑过的替代**：
 - 全 T3 强制 04：绿场造假材料——否决。

@@ -79,6 +79,31 @@ function Write-TestJson {
     )
 }
 
+function ConvertTo-SvnFileUri {
+    param([string]$Path)
+    $full = [System.IO.Path]::GetFullPath($Path).Replace('\', '/')
+    if ($full -match '^[A-Za-z]:') {
+        return ('file:///' + $full)
+    }
+    return ('file://' + $full)
+}
+
+function New-TestUsableSvnWorkingCopy {
+    param([string]$ParentDir)
+    if (-not (Get-Command svnadmin -ErrorAction SilentlyContinue) -or -not (Get-Command svn -ErrorAction SilentlyContinue)) {
+        throw "svnadmin and svn are required for usable-SVN hybrid baseline tests."
+    }
+    [System.IO.Directory]::CreateDirectory($ParentDir) | Out-Null
+    $repo = Join-Path $ParentDir "svn-repo"
+    $wc = Join-Path $ParentDir "wc"
+    & svnadmin create $repo
+    if ($LASTEXITCODE -ne 0) { throw "svnadmin create failed: $repo" }
+    $uri = ConvertTo-SvnFileUri -Path $repo
+    & svn checkout --non-interactive --quiet $uri $wc
+    if ($LASTEXITCODE -ne 0) { throw "svn checkout failed from $uri" }
+    return $wc
+}
+
 function New-TestOwnerCommand {
     param(
         [string]$Operation,
@@ -3499,6 +3524,155 @@ try {
     $hybridVerifyStr = $hybridVerify | Out-String
     if ($LASTEXITCODE -eq 0 -or $hybridVerifyStr -notmatch "04_change_impact\.json is mandatory because semantic risk could not be assessed") {
         throw "VerifyCompletion must require 04 when hybrid production SVN cannot be scanned. Output: $hybridVerifyStr"
+    }
+
+    # 4c. Git-only stale SHA still fails closed.
+    $staleGitOnly = Join-Path $TestRoot "stale_git_only"
+    [System.IO.Directory]::CreateDirectory($staleGitOnly) | Out-Null
+    & git -C $staleGitOnly init --quiet
+    & git -C $staleGitOnly config user.name "Tester"
+    & git -C $staleGitOnly config user.email "tester@test.local"
+    [System.IO.File]::WriteAllText((Join-Path $staleGitOnly "README.md"), "git only", $Utf8NoBom)
+    & git -C $staleGitOnly add README.md
+    & git -C $staleGitOnly commit -m "init" --quiet
+    $staleGitSpec = Join-Path $staleGitOnly ".ai-workspace\specs\features\StaleGitOnly"
+    [System.IO.Directory]::CreateDirectory($staleGitSpec) | Out-Null
+    $deadOverlaySha = "deadbeefdeadbeefdeadbeefdeadbeefdeadbeef"
+    [System.IO.File]::WriteAllText(
+        (Join-Path $staleGitSpec "feature-state.json"),
+        '{"schemaVersion":"1.0","feature":"StaleGitOnly","tier":"T2","phase":"CLAIMED","baseline":"' + $deadOverlaySha + '"}',
+        $Utf8NoBom
+    )
+    Assert-Fails -Message "Git-only stale overlay SHA must still throw INVALID_BASELINE." -Action {
+        & $ScriptPath -Operation AssessRisk -Path $staleGitSpec
+    }
+
+    # 4d. Overlay git + usable SVN: stale overlay SHA fail-soft; dirty production enum still TYPE_EXTENSION.
+    $usableHybridParent = Join-Path $TestRoot "hybrid_usable_svn"
+    $usableHybridRoot = New-TestUsableSvnWorkingCopy -ParentDir $usableHybridParent
+    $usableSrcDir = Join-Path $usableHybridRoot "src\com\game"
+    [System.IO.Directory]::CreateDirectory($usableSrcDir) | Out-Null
+    $usableEnum = Join-Path $usableSrcDir "ShopEnum.java"
+    [System.IO.File]::WriteAllText($usableEnum, "package com.game; public enum ShopEnum { TYPE_OLD }", $Utf8NoBom)
+    [System.IO.File]::WriteAllText((Join-Path $usableHybridRoot "README.md"), "hybrid usable", $Utf8NoBom)
+    & svn add --non-interactive (Join-Path $usableHybridRoot "README.md") | Out-Null
+    & svn add --non-interactive --force (Join-Path $usableHybridRoot "src") | Out-Null
+    & svn commit --non-interactive -m "baseline enum" $usableHybridRoot | Out-Null
+    if ($LASTEXITCODE -ne 0) { throw "svn commit of usable hybrid fixture failed." }
+    [System.IO.File]::WriteAllText($usableEnum, "package com.game; public enum ShopEnum { TYPE_OLD, TYPE_NEW }", $Utf8NoBom)
+    [System.IO.File]::WriteAllText((Join-Path $usableHybridRoot ".gitignore"), "src/`n", $Utf8NoBom)
+    & git -C $usableHybridRoot init --quiet
+    & git -C $usableHybridRoot config user.name "Tester"
+    & git -C $usableHybridRoot config user.email "tester@test.local"
+    & git -C $usableHybridRoot add README.md .gitignore
+    & git -C $usableHybridRoot commit -m "overlay git" --quiet
+    $usableSpec = Join-Path $usableHybridRoot ".ai-workspace\specs\features\UsableHybridFeat"
+    [System.IO.Directory]::CreateDirectory($usableSpec) | Out-Null
+    [System.IO.Directory]::CreateDirectory((Join-Path $usableHybridRoot "build\classes")) | Out-Null
+    $usableReq = Join-Path $usableSpec "01_server_rules.md"
+    $usableDes = Join-Path $usableSpec "06_design_contract.md"
+    $usablePlan = Join-Path $usableSpec "05_test_plan.md"
+    $usableCov = Join-Path $usableSpec "05_test_coverage.json"
+    $usableApproval = Join-Path $usableSpec "00_workflow_state.json"
+    [System.IO.File]::WriteAllText($usableReq, "# Rules`n- BR-01: type extension on usable SVN", $Utf8NoBom)
+    [System.IO.File]::WriteAllText($usableDes, "# Design`n- DC-01: require 04 when TYPE_EXTENSION", $Utf8NoBom)
+    [System.IO.File]::WriteAllText($usablePlan, "# Plan`n- TC-01: new type", $Utf8NoBom)
+    [System.IO.File]::WriteAllText(
+        (Join-Path $usableSpec "feature-state.json"),
+        '{"schemaVersion":"1.0","feature":"UsableHybridFeat","baseline":"' + $deadOverlaySha + '","tier":"T3","phase":"DONE"}',
+        $Utf8NoBom
+    )
+    $usableReqSha = Get-TestArtifactHash -Path $usableReq
+    $usableDesSha = Get-TestArtifactHash -Path $usableDes
+    $usablePlanSha = Get-TestArtifactHash -Path $usablePlan
+    Write-TestJson -Path $usableApproval -Value ([ordered]@{
+        schemaVersion = "1.0"
+        feature = "UsableHybridFeat"
+        baseline = $deadOverlaySha
+        requirement = @{
+            artifact = "01_server_rules.md"
+            status = "APPROVED"
+            approvedBy = "tester"
+            approvedAt = "2026-09-03T00:00:00Z"
+            sha256 = $usableReqSha
+        }
+        design = @{
+            artifact = "06_design_contract.md"
+            status = "APPROVED"
+            approvedBy = "tester"
+            approvedAt = "2026-09-03T00:00:00Z"
+            sha256 = $usableDesSha
+        }
+    })
+    $usableRiskRaw = $null
+    try {
+        $usableRiskRaw = & $ScriptPath -Operation AssessRisk -Path $usableSpec 2>&1 | Out-String
+        $usableRisk = $usableRiskRaw | ConvertFrom-Json
+    } catch {
+        throw "AssessRisk must fail-soft stale overlay git SHA when SVN is usable. Output: $usableRiskRaw Error: $($_.Exception.Message)"
+    }
+    $usableHits = @($usableRisk.triggersHit) -join ","
+    if ($usableHits -match "HYBRID_PRODUCTION_VCS_UNSCANNED") {
+        throw "Usable SVN hybrid must not fail closed as HYBRID_PRODUCTION_VCS_UNSCANNED. Output: $usableRiskRaw"
+    }
+    if ($usableHits -match "VCS_UNAVAILABLE") {
+        throw "Usable SVN hybrid must not mark VCS_UNAVAILABLE for a stale overlay SHA. Output: $usableRiskRaw"
+    }
+    if ($usableHits -notmatch "TYPE_EXTENSION") {
+        throw "Dirty production enum in usable SVN WC must hit TYPE_EXTENSION. Output: $usableRiskRaw"
+    }
+    Write-TestJson -Path $usableCov -Value ([ordered]@{
+        schemaVersion = "1.0"
+        feature = "UsableHybridFeat"
+        requirementArtifact = "01_server_rules.md"
+        requirementSha256 = $usableReqSha
+        designArtifact = "06_design_contract.md"
+        designSha256 = $usableDesSha
+        testPlanArtifact = "05_test_plan.md"
+        testPlanSha256 = $usablePlanSha
+        cases = @(
+            [ordered]@{
+                id = "TC-01"
+                title = "new type"
+                status = "PLANNED"
+                priority = "P1"
+                testTypes = @("FUNCTIONAL")
+                requirementIds = @("BR-01")
+                designIds = @("DC-01")
+                setup = @("Arrange")
+                trigger = @("Act")
+                assertions = @{
+                    protocol = @(@{ target = "ok"; operator = "EQ"; expected = "1" })
+                }
+                cleanup = @("Cleanup")
+                automationCarrier = "TestRunner.ps1"
+            }
+        )
+    })
+    [System.IO.File]::WriteAllText((Join-Path $usableSpec "TestRunner.ps1"), "# test", $Utf8NoBom)
+    $usableVerify = & $ScriptPath -Operation VerifyCompletion -Path $usableApproval 2>&1
+    $usableVerifyStr = $usableVerify | Out-String
+    if ($LASTEXITCODE -eq 0 -or $usableVerifyStr -notmatch "04_change_impact\.json is mandatory for TYPE_EXTENSION/PUBLIC_ROUTING") {
+        throw "VerifyCompletion must require 04 for TYPE_EXTENSION on usable hybrid SVN, not INVALID_BASELINE. Output: $usableVerifyStr"
+    }
+
+    # 4e. Existing feature without baseline + usable SVN uses current SVN revision.
+    $missingOnSvnSpec = Join-Path $usableHybridRoot ".ai-workspace\specs\features\MissingBaselineSvn"
+    [System.IO.Directory]::CreateDirectory($missingOnSvnSpec) | Out-Null
+    [System.IO.File]::WriteAllText(
+        (Join-Path $missingOnSvnSpec "feature-state.json"),
+        '{"schemaVersion":"1.0","feature":"MissingBaselineSvn","tier":"T2","phase":"CLAIMED"}',
+        $Utf8NoBom
+    )
+    $missingOnSvnRaw = $null
+    try {
+        $missingOnSvnRaw = & $ScriptPath -Operation AssessRisk -Path $missingOnSvnSpec 2>&1 | Out-String
+        $missingOnSvnRisk = $missingOnSvnRaw | ConvertFrom-Json
+    } catch {
+        throw "AssessRisk must fail-soft missing baseline when SVN is usable. Output: $missingOnSvnRaw Error: $($_.Exception.Message)"
+    }
+    if ([string]$missingOnSvnRisk.baseline -notmatch '^\d+$') {
+        throw "Missing baseline on usable SVN must resolve to a numeric SVN revision. Output: $missingOnSvnRaw"
     }
 
     # All-digit baseline must not be treated as a git SHA (SVN revisions can be 7+ digits).

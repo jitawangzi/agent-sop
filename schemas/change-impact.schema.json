@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "change-impact.schema.json",
   "title": "Change Impact Analysis Contract",
-  "description": "Machine-readable full-lifecycle change impact and invariant contract. Required when AssessRisk hits TYPE_EXTENSION or PUBLIC_ROUTING, or when semantic risk cannot be assessed; not mandatory for greenfield T3.",
+  "description": "Machine-readable full-lifecycle change impact and invariant contract. Required when AssessRisk hits TYPE_EXTENSION or PUBLIC_ROUTING, or when semantic risk cannot be assessed (including FEATURE_SCOPE_UNRESOLVED); not mandatory for greenfield T3.",
   "type": "object",
   "additionalProperties": false,
   "required": [

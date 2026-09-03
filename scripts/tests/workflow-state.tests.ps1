@@ -3574,7 +3574,7 @@ try {
     $usablePlan = Join-Path $usableSpec "05_test_plan.md"
     $usableCov = Join-Path $usableSpec "05_test_coverage.json"
     $usableApproval = Join-Path $usableSpec "00_workflow_state.json"
-    [System.IO.File]::WriteAllText($usableReq, "# Rules`n- BR-01: type extension on usable SVN", $Utf8NoBom)
+    [System.IO.File]::WriteAllText($usableReq, "# Rules`n- BR-01: type extension of ShopEnum.java`n", $Utf8NoBom)
     [System.IO.File]::WriteAllText($usableDes, "# Design`n- DC-01: require 04 when TYPE_EXTENSION", $Utf8NoBom)
     [System.IO.File]::WriteAllText($usablePlan, "# Plan`n- TC-01: new type", $Utf8NoBom)
     [System.IO.File]::WriteAllText(
@@ -3673,6 +3673,166 @@ try {
     }
     if ([string]$missingOnSvnRisk.baseline -notmatch '^\d+$') {
         throw "Missing baseline on usable SVN must resolve to a numeric SVN revision. Output: $missingOnSvnRaw"
+    }
+
+    # 4f. Unrelated WC type-extension dirt must not force 04 on a spec that only locates WidgetHelper.
+    $unrelatedSpec = Join-Path $usableHybridRoot ".ai-workspace\specs\features\UnrelatedGreenfield"
+    [System.IO.Directory]::CreateDirectory($unrelatedSpec) | Out-Null
+    $unrelatedReq = Join-Path $unrelatedSpec "01_server_rules.md"
+    $unrelatedDes = Join-Path $unrelatedSpec "06_design_contract.md"
+    $unrelatedPlan = Join-Path $unrelatedSpec "05_test_plan.md"
+    $unrelatedCov = Join-Path $unrelatedSpec "05_test_coverage.json"
+    $unrelatedApproval = Join-Path $unrelatedSpec "00_workflow_state.json"
+    [System.IO.File]::WriteAllText($unrelatedReq, "# Rules`n- BR-01: WidgetHelper display only`n", $Utf8NoBom)
+    [System.IO.File]::WriteAllText($unrelatedDes, "# Design`n- DC-01: WidgetHelper greenfield`n", $Utf8NoBom)
+    [System.IO.File]::WriteAllText($unrelatedPlan, "# Plan`n- TC-01: widget`n", $Utf8NoBom)
+    [System.IO.File]::WriteAllText(
+        (Join-Path $unrelatedSpec "feature-state.json"),
+        '{"schemaVersion":"1.0","feature":"UnrelatedGreenfield","baseline":"' + $deadOverlaySha + '","tier":"T3","phase":"DONE"}',
+        $Utf8NoBom
+    )
+    $unrelatedReqSha = Get-TestArtifactHash -Path $unrelatedReq
+    $unrelatedDesSha = Get-TestArtifactHash -Path $unrelatedDes
+    $unrelatedPlanSha = Get-TestArtifactHash -Path $unrelatedPlan
+    Write-TestJson -Path $unrelatedApproval -Value ([ordered]@{
+        schemaVersion = "1.0"
+        feature = "UnrelatedGreenfield"
+        baseline = $deadOverlaySha
+        requirement = @{
+            artifact = "01_server_rules.md"
+            status = "APPROVED"
+            approvedBy = "tester"
+            approvedAt = "2026-09-03T00:00:00Z"
+            sha256 = $unrelatedReqSha
+        }
+        design = @{
+            artifact = "06_design_contract.md"
+            status = "APPROVED"
+            approvedBy = "tester"
+            approvedAt = "2026-09-03T00:00:00Z"
+            sha256 = $unrelatedDesSha
+        }
+    })
+    $unrelatedRiskRaw = & $ScriptPath -Operation AssessRisk -Path $unrelatedSpec 2>&1 | Out-String
+    $unrelatedRisk = $unrelatedRiskRaw | ConvertFrom-Json
+    $unrelatedHits = @($unrelatedRisk.triggersHit) -join ","
+    if ($unrelatedHits -match "TYPE_EXTENSION" -or $unrelatedHits -match "PUBLIC_ROUTING") {
+        throw "Unrelated ShopEnum dirt must not attach TYPE_EXTENSION/PUBLIC_ROUTING to a WidgetHelper spec. Output: $unrelatedRiskRaw"
+    }
+    if ($unrelatedHits -match "FEATURE_SCOPE_UNRESOLVED") {
+        throw "WidgetHelper locator must resolve feature scope. Output: $unrelatedRiskRaw"
+    }
+    Write-TestJson -Path $unrelatedCov -Value ([ordered]@{
+        schemaVersion = "1.0"
+        feature = "UnrelatedGreenfield"
+        requirementArtifact = "01_server_rules.md"
+        requirementSha256 = $unrelatedReqSha
+        designArtifact = "06_design_contract.md"
+        designSha256 = $unrelatedDesSha
+        testPlanArtifact = "05_test_plan.md"
+        testPlanSha256 = $unrelatedPlanSha
+        cases = @(
+            [ordered]@{
+                id = "TC-01"
+                title = "widget"
+                status = "PLANNED"
+                priority = "P1"
+                testTypes = @("FUNCTIONAL")
+                requirementIds = @("BR-01")
+                designIds = @("DC-01")
+                setup = @("Arrange")
+                trigger = @("Act")
+                assertions = @{
+                    protocol = @(@{ target = "ok"; operator = "EQ"; expected = "1" })
+                }
+                cleanup = @("Cleanup")
+                automationCarrier = "TestRunner.ps1"
+            }
+        )
+    })
+    [System.IO.File]::WriteAllText((Join-Path $unrelatedSpec "TestRunner.ps1"), "# test", $Utf8NoBom)
+    $unrelatedVerify = & $ScriptPath -Operation VerifyCompletion -Path $unrelatedApproval 2>&1
+    $unrelatedVerifyStr = $unrelatedVerify | Out-String
+    if ($unrelatedVerifyStr -notmatch "04_change_impact\.json\)未要求") {
+        throw "Greenfield spec must not be forced to 04 by unrelated WC type-extension dirt. Output: $unrelatedVerifyStr"
+    }
+
+    # 4g. Spec with no Class/file locators + production diffs fail-closed (FEATURE_SCOPE_UNRESOLVED).
+    $unscopedSpec = Join-Path $usableHybridRoot ".ai-workspace\specs\features\UnscopedFeat"
+    [System.IO.Directory]::CreateDirectory($unscopedSpec) | Out-Null
+    $unscopedReq = Join-Path $unscopedSpec "01_server_rules.md"
+    $unscopedDes = Join-Path $unscopedSpec "06_design_contract.md"
+    $unscopedPlan = Join-Path $unscopedSpec "05_test_plan.md"
+    $unscopedCov = Join-Path $unscopedSpec "05_test_coverage.json"
+    $unscopedApproval = Join-Path $unscopedSpec "00_workflow_state.json"
+    [System.IO.File]::WriteAllText($unscopedReq, "# Rules`n- BR-01: narrative only without production types`n", $Utf8NoBom)
+    [System.IO.File]::WriteAllText($unscopedDes, "# Design`n- DC-01: narrative only`n", $Utf8NoBom)
+    [System.IO.File]::WriteAllText($unscopedPlan, "# Plan`n- TC-01: narrative`n", $Utf8NoBom)
+    [System.IO.File]::WriteAllText(
+        (Join-Path $unscopedSpec "feature-state.json"),
+        '{"schemaVersion":"1.0","feature":"UnscopedFeat","baseline":"' + $deadOverlaySha + '","tier":"T3","phase":"DONE"}',
+        $Utf8NoBom
+    )
+    $unscopedReqSha = Get-TestArtifactHash -Path $unscopedReq
+    $unscopedDesSha = Get-TestArtifactHash -Path $unscopedDes
+    $unscopedPlanSha = Get-TestArtifactHash -Path $unscopedPlan
+    Write-TestJson -Path $unscopedApproval -Value ([ordered]@{
+        schemaVersion = "1.0"
+        feature = "UnscopedFeat"
+        baseline = $deadOverlaySha
+        requirement = @{
+            artifact = "01_server_rules.md"
+            status = "APPROVED"
+            approvedBy = "tester"
+            approvedAt = "2026-09-03T00:00:00Z"
+            sha256 = $unscopedReqSha
+        }
+        design = @{
+            artifact = "06_design_contract.md"
+            status = "APPROVED"
+            approvedBy = "tester"
+            approvedAt = "2026-09-03T00:00:00Z"
+            sha256 = $unscopedDesSha
+        }
+    })
+    $unscopedRiskRaw = & $ScriptPath -Operation AssessRisk -Path $unscopedSpec 2>&1 | Out-String
+    $unscopedRisk = $unscopedRiskRaw | ConvertFrom-Json
+    if ((@($unscopedRisk.triggersHit) -join ",") -notmatch "FEATURE_SCOPE_UNRESOLVED") {
+        throw "Specs with no locators must fail closed as FEATURE_SCOPE_UNRESOLVED when production diffs exist. Output: $unscopedRiskRaw"
+    }
+    Write-TestJson -Path $unscopedCov -Value ([ordered]@{
+        schemaVersion = "1.0"
+        feature = "UnscopedFeat"
+        requirementArtifact = "01_server_rules.md"
+        requirementSha256 = $unscopedReqSha
+        designArtifact = "06_design_contract.md"
+        designSha256 = $unscopedDesSha
+        testPlanArtifact = "05_test_plan.md"
+        testPlanSha256 = $unscopedPlanSha
+        cases = @(
+            [ordered]@{
+                id = "TC-01"
+                title = "narrative"
+                status = "PLANNED"
+                priority = "P1"
+                testTypes = @("FUNCTIONAL")
+                requirementIds = @("BR-01")
+                designIds = @("DC-01")
+                setup = @("Arrange")
+                trigger = @("Act")
+                assertions = @{
+                    protocol = @(@{ target = "ok"; operator = "EQ"; expected = "1" })
+                }
+                cleanup = @("Cleanup")
+                automationCarrier = "TestRunner.ps1"
+            }
+        )
+    })
+    [System.IO.File]::WriteAllText((Join-Path $unscopedSpec "TestRunner.ps1"), "# test", $Utf8NoBom)
+    $unscopedVerify = & $ScriptPath -Operation VerifyCompletion -Path $unscopedApproval 2>&1
+    $unscopedVerifyStr = $unscopedVerify | Out-String
+    if ($LASTEXITCODE -eq 0 -or $unscopedVerifyStr -notmatch "04_change_impact\.json is mandatory because semantic risk could not be assessed") {
+        throw "VerifyCompletion must require 04 when FEATURE_SCOPE_UNRESOLVED. Output: $unscopedVerifyStr"
     }
 
     # All-digit baseline must not be treated as a git SHA (SVN revisions can be 7+ digits).

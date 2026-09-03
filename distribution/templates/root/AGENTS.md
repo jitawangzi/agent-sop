@@ -65,7 +65,7 @@
   4. **兼容与并发**：涉及新老数据反序列化兼容、多版本滚更混跑、分布式锁或异步任务；
   5. **多分支入口**：在已有 Action/Help 的主干入口中插入了新的条件分支。
 
-  **04 强制范围**：`04_change_impact.json` 不是所有 T3 的必交件。仅当 `AssessRisk` 命中 `TYPE_EXTENSION` 或 `PUBLIC_ROUTING`（旧系统扩展），或风险无法评估（`WORKSPACE_UNRESOLVED` / `VCS_ERROR` / `VCS_UNAVAILABLE` / overlay git+SVN 但生产 SVN 扫不到）时，`VerifyCompletion` 才强制 04。绿场 T3 有 01/06 + 覆盖矩阵即可 Complete；缺 04 不失败。若 04 已存在，仍会校验有效且未过期。混合仓里过期的 overlay git SHA（或功能目录缺 baseline）在 SVN 工作副本可用时按 SVN 评估，不因 `INVALID_BASELINE` 中断。
+  **04 强制范围**：`04_change_impact.json` 不是所有 T3 的必交件。仅当 `AssessRisk` 命中 `TYPE_EXTENSION` 或 `PUBLIC_ROUTING`（旧系统扩展），或风险无法评估（`WORKSPACE_UNRESOLVED` / `VCS_ERROR` / `VCS_UNAVAILABLE` / overlay git+SVN 但生产 SVN 扫不到 / 规格无法定位生产文件）时，`VerifyCompletion` 才强制 04。绿场 T3 有 01/06 + 覆盖矩阵即可 Complete；缺 04 不失败。若 04 已存在，仍会校验有效且未过期。混合仓里过期的 overlay git SHA（或功能目录缺 baseline）在 SVN 工作副本可用时按 SVN 评估，不因 `INVALID_BASELINE` 中断。`AssessRisk` 只扫本功能规格能定位到的生产文件，不把整棵脏工作副本算进本功能。
 
   **类型/策略扩展完成度（机器硬门禁，不只靠审查清单）**：命中触发器 1 或 2 时，`04_change_impact.json` 存在仍不够。`ValidateChangeImpact` / `VerifyCompletion` 会要求：
   - 非空 `behaviorVariants`（每个新旧类型/策略键标明 `IDENTICAL_TO_LEGACY` / `INTENTIONAL_DIFF` / `N_A`）

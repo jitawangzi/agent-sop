@@ -1116,6 +1116,143 @@ function Test-IsAiSopInternalSpecMetadata {
     return $false
 }
 
+function Get-NormalizedDiffBlockPath {
+    param([string]$Raw)
+    if ([string]::IsNullOrWhiteSpace($Raw)) { return "" }
+    $p = Unquote-GitPath -Path $Raw.Trim()
+    $p = $p.Replace('\', '/')
+    $p = $p -replace '\t.*$', ''
+    $p = $p -replace '\s+\([^)]*\)\s*$', ''
+    $p = $p.Trim().TrimStart('/')
+    if ($p.StartsWith('b/')) { $p = $p.Substring(2) }
+    if ($p.StartsWith('a/')) { $p = $p.Substring(2) }
+    return $p
+}
+
+function Get-FeatureSpecLocatorStopWords {
+    return [System.Collections.Generic.HashSet[string]]::new(
+        [string[]]@(
+            'Player', 'String', 'Integer', 'Boolean', 'Object', 'System', 'Exception',
+            'Override', 'Nullable', 'Optional', 'Collection', 'ArrayList', 'HashMap',
+            'Logger', 'Json', 'JSONObject', 'JSONArray', 'Request', 'Response',
+            'Config', 'Helper', 'Manager', 'Service', 'Action', 'Handler', 'Processor',
+            'Controller', 'Test', 'Tests', 'Before', 'After', 'Setup', 'Expected',
+            'Actual', 'Feature', 'Design', 'Requirement', 'Workflow', 'Coverage',
+            'Schema', 'Baseline', 'Status', 'Error', 'Success', 'Failure', 'True',
+            'False', 'Null', 'Type', 'Value', 'Result', 'State', 'Data', 'Info',
+            'Item', 'List', 'Map', 'Set', 'File', 'Path', 'Name', 'Level', 'Class',
+            'Enum', 'Interface', 'Abstract', 'Default', 'Common', 'Util', 'Utils',
+            'Help', 'Rules', 'Plan', 'Contract', 'Display', 'Server', 'Client'
+        ),
+        [System.StringComparer]::Ordinal
+    )
+}
+
+function Add-FeatureSpecLocator {
+    param(
+        [System.Collections.Generic.HashSet[string]]$Set,
+        [string]$Token,
+        [System.Collections.Generic.HashSet[string]]$StopWords
+    )
+    if ($null -eq $Set -or [string]::IsNullOrWhiteSpace($Token)) { return }
+    $t = $Token.Trim().Trim('`', '"', "'")
+    $t = $t.Replace('\', '/')
+    if ($t.Length -lt 5) { return }
+    if ($t -match '^(?:BR|EX|AC|DC|DR|TW|TC|INV)-') { return }
+    if ($StopWords.Contains($t)) { return }
+    [void]$Set.Add($t)
+}
+
+function Get-FeatureSpecLocators {
+    param([string]$SpecDir)
+    $locators = [System.Collections.Generic.HashSet[string]]::new([System.StringComparer]::Ordinal)
+    if ([string]::IsNullOrWhiteSpace($SpecDir) -or -not (Test-Path -LiteralPath $SpecDir -PathType Container)) {
+        return [string[]]@()
+    }
+    $stop = Get-FeatureSpecLocatorStopWords
+    $specFiles = @(
+        "01_server_rules.md",
+        "06_design_contract.md",
+        "05_test_plan.md",
+        "00_server_rules_draft.md",
+        "04_change_impact.json"
+    )
+    foreach ($name in $specFiles) {
+        $path = Join-Path $SpecDir $name
+        if (-not (Test-Path -LiteralPath $path -PathType Leaf)) { continue }
+        $text = [System.IO.File]::ReadAllText($path)
+        foreach ($m in [regex]::Matches($text, '(?i)(?<![A-Za-z0-9_./])((?:[\w.-]+/)+[\w.-]+\.(?:java|kt|kts|groovy|cs|go|py|xml|json|csv))\b')) {
+            Add-FeatureSpecLocator -Set $locators -Token $m.Groups[1].Value -StopWords $stop
+            Add-FeatureSpecLocator -Set $locators -Token ([System.IO.Path]::GetFileNameWithoutExtension($m.Groups[1].Value)) -StopWords $stop
+        }
+        foreach ($m in [regex]::Matches($text, '(?i)\b([A-Za-z_][\w.-]*\.(?:java|kt|kts|groovy|cs|go|py|xml|json|csv))\b')) {
+            Add-FeatureSpecLocator -Set $locators -Token $m.Groups[1].Value -StopWords $stop
+            Add-FeatureSpecLocator -Set $locators -Token ([System.IO.Path]::GetFileNameWithoutExtension($m.Groups[1].Value)) -StopWords $stop
+        }
+        foreach ($m in [regex]::Matches($text, '\b([A-Z][A-Za-z0-9]+)(?:#|\.)([A-Za-z_][A-Za-z0-9]*)\b')) {
+            Add-FeatureSpecLocator -Set $locators -Token $m.Groups[1].Value -StopWords $stop
+        }
+        foreach ($m in [regex]::Matches($text, '`([^`]+)`')) {
+            $inner = $m.Groups[1].Value.Trim()
+            if ($inner -match '^[A-Z][A-Za-z0-9]+$') {
+                Add-FeatureSpecLocator -Set $locators -Token $inner -StopWords $stop
+            } elseif ($inner -match '^([A-Z][A-Za-z0-9]+)[#.]') {
+                Add-FeatureSpecLocator -Set $locators -Token $Matches[1] -StopWords $stop
+            }
+        }
+        foreach ($m in [regex]::Matches($text, '\b([A-Z][A-Za-z0-9]*(?:Helper|Manager|Service|Action|Handler|Processor|Interceptor|Filter|Controller|Dispatcher|Router|Impl|Dao|Repository|Operation|Enum|Help))\b')) {
+            Add-FeatureSpecLocator -Set $locators -Token $m.Groups[1].Value -StopWords $stop
+        }
+        if ($name -eq "04_change_impact.json") {
+            try {
+                $impact = $text | ConvertFrom-Json
+                foreach ($field in @('changedSymbols', 'entryPoints', 'upstreamCallers')) {
+                    foreach ($item in @($impact.$field)) {
+                        if ($null -eq $item) { continue }
+                        $sym = [string]$item
+                        if ([string]::IsNullOrWhiteSpace($sym)) { continue }
+                        if ($sym -match '^([A-Z][A-Za-z0-9]+)') {
+                            Add-FeatureSpecLocator -Set $locators -Token $Matches[1] -StopWords $stop
+                        }
+                        Add-FeatureSpecLocator -Set $locators -Token $sym -StopWords $stop
+                    }
+                }
+            } catch {}
+        }
+    }
+    return [string[]]@($locators)
+}
+
+function Test-RelativePathMatchesFeatureLocators {
+    param(
+        [string]$RelativePath,
+        [string[]]$Locators
+    )
+    if ([string]::IsNullOrWhiteSpace($RelativePath)) { return $false }
+    if ($null -eq $Locators -or @($Locators).Count -eq 0) { return $false }
+    $norm = $RelativePath.Replace('\', '/').TrimStart('/')
+    $fileName = [System.IO.Path]::GetFileName($norm)
+    $baseName = [System.IO.Path]::GetFileNameWithoutExtension($norm)
+    foreach ($loc in @($Locators)) {
+        if ([string]::IsNullOrWhiteSpace($loc)) { continue }
+        $l = $loc.Replace('\', '/').TrimStart('/')
+        if ($norm.Equals($l, [System.StringComparison]::OrdinalIgnoreCase)) { return $true }
+        if ($norm.EndsWith('/' + $l, [System.StringComparison]::OrdinalIgnoreCase)) { return $true }
+        if ($fileName.Equals($l, [System.StringComparison]::OrdinalIgnoreCase)) { return $true }
+        if ($baseName.Equals($l, [System.StringComparison]::OrdinalIgnoreCase)) { return $true }
+    }
+    return $false
+}
+
+function Test-SpecDirHasRequirementOrDesign {
+    param([string]$SpecDir)
+    if ([string]::IsNullOrWhiteSpace($SpecDir)) { return $false }
+    return (
+        (Test-Path -LiteralPath (Join-Path $SpecDir "01_server_rules.md") -PathType Leaf) -or
+        (Test-Path -LiteralPath (Join-Path $SpecDir "06_design_contract.md") -PathType Leaf)
+    )
+}
+
 function Get-GitDiffHeaderPaths {
     param([string]$DiffLine)
     if ($DiffLine -notmatch '^diff --git\s+') { return $null }
@@ -1616,7 +1753,7 @@ function Test-IsTypeExtensionRisk {
 
 function Test-IsFailClosedRisk {
     param($TriggersHit)
-    $opaque = @("WORKSPACE_UNRESOLVED", "VCS_ERROR", "VCS_UNAVAILABLE", "HYBRID_PRODUCTION_VCS_UNSCANNED")
+    $opaque = @("WORKSPACE_UNRESOLVED", "VCS_ERROR", "VCS_UNAVAILABLE", "HYBRID_PRODUCTION_VCS_UNSCANNED", "FEATURE_SCOPE_UNRESOLVED")
     foreach ($t in @($TriggersHit)) {
         if ($opaque -contains [string]$t) { return $true }
     }
@@ -1694,7 +1831,8 @@ function Test-EvidenceHasLocator {
 function Get-WorkspaceChangedRelativePaths {
     param(
         [string]$WorkspaceRoot,
-        [string]$Baseline
+        [string]$Baseline,
+        [string]$SpecDir = $null
     )
     $paths = [System.Collections.Generic.HashSet[string]]::new([System.StringComparer]::OrdinalIgnoreCase)
     if ([string]::IsNullOrWhiteSpace($WorkspaceRoot) -or -not (Test-Path -LiteralPath $WorkspaceRoot)) {
@@ -1773,7 +1911,17 @@ function Get-WorkspaceChangedRelativePaths {
             }
         }
     }
-    return [string[]]@($paths)
+    $all = [string[]]@($paths)
+    if ([string]::IsNullOrWhiteSpace($SpecDir)) { return $all }
+    $locators = @(Get-FeatureSpecLocators -SpecDir $SpecDir)
+    if ($locators.Count -eq 0) { return $all }
+    $scoped = [System.Collections.Generic.List[string]]::new()
+    foreach ($rel in $all) {
+        if (Test-RelativePathMatchesFeatureLocators -RelativePath $rel -Locators $locators) {
+            $scoped.Add($rel)
+        }
+    }
+    return [string[]]@($scoped)
 }
 
 function Get-JavaTypeKeyCandidates {
@@ -1953,7 +2101,7 @@ function Assert-ExtensionImpactEvidence {
     }
 
     $siblingKeys = [System.Collections.Generic.HashSet[string]]::new([System.StringComparer]::Ordinal)
-    $changedRels = Get-WorkspaceChangedRelativePaths -WorkspaceRoot $WorkspaceRoot -Baseline $Baseline
+    $changedRels = Get-WorkspaceChangedRelativePaths -WorkspaceRoot $WorkspaceRoot -Baseline $Baseline -SpecDir $SpecDir
     foreach ($rel in $changedRels) {
         if ($rel -notmatch '\.(?:java|kt|kts|groovy)$') { continue }
         $full = Join-Path $WorkspaceRoot ($rel -replace '/', [IO.Path]::DirectorySeparatorChar)
@@ -2378,10 +2526,41 @@ function Get-SemanticRiskAssessment {
         $triggersHit.Add("VCS_ERROR")
         $details.Add("VCS diff against baseline failed or errored; failing closed to T3")
     }
+
+    $locators = [string[]]@()
+    if (-not [string]::IsNullOrWhiteSpace($SpecDir)) {
+        $locators = @(Get-FeatureSpecLocators -SpecDir $SpecDir)
+    }
+    $scopedDiff = $fullDiff
+    if ($locators.Count -gt 0) {
+        $kept = [System.Text.StringBuilder]::new()
+        $prodTotal = 0
+        $prodKept = 0
+        $scopeBlocks = [regex]::Matches($fullDiff, '(?ms)(?:diff --git a/([^\r\n]+?)\s+b/[^\r\n]+|\+\+\+\s+(?:b/)?([^\r\n]+))(?:(?!diff --git|\+\+\+).)*')
+        foreach ($fb in $scopeBlocks) {
+            $rawPath = if ($fb.Groups[1].Success) { $fb.Groups[1].Value } else { $fb.Groups[2].Value }
+            $blockPath = Get-NormalizedDiffBlockPath -Raw $rawPath
+            if ([string]::IsNullOrWhiteSpace($blockPath)) { continue }
+            if (Test-IsAiSopInternalSpecMetadata -RelativePath $blockPath) { continue }
+            $prodTotal++
+            if (Test-RelativePathMatchesFeatureLocators -RelativePath $blockPath -Locators $locators) {
+                $prodKept++
+                [void]$kept.AppendLine($fb.Value)
+            }
+        }
+        $scopedDiff = $kept.ToString()
+        $excluded = $prodTotal - $prodKept
+        $sample = (@($locators | Select-Object -First 8) -join ", ")
+        $details.Add("Feature-scoped semantic scan: kept $prodKept of $prodTotal production diff files matching spec locators ($sample). Excluded $excluded unrelated workspace files.")
+    } elseif ((Test-SpecDirHasRequirementOrDesign -SpecDir $SpecDir) -and ($fullDiff -match '(?i)(?:diff --git |\+\+\+\s+)\S+\.(?:java|kt|kts|groovy|cs|go)\b')) {
+        $triggersHit.Add("FEATURE_SCOPE_UNRESOLVED")
+        $details.Add("Feature specs cite no Class/file locators while the workspace has production source diffs; failing closed rather than attributing unrelated dirt to this feature.")
+        $scopedDiff = ""
+    }
     
     # 3. Precision Semantic Trigger detection
     # Extract code-only diff blocks (exclude pure data files like .csv, .tsv, .json, .txt, .md)
-    $fileBlocks = [regex]::Matches($fullDiff, '(?ms)(?:diff --git a/([^\r\n]+?)\s+b/[^\r\n]+|\+\+\+\s+(?:b/)?([^\r\n]+))(?:(?!diff --git|\+\+\+).)*')
+    $fileBlocks = [regex]::Matches($scopedDiff, '(?ms)(?:diff --git a/([^\r\n]+?)\s+b/[^\r\n]+|\+\+\+\s+(?:b/)?([^\r\n]+))(?:(?!diff --git|\+\+\+).)*')
     $codeDiffBuilder = [System.Text.StringBuilder]::new()
     foreach ($fb in $fileBlocks) {
         $filePath = if ($fb.Groups[1].Success) { $fb.Groups[1].Value.Trim() } else { $fb.Groups[2].Value.Trim() }
@@ -2426,7 +2605,7 @@ function Get-SemanticRiskAssessment {
     }
     
     # Trigger 5: STRUCTURAL_CONFIG (Configuration tables, new columns, new rows, non-numeric edits)
-    $csvBlocks = [regex]::Matches($fullDiff, '(?ms)(?:diff --git a/.*?\.csv|\+\+\+\s+.*?\.csv)(?:(?!diff --git|\+\+\+).)*')
+    $csvBlocks = [regex]::Matches($scopedDiff, '(?ms)(?:diff --git a/.*?\.csv|\+\+\+\s+.*?\.csv)(?:(?!diff --git|\+\+\+).)*')
     $hasCsvStructural = $false
     foreach ($blockMatch in $csvBlocks) {
         $block = $blockMatch.Value
@@ -2455,7 +2634,7 @@ function Get-SemanticRiskAssessment {
         }
         if ($hasCsvStructural) { break }
     }
-    if ($hasCsvStructural -or $fullDiff -match '(?m)(?:diff --git a/.*?(?:config|data)/.*?\.(?:json|xml)|\+\+\+\s+.*?(?:config|data)/.*?\.(?:json|xml))') {
+    if ($hasCsvStructural -or $scopedDiff -match '(?m)(?:diff --git a/.*?(?:config|data)/.*?\.(?:json|xml)|\+\+\+\s+.*?(?:config|data)/.*?\.(?:json|xml))') {
         $triggersHit.Add("STRUCTURAL_CONFIG")
         $details.Add("Structural table/column configuration changes detected")
     }

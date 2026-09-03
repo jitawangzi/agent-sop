@@ -190,6 +190,7 @@ AI 编码工具百花齐放（Claude Code、Copilot、Cursor、Antigravity、Pi�
 - 绿场 T3 不交 04 也可 Complete（01/06 + 覆盖矩阵照旧）。
 - 风险看不清则 fail-closed 仍要 04：`WORKSPACE_UNRESOLVED`、`VCS_ERROR`、`VCS_UNAVAILABLE`、以及 overlay git + `.svn` 但 SVN 工作副本不可用（`HYBRID_PRODUCTION_VCS_UNSCANNED`）。
 - 混合工作区（根上 overlay git 管 SOP、SVN 管 `src/`）：语义触发只扫 SVN，不用 overlay git 证明「没有类型扩展」。全数字 baseline 不当成 git SHA，避免 SVN 修订号被 git 吃掉。已有功能若只记下 overlay git SHA 且该 SHA 已不在 overlay 仓里、或根本没有 baseline，只要 SVN 工作副本可用，就按 SVN 工作副本评估风险，不因 `INVALID_BASELINE` / `BASELINE_MISSING` 中断。Git-only 或 SVN 不可用时仍 fail-closed。
+- AssessRisk 按功能收窄：只把规格里能定位到的 Class/源文件（01/06/05/04 的路径、`Class#method`、PascalCase Helper 等）与工作区 diff 求交。脏工作副本里别人的 enum 不记到本功能头上。规格没有任何定位且工作区有生产源码 diff 时 fail-closed（`FEATURE_SCOPE_UNRESOLVED`），仍要 04。
 
 **考虑过的替代**：
 - 全 T3 强制 04：绿场造假材料——否决。

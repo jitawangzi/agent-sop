@@ -145,6 +145,33 @@ try {
             ($docOwnerOps.Contains($op)) "doc has: $($docOwnerOps -join ', ')"
     }
 
+    # --- Compile-before-audit (SDD): prevent racing auditor before javac ---
+    $agentsText = Get-Content -LiteralPath $AgentsMd -Raw
+    $adapterPath = Join-Path $SopRoot "workflows/superpowers-adapter.md"
+    $engineSkill = Join-Path $SopRoot "skills/implementation-engine/SKILL.md"
+    $auditorSkill = Join-Path $SopRoot "skills/implementation-auditor/SKILL.md"
+    $logicSkill = Join-Path $SopRoot "skills/logic-auditor/SKILL.md"
+    $antigravityMd = Join-Path $SopRoot "distribution/templates/root/ANTIGRAVITY.md"
+    $adapterText = Get-Content -LiteralPath $adapterPath -Raw
+    $engineText = Get-Content -LiteralPath $engineSkill -Raw
+    $auditorText = Get-Content -LiteralPath $auditorSkill -Raw
+    $logicText = Get-Content -LiteralPath $logicSkill -Raw
+    $antigravityText = Get-Content -LiteralPath $antigravityMd -Raw
+    Assert-Contract "AGENTS.md must require compile-before-audit" `
+        ($agentsText -match '先编译通过再内审')
+    Assert-Contract "adapter must define 编译准入再审查" `
+        ($adapterText -match '编译准入再审查')
+    Assert-Contract "adapter must forbid dispatching auditor without compile evidence" `
+        ($adapterText -match '【编译证据】' -and $adapterText -match '禁止' -and $adapterText -match 'implementation-auditor')
+    Assert-Contract "implementation-engine must require 【编译证据】 handoff" `
+        ($engineText -match '【编译证据】')
+    Assert-Contract "implementation-auditor must refuse PASS without compile evidence" `
+        ($auditorText -match 'INDETERMINATE' -and $auditorText -match 'COMPILE_REQUIRED')
+    Assert-Contract "logic-auditor must refuse PASS without compile evidence" `
+        ($logicText -match 'INDETERMINATE' -and $logicText -match 'COMPILE_REQUIRED')
+    Assert-Contract "ANTIGRAVITY.md must warn against racing auditor with engine" `
+        ($antigravityText -match '编译准入')
+
     # --- Semantic drift guards: prevent known contradiction phrases from recurring ---
     # These were real drift bugs (single-point fix not propagated). Lock them out so the
     # same contradiction cannot silently return. Scan SOP doc surfaces only (templates +

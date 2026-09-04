@@ -19,8 +19,8 @@ claim feature ownership (SUPERPOWERS)
 -> superpowers:writing-plans
 -> quality-assurance(PLAN)（产测试范围/覆盖矩阵/风险清单供 TDD 参考，非完整前置测试计划）
 -> superpowers:subagent-driven-development + TDD
-     实现者 = implementation-engine（执行单元）
-     每 Task 内审 = implementation-auditor / logic-auditor（执行单元，按风险）
+     实现者 = implementation-engine（执行单元；每 Task 交【编译证据】）
+     每 Task 内审 = implementation-auditor / logic-auditor（执行单元，按风险；无编译证据不派）
 -> ValidateTestCoverage（覆盖校验，实现后）
 -> superpowers:requesting-code-review（整体收尾审查）
 -> superpowers:verification-before-completion
@@ -33,6 +33,39 @@ claim feature ownership (SUPERPOWERS)
 - **不前置**完整新功能测试计划（GREENFIELD）：具体新 TC 在 TDD 中产出；`ValidateTestCoverage` 在实现后做覆盖完整性校验。
 - **LEGACY_EXTENSION 例外**：旧系统加类型/改分发时，抽 1–2 个共享同一分发的 `IDENTICAL_TO_LEGACY` 表征 Case，必须在改生产代码前写好，并能在当前基线上跑绿。锁的是已有行为，不是尚未实现的新类型，也不是每个旧类型一条 Case。表征 Case 必须声明 `assertions.persistenceColdReload` 并在载体方法体再读存储。
 - `implementation-auditor`/`logic-auditor` 是 subagent **内审执行单元**，不作实现后的独立流程节点（其全盘视角由可选的全功能审计覆盖，见下）。**Complete 不读这两份报告**（自报）；机器硬门禁分层见 `docs/QUALITY_GATES.md`。
+
+## 编译准入再审查（SDD 硬约束）
+
+每个 Task 的合法顺序只有一条：
+
+```text
+implementation-engine（一次只做一个 Task）
+  -> 编译成功（见下）
+  -> 把【编译证据】交回 controller
+  -> 才派 implementation-auditor
+  -> 按风险再派 logic-auditor
+```
+
+审计官不是编译器：缺 import、改坏方法签名、调用方对不上，只有宿主编译命令能报。未编译就派审，得到的 PASS 没有审查对象。
+
+**编译命令**：生产代码改动后必须跑宿主生产编译（典型 `.\gradlew compileJava`）。本 Task 还改了测试源时，必须再编测试（`compileTestJava` 或会编译测试源的定向 test）。`build/` 目录存在不算编过。只有构建工具客观不可用才允许标环境阻塞，不得用「先审后编」代替。
+
+**【编译证据】最低字段**（写在实现者交工报告里，并由 controller **原样粘贴**进内审 prompt；不是新的 `compile-evidence.json` 机器门禁——Complete 仍用功能目录那份）：
+
+- `command`：实际执行的编译命令
+- `exitCode`：必须为 `0`
+- `excerpt`：含 `BUILD SUCCESSFUL` 或宿主等价成功标记
+
+无此块、`exitCode≠0`、或 engine subagent 尚未返回：**禁止**派 `implementation-auditor` / `logic-auditor`。
+
+**禁止（本次会话已实测的假绿路径）**：
+
+1. engine 还在跑就并发派审计官。
+2. 一条 prompt 把 Task 1–N 全部交给同一个 engine，然后立刻审。必须 **一 Task 一实现者**，该 Task 编译通过并内审通过，才做下一个。
+3. controller / 编排会话自己改生产代码或测试源。编译失败、审计要修、缺符号，一律回派 `implementation-engine` `REPAIR`，修完再编译再审。
+4. 用收尾 `requesting-code-review` 替代被作废的任务内审。收尾审的是全量一致性，不能给「未编译时那次 PASS」续命。
+
+**生产代码或测试源任何再改**（含纯补 import、改回签名、按审计意见改分支）：先前该 Task 的内审 PASS **作废**。顺序仍是：engine 修 → 再编译 → 再派内审（logic 按风险）。不得沿用旧 PASS。
 
 ## 人机交互
 
@@ -74,7 +107,7 @@ brainstorming 节点按需咨询 `design-architect`；设计产出后由 `design
 - **Controller 派发子智能体时的显式 Skill 注入契约 (Prompt Injection Contract)**：
   Controller 在派发 subagent 时，必须在 subagent prompt 的开头显式指明其角色与对应 Skill 路径，确保 subagent 实例化时立即装载 Base + Overlay 体系：
   - 派发实现者：Prompt 必须包含 `【角色与规范】你的角色是 implementation-engine，请首先读取并严格遵守 .ai-sop/skills/implementation-engine/SKILL.md 的实现规范与 Base+Overlay 动态继承体系。`
-  - 派发内审者：Prompt 必须包含 `【角色与规范】你的角色是 implementation-auditor（或 logic-auditor），请首先读取并严格遵守 .ai-sop/skills/implementation-auditor/SKILL.md 的审计规范。`
+  - 派发内审者：Prompt 必须包含 `【角色与规范】你的角色是 implementation-auditor（或 logic-auditor），请首先读取并严格遵守 .ai-sop/skills/implementation-auditor/SKILL.md 的审计规范。` **并且必须粘贴本 Task 实现者返回的【编译证据】**（`command` + `exitCode=0` + 成功摘录）。缺编译证据不得派发。
   - 派发设计审查者：Prompt 必须包含 `【角色与规范】你的角色是 design-reviewer，请首先读取并严格遵守 .ai-sop/skills/design-reviewer/SKILL.md 的审查规范。`
 
 ## 三层审查定位（职责不重叠）
@@ -85,7 +118,7 @@ brainstorming 节点按需咨询 `design-architect`；设计产出后由 `design
 | 整体收尾 | 全部 Task 后 | 流程合规 + 整体一致性 | Superpowers `requesting-code-review` |
 | 全功能审计（可选手动） | 交付后按需 | 跨任务契约一致 + 整体游戏状态正确性 | `workflow-orchestrator` AUDIT_ONLY 全盘（见下） |
 
-**审查铁律**：spec 合规审查 → 代码质量审查（顺序不可颠倒）→ 发现问题修复 → 重新审查 → 通过才标记完成。整体收尾 `requesting-code-review` 独立于 subagent 内审，禁止跳过（哪怕 1 行改动）。
+**审查铁律**：每个 Task 先编译通过，再 spec 合规审查 → 代码质量审查（顺序不可颠倒）→ 发现问题则回派实现者修复并再编译 → 重新审查 → 通过才标记该 Task 完成。整体收尾 `requesting-code-review` 独立于 subagent 内审，禁止跳过（哪怕 1 行改动），也**不能**替代未编译或已过期的任务内审。
 
 ## 模型分级调度
 
@@ -159,7 +192,7 @@ pwsh -NoProfile -File .\.ai-sop\scripts\workflow-state.ps1 -Operation ValidateTe
 
 ## review 与验证
 
-- 单任务内审（subagent 内）覆盖该 Task 的 spec 合规、代码质量与高风险逻辑，由 `implementation-auditor`/`logic-auditor` 作执行单元完成。
+- 单任务内审（subagent 内）覆盖该 Task 的 spec 合规、代码质量与高风险逻辑，由 `implementation-auditor`/`logic-auditor` 作执行单元完成。**准入**：实现者已返回【编译证据】且 `exitCode=0`；否则不得派审。生产代码再改后必须再编译再审。
 - 整体收尾由 Superpowers `requesting-code-review` 完成，覆盖流程合规与整体一致性。
 - 跨任务全盘审计为可选的手动全功能审计（见上），按需触发。
 - QA 遵循 `client-test.md` 的项目手段，以及 `quality-assurance` 的路径决策表（表征/冷重载走路径 A；完整业务链路走路径 B）。覆盖 JSON 用 `SyncCoverage`，VERIFY 必须写 `executionEvidence`。

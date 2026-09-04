@@ -235,7 +235,7 @@ AI 可在一次响应内同时呈递 `01_server_rules.md` 与 `06_design_contrac
 
 **审查必须独立上下文**：审查者（`design-reviewer`/`implementation-auditor`/`logic-auditor`/`requesting-code-review`）必须用独立 subagent 上下文，不能用同一会话自审（共享盲区）。**允许用宿主 subagent 机制加载本项目专家 Skill 提示词**（如 Copilot 的 `Task` 工具加载 `implementation-engine` 提示词）——禁的是“同上下文自审”，不是“用宿主 subagent 载入”。
 
-**审查铁律（仅 T3 严格适用）**：spec 合规审查 → 代码质量审查（顺序不可颠倒）→ 修复 → 重新审查 → 通过才标记完成。同文件修改绝不并行派多个实现者。T3 绝不跳过独立审查（哪怕 1 行）。最终审查 `requesting-code-review` 独立于 subagent 内审，禁止跳过。T2 快速修改降为 AI 自审 + 编译/测试硬验证。
+**审查铁律（仅 T3 严格适用）**：每个 Task **先编译通过再内审**。顺序：`implementation-engine` 交【编译证据】（`command` + `exitCode=0` + 成功摘录）→ 才派 `implementation-auditor` / `logic-auditor` → spec 合规审查 → 代码质量审查（顺序不可颠倒）→ 修复回派实现者并再编译 → 重新审查 → 通过才标记该 Task 完成。engine 未返回或无编译证据时**禁止**派审计官，禁止与实现者并行派审，禁止一条 prompt 打包多个 Task 后立刻审。controller / 编排会话**不得自己改生产代码或测试源**（编译失败或审计要修一律回派 `implementation-engine` `REPAIR`）。生产代码再改后，先前内审 PASS 作废，必须再编译再审。同文件修改绝不并行派多个实现者。T3 绝不跳过独立审查（哪怕 1 行）。最终审查 `requesting-code-review` 独立于 subagent 内审，禁止跳过，也**不能**替代被作废的任务内审。T2 快速修改降为 AI 自审 + 编译/测试硬验证。
 
 **模型分级调度**：派发 subagent 时按角色复杂度选档（最强/标准/便宜），显式指定 model 不省略。`design-architect`/`design-reviewer`/`requesting-code-review`/`logic-auditor` 用最强档；一般实现/合规/`requirement-analyst` 用标准档；机械转录/单文件小修/配置改动用便宜档。修复循环 R4-5 升一档。详见 `.ai-sop/workflows/superpowers-adapter.md`。
 

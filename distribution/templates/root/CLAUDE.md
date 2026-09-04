@@ -16,6 +16,6 @@ Claude Code 用 **Agent 工具**作为独立 subagent 派发领域专家：
 
 - `design-reviewer` 必须用 Agent 工具作为独立 subagent 派发（`subagent_type=design-reviewer`），**禁止用 `Skill()` 加载到当前上下文自审**（审查与设计同上下文共享盲区）。
 - `design-architect` 修正也用 Agent 派发（`subagent_type=design-architect`）。
-- 实现者/内审（`implementation-engine`/`implementation-auditor`/`logic-auditor`）在 `subagent-driven-development` 内由 subagent 派发。
+- 实现者/内审（`implementation-engine`/`implementation-auditor`/`logic-auditor`）在 `subagent-driven-development` 内由 subagent 派发。**禁止**在实现者未返回【编译证据】（`exitCode=0`）时派审计官，禁止与实现者并行派审。
 
 其余公共约束（审查铁律、模型分级调度、不接管编排、不写 `.ai-sop/runtime/`）见 AGENTS.md「领域专家 Skills」。

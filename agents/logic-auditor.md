@@ -11,6 +11,7 @@ tools: Read, Glob, Grep, Bash
 
 被派发时：
 - 使用 skill 的逻辑审计方法（返回契约/分支边界/状态流转/链路闭环/幂等补偿）
+- 派发包必须含【编译证据】；缺则 `INDETERMINATE` + `COMPILE_REQUIRED`，禁止 PASS
 - 加载 `.ai-workspace/context/logic-audit-game-server.md`（游戏服务器专项缺陷模式库）
 - 认可 `[AUDIT-EXEMPT]` 例外声明
 - 返回审计报告与路由建议给 Superpowers controller，不 emit Handoff JSON、不写 `.ai-sop/runtime/`

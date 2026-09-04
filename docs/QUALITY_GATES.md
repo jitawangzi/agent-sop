@@ -15,8 +15,9 @@
 | **没做却声称做过** | 没独立审查、没编译、覆盖矩阵是 `__TODO__` | 功能目录要有可读文件；`LintSpecs` 中途就能报缺 |
 | **做过但已过期** | 编过一次后改了六天代码；06 作废再批仍拿旧 PASS 报告 | 证据绑 `workingTreeDigest` / 产物 SHA |
 | **当场伪造** | 手写 `exitCode=0`、空 `@Test`、只断言回包 | 部分可挡（表征方法体、冷重载调用）；**挡不住**同一次会话编一份假 JSON |
+| **未编译就审 PASS** | engine 还在跑 / 缺 import 时 auditor 已 PASS；controller 自己补编译 | **流程约束**（adapter：无【编译证据】不派审；auditor 缺证据只能 `INDETERMINATE`）。Complete 仍只查功能目录 `compile-evidence.json`，不给每个 Task 再造一份机器文件 |
 
-第三类要 JUnit XML / subagent transcript 才接近防伪，成本高一个数量级。当前刻意不做到那一层。
+第三类要 JUnit XML / subagent transcript 才接近防伪，成本高一个数量级。当前刻意不做到那一层。任务级「先编译再审」靠 controller 纪律 + auditor 拒 PASS，不加第四类机器门禁。
 
 ---
 
@@ -122,6 +123,7 @@ T3 完成表第 4 项（`implementation-auditor` / `logic-auditor` PASS）是 **
 | 全 T3 强制 04 | 绿场造假材料 |
 | 用 `build/classes` 当编译证明 | 过期产物假绿 |
 | 强制 08/09 实现审计文件（在真 T3 稳定前） | 叠摩擦，07 模式尚未在真功能上验证 |
+| 不为每个 Task 写 `compile-evidence.json` | 摩擦大；Task 交接用实现者【编译证据】粘贴进内审 prompt。Complete 仍只认功能目录那一份 |
 | 绑定 JUnit XML / 编译器 transcript | 防当场伪造；成本高一个数量级 |
 | Hook 扩到 `python -c` / `tee` 写文件 | 覆盖成本高、易误拦 |
 | 先验加宽规格定位（只写包名就当定位到） | 等真撞到 `FEATURE_SCOPE_UNRESOLVED` 再加 |

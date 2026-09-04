@@ -14,27 +14,27 @@
     {
       "source": "distribution/templates/root/CLAUDE.md",
       "target": "CLAUDE.md",
-      "sourceBlobSha256": "83d4eaf4753d1a56df0b090569178a279c93aaf831fffba03307bb083fb17fa1",
-      "targetSha256": "83d4eaf4753d1a56df0b090569178a279c93aaf831fffba03307bb083fb17fa1",
-      "legacySha256": "78922d3229f166ec56cd5669388b7a10e5224f9cfedf1ed2ae74f6e1bda2c9ff",
+      "sourceBlobSha256": "92bebe5c475de01e480311abe623ab55a714066267decdda906789d3bf86d1f5",
+      "targetSha256": "92bebe5c475de01e480311abe623ab55a714066267decdda906789d3bf86d1f5",
+      "legacySha256": "83d4eaf4753d1a56df0b090569178a279c93aaf831fffba03307bb083fb17fa1",
       "encoding": "utf8-no-bom",
       "lineEnding": "lf"
     },
     {
       "source": "distribution/templates/root/AGENTS.md",
       "target": "AGENTS.md",
-      "sourceBlobSha256": "e0a153502719a59e300499cec073a75f15eb2b4bd2c32171f96caa5ceb1d67cb",
-      "targetSha256": "e0a153502719a59e300499cec073a75f15eb2b4bd2c32171f96caa5ceb1d67cb",
-      "legacySha256": "f71e45e1ac01fc9a426f498974a6b5acc30dde91fd31c92e6e098929008e694f",
+      "sourceBlobSha256": "b5b14791a133603ab8113d15baaf9472158b04bb3391d18da3d778ac87e96f5b",
+      "targetSha256": "b5b14791a133603ab8113d15baaf9472158b04bb3391d18da3d778ac87e96f5b",
+      "legacySha256": "e0a153502719a59e300499cec073a75f15eb2b4bd2c32171f96caa5ceb1d67cb",
       "encoding": "utf8-no-bom",
       "lineEnding": "lf"
     },
     {
       "source": "distribution/templates/root/ANTIGRAVITY.md",
       "target": "ANTIGRAVITY.md",
-      "sourceBlobSha256": "48e29a97bf70a1690f3c20a91eb4c2f1bad8d20a340abfaa92e2e76f9e469e25",
-      "targetSha256": "48e29a97bf70a1690f3c20a91eb4c2f1bad8d20a340abfaa92e2e76f9e469e25",
-      "legacySha256": "c52fa16fdb111963e40ae3182e53b3dffe339f0c0d407701a88b7b472bfeab11",
+      "sourceBlobSha256": "a89dfd65ad1ebed11e54aa27fbcd495da9448f35ff0d9e49c6b8ba4bca2044ec",
+      "targetSha256": "a89dfd65ad1ebed11e54aa27fbcd495da9448f35ff0d9e49c6b8ba4bca2044ec",
+      "legacySha256": "48e29a97bf70a1690f3c20a91eb4c2f1bad8d20a340abfaa92e2e76f9e469e25",
       "encoding": "utf8-no-bom",
       "lineEnding": "lf"
     },

@@ -42,6 +42,20 @@ description: 实现审计官，负责检查代码是否遵守项目约束、设�
 - 本角色位于 `implementation-engine` 之后、`quality-assurance` 之前，是进入业务 QA 前的**全局合规守门环节**
 - 若功能存在复杂分支、状态流转、奖励结算、兼容补偿或高风险返回契约，必须在本角色后路由到 `logic-auditor` 做第二轮专项逻辑审计
 
+### Compile Gate [CRITICAL]
+本角色**不是编译器**。审查对象必须是已经能编译的代码。
+
+派发包必须含本 Task 实现者的【编译证据】：`command`、`exitCode=0`、含成功标记的 `excerpt`。缺任一项、`exitCode≠0`、或证据明显不是本次改动之后跑的：
+
+- 结论只能是 `INDETERMINATE`
+- 路由建议 `COMPILE_REQUIRED`
+- **禁止**输出 `PASS` / `PASS_WITH_RISKS`
+- 停止审查正文，不要用读源码代替 javac 去「找编译错误」后再给通过
+
+阅读中已能看出无法编译（缺类型、签名对不上）时，同样不得 `PASS`：标 `INDETERMINATE` 或 `FAIL`（实现未完成），路由回 `implementation-engine` 编译修复。
+
+生产代码在本轮审查之后又被改过，本轮 PASS 作废，须等新的【编译证据】再审。
+
 **与机器门禁**：本角色的结论必须返回 Superpowers controller。T3 `VerifyCompletion` **不读取**实现审计报告文件（无 08 产物不阻断 Complete）。这是有意的：设计审查（07 + 06 SHA）先在真 T3 上稳定，再考虑与 07 同构的实现审计文件。分层见 `docs/QUALITY_GATES.md`。审查隔离仍靠独立 subagent，禁止同上下文自审。
 
 ## Audit Modes
@@ -348,6 +362,7 @@ description: 实现审计官，负责检查代码是否遵守项目约束、设�
 - `PASS`
 - `PASS_WITH_RISKS`
 - `FAIL`
+- `INDETERMINATE`（无【编译证据】或代码明显未编译；不得当通过）
 
 每个问题必须带：
 - `标题`
@@ -377,12 +392,14 @@ description: 实现审计官，负责检查代码是否遵守项目约束、设�
 - **清单结果摘要**：至少说明 `coding-style.md` 中哪些关键条目已检查，哪些为 `N/A`
 - **历史问题边界说明**：明确哪些问题属于本次改动引入/放大，哪些只是 `PRE_EXISTING_LEGACY`
 - **[CRITICAL] 路由建议 (Routing Recommendation)**：在报告末尾必须输出明确的下一阶段建议，返回给 Superpowers controller（非 Handoff 字段，不写交接 JSON）：
+    - 无【编译证据】或代码未编译 -> 路由建议 `COMPILE_REQUIRED`（结论 `INDETERMINATE`，不得 PASS）
     - 若本次代码仅为简单读取、文案修改、或无复杂逻辑的改动 -> 路由建议 `QA_VERIFY`
     - 若发现代码包含状态机流转、复杂条件分支、发奖结算、多重资源扣除等高风险特征 -> 路由建议 `LOGIC_AUDIT`
 
 禁止输出“已检查 coding-style / business-logic-pattern”这类无细节结论；必须让读者能看出 **检查了哪些约束、依据是什么、遗漏了没有**。
 
 ### Phase 4: Gate Before QA
+- 若结论为 `INDETERMINATE` 或路由建议 `COMPILE_REQUIRED`，不得进入 QA，也不得当作本 Task 内审已通过。
 - 若结论为 `FAIL`、存在 `BLOCKER`，或任一问题明确标记“QA 前必须修复”，不得进入 QA。
 - 路由必须按根因区分：
     - 业务规则缺失、冲突或无法唯一判定：路由回需求人工确认
@@ -400,7 +417,7 @@ description: 实现审计官，负责检查代码是否遵守项目约束、设�
 本角色属于 **AI 自动闭环阶段**，不应在常规情况下停下来等待用户确认。
 
 默认行为应为：
-1. 接收 Superpowers controller 提供的变更范围与审计模式
+1. 接收 Superpowers controller 提供的变更范围、审计模式与【编译证据】。无编译证据则立即 `INDETERMINATE` + `COMPILE_REQUIRED`，不审代码。
 2. 完成审计并返回审计报告与路由建议给 controller
 3. 除 `REPORT_ONLY` 外，若审计失败，按规则缺口、设计缺口或实现缺陷分别建议回需求/设计人工确认或实现修复
 4. 若审计通过，根据风险建议 `LOGIC_AUDIT` 或 `QA_VERIFY`
@@ -456,6 +473,7 @@ description: 实现审计官，负责检查代码是否遵守项目约束、设�
 - 审计发现设计契约缺口或冲突：返回阻塞，路由回设计人工确认
 - 审计通过且低风险：返回 `PASS`/`PASS_WITH_RISKS` + 路由建议 `QA_VERIFY`
 - 审计通过且命中高风险：返回 `PASS`/`PASS_WITH_RISKS` + 路由建议 `LOGIC_AUDIT`
+- 无【编译证据】或代码未编译：返回 `INDETERMINATE` + 路由建议 `COMPILE_REQUIRED`（不得 PASS）
 - 外部环境无法解除：返回阻塞并保持当前阶段
 
 ## Tone

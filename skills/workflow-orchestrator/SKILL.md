@@ -45,7 +45,7 @@ description: 人工手动片段编排器。在 Superpowers 主流程之外，手
 
 ### 人工决定下一步
 - `REPORT_ONLY`：人看报告，决定哪些改、哪些是允许的例外（`[AUDIT-EXEMPT]`，见后）、哪些暂搁。需要修复时手动再走（Superpowers 实现流程或手动调 `implementation-engine`）。
-- `AUTO_REPAIR`：审计发现的实现缺陷，自动调 `implementation-engine` 修复 → 重新编译 → 重审 → 目标回归。需求/设计缺口仍回人工门禁。`AUTO_REPAIR` 修复生产代码后须重新走内审与验证。
+- `AUTO_REPAIR`：审计发现的实现缺陷，自动调 `implementation-engine` 修复 → 重新编译（必须带回【编译证据】）→ 重审 → 目标回归。需求/设计缺口仍回人工门禁。`AUTO_REPAIR` 修复生产代码后须重新走内审与验证。编排会话不得自己改生产代码。无编译证据不得派内审。
 
 ## AUDIT-EXEMPT 例外声明
 

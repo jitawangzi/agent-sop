@@ -27,6 +27,18 @@ description: 高风险逻辑审计官，专门细查方法级、分支级与链�
 - 若本轮发现 `BLOCKER` 或 `FAIL` 级逻辑错误，不得进入 `quality-assurance`
 - T3 Complete **不读取**本角色报告文件（与 implementation-auditor 相同，见 `docs/QUALITY_GATES.md`）
 
+### Compile Gate [CRITICAL]
+本角色审的是「能编译、能跑一部分、但语义可能错」的代码，**不是编译器**。
+
+派发包必须含本 Task 的【编译证据】（`command`、`exitCode=0`、成功摘录）。缺证据或 `exitCode≠0`：
+
+- 结论只能是 `INDETERMINATE`
+- 路由建议 `COMPILE_REQUIRED`
+- **禁止** `PASS` / `PASS_WITH_RISKS`
+- 停止逻辑走查，不要用读文件代替编译
+
+生产代码在本轮之后又改过，本轮 PASS 作废，须等新编译证据再审。controller 不得自己改生产代码后来沿用本轮结论。
+
 ## Portability Rule
 - skill 只定义逻辑审计职责、审计维度与门禁规则，**不固化具体项目的业务规则**
 - 具体业务语义、状态定义、返回契约、奖励规则、活动规则必须从 `context/` 文档、`01_server_rules.md`、`06_design_contract.md` 与实际代码接口中读取
@@ -330,6 +342,7 @@ description: 高风险逻辑审计官，专门细查方法级、分支级与链�
 - `PASS`
 - `PASS_WITH_RISKS`
 - `FAIL`
+- `INDETERMINATE`（无【编译证据】或代码明显未编译；不得当通过）
 
 每个问题必须带：
 - `标题`
@@ -363,6 +376,7 @@ description: 高风险逻辑审计官，专门细查方法级、分支级与链�
 禁止只输出“已检查逻辑正确性”“已检查分支”，必须让读者看出**具体检查了哪些方法、哪些分支、哪些字段语义**。
 
 ### Phase 5: Gate Before QA
+- 若结论为 `INDETERMINATE` 或路由建议 `COMPILE_REQUIRED`，不得进入 QA，也不得当作本 Task 逻辑审计已通过
 - 若发现返回契约语义错配、状态推进错误、重复发奖/重复写状态、持久化与回包不一致等高风险问题，默认不得进入 `quality-assurance`
 - 若仅有 `MINOR` / `INFO`，可根据风险决定是否先修，但必须在报告中明确
 - 除 `REPORT_ONLY` 外，若结论为 `FAIL` 或报告标记“QA 前必须修复”，必须推荐编排器回到 `IMPLEMENTATION`
@@ -371,9 +385,9 @@ description: 高风险逻辑审计官，专门细查方法级、分支级与链�
 
 ## Automation Rule [CRITICAL]
 本角色属于需求与设计确认后的 AI 自动闭环阶段。
-1. 接收 Superpowers controller 提供的高风险方法、类和链路范围。
+1. 接收 Superpowers controller 提供的高风险方法、类、链路范围与【编译证据】。无编译证据则立即 `INDETERMINATE` + `COMPILE_REQUIRED`，不审代码。
 2. 除 `REPORT_ONLY` 外，审计失败时返回路由建议回实现修复，不向用户请求是否修复；`REPORT_ONLY` 返回发现清单并继续指定审计顺序。
-3. 修复后的“编译 -> 全局审计 -> 逻辑审计”由 Superpowers controller 重新调度。
+3. 修复后的“编译 -> 全局审计 -> 逻辑审计”由 Superpowers controller 重新调度。生产代码再改后先前 PASS 作废。
 4. 审计通过后返回路由建议 `QA_VERIFY`（供 controller 推进，非 Handoff 字段）。
 5. 本角色不直接激活实现或 QA。
 6. 只有规则文档冲突、设计缺陷或外部环境阻塞无法解除时，才允许返回相应人工门禁或阻塞状态。
@@ -433,6 +447,7 @@ description: 高风险逻辑审计官，专门细查方法级、分支级与链�
   - 无问题：按顺序继续或完成
   - 不得修改代码（仅 `AUTO_REPAIR` 模式由 controller 路由回实现修复）
 - 审计失败：返回 `FAIL`，路由回实现修复
+- 无【编译证据】或代码未编译：返回 `INDETERMINATE` + 路由建议 `COMPILE_REQUIRED`（不得 PASS）
 - 审计通过：返回 `PASS`/`PASS_WITH_RISKS`，路由建议 `QA_VERIFY`
 - 需求或设计契约冲突：返回阻塞，分别路由回需求/设计人工确认
 - 外部环境无法解除：返回阻塞并保持当前阶段

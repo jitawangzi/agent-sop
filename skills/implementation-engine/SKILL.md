@@ -135,8 +135,17 @@ description: 高级开发工程师，负责基于当前项目架构的高质量�
     *   若是批量修复，最终输出应覆盖列表中的所有 Issue，哪怕结论是 `SKIP`、`BLOCKED` 或“已存在正确实现”。
 
 ### C. Standard & Compilation Checks (强制校验)
-*   **Compilation**: 完成代码编写后，**必须** 运行 `.\gradlew compileJava` 确保编译通过。这是所有代码任务的最低准入门槛；只有构建工具或环境客观不可用时，才允许明确标记为环境阻塞。
-*   **Configuration Validation**: `CONFIG_APPLY` 必须执行项目定义的配置格式、加载和目标场景校验；仅当配置流程生成代码或同时修改生产代码时才要求 `compileJava`。
+*   **Compilation**: 完成代码编写后，**必须**运行宿主生产编译（典型 `.\gradlew compileJava`）确保编译通过。本 Task 改了测试源时，还必须编测试（`compileTestJava` 或会编译测试源的定向 test）。这是交工给内审的最低准入门槛；只有构建工具或环境客观不可用时，才允许明确标记为环境阻塞。`build/` 目录存在不算编过。
+*   **Compile Evidence Block**: 交回 controller 时**必须**带【编译证据】，否则 controller 不得派审计官。格式：
+    ```
+    【编译证据】
+    command: .\gradlew compileJava
+    exitCode: 0
+    excerpt: BUILD SUCCESSFUL
+    changedFiles: <本 Task 改过的生产/测试文件>
+    ```
+    `exitCode` 必须为 `0`，`excerpt` 必须含实际输出中的成功标记。编译失败则本角色继续修或返回失败，**不得**把未通过编译的树交给审计。
+*   **Configuration Validation**: `CONFIG_APPLY` 必须执行项目定义的配置格式、加载和目标场景校验；仅当配置流程生成代码或同时修改生产代码时才要求生产编译。
 *   **Naming**: 确保字段名、Redis Key 符合简写规范。
 
 ### D. Risk-based Delivery Loop (基于风险的交付闭环) [CRITICAL]
@@ -145,8 +154,8 @@ description: 高级开发工程师，负责基于当前项目架构的高质量�
     - 低风险改动可以采用聚焦方法的审计和最小目标回归；高风险功能必须执行完整覆盖矩阵、双审计和业务集成验证。
 *   **闭环逻辑**:
     1. **Pre-check**: 确认 `00_workflow_state.json` 通过 `.ai-sop/schemas/workflow-state.schema.json` 校验，验证需求与设计文档的 `APPROVED` 状态和 SHA-256 均有效，并确保已生成 `05_test_plan.md` 与 `05_test_coverage.json`；在 TDD 编写测试代码时，本角色负责将 `05_test_coverage.json` 中由 SyncCoverage 生成的 `setup`/`trigger`/`assertions` 占位字段同步回填为具体断言与执行载体，确保后续 `ValidateTestCoverage` 校验通过；纯 Bug 修复至少要有对应的回归 Case。若本次明确不改变既有需求或设计，也不得用自由文本代替已有审批状态校验。
-    2. **Compile**: 执行 `.\gradlew compileJava`。
-    3. **Handoff to Global Audit**: 编译通过后返回 Superpowers controller，附带修改文件、方法和变更基线，由 controller 路由到 `implementation-auditor`。
+    2. **Compile**: 执行宿主生产编译（典型 `.\gradlew compileJava`）；改了测试源则再编测试。失败则留在本角色修复，不交审。
+    3. **Handoff to Global Audit**: 编译通过后返回 Superpowers controller，附带【编译证据】、修改文件、方法和变更基线。**无【编译证据】不得视为交工。** 由 controller 路由到 `implementation-auditor`。controller 不得代本角色改生产代码。
        - 局部修改使用 `Single-Class Audit`，必须提供 `focus_methods`。
        - 跨类功能使用 `Feature Diff Audit`，必须提供 SVN revision、changelist 或明确文件范围。
        - **类型/策略扩展**：不得把审计范围收缩到“新改的几行”。实现自审必须：① 从 `04_change_impact.json` 读取全部 `typeKey`；② grep 兄弟类型标识符，列出所有已有分发位点；③ 刷新 `04_change_impact.json` 的 `changedSymbols`/`changeSetDigest`/`lifecycleFacets`/`entryPoints` 证据；④ 交审计时明确这是 Mode D + Mode E（协议追踪）/ 类型扩展，带上 `entry_points`（取自 `04.entryPoints`），禁止只带 `focus_methods`。
@@ -179,7 +188,7 @@ description: 高级开发工程师，负责基于当前项目架构的高质量�
   - `DESIGN_FLAW` → 阻塞：回到设计人工确认
   - `REQUIREMENT_GAP` → 阻塞：回到需求人工确认
   - `CLIENT_ISSUE` / `TEST_ERROR` / `INVALID` → 不改服务端，只输出证据
-- `IMPLEMENT` / `REPAIR` 编译通过：返回编译结果 + 修改文件/方法/变更基线，交 controller 路由到 `implementation-auditor`（局部用 `Single-Class Audit` 带 `focus_methods`，跨类用 `Feature Diff Audit` 带 SVN revision/changelist/文件范围；类型/策略扩展追加 `Protocol Trace Audit` 与 `entry_points`）。
+- `IMPLEMENT` / `REPAIR` 编译通过：返回【编译证据】（`command` / `exitCode=0` / 成功摘录）+ 修改文件/方法/变更基线，交 controller 路由到 `implementation-auditor`（局部用 `Single-Class Audit` 带 `focus_methods`，跨类用 `Feature Diff Audit` 带 SVN revision/changelist/文件范围；类型/策略扩展追加 `Protocol Trace Audit` 与 `entry_points`）。无【编译证据】= 未交工。
 - `CONFIG_APPLY` 校验通过：返回配置已应用，交 controller 路由到审计/回归。
 - 编译失败且仍可自动修复：返回失败信息，由 controller 以修复循环重新派发本角色（业务代码修改后必须重新编译再交 controller，不直接进 QA）。
 - 契约缺口：返回阻塞（需求/设计缺口回对应人工确认）。

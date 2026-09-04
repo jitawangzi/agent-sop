@@ -119,6 +119,15 @@ function ConvertTo-AiSopDispatcherEnvelope {
             if ($ReasonCode -eq "OWNER_REQUIRED") {
                 $reason = "AI_SOP_GUARD_OWNER_REQUIRED: missing active Owner. AI must auto-Claim before retrying edit, do not surface error to user. Hint: input 'takeover task' to auto Transfer/ForceRelease."
             }
+            if ($ReasonCode -eq "WORKFLOW_TRANSACTION_INDETERMINATE") {
+                $journalPath = ""
+                if (Get-Command Get-AiSopLastIndeterminateJournalPath -ErrorAction SilentlyContinue) {
+                    $journalPath = Get-AiSopLastIndeterminateJournalPath
+                }
+                if (-not [string]::IsNullOrWhiteSpace($journalPath)) {
+                    $reason = "AI_SOP_GUARD_WORKFLOW_TRANSACTION_INDETERMINATE: stuck journal at $journalPath. Inspect targets, then delete that file to unblock hooks. Run doctor.ps1."
+                }
+            }
             $result.reason = $reason
         }
         return ConvertTo-Json -Compress -InputObject $result
@@ -132,6 +141,15 @@ function ConvertTo-AiSopDispatcherEnvelope {
     $reason = "AI_SOP_GUARD_${ReasonCode}: operation denied by policy"
     if ($ReasonCode -eq "OWNER_REQUIRED") {
         $reason = "AI_SOP_GUARD_OWNER_REQUIRED: missing active Owner. AI must auto-Claim before retrying edit, do not surface error to user. Hint: input 'takeover task' to auto Transfer/ForceRelease."
+    }
+    if ($ReasonCode -eq "WORKFLOW_TRANSACTION_INDETERMINATE") {
+        $journalPath = ""
+        if (Get-Command Get-AiSopLastIndeterminateJournalPath -ErrorAction SilentlyContinue) {
+            $journalPath = Get-AiSopLastIndeterminateJournalPath
+        }
+        if (-not [string]::IsNullOrWhiteSpace($journalPath)) {
+            $reason = "AI_SOP_GUARD_WORKFLOW_TRANSACTION_INDETERMINATE: stuck journal at $journalPath. Inspect targets, then delete that file to unblock hooks. Run doctor.ps1."
+        }
     }
     switch ($Agent) {
         "CLAUDE_CODE" {
@@ -268,7 +286,8 @@ function Get-AiSopDispatcherSession {
         return Get-AiSopWorkflowSession `
             -SessionKey $sessionKey `
             -AcceptedAt $AcceptedAt `
-            -DeadlineUtc $DeadlineUtc
+            -DeadlineUtc $DeadlineUtc `
+            -WorkspacePath ([string]$HookEvent.workspacePath)
     } catch {
         if ($_.Exception.Message -eq "SESSION_NOT_FOUND") {
             return $null
@@ -349,6 +368,37 @@ function Get-AiSopDispatcherToolContext {
         Name = [string]$toolPayload.ToolName
         Arguments = $toolPayload.Arguments
     }
+}
+
+function Get-AiSopDispatcherShellCommandText {
+    param($Arguments)
+
+    if ($null -eq $Arguments) {
+        return $null
+    }
+    $keys = @("command", "CommandLine", "commandLine", "cmd")
+    foreach ($key in $keys) {
+        $value = $null
+        if ($Arguments -is [System.Collections.IDictionary]) {
+            $match = @(
+                $Arguments.Keys | Where-Object { [string]$_ -ieq $key }
+            ) | Select-Object -First 1
+            if ($null -ne $match) {
+                $value = $Arguments[$match]
+            }
+        } else {
+            $prop = $Arguments.PSObject.Properties | Where-Object {
+                $_.Name -ieq $key
+            } | Select-Object -First 1
+            if ($null -ne $prop) {
+                $value = $prop.Value
+            }
+        }
+        if ($value -is [string] -and -not [string]::IsNullOrWhiteSpace([string]$value)) {
+            return [string]$value
+        }
+    }
+    return $null
 }
 
 function Test-AiSopDispatcherShellTool {
@@ -444,27 +494,27 @@ function Get-AiSopDispatcherToolPlan {
         $tool = Get-AiSopDispatcherToolContext `
             -RawPayload $RawPayload `
             -HookEvent $HookEvent
+        $cmdText = Get-AiSopDispatcherShellCommandText -Arguments $tool.Arguments
         if (
             (Test-AiSopDispatcherShellTool -ToolName $tool.Name) -and
-            $tool.Arguments -is [System.Collections.IDictionary] -and
-            $tool.Arguments.Contains("command") -and
-            $tool.Arguments.command -is [string]
+            -not [string]::IsNullOrWhiteSpace($cmdText)
         ) {
             try {
                 $grantPlan = Get-AiSopWorkflowCommandGrantPlan `
-                    -CommandText ([string]$tool.Arguments.command) `
+                    -CommandText $cmdText `
                     -SessionKey ([string]$session.Record.sessionKey) `
                     -SessionEpochId ([string]$session.Record.sessionEpochId) `
                     -DedupKey ([string]$HookEvent.dedupKey) `
                     -AcceptedAt $AcceptedAt `
-                    -DeadlineUtc $DeadlineUtc
+                    -DeadlineUtc $DeadlineUtc `
+                    -WorkspacePath ([string]$HookEvent.workspacePath)
                 return New-AiSopDispatcherPlan `
                     -Decision ALLOW `
                     -ReasonCode COMMAND_GRANT_ISSUED `
                     -SideEffectKind ISSUE_GRANT `
                     -Session $session `
                     -GrantPlan $grantPlan `
-                    -CommandText ([string]$tool.Arguments.command)
+                    -CommandText $cmdText
             } catch {
                 # A non-canonical command remains OWNER_REQUIRED. It can still
                 # run under an independently exact Owner 1.1 authorization.
@@ -790,7 +840,8 @@ function Invoke-AiSopDispatcherSideEffect {
                 -DedupKey ([string]$HookEvent.dedupKey) `
                 -AcceptedAt $AcceptedAt `
                 -TransactionId $transactionId `
-                -DeadlineUtc $DeadlineUtc
+                -DeadlineUtc $DeadlineUtc `
+                -WorkspacePath ([string]$HookEvent.workspacePath)
             if (
                 [string]$grant.Record.grantId -cne
                     [string]$Plan.GrantPlan.GrantId
@@ -912,7 +963,8 @@ function Invoke-AiSopHookDispatcher {
 
         # 3. Every authoritative read follows transaction recovery.
         Invoke-AiSopWorkflowTransactionRecovery `
-            -DeadlineUtc $deadlineUtc |
+            -DeadlineUtc $deadlineUtc `
+            -WorkspacePath $TrustedWorkspaceRoot |
             Out-Null
 
         # 4. Applied duplicates replay before lifecycle, Guard or grant work.

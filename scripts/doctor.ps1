@@ -138,11 +138,47 @@ if (-not $detectedToolchain) {
 $dispatcher = Join-Path $SopRoot "scripts/hook-dispatcher.ps1"
 Add-Check "Submodule init" (Test-Path -LiteralPath $dispatcher -PathType Leaf) $dispatcher
 
-# 7. Hook injection status (check generated projection files exist)
+# 7. Hook injection status
 $agentsHooks = Join-Path $WorkspaceRoot ".agents/hooks.json"
 $claudeSettings = Join-Path $WorkspaceRoot ".claude/settings.json"
 $hookInjected = (Test-Path -LiteralPath $agentsHooks) -or (Test-Path -LiteralPath $claudeSettings)
 Add-Check "Hook injected" $hookInjected ".agents/hooks.json or .claude/settings.json"
+if (Test-Path -LiteralPath $claudeSettings -PathType Leaf) {
+    $claudeOk = $true
+    try {
+        $csRaw = Get-Content -LiteralPath $claudeSettings -Raw
+        $claudeOk = (
+            $csRaw -match "hook-wrapper\.ps1" -or
+            $csRaw -match "hook-dispatcher\.ps1"
+        )
+    } catch {
+        $claudeOk = $false
+    }
+    Add-Check "Claude Code hooks" $claudeOk $claudeSettings
+} else {
+    Add-Check "Claude Code hooks" $true "WARN: .claude/settings.json missing — Claude Code PreToolUse will not run until install projects it"
+}
+
+# 7b. Stuck 2PC journals (fail-closed leftover; hooks DENY until removed)
+$txScript = Join-Path $SopRoot "scripts/workflow-transaction.ps1"
+if (Test-Path -LiteralPath $txScript -PathType Leaf) {
+    try {
+        . $txScript
+        $txRoot = Get-AiSopWorkflowTransactionRegistryRoot -WorkspacePath $WorkspaceRoot
+        $stuck = @()
+        if (Test-Path -LiteralPath $txRoot -PathType Container) {
+            $stuck = @(Get-ChildItem -LiteralPath $txRoot -Filter "*.json" -File)
+        }
+        if ($stuck.Count -gt 0) {
+            $names = ($stuck | ForEach-Object { $_.FullName }) -join "; "
+            Add-Check "Transaction journals" $true "WARN: stuck journal(s) will DENY every hook until inspected/removed: $names"
+        } else {
+            Add-Check "Transaction journals" $true "none"
+        }
+    } catch {
+        Add-Check "Transaction journals" $true "WARN: could not scan transaction registry: $($_.Exception.Message)"
+    }
+}
 
 # 8. Superpowers skill suite presence (enables full T3)
 $superpowersFound = $false

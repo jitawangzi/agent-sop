@@ -72,10 +72,7 @@ $AcceptedAt = [DateTimeOffset]::UtcNow
 # controlled separately by GrantTtlSeconds at issue time.
 $DeadlineUtc = $AcceptedAt.AddSeconds($GrantTtlSeconds + 60)
 
-$OwnerRegistryRoot = Join-Path $env:LOCALAPPDATA "AIWorkflowOwners\server_new"
-if (-not [string]::IsNullOrWhiteSpace($env:SERVER_NEW_WORKFLOW_REGISTRY)) {
-    $OwnerRegistryRoot = [System.IO.Path]::GetFullPath($env:SERVER_NEW_WORKFLOW_REGISTRY)
-}
+$OwnerRegistryRoot = Get-AiSopWorkflowOwnerRegistryRoot -WorkspacePath $ResolvedWorkspace
 $ownerPath = Join-Path $OwnerRegistryRoot ($Feature.ToLowerInvariant() + ".json")
 
 # Canonical owner command, identical shape to the other harnesses (single-quoted

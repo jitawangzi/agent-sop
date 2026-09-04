@@ -1360,13 +1360,19 @@ function Get-AiSopWorkflowCommandGrantPlan {
         [Parameter(Mandatory)]
         [DateTimeOffset]$AcceptedAt,
 
-        [Nullable[DateTimeOffset]]$DeadlineUtc
+        [Nullable[DateTimeOffset]]$DeadlineUtc,
+
+        [string]$WorkspacePath = $null
     )
 
     Assert-AiSopWorkflowDeadline $DeadlineUtc
-    Invoke-AiSopWorkflowTransactionRecovery -DeadlineUtc $DeadlineUtc |
+    Invoke-AiSopWorkflowTransactionRecovery `
+        -DeadlineUtc $DeadlineUtc `
+        -WorkspacePath $WorkspacePath |
         Out-Null
-    $sessionPath = Get-AiSopWorkflowSessionPath $SessionKey
+    $sessionPath = Get-AiSopWorkflowSessionPath `
+        -SessionKey $SessionKey `
+        -WorkspacePath $WorkspacePath
     $lockPath = "$sessionPath.lock"
     $lock = Enter-AiSopWorkflowFileLock `
         -LockPath $lockPath `
@@ -1441,14 +1447,18 @@ function Invoke-AiSopWorkflowCommandGrant {
         # tool-call / human step rather than in the same hook cycle.
         [int]$GrantTtlSeconds = 10,
 
-        [Nullable[DateTimeOffset]]$DeadlineUtc
+        [Nullable[DateTimeOffset]]$DeadlineUtc,
+
+        [string]$WorkspacePath = $null
     )
 
     if ($GrantTtlSeconds -lt 1 -or $GrantTtlSeconds -gt 86400) {
         throw "COMMAND_GRANT_ARGUMENT_INVALID"
     }
     Assert-AiSopWorkflowDeadline $DeadlineUtc
-    Invoke-AiSopWorkflowTransactionRecovery -DeadlineUtc $DeadlineUtc |
+    Invoke-AiSopWorkflowTransactionRecovery `
+        -DeadlineUtc $DeadlineUtc `
+        -WorkspacePath $WorkspacePath |
         Out-Null
     switch ($Operation) {
         "Issue" {
@@ -1460,10 +1470,19 @@ function Invoke-AiSopWorkflowCommandGrant {
             ) {
                 throw "COMMAND_GRANT_ARGUMENT_INVALID"
             }
-            $sessionPath = Get-AiSopWorkflowSessionPath $SessionKey
+            $sessionPath = Get-AiSopWorkflowSessionPath `
+                -SessionKey $SessionKey `
+                -WorkspacePath $WorkspacePath
             $initialSession = Read-AiSopWorkflowSessionRecord `
                 -SessionPath $sessionPath `
                 -ExpectedSessionKey $SessionKey
+            $effectiveWs = $WorkspacePath
+            if (
+                [string]::IsNullOrWhiteSpace($effectiveWs) -and
+                -not [string]::IsNullOrWhiteSpace([string]$initialSession.workspacePath)
+            ) {
+                $effectiveWs = [string]$initialSession.workspacePath
+            }
             $initialPlan = Resolve-AiSopWorkflowCommandGrantPlan `
                 -Session $initialSession `
                 -CommandText $CommandText `
@@ -1474,7 +1493,7 @@ function Invoke-AiSopWorkflowCommandGrant {
             $intent = $initialPlan.Intent
             $intentSha256 = $initialPlan.IntentSha256
             $ownerPath = Join-Path (
-                Get-AiSopWorkflowOwnerRegistryRoot
+                Get-AiSopWorkflowOwnerRegistryRoot -WorkspacePath $effectiveWs
             ) (([string]$intent.feature).ToLowerInvariant() + ".json")
             $initialOwner = Read-AiSopWorkflowGrantOwnerRecord `
                 -OwnerPath $ownerPath `
@@ -1497,7 +1516,8 @@ function Invoke-AiSopWorkflowCommandGrant {
                     kind = "COMMAND_GRANT"
                     path = $grantPath
                 }) `
-                -DeadlineUtc $DeadlineUtc
+                -DeadlineUtc $DeadlineUtc `
+                -WorkspacePath $effectiveWs
             try {
                 $session = Read-AiSopWorkflowSessionRecord `
                     -SessionPath $sessionPath `
@@ -1528,9 +1548,9 @@ function Invoke-AiSopWorkflowCommandGrant {
                     $null -ne $owner -and
                     [string]$owner.schemaVersion -eq "1.1"
                 ) {
-                    $oldSessionPath = Get-AiSopWorkflowSessionPath (
-                        [string]$owner.sessionBinding.sessionKey
-                    )
+                    $oldSessionPath = Get-AiSopWorkflowSessionPath `
+                        -SessionKey ([string]$owner.sessionBinding.sessionKey) `
+                        -WorkspacePath $effectiveWs
                     $oldSession = Read-AiSopWorkflowSessionRecord `
                         -SessionPath $oldSessionPath `
                         -ExpectedSessionKey ([string]$owner.sessionBinding.sessionKey)

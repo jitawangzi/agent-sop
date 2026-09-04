@@ -27,7 +27,8 @@ $RegistryVariables = @(
     "SERVER_NEW_WORKFLOW_TRANSACTION_REGISTRY",
     "SERVER_NEW_HOOK_DEDUP_REGISTRY",
     "SERVER_NEW_HOOK_CORRELATION_REGISTRY",
-    "SERVER_NEW_SKIP_OWNER_GUARD"
+    "SERVER_NEW_SKIP_OWNER_GUARD",
+    "AI_SOP_GUARD_ROOT"
 )
 
 function Assert-Equal {
@@ -193,10 +194,12 @@ try {
         (Join-Path $Workspace "docs"),
         (Join-Path $Workspace "src\com"),
         (Join-Path $Workspace "WebRoot"),
-        (Join-Path $Workspace "config")
+        (Join-Path $Workspace "config"),
+        (Join-Path $Workspace ".ai-sop")
     )) {
         [System.IO.Directory]::CreateDirectory($path) | Out-Null
     }
+    $env:AI_SOP_GUARD_ROOT = Join-Path $Workspace ".ai-sop"
 
     foreach ($requiredPath in @(
         $GuardScript,
@@ -510,6 +513,121 @@ try {
     Write-Owner -Feature "GuardFeature" -Record (
         Copy-Record $baselineOwner
     )
+
+    $guardDisabledPath = Join-Path $env:AI_SOP_GUARD_ROOT ".guard-disabled"
+    $guardTokenPath = Join-Path $env:AI_SOP_GUARD_ROOT ".guard-token.json"
+    $disabledEvent = New-TestHookEvent -TargetPaths @($guardDisabledPath)
+    $disabledDeny = Assert-DenyDecision `
+        -HookEvent $disabledEvent `
+        -Message "AI must not create .guard-disabled without env skip."
+    Assert-Equal $disabledDeny.ReasonCode "GOVERNANCE_SWITCH_PROTECTED" (
+        "Governance switch deny used the wrong reason."
+    )
+    $tokenEvent = New-TestHookEvent -TargetPaths @($guardTokenPath)
+    $tokenDeny = Assert-DenyDecision `
+        -HookEvent $tokenEvent `
+        -Message "AI must not create .guard-token.json without env skip."
+    Assert-Equal $tokenDeny.ReasonCode "GOVERNANCE_SWITCH_PROTECTED" (
+        "Governance token deny used the wrong reason."
+    )
+    $env:AI_SOP_SKIP_OWNER_GUARD = "1"
+    Assert-AllowDecision `
+        -HookEvent $disabledEvent `
+        -Message "Human env skip may write the governance switch." |
+        Out-Null
+    Remove-Item Env:AI_SOP_SKIP_OWNER_GUARD -ErrorAction SilentlyContinue
+
+    [System.IO.File]::WriteAllText(
+        $guardTokenPath,
+        (@{
+            feature = "GuardFeature"
+            reason = "test"
+            operator = "test"
+            expiresAt = $t0.AddHours(1).ToString("o")
+        } | ConvertTo-Json -Compress),
+        $Utf8NoBom
+    )
+    Assert-True (-not (Test-AiSopGuardEscapeEnabled)) (
+        "Unexpired token must not globally disable the guard."
+    )
+    $tokenAllow = Assert-AllowDecision `
+        -HookEvent $productionEvent `
+        -Message "Feature-matching token must allow production edit."
+    Assert-Equal $tokenAllow.ReasonCode "T1_TOKEN_ESCAPE" (
+        "Matching token used the wrong reason."
+    )
+    [System.IO.File]::WriteAllText(
+        $guardTokenPath,
+        (@{
+            feature = "OtherFeature"
+            reason = "test"
+            operator = "test"
+            expiresAt = $t0.AddHours(1).ToString("o")
+        } | ConvertTo-Json -Compress),
+        $Utf8NoBom
+    )
+    Assert-AllowDecision `
+        -HookEvent $productionEvent `
+        -Message "Mismatched token must fall through to exact Owner." |
+        Out-Null
+    Remove-Item -LiteralPath $guardTokenPath -Force
+
+    $posixPolicyDir = Join-Path $Workspace ".ai-sop\config"
+    [System.IO.Directory]::CreateDirectory($posixPolicyDir) | Out-Null
+    [System.IO.File]::WriteAllText(
+        (Join-Path $posixPolicyDir "project-policy.json"),
+        '{"productionPatterns":["^src/.*"]}',
+        $Utf8NoBom
+    )
+    Assert-True (
+        Test-AiSopGuardProductionPath `
+            -Path (Join-Path $Workspace "src\com\posix.java") `
+            -WorkspaceRoot ([System.IO.Path]::GetFullPath($Workspace))
+    ) "POSIX policy ^src/ must match a Windows src\\ path after slash normalize."
+    Remove-Item -LiteralPath (Join-Path $posixPolicyDir "project-policy.json") -Force
+
+    $script:AiSopForceUnixLockSemantics = $true
+    $posixLockPath = Join-Path $TestRoot "posix.lock"
+    [System.IO.File]::WriteAllText($posixLockPath, "", $Utf8NoBom)
+    $posixStream = [System.IO.File]::Open(
+        $posixLockPath,
+        [System.IO.FileMode]::Open,
+        [System.IO.FileAccess]::ReadWrite,
+        [System.IO.FileShare]::None
+    )
+    Exit-AiSopWorkflowLocks @(
+        [pscustomobject]@{ Path = $posixLockPath; Stream = $posixStream }
+    )
+    Assert-True (Test-Path -LiteralPath $posixLockPath) (
+        "POSIX lock semantics must leave the sentinel file in place."
+    )
+    $script:AiSopForceUnixLockSemantics = $false
+    Remove-Item -LiteralPath $posixLockPath -Force -ErrorAction SilentlyContinue
+
+    $savedOwnerReg = $env:SERVER_NEW_WORKFLOW_REGISTRY
+    $savedAiSopOwner = $env:AI_SOP_OWNER_REGISTRY
+    Remove-Item Env:SERVER_NEW_WORKFLOW_REGISTRY -ErrorAction SilentlyContinue
+    Remove-Item Env:AI_SOP_OWNER_REGISTRY -ErrorAction SilentlyContinue
+    try {
+        $fromWorkspace = Get-AiSopWorkflowOwnerRegistryRoot -WorkspacePath $Workspace
+        Push-Location (Join-Path $Workspace "docs")
+        try {
+            $fromCwd = Get-AiSopWorkflowOwnerRegistryRoot
+        } finally {
+            Pop-Location
+        }
+        Assert-True ($fromWorkspace -cne $fromCwd) (
+            "Owner registry scope must not silently follow cwd when WorkspacePath is passed."
+        )
+        Assert-Equal (Get-AiSopWorkflowOwnerRegistryRoot -WorkspacePath $Workspace) $fromWorkspace (
+            "Explicit WorkspacePath must be stable regardless of cwd."
+        )
+    } finally {
+        $env:SERVER_NEW_WORKFLOW_REGISTRY = $savedOwnerReg
+        if (-not [string]::IsNullOrWhiteSpace($savedAiSopOwner)) {
+            $env:AI_SOP_OWNER_REGISTRY = $savedAiSopOwner
+        }
+    }
 
     $safePhysical = Join-Path $Workspace ".claude\safe-physical"
     [System.IO.Directory]::CreateDirectory($safePhysical) | Out-Null

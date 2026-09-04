@@ -45,13 +45,16 @@ function Get-AiSopWorkflowSessionKey {
 }
 
 function Get-AiSopWorkflowSessionPath {
-    param([string]$SessionKey)
+    param(
+        [string]$SessionKey,
+        [string]$WorkspacePath = $null
+    )
 
     if ($SessionKey -notmatch "^[0-9a-f]{64}$") {
         throw "SESSION_IDENTITY_INVALID"
     }
     return Join-Path (
-        Get-AiSopWorkflowSessionRegistryRoot
+        Get-AiSopWorkflowSessionRegistryRoot -WorkspacePath $WorkspacePath
     ) "$SessionKey.json"
 }
 
@@ -287,12 +290,18 @@ function Get-AiSopWorkflowSession {
 
         [DateTimeOffset]$AcceptedAt = [DateTimeOffset]::UtcNow,
 
-        [Nullable[DateTimeOffset]]$DeadlineUtc
+        [Nullable[DateTimeOffset]]$DeadlineUtc,
+
+        [string]$WorkspacePath = $null
     )
 
-    Invoke-AiSopWorkflowTransactionRecovery -DeadlineUtc $DeadlineUtc |
+    Invoke-AiSopWorkflowTransactionRecovery `
+        -DeadlineUtc $DeadlineUtc `
+        -WorkspacePath $WorkspacePath |
         Out-Null
-    $sessionPath = Get-AiSopWorkflowSessionPath $SessionKey
+    $sessionPath = Get-AiSopWorkflowSessionPath `
+        -SessionKey $SessionKey `
+        -WorkspacePath $WorkspacePath
     $lockPath = "$sessionPath.lock"
     $lock = Enter-AiSopWorkflowFileLock `
         -LockPath $lockPath `
@@ -311,11 +320,7 @@ function Get-AiSopWorkflowSession {
             -SessionPath $sessionPath
     } finally {
         $lock.Dispose()
-        try {
-            [System.IO.File]::Delete($lockPath)
-        } catch {
-            # Lock-file cleanup is not authorization state.
-        }
+        Remove-AiSopWorkflowLockFile -LockPath $lockPath
     }
 }
 
@@ -353,19 +358,23 @@ function Invoke-AiSopWorkflowSession {
     )
 
     Assert-AiSopWorkflowDeadline $DeadlineUtc
-    Invoke-AiSopWorkflowTransactionRecovery -DeadlineUtc $DeadlineUtc |
-        Out-Null
     try {
         $physicalWorkspace = Resolve-PhysicalPathIdentity -Path $WorkspacePath
     } catch {
         throw "SESSION_WORKSPACE_INVALID"
     }
+    Invoke-AiSopWorkflowTransactionRecovery `
+        -DeadlineUtc $DeadlineUtc `
+        -WorkspacePath $physicalWorkspace |
+        Out-Null
     $nativeSessionIdSha256 = Get-AiSopWorkflowSha256 $NativeSessionId
     $sessionKey = Get-AiSopWorkflowSessionKey `
         -Agent $Agent `
         -NativeSessionId $NativeSessionId `
         -WorkspacePath $physicalWorkspace
-    $sessionPath = Get-AiSopWorkflowSessionPath $sessionKey
+    $sessionPath = Get-AiSopWorkflowSessionPath `
+        -SessionKey $sessionKey `
+        -WorkspacePath $physicalWorkspace
     $lockPath = "$sessionPath.lock"
     $lock = Enter-AiSopWorkflowFileLock `
         -LockPath $lockPath `
@@ -548,11 +557,7 @@ function Invoke-AiSopWorkflowSession {
             -SessionPath $sessionPath
     } finally {
         $lock.Dispose()
-        try {
-            [System.IO.File]::Delete($lockPath)
-        } catch {
-            # Lock-file cleanup is not authorization state.
-        }
+        Remove-AiSopWorkflowLockFile -LockPath $lockPath
     }
 
     if ($expireGrants) {
@@ -600,10 +605,14 @@ function Set-AiSopWorkflowSessionGrantMetadata {
         [ValidatePattern("^[A-Za-z0-9._:-]+$")]
         [string]$TransactionId,
 
-        [Nullable[DateTimeOffset]]$DeadlineUtc
+        [Nullable[DateTimeOffset]]$DeadlineUtc,
+
+        [string]$WorkspacePath = $null
     )
 
-    $sessionPath = Get-AiSopWorkflowSessionPath $SessionKey
+    $sessionPath = Get-AiSopWorkflowSessionPath `
+        -SessionKey $SessionKey `
+        -WorkspacePath $WorkspacePath
     $lockPath = "$sessionPath.lock"
     $lock = Enter-AiSopWorkflowFileLock `
         -LockPath $lockPath `
@@ -621,10 +630,6 @@ function Set-AiSopWorkflowSessionGrantMetadata {
         return [pscustomobject]$record
     } finally {
         $lock.Dispose()
-        try {
-            [System.IO.File]::Delete($lockPath)
-        } catch {
-            # Lock-file cleanup is not authorization state.
-        }
+        Remove-AiSopWorkflowLockFile -LockPath $lockPath
     }
 }

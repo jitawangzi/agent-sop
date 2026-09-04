@@ -124,8 +124,13 @@
         "encoding": {
           "$ref": "#/$defs/encoding"
         },
-        "lineEnding": {
+                        "lineEnding": {
           "$ref": "#/$defs/lineEnding"
+        },
+        "verifyMode": {
+          "type": "string",
+          "enum": ["bytes", "json-hooks-merge"],
+          "description": "bytes (default): target SHA-256 must match. json-hooks-merge: SOP hook commands must be present; other JSON keys may differ."
         }
       }
     }

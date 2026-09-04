@@ -280,6 +280,69 @@ Invoke-Test "Invoke-AiSopSvnRollback restores .claude from backup" {
     } finally { Remove-Item -Recurse -Force -LiteralPath $tmp }
 }
 
+Invoke-Test "project-manifest.json validates and settings hash matches" {
+    $manifestPath = Join-Path $ClaudeRoot "distribution\project-manifest.json"
+    Assert-True (Test-AiSopManifest -Path $manifestPath) "project-manifest.json must satisfy schema (including verifyMode)"
+    $manifest = Get-Content -Raw -LiteralPath $manifestPath | ConvertFrom-Json
+    $settingsProj = @($manifest.projections | Where-Object { $_.target -eq ".claude/settings.json" }) | Select-Object -First 1
+    Assert-True ($null -ne $settingsProj) "manifest must project .claude/settings.json"
+    Assert-Equal "json-hooks-merge" $settingsProj.verifyMode "settings projection must merge hooks"
+    $src = Join-Path $ClaudeRoot $settingsProj.source
+    $bytes = Get-AiSopProjectionBytes -SourcePath $src
+    $hash = ([System.Security.Cryptography.SHA256]::Create().ComputeHash($bytes) | ForEach-Object { $_.ToString("x2") }) -join ""
+    Assert-Equal $settingsProj.targetSha256 $hash "claude-settings.json targetSha256 must match LF-normalized bytes"
+}
+
+Invoke-Test "json-hooks-merge preserves extra JSON keys and injects SOP hooks" {
+    $tmp = Join-Path ([System.IO.Path]::GetTempPath()) ("aisop-hooks-merge-" + [guid]::NewGuid().ToString("N").Substring(0,8))
+    New-Item -ItemType Directory -Path $tmp | Out-Null
+    try {
+        $sop = Join-Path $tmp "sop"
+        $ws = Join-Path $tmp "ws"
+        $srcRel = "distribution\templates\hooks\claude-settings.json"
+        $srcDir = Join-Path $sop "distribution\templates\hooks"
+        New-Item -ItemType Directory -Path $srcDir -Force | Out-Null
+        New-Item -ItemType Directory -Path (Join-Path $ws ".claude") -Force | Out-Null
+        Copy-Item -LiteralPath (Join-Path $ClaudeRoot $srcRel) -Destination (Join-Path $sop $srcRel)
+        $existingPath = Join-Path $ws ".claude\settings.json"
+        [System.IO.File]::WriteAllText(
+            $existingPath,
+            '{"permissions":{"allow":["Bash(git *)"]},"hooks":{"Stop":[{"matcher":"*"}]}}'
+        )
+        $manifest = @{
+            projections = @(
+                @{
+                    source = "distribution/templates/hooks/claude-settings.json"
+                    target = ".claude/settings.json"
+                    sourceBlobSha256 = ("f" * 64)
+                    targetSha256 = ("0" * 64)
+                    legacySha256 = ""
+                    encoding = "utf8-no-bom"
+                    lineEnding = "lf"
+                    verifyMode = "json-hooks-merge"
+                }
+            )
+        }
+        $null = Invoke-AiSopGenerateProjections -WorkspaceRoot $ws -Manifest $manifest -SopRoot $sop
+        $merged = Get-Content -Raw -LiteralPath $existingPath | ConvertFrom-Json -Depth 30
+        Assert-True ($null -ne $merged.permissions.allow) "merge must keep permissions.allow"
+        Assert-True ($null -ne $merged.hooks.Stop) "merge must keep unrelated hook events"
+        Assert-True ($null -ne $merged.hooks.SessionStart) "merge must inject SessionStart"
+        Assert-True ($null -ne $merged.hooks.PreToolUse) "merge must inject PreToolUse"
+        Assert-True (Test-AiSopClaudeSettingsHasSopHooks -TargetPath $existingPath) "merged settings must contain SOP hooks"
+        $null = Invoke-AiSopVerifyProjections -Manifest $manifest -WorkspaceRoot $ws -ClaudeRoot $sop
+        [System.IO.File]::WriteAllText($existingPath, '{"permissions":{"allow":["Bash(git *)"]}}')
+        $threw = $false
+        try {
+            $null = Invoke-AiSopVerifyProjections -Manifest $manifest -WorkspaceRoot $ws -ClaudeRoot $sop
+        } catch {
+            $threw = $true
+            Assert-Equal "AI_SOP_PROJECTION_DRIFT" $_.Exception.Message "missing SOP hooks must be drift"
+        }
+        Assert-True $threw "settings without SOP hooks must fail json-hooks-merge verify"
+    } finally { Remove-Item -Recurse -Force -LiteralPath $tmp }
+}
+
 Invoke-Test "Complete-AiSopSvnTransaction marks COMMITTED + writes marker" {
     $tmp = Join-Path ([System.IO.Path]::GetTempPath()) ("aisop-commit-" + [guid]::NewGuid().ToString("N").Substring(0,8))
     New-Item -ItemType Directory -Path $tmp | Out-Null

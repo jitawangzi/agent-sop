@@ -1,0 +1,40 @@
+{
+  "hooks": {
+    "SessionStart": [
+      {
+        "matcher": "*",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "pwsh -NoProfile -File ./.claude/hook-wrapper.ps1 -EventHint SESSION_START",
+            "timeout": 10
+          }
+        ]
+      }
+    ],
+    "SessionEnd": [
+      {
+        "matcher": "*",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "pwsh -NoProfile -File ./.claude/hook-wrapper.ps1 -EventHint SESSION_END",
+            "timeout": 10
+          }
+        ]
+      }
+    ],
+    "PreToolUse": [
+      {
+        "matcher": "*",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "pwsh -NoProfile -File ./.claude/hook-wrapper.ps1 -EventHint PRE_TOOL_USE",
+            "timeout": 10
+          }
+        ]
+      }
+    ]
+  }
+}

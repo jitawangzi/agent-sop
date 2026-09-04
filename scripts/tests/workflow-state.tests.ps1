@@ -33,15 +33,13 @@ $env:SERVER_NEW_WORKFLOW_OWNER_DEADLINE_MS = "10000"
 . $GrantScriptPath
 
 function Get-TestArtifactHash {
-    # Mirror of Get-AiSopArtifactHash in workflow-state.ps1: normalize CRLF->LF,
-    # strip trailing whitespace per line, ensure single final newline.
-    # JSON files keep raw-byte hashing.
+    # Mirror of Get-AiSopArtifactHash: strip BOM, CRLF->LF, trailing whitespace,
+    # single final newline. Includes JSON (no raw-byte special case).
     param([string]$Path)
-    $ext = [System.IO.Path]::GetExtension($Path)
-    if ($ext -ieq ".json") {
-        return (Get-TestArtifactHash -Path $Path)
-    }
     $raw = [System.IO.File]::ReadAllText($Path)
+    if ($raw.Length -gt 0 -and [int][char]$raw[0] -eq 0xFEFF) {
+        $raw = $raw.Substring(1)
+    }
     $normalized = $raw -replace "`r`n", "`n"
     $normalized = $normalized -replace "`r", "`n"
     $normalized = $normalized -replace "[ \t]+`n", "`n"
@@ -1374,6 +1372,15 @@ function Assert-ReadEntrypointsRecoverTransactions {
 
 try {
     [System.IO.Directory]::CreateDirectory($FeatureRoot) | Out-Null
+    $jsonLfPath = Join-Path $TestRoot "artifact-hash-lf.json"
+    $jsonCrlfPath = Join-Path $TestRoot "artifact-hash-crlf.json"
+    [System.IO.File]::WriteAllText($jsonLfPath, "{`"k`": `"v`"}`n", $Utf8NoBom)
+    [System.IO.File]::WriteAllText($jsonCrlfPath, "{`"k`": `"v`"}`r`n", $Utf8NoBom)
+    $jsonLfHash = Get-TestArtifactHash -Path $jsonLfPath
+    $jsonCrlfHash = Get-TestArtifactHash -Path $jsonCrlfPath
+    if ($jsonLfHash -cne $jsonCrlfHash) {
+        throw "JSON artifact hashes must ignore CRLF vs LF after the same normalize as markdown."
+    }
     # 从当前非 Claude harness 开始, 直接回归已复现的跨 harness mutation 拒绝.
     foreach ($mutationAgent in @("COPILOT", "ANTIGRAVITY", "CLAUDE_CODE", "CURSOR")) {
         Assert-SuperpowersMutationAccepted -Agent $mutationAgent

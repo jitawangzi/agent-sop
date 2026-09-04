@@ -176,6 +176,12 @@ function Invoke-AiSopVerifyProjections {
         if (-not (Test-Path -LiteralPath $targetPath)) {
             throw "AI_SOP_PROJECTION_MISSING"
         }
+        if ((Get-AiSopProjectionVerifyMode -Projection $p) -eq "json-hooks-merge") {
+            if (-not (Test-AiSopClaudeSettingsHasSopHooks -TargetPath $targetPath)) {
+                throw "AI_SOP_PROJECTION_DRIFT"
+            }
+            continue
+        }
         # Render target hash = UTF-8 no BOM + LF bytes of the current file
         # after normalizing CRLF to LF (DC-004).
         $raw = [System.IO.File]::ReadAllText($targetPath)
@@ -271,6 +277,98 @@ function Write-AiSopInstallResult {
     }
 }
 
+function Get-AiSopProjectionVerifyMode {
+    param([object]$Projection)
+    $mode = [string]$Projection.verifyMode
+    if ([string]::IsNullOrWhiteSpace($mode)) {
+        return "bytes"
+    }
+    return $mode
+}
+
+function ConvertTo-AiSopOrderedHashtable {
+    param($Value)
+    if ($null -eq $Value) {
+        return [ordered]@{}
+    }
+    if ($Value -is [System.Collections.IDictionary]) {
+        $out = [ordered]@{}
+        foreach ($key in $Value.Keys) {
+            $out[[string]$key] = ConvertTo-AiSopOrderedHashtable $Value[$key]
+        }
+        return $out
+    }
+    if ($Value -is [System.Collections.IEnumerable] -and $Value -isnot [string]) {
+        $list = @()
+        foreach ($item in $Value) {
+            $list += ,(ConvertTo-AiSopOrderedHashtable $item)
+        }
+        return $list
+    }
+    return $Value
+}
+
+function Merge-AiSopClaudeSettingsHooks {
+    param(
+        [Parameter(Mandatory)][string]$TemplatePath,
+        [Parameter(Mandatory)][string]$TargetPath
+    )
+    $enc = [System.Text.UTF8Encoding]::new($false)
+    $templateRaw = [System.IO.File]::ReadAllText($TemplatePath)
+    $template = $templateRaw | ConvertFrom-Json -AsHashtable -Depth 100
+    $existing = [ordered]@{}
+    if (Test-Path -LiteralPath $TargetPath -PathType Leaf) {
+        try {
+            $existingRaw = [System.IO.File]::ReadAllText($TargetPath)
+            $parsed = $existingRaw | ConvertFrom-Json -AsHashtable -Depth 100
+            $existing = ConvertTo-AiSopOrderedHashtable $parsed
+        } catch {
+            $existing = [ordered]@{}
+        }
+    }
+    if ($existing -isnot [System.Collections.IDictionary]) {
+        $existing = [ordered]@{}
+    }
+    $hooksValue = $existing["hooks"]
+    if ($hooksValue -isnot [System.Collections.IDictionary]) {
+        $existing["hooks"] = [ordered]@{}
+    }
+    foreach ($eventName in @("SessionStart", "SessionEnd", "PreToolUse")) {
+        $existing.hooks[$eventName] = $template.hooks[$eventName]
+    }
+    $json = ($existing | ConvertTo-Json -Depth 30) -replace "`r`n", "`n"
+    if (-not $json.EndsWith("`n")) {
+        $json += "`n"
+    }
+    $tgtDir = Split-Path -Parent $TargetPath
+    if (-not (Test-Path -LiteralPath $tgtDir)) {
+        New-Item -ItemType Directory -Path $tgtDir -Force | Out-Null
+    }
+    [System.IO.File]::WriteAllBytes($TargetPath, $enc.GetBytes($json))
+}
+
+function Test-AiSopClaudeSettingsHasSopHooks {
+    param([Parameter(Mandatory)][string]$TargetPath)
+    if (-not (Test-Path -LiteralPath $TargetPath -PathType Leaf)) {
+        return $false
+    }
+    try {
+        $raw = [System.IO.File]::ReadAllText($TargetPath)
+        $obj = $raw | ConvertFrom-Json -Depth 100
+    } catch {
+        return $false
+    }
+    $blob = ($obj | ConvertTo-Json -Depth 30)
+    return (
+        $blob -match "hook-wrapper\.ps1" -or
+        $blob -match "hook-dispatcher\.ps1"
+    ) -and (
+        $blob -match "SESSION_START" -or $blob -match "SessionStart"
+    ) -and (
+        $blob -match "PRE_TOOL_USE" -or $blob -match "PreToolUse"
+    )
+}
+
 function Get-AiSopProjectionBytes {
     # Render the canonical projection bytes for a source file: UTF-8 no BOM + LF.
     param([Parameter(Mandatory)][string]$SourcePath)
@@ -353,8 +451,12 @@ function Invoke-AiSopGenerateProjections {
         }
         $tgtDir = Split-Path -Parent $tgt
         if (-not (Test-Path -LiteralPath $tgtDir)) { New-Item -ItemType Directory -Path $tgtDir -Force | Out-Null }
-        $bytes = Get-AiSopProjectionBytes -SourcePath $src
-        [System.IO.File]::WriteAllBytes($tgt, $bytes)
+        if ((Get-AiSopProjectionVerifyMode -Projection $p) -eq "json-hooks-merge") {
+            Merge-AiSopClaudeSettingsHooks -TemplatePath $src -TargetPath $tgt
+        } else {
+            $bytes = Get-AiSopProjectionBytes -SourcePath $src
+            [System.IO.File]::WriteAllBytes($tgt, $bytes)
+        }
         $changed += $p.target
     }
 

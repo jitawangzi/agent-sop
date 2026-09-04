@@ -58,11 +58,10 @@ function Assert-Equal {
 
 function Get-TestArtifactHash {
     param([string]$Path)
-    $ext = [System.IO.Path]::GetExtension($Path)
-    if ($ext -ieq ".json") {
-        return (Get-FileHash -LiteralPath $Path -Algorithm SHA256).Hash.ToLowerInvariant()
-    }
     $raw = [System.IO.File]::ReadAllText($Path)
+    if ($raw.Length -gt 0 -and [int][char]$raw[0] -eq 0xFEFF) {
+        $raw = $raw.Substring(1)
+    }
     $normalized = $raw -replace "`r`n", "`n"
     $normalized = $normalized -replace "`r", "`n"
     $normalized = $normalized -replace "[ \t]+`n", "`n"

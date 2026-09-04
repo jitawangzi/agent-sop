@@ -163,22 +163,17 @@ function Get-StringSha256 {
 function Get-AiSopArtifactHash {
     # Normalized SHA-256 for approval/test artifacts. CRLF/LF differences
     # (from Windows editors, git autocrlf, or cross-tool saves) must NOT cause
-    # spurious hash drift that blocks the pipeline. Normalize: CRLF -> LF,
-    # strip trailing whitespace per line, ensure file ends with one LF.
-    # JSON coverage files keep raw-byte hashing (they are machine-generated
-    # with stable encoding, and JSON whitespace is insignificant to parsers).
+    # spurious hash drift that blocks the pipeline. Normalize: strip UTF-8 BOM,
+    # CRLF -> LF, strip trailing whitespace per line, ensure file ends with one LF.
     param([string]$Path)
 
-    $ext = [System.IO.Path]::GetExtension($Path)
-    if ($ext -ieq ".json") {
-        return (Get-FileHash -LiteralPath $Path -Algorithm SHA256).Hash.ToLowerInvariant()
-    }
     $raw = [System.IO.File]::ReadAllText($Path)
+    if ($raw.Length -gt 0 -and [int][char]$raw[0] -eq 0xFEFF) {
+        $raw = $raw.Substring(1)
+    }
     $normalized = $raw -replace "`r`n", "`n"
     $normalized = $normalized -replace "`r", "`n"
-    # Strip trailing whitespace per line (spaces/tabs before newline).
     $normalized = $normalized -replace "[ \t]+`n", "`n"
-    # Collapse trailing blank lines to a single final newline.
     $normalized = $normalized.TrimEnd() + "`n"
     $enc = [System.Text.UTF8Encoding]::new($false)
     $bytes = $enc.GetBytes($normalized)
@@ -893,11 +888,13 @@ function Invoke-WithMutationOwnership {
     if ([string]$initialOwner.schemaVersion -ceq "1.1") {
         $sessionKeys += [string]$initialOwner.sessionBinding.sessionKey
     }
+    $mutWs = [string]$initialOwner.workspacePath
     $lockResult = Enter-AiSopWorkflowTransactionLocks `
         -SessionKeys $sessionKeys `
         -OwnerPath $ownerPath `
         -Targets @() `
-        -DeadlineUtc $MutationDeadlineUtc
+        -DeadlineUtc $MutationDeadlineUtc `
+        -WorkspacePath $mutWs
 
     try {
         $owner = Read-JsonObject -FilePath $ownerPath -SchemaPath (

@@ -472,7 +472,8 @@ function Invoke-LegacyOwnerOperation {
         -SessionKeys @() `
         -Targets @($target) `
         -TransactionId $transactionId `
-        -DeadlineUtc $WorkflowDeadlineUtc |
+        -DeadlineUtc $WorkflowDeadlineUtc `
+        -WorkspacePath $ownerWs |
         Out-Null
     Write-OwnerMirror $after
     Write-Output $OwnerPath
@@ -635,7 +636,8 @@ function Invoke-OwnerValidate11 {
             -Targets $targets `
             -TransactionId $transactionId `
             -DeadlineUtc $WorkflowDeadlineUtc `
-            -LocksAlreadyHeld |
+            -LocksAlreadyHeld `
+            -WorkspacePath $ownerWs |
             Out-Null
         Write-Output "VALID"
     } finally {
@@ -645,7 +647,8 @@ function Invoke-OwnerValidate11 {
 
 Assert-CanonicalSpecDirectory
 Invoke-AiSopWorkflowTransactionRecovery `
-    -DeadlineUtc $WorkflowDeadlineUtc |
+    -DeadlineUtc $WorkflowDeadlineUtc `
+    -WorkspacePath $ownerWs |
     Out-Null
 $existingOwner = Read-Owner -AllowMissing
 
@@ -1225,7 +1228,8 @@ Invoke-AiSopWorkflowTransaction `
     -SessionKeys $sessionKeys `
     -Targets $targets `
     -TransactionId $transactionId `
-    -DeadlineUtc $WorkflowDeadlineUtc |
+    -DeadlineUtc $WorkflowDeadlineUtc `
+    -WorkspacePath $ownerWs |
     Out-Null
 
 if (-not [string]::IsNullOrWhiteSpace($ResolvedSpecDirectory)) {

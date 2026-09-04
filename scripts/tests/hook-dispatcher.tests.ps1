@@ -336,6 +336,28 @@ try {
     . $DispatcherScript
     . $SessionScript
 
+    Assert-Equal (Get-AiSopDispatcherShellCommandText @{ command = "a" }) "a" (
+        "command alias must be read."
+    )
+    Assert-Equal (Get-AiSopDispatcherShellCommandText @{ CommandLine = "b" }) "b" (
+        "CommandLine alias must be read."
+    )
+    Assert-Equal (Get-AiSopDispatcherShellCommandText @{ commandLine = "c" }) "c" (
+        "commandLine alias must be read."
+    )
+    Assert-Equal (Get-AiSopDispatcherShellCommandText @{ cmd = "d" }) "d" (
+        "cmd alias must be read."
+    )
+    Assert-Equal (
+        Get-AiSopDispatcherShellCommandText @{ command = "a"; cmd = "z" }
+    ) "a" "command must win over later aliases."
+    Assert-Equal (
+        Get-AiSopDispatcherShellCommandText ([pscustomobject]@{ CommandLine = "e" })
+    ) "e" "PSCustomObject CommandLine must be read."
+    Assert-Equal (Get-AiSopDispatcherShellCommandText @{}) $null (
+        "empty arguments must yield no command text."
+    )
+
     $now = [DateTimeOffset]::UtcNow
 
     $env:SERVER_NEW_SKIP_OWNER_GUARD = "1"
@@ -681,6 +703,42 @@ try {
     Assert-True (
         [string]$pendingRetry.GrantId -match "^[0-9a-f]{64}$"
     ) "Cursor Claim retry did not return the deterministic grantId."
+
+    $aliasFeature = "CmdAliasFeature"
+    $aliasOwnerId = "cmd-alias-owner"
+    $aliasSession = "cursor-cmd-alias"
+    [System.IO.Directory]::CreateDirectory(
+        (Join-Path $Workspace ".ai-workspace\specs\features\$aliasFeature")
+    ) | Out-Null
+    $aliasStartAt = $now.AddMinutes(1).AddSeconds(10)
+    Invoke-Dispatch `
+        -RawPayload (
+            New-CursorPayload -Event SESSION_START -SessionId $aliasSession
+        ) `
+        -EventHint SESSION_START `
+        -AcceptedAt $aliasStartAt | Out-Null
+    $aliasCommand = New-OwnerCommand `
+        -Operation Claim `
+        -Feature $aliasFeature `
+        -Agent CURSOR `
+        -OwnerId $aliasOwnerId
+    $aliasGrant = Invoke-Dispatch `
+        -RawPayload (
+            New-CursorPayload `
+                -Event PRE_TOOL_USE `
+                -SessionId $aliasSession `
+                -ToolName Shell `
+                -ToolInput @{ CommandLine = $aliasCommand } `
+                -Occurrence "cmd-alias"
+        ) `
+        -EventHint PRE_TOOL_USE `
+        -AcceptedAt $aliasStartAt.AddSeconds(1)
+    Assert-Equal $aliasGrant.Decision "ALLOW" (
+        "Shell CommandLine alias did not issue a grant."
+    )
+    Assert-True (
+        [string]$aliasGrant.GrantId -match "^[0-9a-f]{64}$"
+    ) "CommandLine grant did not return a grantId."
 
     $claimFeature = "DispatcherExact"
     $claimOwnerId = "dispatcher-owner"

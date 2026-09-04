@@ -15,6 +15,12 @@ $script:WorkflowStateSchemaPaths = @{
     ) "schemas\workflow-command-grant.schema.json"
 }
 $script:WorkflowUtf8NoBom = [System.Text.UTF8Encoding]::new($false)
+$script:AiSopLastIndeterminateJournalPath = ""
+$script:AiSopForceUnixLockSemantics = $false
+$script:WorkflowPathIdentityScriptPath = Join-Path $PSScriptRoot "path-identity.ps1"
+if (-not (Get-Command Resolve-PhysicalPathIdentity -ErrorAction SilentlyContinue)) {
+    . $script:WorkflowPathIdentityScriptPath
+}
 
 function ConvertFrom-AiSopWorkflowJson {
     [CmdletBinding()]
@@ -159,13 +165,66 @@ function Get-AiSopWorkflowBaseAppDataRoot {
 function Get-AiSopWorkspaceScopeKey {
     param([string]$WorkspacePath = $null)
     try {
-        $p = if (-not [string]::IsNullOrWhiteSpace($WorkspacePath)) { $WorkspacePath } else { (Get-Location).Path }
-        $norm = [System.IO.Path]::GetFullPath($p).ToLowerInvariant()
-        $hash = [System.Security.Cryptography.SHA256]::HashData([System.Text.Encoding]::UTF8.GetBytes($norm))
+        $p = if (-not [string]::IsNullOrWhiteSpace($WorkspacePath)) {
+            $WorkspacePath
+        } else {
+            (Get-Location).Path
+        }
+        try {
+            $norm = (Resolve-PhysicalPathIdentity -Path $p).ToLowerInvariant()
+        } catch {
+            $norm = [System.IO.Path]::GetFullPath($p).ToLowerInvariant()
+        }
+        $hash = [System.Security.Cryptography.SHA256]::HashData(
+            [System.Text.Encoding]::UTF8.GetBytes($norm)
+        )
         return ([System.BitConverter]::ToString($hash) -replace "-", "").Substring(0, 12).ToLowerInvariant()
     } catch {
         return "default"
     }
+}
+
+function Test-AiSopShouldUnlinkLockFile {
+    # POSIX flock is inode-based. Unlinking a lock file after Dispose lets a
+    # waiter hold inode N while a new OpenOrCreate gets inode N+1 — mutex breaks.
+    # Windows FileShare.None is name-based; deleting the empty sentinel is fine.
+    if ($script:AiSopForceUnixLockSemantics) {
+        return $false
+    }
+    return [System.OperatingSystem]::IsWindows()
+}
+
+function Remove-AiSopWorkflowLockFile {
+    param([string]$LockPath)
+
+    if ([string]::IsNullOrWhiteSpace($LockPath)) {
+        return
+    }
+    if (-not (Test-AiSopShouldUnlinkLockFile)) {
+        return
+    }
+    try {
+        [System.IO.File]::Delete($LockPath)
+    } catch {
+        # Empty lock files are not authorization state.
+    }
+}
+
+function Set-AiSopLastIndeterminateJournalPath {
+    param([string]$JournalPath)
+    $script:AiSopLastIndeterminateJournalPath = [string]$JournalPath
+}
+
+function Get-AiSopLastIndeterminateJournalPath {
+    return [string]$script:AiSopLastIndeterminateJournalPath
+}
+
+function Throw-AiSopWorkflowTransactionIndeterminate {
+    param([string]$JournalPath = "")
+    if (-not [string]::IsNullOrWhiteSpace($JournalPath)) {
+        Set-AiSopLastIndeterminateJournalPath -JournalPath $JournalPath
+    }
+    throw "WORKFLOW_TRANSACTION_INDETERMINATE"
 }
 
 function Get-AiSopWorkflowTransactionRegistryRoot {
@@ -491,11 +550,7 @@ function Exit-AiSopWorkflowLocks {
         } catch {
             # Lock release is best effort after the authoritative action.
         }
-        try {
-            [System.IO.File]::Delete([string]$item.Path)
-        } catch {
-            # Empty lock files are not authorization state.
-        }
+        Remove-AiSopWorkflowLockFile -LockPath ([string]$item.Path)
     }
 }
 
@@ -504,7 +559,8 @@ function Enter-AiSopWorkflowTransactionLocks {
         [string[]]$SessionKeys,
         [string]$OwnerPath,
         [object[]]$Targets,
-        [Nullable[DateTimeOffset]]$DeadlineUtc
+        [Nullable[DateTimeOffset]]$DeadlineUtc,
+        [string]$WorkspacePath = $null
     )
 
     $locks = @()
@@ -517,7 +573,7 @@ function Enter-AiSopWorkflowTransactionLocks {
     try {
         foreach ($sessionKey in $sessionOrder) {
             $sessionPath = Join-Path (
-                Get-AiSopWorkflowSessionRegistryRoot
+                Get-AiSopWorkflowSessionRegistryRoot -WorkspacePath $WorkspacePath
             ) "$sessionKey.json"
             $lockPath = "$sessionPath.lock"
             $locks += [pscustomobject]@{
@@ -632,7 +688,8 @@ function Invoke-AiSopWorkflowPausePoint {
 function Resolve-AiSopWorkflowTransactionJournal {
     param(
         [string]$JournalPath,
-        [Nullable[DateTimeOffset]]$DeadlineUtc
+        [Nullable[DateTimeOffset]]$DeadlineUtc,
+        [string]$WorkspacePath = $null
     )
 
     Assert-AiSopWorkflowDeadline $DeadlineUtc
@@ -641,7 +698,8 @@ function Resolve-AiSopWorkflowTransactionJournal {
         -SessionKeys @($journal.sessionKeys) `
         -OwnerPath ([string]$journal.ownerPath) `
         -Targets @($journal.targets) `
-        -DeadlineUtc $DeadlineUtc
+        -DeadlineUtc $DeadlineUtc `
+        -WorkspacePath $WorkspacePath
     try {
         $rollForward = [string]$journal.phase -eq "COMMITTED"
         if ([string]$journal.phase -eq "PREPARED") {
@@ -653,7 +711,7 @@ function Resolve-AiSopWorkflowTransactionJournal {
                         -Path ([string]$target.path) `
                         -SchemaId ([string]$target.schemaId)
                 } catch {
-                    throw "WORKFLOW_TRANSACTION_INDETERMINATE"
+                    Throw-AiSopWorkflowTransactionIndeterminate -JournalPath $JournalPath
                 }
                 $matchesBefore = Test-AiSopWorkflowSnapshotEqual `
                     -Left $current `
@@ -662,7 +720,7 @@ function Resolve-AiSopWorkflowTransactionJournal {
                     -Left $current `
                     -Right $target.after
                 if (-not $matchesBefore -and -not $matchesAfter) {
-                    throw "WORKFLOW_TRANSACTION_INDETERMINATE"
+                    Throw-AiSopWorkflowTransactionIndeterminate -JournalPath $JournalPath
                 }
                 $currentStates += [pscustomobject]@{
                     Before = $matchesBefore
@@ -699,7 +757,7 @@ function Resolve-AiSopWorkflowTransactionJournal {
                 -Path ([string]$target.path) `
                 -SchemaId ([string]$target.schemaId)
             if (-not (Test-AiSopWorkflowSnapshotEqual $actual $expected)) {
-                throw "WORKFLOW_TRANSACTION_INDETERMINATE"
+                Throw-AiSopWorkflowTransactionIndeterminate -JournalPath $JournalPath
             }
         }
         try {
@@ -721,14 +779,15 @@ function Invoke-AiSopWorkflowTransactionRecovery {
     [CmdletBinding()]
     param(
         [Nullable[DateTimeOffset]]$DeadlineUtc,
-        [int64]$RemainingMilliseconds = -1
+        [int64]$RemainingMilliseconds = -1,
+        [string]$WorkspacePath = $null
     )
 
     if ($RemainingMilliseconds -eq 0) {
         throw "WORKFLOW_DEADLINE_EXCEEDED"
     }
     Assert-AiSopWorkflowDeadline $DeadlineUtc
-    $root = Get-AiSopWorkflowTransactionRegistryRoot
+    $root = Get-AiSopWorkflowTransactionRegistryRoot -WorkspacePath $WorkspacePath
     try {
         [System.IO.Directory]::CreateDirectory($root) | Out-Null
         $journals = @(
@@ -749,15 +808,12 @@ function Invoke-AiSopWorkflowTransactionRecovery {
             if ([System.IO.File]::Exists($journalPath)) {
                 $results += Resolve-AiSopWorkflowTransactionJournal `
                     -JournalPath $journalPath `
-                    -DeadlineUtc $DeadlineUtc
+                    -DeadlineUtc $DeadlineUtc `
+                    -WorkspacePath $WorkspacePath
             }
         } finally {
             $journalLock.Dispose()
-            try {
-                [System.IO.File]::Delete($journalLockPath)
-            } catch {
-                # Lock-file cleanup is not authorization state.
-            }
+            Remove-AiSopWorkflowLockFile -LockPath $journalLockPath
         }
     }
     return @($results)
@@ -795,15 +851,19 @@ function Invoke-AiSopWorkflowTransaction {
 
         [Nullable[DateTimeOffset]]$DeadlineUtc,
 
-        [switch]$LocksAlreadyHeld
+        [switch]$LocksAlreadyHeld,
+
+        [string]$WorkspacePath = $null
     )
 
     Assert-AiSopWorkflowDeadline $DeadlineUtc
     if (-not $LocksAlreadyHeld) {
-        Invoke-AiSopWorkflowTransactionRecovery -DeadlineUtc $DeadlineUtc |
+        Invoke-AiSopWorkflowTransactionRecovery `
+            -DeadlineUtc $DeadlineUtc `
+            -WorkspacePath $WorkspacePath |
             Out-Null
     }
-    $root = Get-AiSopWorkflowTransactionRegistryRoot
+    $root = Get-AiSopWorkflowTransactionRegistryRoot -WorkspacePath $WorkspacePath
     $journalPath = Join-Path $root "$TransactionId.json"
     if ([System.IO.File]::Exists($journalPath)) {
         throw "WORKFLOW_TRANSACTION_EXISTS"
@@ -896,7 +956,8 @@ function Invoke-AiSopWorkflowTransaction {
             -SessionKeys $SessionKeys `
             -OwnerPath ([System.IO.Path]::GetFullPath($OwnerPath)) `
             -Targets $normalizedTargets `
-            -DeadlineUtc $DeadlineUtc
+            -DeadlineUtc $DeadlineUtc `
+            -WorkspacePath $WorkspacePath
     }
     try {
         $journalTargets = @()
@@ -966,7 +1027,7 @@ function Invoke-AiSopWorkflowTransaction {
                 -Path ([string]$target.path) `
                 -SchemaId ([string]$target.schemaId)
             if (-not (Test-AiSopWorkflowSnapshotEqual $actual $target.after)) {
-                throw "WORKFLOW_TRANSACTION_INDETERMINATE"
+                Throw-AiSopWorkflowTransactionIndeterminate -JournalPath $journalPath
             }
         }
         [System.IO.File]::Delete($journalPath)
@@ -991,7 +1052,9 @@ function Get-AiSopWorkflowTransactionProof {
 
         [Nullable[DateTimeOffset]]$DeadlineUtc,
 
-        [int64]$RemainingMilliseconds = -1
+        [int64]$RemainingMilliseconds = -1,
+
+        [string]$WorkspacePath = $null
     )
 
     if ($RemainingMilliseconds -eq 0) {
@@ -1000,7 +1063,7 @@ function Get-AiSopWorkflowTransactionProof {
     try {
         Assert-AiSopWorkflowDeadline $DeadlineUtc
         $journalPath = Join-Path (
-            Get-AiSopWorkflowTransactionRegistryRoot
+            Get-AiSopWorkflowTransactionRegistryRoot -WorkspacePath $WorkspacePath
         ) "$TransactionId.json"
         if ([System.IO.File]::Exists($journalPath)) {
             $journal = Read-AiSopWorkflowTransactionJournal $journalPath
@@ -1012,17 +1075,17 @@ function Get-AiSopWorkflowTransactionProof {
 
         $registries = @(
             [pscustomobject]@{
-                Root = Get-AiSopWorkflowSessionRegistryRoot
+                Root = Get-AiSopWorkflowSessionRegistryRoot -WorkspacePath $WorkspacePath
                 SchemaId = "SESSION"
                 Property = "lastTransactionId"
             },
             [pscustomobject]@{
-                Root = Get-AiSopWorkflowOwnerRegistryRoot
+                Root = Get-AiSopWorkflowOwnerRegistryRoot -WorkspacePath $WorkspacePath
                 SchemaId = "OWNER"
                 Property = "lastTransactionId"
             },
             [pscustomobject]@{
-                Root = Get-AiSopWorkflowCommandGrantRegistryRoot
+                Root = Get-AiSopWorkflowCommandGrantRegistryRoot -WorkspacePath $WorkspacePath
                 SchemaId = "COMMAND_GRANT"
                 Property = "transactionId"
             }

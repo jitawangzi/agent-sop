@@ -25,52 +25,91 @@ if (-not (Get-Command Get-AiSopWorkflowSessionKey -ErrorAction SilentlyContinue)
     . $script:GuardSessionScript
 }
 
-function Test-AiSopGuardEscapeEnabled {
-    [CmdletBinding()]
-    param()
+function Get-AiSopGuardRoot {
+    if (-not [string]::IsNullOrWhiteSpace($env:AI_SOP_GUARD_ROOT)) {
+        return [System.IO.Path]::GetFullPath($env:AI_SOP_GUARD_ROOT)
+    }
+    if (-not [string]::IsNullOrWhiteSpace($script:DispatcherClaudeRoot)) {
+        return $script:DispatcherClaudeRoot
+    }
+    return Split-Path -Parent $PSScriptRoot
+}
 
-    # Guard manual switch. Three ways to disable the production-edit guard:
-    #   1. env AI_SOP_SKIP_OWNER_GUARD=1 (or legacy SERVER_NEW_SKIP_OWNER_GUARD=1)
-    #      (per-process; hook subprocesses inherit it only if set at user level before AI tool starts).
-    #   2. switch file at the SOP root (reliable across hook subprocesses):
-    #      create  .ai-sop/.guard-disabled   to disable guard
-    #      remove  .ai-sop/.guard-disabled   to re-enable guard
-    #   3. one-time token (preferred for scoped bypass): a JSON file at
-    #      .ai-sop/.guard-token.json with {feature, reason, operator, expiresAt}.
-    #      Guard honors it only if feature matches the active owner AND not
-    #      expired. Auto-expires; won't leak to other features/tasks.
-    # Env is authoritative: when set to "1" escape; when set to any other
-    # explicit value (e.g. "0") do NOT escape (even if the switch file exists).
-    # Only when env is unset/empty does the switch file / token get consulted.
+function Test-AiSopGuardEnvSkipEnabled {
     $envSkip = if (-not [string]::IsNullOrEmpty($env:AI_SOP_SKIP_OWNER_GUARD)) {
         $env:AI_SOP_SKIP_OWNER_GUARD
     } else {
         $env:SERVER_NEW_SKIP_OWNER_GUARD
     }
-    if ($envSkip -eq "1") { return $true }
-    if (-not [string]::IsNullOrEmpty($envSkip) -and $envSkip -ne "1") { return $false }
+    return $envSkip -eq "1"
+}
 
-    $guardRoot = if (-not [string]::IsNullOrWhiteSpace($script:DispatcherClaudeRoot)) {
-        $script:DispatcherClaudeRoot
+function Test-AiSopGuardEnvSkipDenied {
+    $envSkip = if (-not [string]::IsNullOrEmpty($env:AI_SOP_SKIP_OWNER_GUARD)) {
+        $env:AI_SOP_SKIP_OWNER_GUARD
     } else {
-        Split-Path -Parent $PSScriptRoot
+        $env:SERVER_NEW_SKIP_OWNER_GUARD
     }
-    $switchPath = Join-Path $guardRoot ".guard-disabled"
-    if (Test-Path -LiteralPath $switchPath) { return $true }
-    # One-time token: honored only if not expired (feature check is done
-    # by caller via the decision's owner context; here we only check expiry).
-    $tokenPath = Join-Path $guardRoot ".guard-token.json"
-    if (Test-Path -LiteralPath $tokenPath -PathType Leaf) {
-        try {
-            $token = Get-Content -LiteralPath $tokenPath -Raw | ConvertFrom-Json
-            $expires = [DateTimeOffset]::Parse([string]$token.expiresAt)
-            if ([DateTimeOffset]::UtcNow -lt $expires) {
-                return $true
-            }
-            # Expired token: auto-delete to prevent stale bypass.
+    return (-not [string]::IsNullOrEmpty($envSkip) -and $envSkip -ne "1")
+}
+
+function Test-AiSopGuardEscapeEnabled {
+    [CmdletBinding()]
+    param()
+
+    # Global T1 escape is env or the human-created .guard-disabled file.
+    # Feature tokens are NOT global: they are checked in Get-AiSopGuardDecision
+    # against the session-bound feature.
+    if (Test-AiSopGuardEnvSkipEnabled) { return $true }
+    if (Test-AiSopGuardEnvSkipDenied) { return $false }
+
+    $switchPath = Join-Path (Get-AiSopGuardRoot) ".guard-disabled"
+    return (Test-Path -LiteralPath $switchPath)
+}
+
+function Get-AiSopGuardTokenRecord {
+    if (Test-AiSopGuardEnvSkipDenied) {
+        return $null
+    }
+    $tokenPath = Join-Path (Get-AiSopGuardRoot) ".guard-token.json"
+    if (-not (Test-Path -LiteralPath $tokenPath -PathType Leaf)) {
+        return $null
+    }
+    try {
+        $token = Get-Content -LiteralPath $tokenPath -Raw | ConvertFrom-Json
+        $expires = [DateTimeOffset]::Parse([string]$token.expiresAt)
+        if ([DateTimeOffset]::UtcNow -ge $expires) {
             Remove-Item -LiteralPath $tokenPath -Force -ErrorAction SilentlyContinue
-        } catch {
-            # Corrupt token: ignore (fail-safe = guard stays on).
+            return $null
+        }
+        $feature = [string]$token.feature
+        if ([string]::IsNullOrWhiteSpace($feature)) {
+            return $null
+        }
+        return [pscustomobject]@{
+            Feature = $feature
+            Path = $tokenPath
+        }
+    } catch {
+        return $null
+    }
+}
+
+function Test-AiSopGuardGovernanceSwitchPath {
+    param([string]$Path)
+
+    if ([string]::IsNullOrWhiteSpace($Path)) {
+        return $false
+    }
+    $guardRoot = [System.IO.Path]::GetFullPath((Get-AiSopGuardRoot))
+    $candidates = @(
+        [System.IO.Path]::GetFullPath((Join-Path $guardRoot ".guard-disabled")),
+        [System.IO.Path]::GetFullPath((Join-Path $guardRoot ".guard-token.json"))
+    )
+    $physical = [System.IO.Path]::GetFullPath($Path)
+    foreach ($candidate in $candidates) {
+        if ($physical.Equals($candidate, [System.StringComparison]::OrdinalIgnoreCase)) {
+            return $true
         }
     }
     return $false
@@ -133,15 +172,15 @@ function Get-AiSopProductionPatterns {
     }
 
     return @(
-        "^(?i:src)(?:\\|/|$)",
-        "^(?i:pkg)(?:\\|/|$)",
-        "^(?i:cmd)(?:\\|/|$)",
-        "^(?i:internal)(?:\\|/|$)",
-        "^(?i:app)(?:\\|/|$)",
-        "^(?i:lib)(?:\\|/|$)",
-        "^(?i:WebRoot)(?:\\|/|$)",
-        "^(?i:config)(?:\\|/|$)",
-        "^(?i:include)(?:\\|/|$)"
+        "^(?i:src)(?:/|$)",
+        "^(?i:pkg)(?:/|$)",
+        "^(?i:cmd)(?:/|$)",
+        "^(?i:internal)(?:/|$)",
+        "^(?i:app)(?:/|$)",
+        "^(?i:lib)(?:/|$)",
+        "^(?i:WebRoot)(?:/|$)",
+        "^(?i:config)(?:/|$)",
+        "^(?i:include)(?:/|$)"
     )
 }
 
@@ -158,8 +197,12 @@ function Test-AiSopGuardProductionPath {
         [System.IO.Path]::GetFullPath($WorkspaceRoot),
         [System.IO.Path]::GetFullPath($Path)
     )
-    $normalized = ($relative -replace "/", "\").TrimStart(".", "\")
-    
+    $normalized = ($relative -replace "\\", "/").Trim()
+    while ($normalized.StartsWith("./")) {
+        $normalized = $normalized.Substring(2)
+    }
+    $normalized = $normalized.TrimStart("/")
+
     $patterns = Get-AiSopProductionPatterns -WorkspaceRoot $WorkspaceRoot
     foreach ($pattern in $patterns) {
         if ($normalized -match $pattern) {
@@ -214,6 +257,14 @@ function Get-AiSopGuardTargetDecision {
         foreach ($target in $targets) {
             $lexical = [System.IO.Path]::GetFullPath([string]$target)
             if (
+                (Test-AiSopGuardGovernanceSwitchPath -Path $lexical) -and
+                -not (Test-AiSopGuardEnvSkipEnabled)
+            ) {
+                return New-AiSopGuardDecision `
+                    -Decision DENY `
+                    -ReasonCode GOVERNANCE_SWITCH_PROTECTED
+            }
+            if (
                 Test-AiSopGuardProductionPath `
                     -Path $lexical `
                     -WorkspaceRoot $workspace
@@ -227,6 +278,14 @@ function Get-AiSopGuardTargetDecision {
                     -Root $workspace
             )) {
                 throw "EDIT_PATH_OUTSIDE_WORKSPACE"
+            }
+            if (
+                (Test-AiSopGuardGovernanceSwitchPath -Path $physical) -and
+                -not (Test-AiSopGuardEnvSkipEnabled)
+            ) {
+                return New-AiSopGuardDecision `
+                    -Decision DENY `
+                    -ReasonCode GOVERNANCE_SWITCH_PROTECTED
             }
             if (
                 Test-AiSopGuardProductionPath `
@@ -294,7 +353,8 @@ function Read-AiSopGuardOwner {
 }
 
 function Test-AiSopGuardTransactionJournalPresent {
-    $root = Get-AiSopWorkflowTransactionRegistryRoot
+    param([string]$WorkspacePath = $null)
+    $root = Get-AiSopWorkflowTransactionRegistryRoot -WorkspacePath $WorkspacePath
     if (-not [System.IO.Directory]::Exists($root)) {
         if ([System.IO.File]::Exists($root)) {
             throw "WORKFLOW_REGISTRY_IO_ERROR"
@@ -352,7 +412,9 @@ function Get-AiSopExactOwnerDecision {
             -Agent ([string]$HookEvent.agent) `
             -NativeSessionId ([string]$HookEvent.nativeSessionId) `
             -WorkspacePath $workspace
-        $sessionPath = Get-AiSopWorkflowSessionPath -SessionKey $sessionKey
+        $sessionPath = Get-AiSopWorkflowSessionPath `
+            -SessionKey $sessionKey `
+            -WorkspacePath $workspace
         $sessionLockPath = "$sessionPath.lock"
         $sessionLock = Enter-AiSopWorkflowFileLock `
             -LockPath $sessionLockPath `
@@ -393,7 +455,7 @@ function Get-AiSopExactOwnerDecision {
             throw "SESSION_BINDING_INVALID"
         }
 
-        $ownerRoot = Get-AiSopWorkflowOwnerRegistryRoot
+        $ownerRoot = Get-AiSopWorkflowOwnerRegistryRoot -WorkspacePath $workspace
         $ownerPath = Join-Path (
             $ownerRoot
         ) (([string]$session.boundFeature).ToLowerInvariant() + ".json")
@@ -406,7 +468,7 @@ function Get-AiSopExactOwnerDecision {
         # overlap this exact session/owner lock pair. Its durable journal is
         # therefore evidence of an incomplete or unrelated half-state, and the
         # conservative authorization result is deny.
-        if (Test-AiSopGuardTransactionJournalPresent) {
+        if (Test-AiSopGuardTransactionJournalPresent -WorkspacePath $workspace) {
             throw "WORKFLOW_TRANSACTION_PENDING"
         }
 
@@ -476,19 +538,11 @@ function Get-AiSopExactOwnerDecision {
     } finally {
         if ($null -ne $ownerLock) {
             $ownerLock.Dispose()
-            try {
-                [System.IO.File]::Delete($ownerLockPath)
-            } catch {
-                # Lock-file cleanup is not authorization state.
-            }
+            Remove-AiSopWorkflowLockFile -LockPath $ownerLockPath
         }
         if ($null -ne $sessionLock) {
             $sessionLock.Dispose()
-            try {
-                [System.IO.File]::Delete($sessionLockPath)
-            } catch {
-                # Lock-file cleanup is not authorization state.
-            }
+            Remove-AiSopWorkflowLockFile -LockPath $sessionLockPath
         }
     }
 }
@@ -511,6 +565,45 @@ function Get-AiSopGuardDecision {
             -ReasonCode EVENT_HINT_MISMATCH
     }
     $targetDecision = Get-AiSopGuardTargetDecision -HookEvent $HookEvent
+    if ($targetDecision.ReasonCode -eq "GOVERNANCE_SWITCH_PROTECTED") {
+        return $targetDecision
+    }
+
+    $token = Get-AiSopGuardTokenRecord
+    if ($null -ne $token) {
+        $boundFeature = ""
+        try {
+            $workspace = Resolve-PhysicalPathIdentity `
+                -Path ([string]$HookEvent.workspacePath)
+            $sessionKey = Get-AiSopWorkflowSessionKey `
+                -Agent ([string]$HookEvent.agent) `
+                -NativeSessionId ([string]$HookEvent.nativeSessionId) `
+                -WorkspacePath $workspace
+            $sessionPath = Get-AiSopWorkflowSessionPath `
+                -SessionKey $sessionKey `
+                -WorkspacePath $workspace
+            $session = Read-AiSopWorkflowSessionRecord `
+                -SessionPath $sessionPath `
+                -ExpectedSessionKey $sessionKey
+            $boundFeature = [string]$session.boundFeature
+        } catch {
+            $boundFeature = ""
+        }
+        if (
+            -not [string]::IsNullOrWhiteSpace($boundFeature) -and
+            $boundFeature.Equals(
+                [string]$token.Feature,
+                [System.StringComparison]::OrdinalIgnoreCase
+            )
+        ) {
+            return New-AiSopGuardDecision `
+                -Decision ALLOW `
+                -ReasonCode T1_TOKEN_ESCAPE `
+                -RequiresExactOwner $false `
+                -IsProduction $targetDecision.IsProduction
+        }
+    }
+
     if (-not $targetDecision.RequiresExactOwner) {
         return $targetDecision
     }

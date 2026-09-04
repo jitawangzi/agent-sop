@@ -127,6 +127,16 @@
       "legacySha256": "",
       "encoding": "utf8-no-bom",
       "lineEnding": "lf"
+    },
+    {
+      "source": "distribution/templates/hooks/claude-settings.json",
+      "target": ".claude/settings.json",
+      "sourceBlobSha256": "58c28b0c307927e34b92f660e57e858b9be8f5dafed8e829262b91196f6e1874",
+      "targetSha256": "58c28b0c307927e34b92f660e57e858b9be8f5dafed8e829262b91196f6e1874",
+      "legacySha256": "",
+      "encoding": "utf8-no-bom",
+      "lineEnding": "lf",
+      "verifyMode": "json-hooks-merge"
     }
   ]
 }

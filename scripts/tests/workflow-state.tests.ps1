@@ -4391,6 +4391,13 @@ Then:
     if ($verifyNoReview -notmatch "compile-evidence\.json" -or $verifyNoReview -notmatch "not compile proof") {
         throw "VerifyCompletion T3 must reject build/classes as compile proof. Output: $verifyNoReview"
     }
+    $checkNoEvidence = & $ScriptPath -Operation CheckCompletion -Path (Join-Path $p0Spec "00_workflow_state.json") 2>&1 | Out-String
+    if ($checkNoEvidence -match "编译产物存在") {
+        throw "CheckCompletion must not treat build/classes as compile proof. Output: $checkNoEvidence"
+    }
+    if ($checkNoEvidence -notmatch "\[X\].*compile-evidence\.json" -or $checkNoEvidence -notmatch "\[X\].*design-reviewer") {
+        throw "CheckCompletion T3 must flag missing compile-evidence and 07_design_review. Output: $checkNoEvidence"
+    }
 
     Write-TestDesignReview -SpecDir $p0Spec -Status "NEEDS_FIX"
     $p0JavaDir = Join-Path $TestRoot "test\quality"

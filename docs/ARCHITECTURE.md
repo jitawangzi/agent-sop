@@ -215,7 +215,7 @@ AI 编码工具百花齐放（Claude Code、Copilot、Cursor、Antigravity、Pi�
 - 旧功能一律豁免开关：掩盖规格债，否决。
 - 用 `build/classes` 当编译证明：过期产物假绿，否决。
 
-**价值**：假绿口从「口头说审查过/编译过」变成功能目录里的可读文件。
+**价值**：假绿口从「口头说审查过/编译过」变成功能目录里的可读文件；过期证据用 digest / 06 SHA 绑死。完整分层、机器 vs 自报、明确不做的下一刀见 [`docs/QUALITY_GATES.md`](QUALITY_GATES.md)。
 
 ---
 
@@ -230,6 +230,7 @@ AI 编码工具百花齐放（Claude Code、Copilot、Cursor、Antigravity、Pi�
 5. **能力准入不静默降级**：未知能力默认 BLOCKED，明确输出缺口，不偷偷降级跑 T3。
 6. **lock 引用已发布 commit**：禁 branch/tag/latest/未发布 SHA，保证可复现。
 7. **分发可复现**：fresh clone + Install = lock commit + 一致投影，0 无映射 gitlink。
+8. **编译看证据文件**：T3 Complete 认 `compile-evidence.json`（exitCode=0 + 当前工作区 digest），不把构建目录存在当证明。
 
 ---
 
@@ -247,6 +248,7 @@ AI 编码工具百花齐放（Claude Code、Copilot、Cursor、Antigravity、Pi�
 │   ├── scripts/                门禁/流程/capability/pi-adapter(真源)
 │   ├── schemas/                流程契约 schema(workflow-*/hook-*/harness-capability)
 │   ├── workflows/              标准流程编排
+│   ├── docs/                   ARCHITECTURE / QUALITY_GATES
 │   ├── distribution/           installer + 投影模板 + capability/certification
 │   ├── config/                 流程状态机
 │   └── settings.json           标准模板(hooks 指 .ai-sop/scripts)
@@ -368,6 +370,7 @@ AI 编码工具百花齐放（Claude Code、Copilot、Cursor、Antigravity、Pi�
 | P4 | 中立核心抽取（不做，数据驱动） |
 
 ## 十、相关文档
+- [`docs/QUALITY_GATES.md`](QUALITY_GATES.md)（质量保证分层：机器门禁 vs 自报、证据绑定、明确不做）
 - 《AI SOP 使用指南》（使用者）
 - `.ai-sop/SUPERPOWERS_MANUAL.md`（Superpowers 流程）
 - `.ai-workspace/specs/features/AiSopPortabilityP0/06_design_contract.md`（P0 完整契约 DC-001~057）

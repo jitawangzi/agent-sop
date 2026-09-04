@@ -460,7 +460,7 @@ Superpowers 会校验当前文件、写入归属与确认状态，然后自动�
 | 整体收尾 | 全部 Task 后 | 流程合规 + 整体一致性 | Superpowers `requesting-code-review` |
 | 全功能审计（可选手动） | 交付后按需 | 跨任务契约一致 + 整体游戏状态正确性 | `workflow-orchestrator` AUDIT_ONLY 全盘（见下） |
 
-- 单任务内审：`implementation-auditor` 覆盖实现/契约合规；状态机、奖励结算、多资源扣除、兼容补偿、重试幂等等高风险项路由 `logic-auditor`。审查发现问题 → 修复 → 重新审查 → 通过才标记完成。
+- 单任务内审：`implementation-auditor` 覆盖实现/契约合规；状态机、奖励结算、多资源扣除、兼容补偿、重试幂等等高风险项路由 `logic-auditor`。审查发现问题 → 修复 → 重新审查 → 通过才标记完成。**`VerifyCompletion` 不读这两份报告**（仍为 subagent 回传自报）；机器硬门禁分层见 `docs/QUALITY_GATES.md`。
 - 业务代码修复后必须重新编译、重新审查、重新验证。
 - QA 完成标准是已规划的覆盖场景返回成功，而不是仅编译通过或服务启动成功。
 
@@ -541,12 +541,12 @@ pwsh -NoProfile -File .\.ai-sop\scripts\run-all-tests.ps1
 
 ## 完成定义与交付闭环
 
-各档位完成条件与门禁硬指标统一以 [AGENTS.md「完成定义」](../AGENTS.md) 为单一真源。
+各档位完成条件与门禁硬指标统一以 [AGENTS.md「完成定义」](../AGENTS.md) 为操作清单；分层设计（机器 vs 自报、证据绑定）见 [QUALITY_GATES.md](docs/QUALITY_GATES.md)。
 
 ### 交付闭环时序（硬时序约束）
 
 ```text
-阶段 1（验证）：AI 运行 VerifyCompletion（硬门禁 100% 校验门禁 APPROVED、SHA、测试覆盖矩阵无占位；仅类型/公共分发扩展或风险无法评估时要求 04_change_impact 有效；类型/公共分发扩展时再校验 8 切面完成度、证据/兄弟键与表征方法体，编译产物）
+阶段 1（验证）：AI 运行 VerifyCompletion（硬门禁：01/06 APPROVED+SHA、覆盖矩阵无占位、07_design_review PASS/PASS_WITH_WARNINGS 且审查对象 sha256 匹配当前 06、compile-evidence exitCode=0 且 workingTreeDigest 匹配当前工作区；仅类型/公共分发扩展或风险无法评估时要求 04；类型/公共分发扩展时再校验 8 切面与表征方法体。implementation-auditor/logic-auditor 仍为自报）
   ↓
 阶段 2（释放锁）：AI 运行 workflow-owner.ps1 -Operation Complete 释放工作流开发锁
   ↓

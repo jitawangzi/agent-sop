@@ -26,7 +26,7 @@ description: 独立审计测试计划的条款覆盖、设计方法、断言可�
 
 ## Audit Procedure
 
-1. 使用 `workflow-state.ps1 -Operation ValidateTestCoverage` 校验 Schema、产物 Hash、条款引用、双向 Case ID、覆盖闭环和 P0/P1 自动化映射。
+1. 使用 `workflow-state.ps1 -Operation ValidateTestCoverage` 校验 Schema、产物 Hash、条款引用、双向 Case ID、覆盖闭环和 P0/P1 自动化映射。机器门禁分层见 `docs/QUALITY_GATES.md`。
 2. 逐项检查所有 `BR-*`、`EX-*`、`AC-*`、`DC-*`、`DR-*`、`TW-*` 是否由能验证其语义的 Case 覆盖，禁止仅因引用了 ID 就判定有效覆盖。
    - 豁免必须已在对应批准文档的条款行声明 `[TEST-EXEMPT: 原因]`，且覆盖契约中的原因与审批人完全匹配；QA 新增的孤立豁免一律拒绝。
 3. 检查等价类、边界值、决策表、状态迁移、异常、幂等、并发、恢复和兼容方法是否按功能风险适用；缺失时必须有可验证的不适用理由。

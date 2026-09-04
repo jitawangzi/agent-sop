@@ -52,5 +52,6 @@ pwsh -NoProfile -File ./scripts/run-all-tests.ps1
 ## 四、文档与技能规范
 
 - **用户操作手册**：SOP 操作指南为 `SUPERPOWERS_MANUAL.md`，工作流适配器为 `workflows/superpowers-adapter.md`。
+- **质量保证设计**：机器门禁 vs 自报、证据绑定、明确不做见 `docs/QUALITY_GATES.md`。
 - **模板单一真源**：下游宿主工程所使用的 Agent 指令模板维护在 `distribution/templates/root/AGENTS.md`。
 - **专家 Skill**：`skills/` 下的专家 Skill（`implementation-engine`, `logic-auditor`, `design-reviewer` 等）仅定义角色职责与通用检查清单，不硬编码具体业务专有名词。

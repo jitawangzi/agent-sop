@@ -5494,7 +5494,6 @@ switch ($Operation) {
         $checks = [System.Collections.Generic.List[string]]::new()
         
         # Workspace root resolution (search upward for .ai-workspace, .git, or .svn)
-        $specFullPath = [System.IO.Path]::GetFullPath($specDir)
         $wsRoot = Resolve-AiSopWorkspaceRoot -StartPath $specDir
         if ([string]::IsNullOrWhiteSpace($wsRoot)) {
             $checks.Add("[X] 工作区解析失败: spec directory 未位于有效工作区内 (.ai-workspace / .git / .svn)")
@@ -5521,30 +5520,35 @@ switch ($Operation) {
             $covOk = Test-Path -LiteralPath $covPath -PathType Leaf
             $checks.Add("[$(if($covOk){'v'}else{'X'})] 测试覆盖矩阵存在")
         }
-        # 3. Compile (check candidate roots for build/ classes/ target artifacts).
-        $specParent2 = Split-Path -Parent (Split-Path -Parent $specFullPath)
-        $specParent4 = Split-Path -Parent (Split-Path -Parent $specParent2)
-        $candidateRoots = @($wsRoot, $specParent2, $specParent4) | Where-Object { -not [string]::IsNullOrWhiteSpace($_) }
-        $compileOk = $false
-        foreach ($r in $candidateRoots) {
-            if ((Test-Path -LiteralPath (Join-Path $r "build/classes") -PathType Container) -or
-                (Test-Path -LiteralPath (Join-Path $r "build/libs") -PathType Container) -or
-                (Test-Path -LiteralPath (Join-Path $r "build") -PathType Container) -or
-                (Test-Path -LiteralPath (Join-Path $r "classes") -PathType Container) -or
-                (Test-Path -LiteralPath (Join-Path $r "target/classes") -PathType Container) -or
-                (Test-Path -LiteralPath (Join-Path $r "WebRoot/WEB-INF/classes") -PathType Container)) {
-                $compileOk = $true
-                break
-            }
-            if (Test-Path -LiteralPath $r -PathType Container) {
-                $subClasses = Get-ChildItem -LiteralPath $r -Directory -Depth 4 -Filter "classes" -ErrorAction SilentlyContinue
-                if ($subClasses.Count -gt 0) {
-                    $compileOk = $true
-                    break
-                }
+        # 3. Compile + design-review evidence (same signals as VerifyCompletion; diagnostic only).
+        if ($effectiveTier -eq "T3" -and (Test-Path -LiteralPath (Join-Path $specDir "06_design_contract.md") -PathType Leaf)) {
+            $reviewGate = Test-DesignReviewGate -SpecDir $specDir
+            if ($reviewGate.Ok) {
+                $checks.Add("[v] design-reviewer 报告 $($reviewGate.Status)")
+            } else {
+                $checks.Add("[X] design-reviewer 报告($($reviewGate.Problem))")
             }
         }
-        $checks.Add("[$(if($compileOk){'v'}else{'?'})] 编译产物存在(以构建/测试命令执行结果为准)")
+        $compileEvPath = Find-CommandEvidencePath -SpecDir $specDir -WorkspaceRoot $wsRoot -FileName "compile-evidence.json"
+        $needCompileDigest = ($effectiveTier -eq "T3") -or (-not [string]::IsNullOrWhiteSpace($compileEvPath))
+        $compileEvProblem = Get-CommandEvidenceProblem -EvidencePath $compileEvPath -RequireWorkingTreeDigest:$needCompileDigest -WorkspaceRoot $wsRoot -SpecDir $specDir
+        if ($effectiveTier -eq "T3") {
+            if ($compileEvProblem) {
+                $checks.Add("[X] 编译证据(compile-evidence.json: $compileEvProblem)")
+            } else {
+                $checks.Add("[v] 编译证据(compile-evidence.json exitCode=0)")
+            }
+        } elseif ($effectiveTier -eq "T2") {
+            if ([string]::IsNullOrWhiteSpace($compileEvPath)) {
+                $checks.Add("[?] 编译证据(无 compile-evidence.json)")
+            } elseif ($compileEvProblem) {
+                $checks.Add("[X] 编译证据(compile-evidence.json: $compileEvProblem)")
+            } else {
+                $checks.Add("[v] 编译证据(compile-evidence.json exitCode=0)")
+            }
+        } else {
+            $checks.Add("[?] 编译(以构建/测试命令执行结果为准；build/classes 不算证明)")
+        }
         
         # 4. VCS delivery surface state (3-state detection).
         if (-not [string]::IsNullOrWhiteSpace($wsRoot) -and (Test-Path -LiteralPath (Join-Path $wsRoot ".svn") -PathType Container)) {
@@ -5592,28 +5596,12 @@ switch ($Operation) {
         $checks = [System.Collections.Generic.List[string]]::new()
         
         # Workspace root resolution
-        $specFullPath = [System.IO.Path]::GetFullPath($specDir)
         $wsRoot = Resolve-AiSopWorkspaceRoot -StartPath $specDir
         if ([string]::IsNullOrWhiteSpace($wsRoot)) {
             $failures.Add("WORKSPACE_UNRESOLVED: unable to resolve workspace root (.ai-workspace, .git, or .svn) for spec directory '$specDir'.")
             $checks.Add("[X] 工作区解析失败: spec directory 未位于有效工作区内")
         }
 
-        $candidateRoots = if (-not [string]::IsNullOrWhiteSpace($wsRoot)) { @($wsRoot) } else { @() }
-        $compileOk = $false
-        foreach ($r in $candidateRoots) {
-            if ((Test-Path -LiteralPath (Join-Path $r "build/classes") -PathType Container) -or
-                (Test-Path -LiteralPath (Join-Path $r "build/libs") -PathType Container) -or
-                (Test-Path -LiteralPath (Join-Path $r "build") -PathType Container) -or
-                (Test-Path -LiteralPath (Join-Path $r "classes") -PathType Container) -or
-                (Test-Path -LiteralPath (Join-Path $r "target/classes") -PathType Container) -or
-                (Test-Path -LiteralPath (Join-Path $r "WebRoot/WEB-INF/classes") -PathType Container) -or
-                (Test-Path -LiteralPath (Join-Path $r "bin") -PathType Container) -or
-                (Test-Path -LiteralPath (Join-Path $r "out") -PathType Container)) {
-                $compileOk = $true
-                break
-            }
-        }
         if ($effectiveTier -eq "T3") {
             if (Test-Path -LiteralPath $Path -PathType Leaf) {
                 $st = Get-Content -Raw -LiteralPath $Path | ConvertFrom-Json

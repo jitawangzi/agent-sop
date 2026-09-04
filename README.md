@@ -9,7 +9,7 @@
   <a href="#-核心原理深度剖析"><img src="https://img.shields.io/badge/Architecture-Deterministic%20OS-orange.svg" alt="Architecture"></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/License-MIT-blue.svg" alt="License"></a>
   <a href="https://github.com/PowerShell/PowerShell"><img src="https://img.shields.io/badge/PowerShell-7.0%2B-blue.svg" alt="PowerShell"></a>
-  <a href="#-全量自动化测试矩阵"><img src="https://img.shields.io/badge/Tests-14%2F14%20PASS%20(100%25)-brightgreen.svg" alt="Tests"></a>
+  <a href="#-全量自动化测试矩阵"><img src="https://img.shields.io/badge/Tests-17%2F17%20PASS%20(100%25)-brightgreen.svg" alt="Tests"></a>
   <a href="#-支持的-ide--harness-矩阵"><img src="https://img.shields.io/badge/Harness-Claude%20Code%20|%20Antigravity%20|%20Cursor%20|%20Copilot-green.svg" alt="Harness"></a>
 </p>
 
@@ -32,7 +32,7 @@
 | 👤 **人类开发者（日常开发）** | 只需阅读下方的 [3 分钟快速上手](#-3-分钟快速上手)。日常 Bug 修复直接说 `快速修改：修复 X 的空指针`；新功能直接描述需求。不需要记复杂的命令或工单！ |
 | 🔄 **跨 IDE / 工具切换** | 在新 IDE（如从 Cursor 切到 Claude Code）直接说 `接着做 <Feature>` 或 `接管任务`，SOP 会自动完成会话绑定与租约交接。 |
 | 🤖 **AI 编码智能体 (Agent)** | 统一加载项目根目录下的 **`AGENTS.md`**（单一真源），严格执行 OS 物理拦截与门禁。 |
-| 🛠️ **框架维护与架构师** | 阅读 [底层原理剖析](#-核心原理深度剖析) 与 [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md)。 |
+| 🛠️ **框架维护与架构师** | 阅读 [底层原理剖析](#-核心原理深度剖析)、[`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) 与 [`docs/QUALITY_GATES.md`](docs/QUALITY_GATES.md)。 |
 
 ---
 
@@ -137,6 +137,7 @@ Agent-SOP 实现了一套**无中心依赖的文件级两阶段事务（2PC）�
   ```
 - 通过 `workflow-state.ps1 -Operation SyncCoverage` 自动生成机器可读的 `05_test_coverage.json` 覆盖矩阵。
 - 在交付前，机检引擎会逐条扫描 P0/P1 用例的 `setup`、`trigger`、`assertions` 映射。**只要有任何一条核心业务需求未被自动化测试断言覆盖，交付命令直接报 FAIL 阻断**。
+- T3 Complete 还要求 `07_design_review.md`（绑当前 06 SHA）与 `compile-evidence.json`（绑当前工作区 digest）。`build/classes` 不算编译过。分层见 [`docs/QUALITY_GATES.md`](docs/QUALITY_GATES.md)。
 
 ---
 
@@ -276,15 +277,18 @@ pwsh -NoProfile -File ./scripts/run-all-tests.ps1
 ```
 
 ```text
-Running 14 test suite(s) from ./scripts/tests (serial)
+Running 17 test suite(s) from ./scripts/tests (serial)
 ai-sop-installer.tests                     PASS
 doc-script-contract.tests                  PASS
 e2e-t2-smoke.tests                         PASS
 guard-production-edit.tests                PASS
 harness-capability.tests                   PASS
+harness-tool-matrix.tests                  PASS
+hidden-process.tests                       PASS
 hook-dedup.tests                           PASS
 hook-dispatcher.tests                      PASS
 hook-event-normalizer.tests                PASS
+review-mailbox.tests                       PASS
 run-all-tests.tests                        PASS
 workflow-command-grant.tests               PASS
 workflow-owner.tests                       PASS
@@ -292,7 +296,7 @@ workflow-session.tests                     PASS
 workflow-state.tests                       PASS
 workflow-transaction.tests                 PASS
 -----------------------------------------------
-14/14 test suites passed (100% GREEN)
+17/17 test suites passed (100% GREEN)
 ```
 
 ---

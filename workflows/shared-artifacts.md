@@ -4,6 +4,8 @@
 
 `.ai-workspace/specs/features/<FeatureName>/`
 
+质量保证分层（哪些产物进 `VerifyCompletion`、哪些仍是自报）见 `docs/QUALITY_GATES.md`。
+
 ## 规范产物
 
 | 产物 | 契约 |

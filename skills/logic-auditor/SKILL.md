@@ -25,6 +25,7 @@ description: 高风险逻辑审计官，专门细查方法级、分支级与链�
 - 本角色负责**高风险逻辑专项审计**
 - 两者不互相替代，推荐作为**两轮连续门禁**
 - 若本轮发现 `BLOCKER` 或 `FAIL` 级逻辑错误，不得进入 `quality-assurance`
+- T3 Complete **不读取**本角色报告文件（与 implementation-auditor 相同，见 `docs/QUALITY_GATES.md`）
 
 ## Portability Rule
 - skill 只定义逻辑审计职责、审计维度与门禁规则，**不固化具体项目的业务规则**

@@ -42,6 +42,8 @@ description: 实现审计官，负责检查代码是否遵守项目约束、设�
 - 本角色位于 `implementation-engine` 之后、`quality-assurance` 之前，是进入业务 QA 前的**全局合规守门环节**
 - 若功能存在复杂分支、状态流转、奖励结算、兼容补偿或高风险返回契约，必须在本角色后路由到 `logic-auditor` 做第二轮专项逻辑审计
 
+**与机器门禁**：本角色的结论必须返回 Superpowers controller。T3 `VerifyCompletion` **不读取**实现审计报告文件（无 08 产物不阻断 Complete）。这是有意的：设计审查（07 + 06 SHA）先在真 T3 上稳定，再考虑与 07 同构的实现审计文件。分层见 `docs/QUALITY_GATES.md`。审查隔离仍靠独立 subagent，禁止同上下文自审。
+
 ## Audit Modes
 
 ### Mode A: Single-Class Audit (单类审计)

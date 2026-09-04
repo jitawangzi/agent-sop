@@ -169,7 +169,7 @@ brainstorming（需求 → 确认 → design-architect 产出 06）
 
 ## 输出格式
 
-审查结论必须写入功能目录 `07_design_review.md`（`VerifyCompletion` 读取此文件；无文件、状态不是 PASS / PASS_WITH_WARNINGS、或 `审查对象 sha256` 与当前 `06_design_contract.md` 不一致则 T3 不能 Complete）。同时把同一份结论返回给 Superpowers controller（不写 `.ai-sop/runtime/`）。
+审查结论必须写入功能目录 `07_design_review.md`（`VerifyCompletion` 读取此文件；无文件、状态不是 PASS / PASS_WITH_WARNINGS、或 `审查对象 sha256` 与当前 `06_design_contract.md` 不一致则 T3 不能 Complete）。同时把同一份结论返回给 Superpowers controller（不写 `.ai-sop/runtime/`）。机器 vs 自报分层见 `docs/QUALITY_GATES.md`。
 
 ```
 ## 设计方案审查结论

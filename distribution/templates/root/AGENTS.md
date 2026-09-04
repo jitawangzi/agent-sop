@@ -329,7 +329,9 @@ pwsh -NoProfile -File .\.ai-sop\scripts\workflow-state.ps1 -Operation LintSpecs 
 
 ## 完成定义
 
-完成条件**按档位分**（`workflow-state.ps1 -Operation Status` 显示当前 tier + 门禁 SHA；`workflow-state.ps1 -Operation CheckCompletion -Path .../00_workflow_state.json` 输出机检 ASCII checklist（门禁 SHA/coverage/编译产物/SVN status）。**机检项 [v]=pass/[X]=fail，人工项 [?]=需 AI 验证**。AI 据下表 + CheckCompletion 结果逐项检查并报告）：
+质量保证分层（机器硬门禁 vs AI 自报、证据绑定、明确不做）见 `.ai-sop/docs/QUALITY_GATES.md`。下表是操作清单。
+
+完成条件**按档位分**（`workflow-state.ps1 -Operation Status` 显示当前 tier + 门禁 SHA；`workflow-state.ps1 -Operation CheckCompletion -Path .../00_workflow_state.json` 输出机检 ASCII checklist（门禁 SHA/coverage/`07`/`compile-evidence.json`/SVN status）。**机检项 [v]=pass/[X]=fail，人工项 [?]=需 AI 验证**。`CheckCompletion` 是诊断（exit 0）；硬失败只在 `VerifyCompletion` / `Complete`。AI 据下表 + CheckCompletion 结果逐项检查并报告）：
 
 **Complete 前硬门禁（VerifyCompletion 内嵌执行）**：`workflow-owner.ps1 -Operation Complete` 内部已嵌入 `VerifyCompletion` 硬门禁检验。在释放归属锁前，脚本会自动在后台先调用 `VerifyCompletion`：T3 严格校验门禁 APPROVED+SHA / coverage 无占位与 carrier 错误 / `07_design_review.md` 审查状态为 PASS 或 PASS_WITH_WARNINGS 且 `审查对象 sha256` 与当前 06 一致 / `compile-evidence.json`（exitCode=0 且 `workingTreeDigest` 匹配当前工作区，有 `build/classes` 不算编译过）；仅当 AssessRisk 命中 TYPE_EXTENSION/PUBLIC_ROUTING 或风险无法评估时才要求 `04_change_impact.json` 有效且未过期；类型或公共分发扩展时再校验 8 切面完成度 / feature-state 阶段非初始。T2：无 `test-evidence.json` 时测试项仍为自报；若该文件存在则必须 exitCode=0。实现中途用 `LintSpecs -Phase PLAN` 提前看缺 00/未覆盖条款/MISSING 载体。**若 VerifyCompletion 检验未通过（非 0），Complete 会直接抛出错误并拒绝释放归属锁**。AI 亦可事先调用 `workflow-state.ps1 -Operation VerifyCompletion -Path .../00_workflow_state.json` 提前确认是否达到完成标准。
 
@@ -340,7 +342,7 @@ pwsh -NoProfile -File .\.ai-sop\scripts\workflow-state.ps1 -Operation LintSpecs 
 | 1 | 需求与设计已确认 | `workflow-state.ps1 -Operation Status -Path .../00_workflow_state.json` | `gate=requirement status=APPROVED` + `gate=design status=APPROVED` + `hashMatch=MATCH` | `ResetApproval` + 修改 + `Approve` |
 | 2 | 测试计划与覆盖矩阵已创建/更新 | `workflow-state.ps1 -Operation ValidateTestCoverage -Path .../05_test_coverage.json` | `VALID` | 补 05_test_plan.md + 05_test_coverage.json |
 | 3 | 代码编译通过 | 功能目录 `compile-evidence.json`（command + exitCode=0 + executedAt + workingTreeDigest） | `VERIFY_COMPLETION_PASS` 含编译证据 | 重跑编译并写入证据（digest 须匹配当前工作区），目录存在不算 |
-| 4 | 必要全局审计与逻辑审计通过 | `implementation-auditor` + `logic-auditor` 报告 PASS | 审查报告 PASS | 修复发现 + 重审 |
+| 4 | 必要全局审计与逻辑审计通过 | `implementation-auditor` + `logic-auditor` 报告 PASS | **AI 据独立 subagent 报告自报**（`VerifyCompletion` 不读 08/09） | 修复发现 + 重审 |
 | 5 | 目标自动化场景通过 | `run-all-tests.ps1 -IncludeCompile` + 定向 JUnit | exit 0 | 修测试 + 重跑 |
 | 6 | 中途失败已修复、复审和回归 | 检查无未解决发现 | 无未解决发现 | 补修复 + 回归 |
 

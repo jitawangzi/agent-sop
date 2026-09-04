@@ -26,7 +26,7 @@ description: 独立审计测试计划的条款覆盖、设计方法、断言可�
 
 ## Audit Procedure
 
-1. 使用 `workflow-state.ps1 -Operation ValidateTestCoverage` 校验 Schema、产物 Hash、条款引用、双向 Case ID、覆盖闭环和 P0/P1 自动化映射。机器门禁分层见 `docs/QUALITY_GATES.md`。
+1. 使用 `workflow-state.ps1 -Operation ValidateTestCoverage` 校验 Schema、产物 Hash、条款引用、双向 Case ID、覆盖闭环和 P0/P1 自动化映射。覆盖 JSON 必须来自 `SyncCoverage`（计划侧有 `<!-- meta -->`），拒绝从空文件手写的骨架。机器门禁分层见 `docs/QUALITY_GATES.md`。
 2. 逐项检查所有 `BR-*`、`EX-*`、`AC-*`、`DC-*`、`DR-*`、`TW-*` 是否由能验证其语义的 Case 覆盖，禁止仅因引用了 ID 就判定有效覆盖。
    - 豁免必须已在对应批准文档的条款行声明 `[TEST-EXEMPT: 原因]`，且覆盖契约中的原因与审批人完全匹配；QA 新增的孤立豁免一律拒绝。
 3. 检查等价类、边界值、决策表、状态迁移、异常、幂等、并发、恢复和兼容方法是否按功能风险适用；缺失时必须有可验证的不适用理由。
@@ -34,7 +34,7 @@ description: 独立审计测试计划的条款覆盖、设计方法、断言可�
 4. **检查集合枚举全覆盖**：对"有限集合的逐元素行为"（商店每个商品、奖励每档、任务列表每个任务、活动配置每行等），若元素有独立配置或独立分支，必须枚举全覆盖每个元素；抽样未覆盖的须标为缺口。元素行为同质（同类玩家、同格式配置项校验）仍允许等价类抽样。判定标准：换一个元素可能改变预期结果 → 必须枚举到。
 5. **检查类型扩展差分回归**：若同功能目录存在 `04_change_impact.json` 且含 `behaviorVariants`/`legacyPaths`，则每个 `IDENTICAL_TO_LEGACY` 变体必须有 `legacyPaths[].regressionCaseId`，该 Case 必须出现在 `05_test_plan.md` / `05_test_coverage.json`；`invariants[].invariantId` 必须出现在某个 Case 的 `invariantIds`。缺差分回归不得以“新类型主路径已测”放行。
    - **表征与入口覆盖**：共享同一分发的 `IDENTICAL_TO_LEGACY` 必须**至少抽 1 个** `typeKey` 出现在某条 `testTypes` 含 `CHARACTERIZATION` 且 `variantKeys` 含该键的 Case；每个 `INTENTIONAL_DIFF` 必须出现在某条 `variantKeys`；每个 `04.entryPoints` 必须出现在某条 `entryPointIds`；`TOUCHED`/`INHERITED` 切面必须出现在某条 `facetIds`；QUERY 仍生效时至少一条 `bypassesPriorQuery=true`。核心 Act 必须是**已有**正式协议/正式业务入口，GM 只允许 Arrange/Observe/Cleanup。同质兄弟不必每个都有 Case；独立配置/独立分支未抽样 = 缺口。
-   - **表征必须打到旧分发**：`CHARACTERIZATION` Case 的 `automationCarrier#method` 方法体必须字面包含该 Case 的 `variantKeys` 与 `entryPointIds`，且含有调用（`(`）。空 `@Test`、只测新类型、或 Act 调 Helper 而不是公共入口 = `FAIL`。
+   - **表征必须打到旧分发**：`CHARACTERIZATION` Case 的 `automationCarrier#method` 必须是路径 A（JVM）测试方法，方法体必须字面包含该 Case 的 `variantKeys` 与 `entryPointIds`，且含有调用（`(`）。空 `@Test`、只测新类型、Act 调 Helper、或载体写成 JSP = `FAIL`。
    - **冷重载不是口头要求**：`CHARACTERIZATION` 必须有非 `N_A` 的 `assertions.persistenceColdReload`（含 `coldReloadEntity`），方法体必须再读存储。只断言回包 JSON = `FAIL`。
 6. 检查每个 `TC-*` 的前置条件、触发步骤、断言和清理是否可由另一个 AI 直接执行。
 7. 检查四层断言是否都使用 `{ target, operator, expected }`，或以 `operator=N_A` 给出明确不适用原因；拒绝空断言层和“正确”“正常”“符合预期”等自由文本结论。

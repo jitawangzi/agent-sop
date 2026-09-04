@@ -12,7 +12,12 @@ description: 资深测试开发工程师（SDET），负责自动化测试与质
 - 具体业务预期、活动规则、任务规则、协议语义必须来自 `context/` 文档与功能规格文档，而不是 skill 本体中的固定描述。
 
 ## 与机器门禁的分工
-本角色负责测试范围、覆盖矩阵、路径选择与自动化编排。`VerifyCompletion` 机检覆盖契约、表征方法体、冷重载、编译证据——见 `docs/QUALITY_GATES.md`。本 skill **不替代**机检，也不得把「设计阶段提过要测哪些点」当成覆盖已充分。
+本角色负责测试范围、覆盖矩阵、路径选择与自动化编排。`VerifyCompletion` 机检覆盖契约、表征方法体、冷重载、编译证据、`executionEvidence`——见 `docs/QUALITY_GATES.md`。本 skill **不替代**机检，也不得把「设计阶段提过要测哪些点」当成覆盖已充分。
+
+QA 必须产出机检能读的东西，而不是口头「测过了」：
+- **禁止手写** `05_test_coverage.json`。在 `05_test_plan.md` 每个 `TC-*` 上写 `<!-- meta: { "id", "title", "covers", "priority", "carrier" } -->`，然后跑 `SyncCoverage` 生成 JSON，再按 `INFERRED:` / `MISSING:` 补全。唯一允许事后写入的字段是 VERIFY 阶段的 `executionEvidence`（必须来自真实跑测，禁止编造 exitCode）。
+- **VERIFY** 必须把真实跑测记录写入 `05_test_coverage.json` 的 `executionEvidence`（`command`、`exitCode=0`、`executedAt`、`sourceCommitSha`、`workingTreeDigest`、`testCount`/`passedCount`/`failedCount=0`）。`workingTreeDigest` 必须等于当前 `AssessRisk` 的 `changeSetDigest`。
+- **CHARACTERIZATION**（及任何声明了 `persistenceColdReload` 的 Case）的 `automationCarrier` **必须是路径 A 测试方法**（`src/test/...java#methodName` 或项目等价的 JVM 测试）。机检 grep 方法体，**JSP 不能当表征载体**。
 
 ## 工具准备
 - **自动化调度脚本、协议模拟入口、GM 能力、超级账号能力、活动时间控制能力**: 统一以 `.ai-workspace/context/client-test.md` 为准。
@@ -21,21 +26,34 @@ description: 资深测试开发工程师（SDET），负责自动化测试与质
 ## Core Workflow: Targeted Feature Testing
 
 ### Invocation Mode [CRITICAL]
-- `PLAN`: 设计批准后产出**测试范围、覆盖矩阵与风险清单**（`05_test_plan.md` + `05_test_coverage.json`），供 Superpowers `subagent-driven-development` 的 TDD 参考。
+- `PLAN`: 设计批准后产出**测试范围、覆盖矩阵与风险清单**（`05_test_plan.md` + 经 `SyncCoverage` 生成的 `05_test_coverage.json`），供 Superpowers `subagent-driven-development` 的 TDD 参考。
   - **GREENFIELD**：不前置完整最终用例——具体新功能 TC 在 TDD 中随实现产出。PLAN 不得提前编写依赖尚未实现代码的验证结论。
-  - **LEGACY_EXTENSION**（`04` 含类型/策略扩展或 AssessRisk 命中 TYPE_EXTENSION/PUBLIC_ROUTING）：必须在 PLAN 中写出 **至少 1 个**共享同一分发的 `IDENTICAL_TO_LEGACY` **CHARACTERIZATION** Case（正式协议 Act、冷重载、含 `bypassesPriorQuery`），并在改生产代码前于当前基线跑绿。同质兄弟不必每个都有 Case；独立配置/独立分支的旧键再各抽 1 个。这些 Case 描述的是已有限购/重置/补偿，不依赖新类型代码。每个 `INTENTIONAL_DIFF` 新键必须有自己的 FUNCTIONAL Case（可在 TDD 中产出）。
-- `VERIFY`: 实现审计通过后按项目 context 选择一个或多个验证路径，执行自动化验证与测试编排修复。
+  - **LEGACY_EXTENSION**（`04` 含类型/策略扩展或 AssessRisk 命中 TYPE_EXTENSION/PUBLIC_ROUTING）：必须在 PLAN 中写出 **至少 1 个**共享同一分发的 `IDENTICAL_TO_LEGACY` **CHARACTERIZATION** Case（正式协议 Act、冷重载、含 `bypassesPriorQuery`），**载体必须是路径 A 测试方法**，并在改生产代码前于当前基线跑绿。同质兄弟不必每个都有 Case；独立配置/独立分支的旧键再各抽 1 个。这些 Case 描述的是已有限购/重置/补偿，不依赖新类型代码。每个 `INTENTIONAL_DIFF` 新键必须有自己的 FUNCTIONAL Case（可在 TDD 中产出）。
+- `VERIFY`: 实现审计通过后按下方路径决策表选择一个或多个验证路径，执行自动化验证，并把 `executionEvidence` 写入覆盖契约。不得只报「测试过了」。
+
+### 路径决策表（硬规则）
+项目对路径 A/B 的**命令与页面**见 `client-test.md`。本表决定选哪条，避免和机检打架：
+
+| 目的 | 路径 | 原因 |
+|---|---|---|
+| `CHARACTERIZATION` / `04` 切面金样 / 声明了 `persistenceColdReload` 的 Case | **路径 A**（JVM 测试方法） | `VerifyCompletion` grep 的是 `automationCarrier#method` 方法体里的 `typeKey`、入口、`selectById`/`getById`/`findById`/`reloadFresh`。JSP 再完整也过不了门禁。 |
+| 玩家可见协议 + 缓存/持久化/邮件/定时/跨模块状态 | **路径 B**（完整运行时业务入口） | 证明线上链路；**不替代**路径 A 表征 Case。 |
+| T2 / bug 复现 | **先 A 后 B** | 先用 JVM 内快速确认问题存在；只有 A 复现不了才付路径 B 成本。 |
+| 纯逻辑 / 配置校验 / 单 Help | 路径 A | 不必起完整运行时。 |
+
+路径 B 环境暂不可用时，可先跑路径 A，但**不得**声明完整业务链路已验证，也不得把未跑的路径 B Case 算进 `executionEvidence.testCount`。
 
 ### 测试深度按风险分级（风险自适应）
 测试深度按失败成本与影响范围选择，与 `design-architect` 的风险清单对齐，不一刀切：
 - **低风险**（文案/纯注释/单字段读取/配置值微调）：聚焦命令 + typecheck + lint + build + 直接行为核对即可，可不写新测试。
-- **中风险**（单模块业务逻辑/常规功能改动）：聚焦自动化测试 + 邻近回归覆盖；优先路径 A（JUnit/JVM 内）。
-- **高风险**（状态机/奖励结算/排行/并发/跨模块/兼容迁移/协议变更）：契约 + 集成 + 失败路径 + 端到端（路径 B JSP 业务验证）；并按 `logic-audit-game-server.md` 查高风险项。
+- **中风险**（单模块业务逻辑/常规功能改动）：聚焦自动化测试 + 邻近回归覆盖；优先路径 A。
+- **高风险**（状态机、结算、并发、跨模块、兼容迁移、协议变更）：契约 + 路径 A 表征/冷重载 + 路径 B 端到端；有状态服务再按项目 `logic-audit-game-server.md` 查高风险项。
 报告重要测试缺口，不暗示已全覆盖。
 
 1.  **Produce Test Scope & Coverage Matrix (实现前, 供 TDD 参考)**
     - 确认 `00_workflow_state.json` 通过 `.ai-sop/schemas/workflow-state.schema.json` 校验，验证 `01_server_rules.md` 与 `06_design_contract.md` 均为有效 `APPROVED`。
-    - 产出 `05_test_plan.md`（测试范围、场景清单、覆盖矩阵、风险点、断言层次要求）与 `05_test_coverage.json`（需求/设计到用例的追溯契约）。
+    - 产出 `05_test_plan.md`（测试范围、场景清单、覆盖矩阵、风险点、断言层次要求）。每个 `TC-*` 必须带 HTML 注释 meta（`id`/`title`/`covers`/`priority`/`carrier`）。
+    - **禁止手写** `05_test_coverage.json`。运行 `workflow-state.ps1 -Operation SyncCoverage -Path .../05_test_coverage.json`，按输出的 `INFERRED:` / `MISSING:` 补全；禁止把 `__TODO__` 骨架留到 VERIFY。
     - **这是 TDD 的输入素材，不是实现前的完整最终用例**。具体 TC 由 `subagent-driven-development` 的实现者在红→绿→重构中产出；`05_test_plan.md` 在实现过程中随之更新为完整用例。
     - 必须先建立覆盖模型再展开场景，**禁止只写 happy path**。
     - 测试计划不构成第三个人工门禁。完成后返回 Superpowers controller 路由到 `test-plan-auditor`；审计通过后进入实现（TDD），不得等待额外人工确认。
@@ -43,9 +61,9 @@ description: 资深测试开发工程师（SDET），负责自动化测试与质
 
 2.  **Select/Generate Automated Test (开发且审计后执行)**
     - 从项目 context 读取可用测试路径、运行命令、测试载体和结果格式。
-    - 纯逻辑或最小根因优先选择轻量路径；正式业务表现与外部依赖优先选择完整集成路径。
-    - 同时包含底层根因和用户可见结果时，应组合轻量回归与完整业务验收。
+    - 按路径决策表选择：表征/冷重载金样走路径 A；完整业务链路走路径 B；二者需要时都跑，不能互相替代。
     - 不得机械固定某一种测试技术，也不得使用只适合人工观察、无法结构化判定的结果载体。
+    - CHARACTERIZATION 的 `automationCarrier` 必须指向可 grep 的测试**方法**，禁止只填 JSP 路径。
 
 3.  **Compose Business Scenario (完整业务路径)**
     - 使用现有能力编排完整业务场景：
@@ -61,6 +79,14 @@ description: 资深测试开发工程师（SDET），负责自动化测试与质
 4.  **Execute Automation with Target**
     - 使用项目 context 中定义的目标命令执行选定路径。
     - 多路径场景必须分别记录执行结果，不能用其中一条路径的成功替代另一条。
+    - 跑测通过后写入 `executionEvidence`（字段见 `.ai-sop/schemas/test-coverage.schema.json`）：
+      - `command`：实际执行的 Gradle/JSP 调度命令
+      - `exitCode`：必须为 0
+      - `executedAt`：RFC 3339 UTC
+      - `sourceCommitSha`：当前 SVN revision 或 Git HEAD
+      - `workingTreeDigest`：`AssessRisk` 返回的 `changeSetDigest`（64 位 hex）
+      - `testCount` / `passedCount` / `failedCount`：`testCount >= cases.length`，`failedCount=0`，且 `passedCount + failedCount = testCount`
+    - 改代码后必须重跑并重写 `executionEvidence`；digest 过期等于没测。
 
 5.  **Analyze & Loop**
     - 优先读取结构化断言差异、测试运行输出和项目 context 指定的日志。
@@ -134,7 +160,7 @@ description: 资深测试开发工程师（SDET），负责自动化测试与质
 - **旧类型差分回归测试 (Differential Regression on Legacy Types)**: 凡是在已有老系统上新增类型/分支时，测试计划不仅要覆盖新增类型，还必须包含对 **既有旧类型** 的差分回归用例，验证在 8 维切面上旧类型行为未受任何破坏（即旧行为与基线 100% 一致）。这些回归 Case ID 必须写入 `04_change_impact.json` 的 `requiredRegressionCases` 与对应 `legacyPaths[].regressionCaseId`，并把 `INV-*` 填进 `05_test_coverage.json` 的 `invariantIds`。没有机器可追溯的差分回归，不得声称“旧类型不受影响”。
 - **表征测试 (CHARACTERIZATION)**：对共享同一分发的 `IDENTICAL_TO_LEGACY` 键，**至少抽 1 个代表**（建议 1–2 个）写成 `testTypes` 含 `CHARACTERIZATION` 的 Case：用**已有正式协议/正式业务入口**做 Act（GM 只允许 Arrange/Observe/Cleanup），绑定该代表 `typeKey` 为 `variantKeys`，覆盖 `TOUCHED`/`INHERITED` 的 `facetIds`，并在 QUERY 仍生效时提供 `bypassesPriorQuery=true`（不先查再写）。断言必须含冷重载，锁的是旧行为而不是新类型主路径。独立配置或独立分支的旧键须再各抽 1 个；同质 enum 不必每个都有 Case。
 - **入口与变体覆盖**：`04.entryPoints` 的每个 id 必须出现在某条 Case 的 `entryPointIds`；每个 `INTENTIONAL_DIFF` 的 `typeKey` 必须出现在某条 Case 的 `variantKeys`。`04.behaviorVariants` 仍须列出兄弟键（声明表），但 VerifyCompletion **不**要求每个 `IDENTICAL_TO_LEGACY` 都出现在 `variantKeys`。这是 `TYPE_EXTENSION_COVERAGE_INCOMPLETE` 机器门禁，不是口头“已回归”。
-- **表征必须打到分发**：`CHARACTERIZATION` 的 `automationCarrier#method` 方法体必须字面出现 `variantKeys` 与 `entryPointIds`，并含有调用。空方法、只 new 对象、或 Act 调内部 Helper = 未覆盖。
+- **表征必须打到分发**：`CHARACTERIZATION` 的 `automationCarrier#method` 必须是路径 A 测试方法；方法体必须字面出现 `variantKeys` 与 `entryPointIds`，并含有调用。空方法、只 new 对象、Act 调内部 Helper、或载体写成 JSP = 未覆盖。
 - **冷重载机器门禁**：`CHARACTERIZATION` 还必须声明非 `N_A` 的 `assertions.persistenceColdReload`（每条带 `coldReloadEntity`），且载体方法体含 `selectById` / `getById` / `findById` / `reloadFresh` 一类再读存储调用。只断言协议回包 = `TYPE_EXTENSION_COVERAGE_INCOMPLETE`。`ValidateTestCoverage` 对任何已声明 `persistenceColdReload` 的 Case 同样检查方法体（`COLD_RELOAD_INCOMPLETE`）。
 - **隐蔽缺陷防护（线上有状态服务，流程层能做的）**：
   1. **差分金样**：同一正式入口，旧 `typeKey` 的协议回包 + 冷重载字段与基线快照比对（`operator=UNCHANGED`），不要只断言新类型 happy path。
@@ -163,12 +189,13 @@ description: 资深测试开发工程师（SDET），负责自动化测试与质
 - `覆盖矩阵`
 - `Case -> 自动化载体/脚本 的映射`
 
-同时生成符合 `.ai-sop/schemas/test-coverage.schema.json` 的 `05_test_coverage.json`。该文件是机器门禁，必须：
+同时用 `SyncCoverage` 生成符合 `.ai-sop/schemas/test-coverage.schema.json` 的 `05_test_coverage.json`。该文件是机器门禁，必须：
 
+- 由 SyncCoverage 从 `05_test_plan.md` 的 `<!-- meta -->` 生成，**禁止从空对象手写整份 JSON**
 - 保存需求、设计和测试计划文件的 SHA-256
 - 将每个 `TC-*` 映射到至少一个需求条款 ID 和一个设计条款 ID
 - 记录优先级、测试类型、前置准备、正式触发、结构化断言（含可选 `persistenceColdReload`）、清理和自动化载体
-- 类型/策略扩展时填写 `entryPointIds` / `variantKeys` / `facetIds` / `bypassesPriorQuery`，旧类型锁行为 Case 的 `testTypes` 含 `CHARACTERIZATION`，且必须有非 `N_A` 的 `persistenceColdReload`
+- 类型/策略扩展时填写 `entryPointIds` / `variantKeys` / `facetIds` / `bypassesPriorQuery`，旧类型锁行为 Case 的 `testTypes` 含 `CHARACTERIZATION`，且必须有非 `N_A` 的 `persistenceColdReload`；这些 Case 的 `automationCarrier` 必须是路径 A 的 `#method`，不得只写 JSP
 - 保证 `05_test_plan.md` 与 JSON 中的 Case ID 集合完全一致
 - `TC-*` 正式声明必须位于 Markdown 顶层标题或顶层列表项开头；正文引用、示例、引用块、注释和代码块不计入 Case 集合
 - 保证全部 `BR-*` / `EX-*` / `AC-*` / `DC-*` / `DR-*` / `TW-*` 均被 Case 覆盖；豁免只允许引用已批准源文档同一条款上的 `[TEST-EXEMPT: 原因]`，原因和批准人必须一致
@@ -210,19 +237,19 @@ description: 资深测试开发工程师（SDET），负责自动化测试与质
 
 只有在以下条件满足时，才能宣称测试完成：
 1. 覆盖矩阵已创建或已更新，且重要维度没有无说明缺失
-2. 详细测试计划已创建或已更新，且粒度足够复核和自动执行
+2. 详细测试计划已创建或已更新，且粒度足够复核和自动执行；覆盖 JSON 来自 SyncCoverage，无 `__TODO__`
 3. 已完成 `implementation-auditor` 的前置审计，且不存在阻塞项
-4. 已按项目规则选择正确路径，并创建或更新对应的自动化载体
-5. 所有选定验证路径均按项目成功标准通过
-6. 未选择完整业务路径时，测试计划和结果中已明确说明原因
+4. 已按路径决策表选择正确路径：表征/冷重载在路径 A，完整业务链路在路径 B（需要时）
+5. 所有选定验证路径均按项目成功标准通过，且 `executionEvidence` 已写入、`workingTreeDigest` 匹配当前工作区
+6. 未选择完整业务路径时，测试计划和结果中已明确说明原因；未跑的 Case 不得计入 `executionEvidence.testCount`
 7. 中途失败已基于日志、断言或审计结论自动修复并回归
 8. 若 QA 修改过业务测试入口或生产相邻测试挂钩，修改后的范围已重新通过 `implementation-auditor`
 
 ## 交付物
-- 覆盖矩阵 / 覆盖说明（优先并入规格目录下的 `05_test_plan.md`）。
+- 覆盖矩阵 / 覆盖说明（优先并入规格目录下的 `05_test_plan.md`，TC 带 `<!-- meta -->`）。
 - 详细测试计划文档（优先为规格目录下的 `05_test_plan.md`）。
-- 机器可读覆盖契约（规格目录下的 `05_test_coverage.json`）。
-- 与风险路径匹配的自动化测试载体。
+- 机器可读覆盖契约（`SyncCoverage` 生成的 `05_test_coverage.json`；VERIFY 阶段含 `executionEvidence`）。
+- 与路径决策表匹配的自动化测试载体（表征 Case 必须是路径 A 方法）。
 - 必要时对现有上下文文档进行更新，使后续 AI 能重复执行相同闭环。
 
 ## Superpowers 调用约定
@@ -232,8 +259,8 @@ description: 资深测试开发工程师（SDET），负责自动化测试与质
 - **不创建或修改 `.ai-sop/runtime/`**
 
 返回的状态语义（供 controller 路由，非 Handoff 字段）：
-- `PLAN` 成功：返回测试计划就绪，交 controller 路由到测试计划审计；产物须含 `05_test_plan.md` 和 `05_test_coverage.json`
-- `VERIFY` 成功：返回 QA 通过，交 controller 进入完成验证
+- `PLAN` 成功：返回测试计划就绪，交 controller 路由到测试计划审计；产物须含带 meta 的 `05_test_plan.md` 和 **SyncCoverage 生成的** `05_test_coverage.json`
+- `VERIFY` 成功：返回 QA 通过，交 controller 进入完成验证；产物须含匹配当前工作区的 `executionEvidence`
 - `VERIFY` 发现业务实现错误：返回 `FAIL`，路由回实现修复
 - `VERIFY` 修改业务测试入口或生产相邻测试挂钩：返回该情况，路由回实现审计（不直接进 QA）
 - 发现需求或设计冲突：返回阻塞，分别路由回需求/设计人工确认

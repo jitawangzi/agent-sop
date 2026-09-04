@@ -55,3 +55,11 @@ pwsh -NoProfile -File ./scripts/run-all-tests.ps1
 - **质量保证设计**：机器门禁 vs 自报、证据绑定、明确不做见 `docs/QUALITY_GATES.md`。
 - **模板单一真源**：下游宿主工程所使用的 Agent 指令模板维护在 `distribution/templates/root/AGENTS.md`。
 - **专家 Skill**：`skills/` 下的专家 Skill（`implementation-engine`, `logic-auditor`, `design-reviewer` 等）仅定义角色职责与通用检查清单，不硬编码具体业务专有名词。
+
+---
+
+## 五、提交与推送约定
+
+- **本仓库（agent-sop）**：改动完成后默认 `git commit` 并 `git push` 到 `origin`。
+- **宿主 SVN**：生产代码 / `WebRoot` / `src` **不要** `svn commit`（仍由人工提交团队真源）。
+- **宿主 `.ai-workspace/`**：该目录是独立 git（`ai-workspace.git`）。其中的修改默认在该嵌套仓库里 `git commit` 并 `git push`。不要把宿主根目录 git 里的 `.ai-sop`、生产文件或未相关 context 一并提交。

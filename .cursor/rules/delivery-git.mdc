@@ -1,0 +1,12 @@
+---
+description: Default git commit+push for SOP and host .ai-workspace; never svn commit the host.
+alwaysApply: true
+---
+
+# Delivery defaults
+
+After finishing work in this conversation:
+
+- **SOP repo** (`agent-sop`): `git commit` then `git push origin` for the changes you made. Do not wait for a second ask.
+- **Host SVN**: never `svn commit` production / `src` / `WebRoot`. Humans commit the team source.
+- **Host `.ai-workspace/`**: this is a nested git remote (`ai-workspace.git`). Commit and push only that nested repo. Do not stage host-root git noise (`.ai-sop` submodule, `ai-sop.ps1`, unrelated context, logs).

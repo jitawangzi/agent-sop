@@ -162,7 +162,7 @@ pwsh -NoProfile -File .\.ai-sop\scripts\workflow-state.ps1 -Operation ValidateTe
 - 单任务内审（subagent 内）覆盖该 Task 的 spec 合规、代码质量与高风险逻辑，由 `implementation-auditor`/`logic-auditor` 作执行单元完成。
 - 整体收尾由 Superpowers `requesting-code-review` 完成，覆盖流程合规与整体一致性。
 - 跨任务全盘审计为可选的手动全功能审计（见上），按需触发。
-- QA 遵循 `client-test.md`。
+- QA 遵循 `client-test.md` 的项目手段，以及 `quality-assurance` 的路径决策表（表征/冷重载走路径 A；完整业务链路走路径 B）。覆盖 JSON 用 `SyncCoverage`，VERIFY 必须写 `executionEvidence`。
 - 完成校验会复查测试覆盖与所需的项目测试。
 
 ## SVN + 本地 Git

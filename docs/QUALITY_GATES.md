@@ -124,6 +124,7 @@ T3 完成表第 4 项（`implementation-auditor` / `logic-auditor` PASS）是 **
 | 用 `build/classes` 当编译证明 | 过期产物假绿 |
 | 强制 08/09 实现审计文件（在真 T3 稳定前） | 叠摩擦，07 模式尚未在真功能上验证 |
 | 不为每个 Task 写 `compile-evidence.json` | 摩擦大；Task 交接用实现者【编译证据】粘贴进内审 prompt。Complete 仍只认功能目录那一份 |
+| 按 Task 个数设机器上限 / 强制拆或强制合 | 切分是 writing-plans 判断；机检个数只会逼出假拆或假合 |
 | 绑定 JUnit XML / 编译器 transcript | 防当场伪造；成本高一个数量级 |
 | Hook 扩到 `python -c` / `tee` 写文件 | 覆盖成本高、易误拦 |
 | 先验加宽规格定位（只写包名就当定位到） | 等真撞到 `FEATURE_SCOPE_UNRESOLVED` 再加 |

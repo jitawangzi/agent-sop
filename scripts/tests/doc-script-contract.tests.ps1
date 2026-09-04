@@ -171,6 +171,12 @@ try {
         ($logicText -match 'INDETERMINATE' -and $logicText -match 'COMPILE_REQUIRED')
     Assert-Contract "ANTIGRAVITY.md must warn against racing auditor with engine" `
         ($antigravityText -match '编译准入')
+    Assert-Contract "AGENTS.md must not treat 2-5 minute steps as Task splits" `
+        ($agentsText -notmatch '拆分为 2-5 分钟可完成的小任务')
+    Assert-Contract "AGENTS.md must distinguish Task vs Step for writing-plans" `
+        ($agentsText -match '默认 1 个 Task' -and $agentsText -match 'Step')
+    Assert-Contract "adapter must define writing-plans Task granularity overlay" `
+        ($adapterText -match 'writing-plans Task 粒度')
 
     # --- Semantic drift guards: prevent known contradiction phrases from recurring ---
     # These were real drift bugs (single-point fix not propagated). Lock them out so the
@@ -199,7 +205,7 @@ try {
         '默认T3'              = "default follows change-class; use '变更类默认' instead"
         '不管需求多简单'      = "removed; tier follows change-class default, not blanket T3"
         'ai-sop$1'            = "leftover `$1 path artifact; use '.ai-sop\scripts\' instead"
-        '.ai-sop/workflows/parallel-development' = "wrong path; parallel-development is at .ai-workspace/workflows/"
+        '拆分为 2-5 分钟可完成的小任务' = "2-5 minutes are Steps inside a Task, not Task count; see adapter writing-plans Task 粒度"
     }
     $driftFiles = [System.Collections.Generic.List[string]]::new()
     foreach ($d in $driftScanDirs) {

@@ -13,7 +13,7 @@
 | 顺序 | 必须调用的 Skill | 说明 |
 |:---:|---|---|
 | 1 | `superpowers:brainstorming` | 新功能/新设计/行为变更：探索上下文 → 逐一提问 → 方案对比 → 逐节呈现 → 写 spec → 自审 → 用户审阅。设计产出后由 `design-reviewer` 机器审查（闭环自审自修），再交人工确认 |
-| 2 | `superpowers:writing-plans` | spec 确认后：拆分为 2-5 分钟可完成的小任务，含精确路径、完整代码、验证命令。**严禁 TBD/TODO 占位符** |
+| 2 | `superpowers:writing-plans` | spec 确认后写实现计划。**Task** = 一次实现+编译+内审的审查单位（紧耦合小改动默认 1 个 Task）；**Step** 才是 2–5 分钟动作。计划须含精确路径、完整代码、验证命令。**严禁 TBD/TODO 占位符**。粒度见 adapter「writing-plans Task 粒度」 |
 | 3 | `superpowers:subagent-driven-development` | 读计划全文 → 建 Todo → 对每个 Task：派实现者（`implementation-engine`）→ 内审（`implementation-auditor`/`logic-auditor`）→ 修复 → 标记完成。**每个 Task 必须过双重审查** |
 | 4 | `superpowers:requesting-code-review` | 全部 Task 完成后**必须显式调用**，派最终 code reviewer 审查整体实现。禁止用普通 Agent 替代 |
 | 5 | `superpowers:verification-before-completion` | 声称完成前必须编译/测试验证，禁止"应该可以了"就标记完成 |

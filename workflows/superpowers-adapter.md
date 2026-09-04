@@ -16,7 +16,7 @@ claim feature ownership (SUPERPOWERS)
        -> 续做设计 -> design-architect 产出 06_design_contract.md
        -> design-reviewer 机器审查（闭环自审自修，不进人工门禁）
        -> 人工确认 06_design_contract.md）
--> superpowers:writing-plans
+-> superpowers:writing-plans（Task 粒度见下：小改动默认 1 个 Task，禁止按层拆）
 -> quality-assurance(PLAN)（产测试范围/覆盖矩阵/风险清单供 TDD 参考，非完整前置测试计划）
 -> superpowers:subagent-driven-development + TDD
      实现者 = implementation-engine（执行单元；每 Task 交【编译证据】）
@@ -33,6 +33,25 @@ claim feature ownership (SUPERPOWERS)
 - **不前置**完整新功能测试计划（GREENFIELD）：具体新 TC 在 TDD 中产出；`ValidateTestCoverage` 在实现后做覆盖完整性校验。
 - **LEGACY_EXTENSION 例外**：旧系统加类型/改分发时，抽 1–2 个共享同一分发的 `IDENTICAL_TO_LEGACY` 表征 Case，必须在改生产代码前写好，并能在当前基线上跑绿。锁的是已有行为，不是尚未实现的新类型，也不是每个旧类型一条 Case。表征 Case 必须声明 `assertions.persistenceColdReload` 并在载体方法体再读存储。
 - `implementation-auditor`/`logic-auditor` 是 subagent **内审执行单元**，不作实现后的独立流程节点（其全盘视角由可选的全功能审计覆盖，见下）。**Complete 不读这两份报告**（自报）；机器硬门禁分层见 `docs/QUALITY_GATES.md`。
+
+## writing-plans Task 粒度（项目叠加）
+
+`writing-plans` 是 Superpowers 原生技能；本节省制切分，避免小需求被切成多次「实现→编译→内审」。不上机器门禁、不按 Task 个数计分。
+
+**Task ≠ Step：**
+
+| | 是什么 | 过几关 |
+|---|---|---|
+| **Task** | 审查员能单独批准或否决的交付切片 | 一次实现 + 编译 + 内审 |
+| **Step** | Task 里的 2–5 分钟动作（写失败测试、最小实现、跑绿、commit） | 不过独立内审 |
+
+**默认合成 1 个 Task**：同一条协议/存储/埋点切片、共享同一批类型与文件、审查无法批准 A 而否决 B。入参、内存结构、回包、埋点并进这一个 Task，里面用多个 Step 做 TDD。
+
+**才拆成多个 Task**：审查员能批准其中一个、否决另一个仍有意义——例如几乎不交的文件集、可独立交付的入口、旧系统扩展里「先表征锁旧行为」与「再提交新类型」必须分开（表征须在改生产代码前跑绿）。
+
+**禁止**：按分层拆（Model / Process / TA / 测试各一个 Task）；把「2–5 分钟」当成 Task 粒度。复杂大功能、多入口、多存储边界仍应拆。
+
+SDD 按计划串行执行，不会在执行期合并 Task。切错了，贵的是多轮编译和内审，不是少写两行计划。
 
 ## 编译准入再审查（SDD 硬约束）
 
@@ -109,6 +128,7 @@ brainstorming 节点按需咨询 `design-architect`；设计产出后由 `design
   - 派发实现者：Prompt 必须包含 `【角色与规范】你的角色是 implementation-engine，请首先读取并严格遵守 .ai-sop/skills/implementation-engine/SKILL.md 的实现规范与 Base+Overlay 动态继承体系。`
   - 派发内审者：Prompt 必须包含 `【角色与规范】你的角色是 implementation-auditor（或 logic-auditor），请首先读取并严格遵守 .ai-sop/skills/implementation-auditor/SKILL.md 的审计规范。` **并且必须粘贴本 Task 实现者返回的【编译证据】**（`command` + `exitCode=0` + 成功摘录）。缺编译证据不得派发。
   - 派发设计审查者：Prompt 必须包含 `【角色与规范】你的角色是 design-reviewer，请首先读取并严格遵守 .ai-sop/skills/design-reviewer/SKILL.md 的审查规范。`
+  - 调用 `writing-plans`：必须先遵守本文件「writing-plans Task 粒度」。紧耦合小改动默认 1 个 Task；禁止把 2–5 分钟 Step 写成多个 Task。
 
 ## 三层审查定位（职责不重叠）
 

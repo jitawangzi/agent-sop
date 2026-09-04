@@ -45,7 +45,7 @@ flowchart TD
     I --> J[design-reviewer 机器闭环审查 最多2轮]
     J -->|PASS / PASS_WITH_WARNINGS| K{人工确认设计门禁}
     J -->|NEEDS_FIX| I
-    K -->|Approve| L[Superpowers writing-plans 拆解任务]
+    K -->|Approve| L[Superpowers writing-plans 写计划 小改动可1个Task]
     L --> M[subagent-driven-development + TDD]
     M --> N[每 Task 双重内审 auditor 守门]
     N --> O[ValidateTestCoverage 覆盖校验]

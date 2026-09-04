@@ -79,16 +79,42 @@ function Write-TestJson {
     )
 }
 
+function Get-TestChangeSetDigest {
+    param([string]$SpecDir)
+    $raw = & $ScriptPath -Operation AssessRisk -Path $SpecDir 2>&1 | Out-String
+    $start = $raw.IndexOf('{')
+    $end = $raw.LastIndexOf('}')
+    if ($start -lt 0 -or $end -le $start) {
+        throw "AssessRisk did not return JSON for '$SpecDir'. Output: $raw"
+    }
+    try {
+        $obj = $raw.Substring($start, $end - $start + 1) | ConvertFrom-Json
+        $digest = [string]$obj.changeSetDigest
+        if ([string]::IsNullOrWhiteSpace($digest)) {
+            throw "empty digest"
+        }
+        return $digest
+    } catch {
+        throw "AssessRisk did not return changeSetDigest for '$SpecDir'. Output: $raw"
+    }
+}
+
 function Write-TestDesignReview {
     param(
         [string]$SpecDir,
-        [string]$Status = "PASS"
+        [string]$Status = "PASS",
+        [switch]$OmitDesignSha
     )
     [System.IO.Directory]::CreateDirectory($SpecDir) | Out-Null
+    $desPath = Join-Path $SpecDir "06_design_contract.md"
+    $shaLine = ""
+    if (-not $OmitDesignSha -and (Test-Path -LiteralPath $desPath -PathType Leaf)) {
+        $shaLine = "审查对象 sha256：$(Get-TestArtifactHash -Path $desPath)`n"
+    }
     $md = @"
 ## 设计方案审查结论
 审查对象：06_design_contract.md
-审查状态：$Status
+${shaLine}审查状态：$Status
 ### 发现（按级别）
 BLOCKER:
 MAJOR:
@@ -110,14 +136,19 @@ function Write-TestCompileEvidence {
     param(
         [string]$SpecDir,
         [int]$ExitCode = 0,
-        [string]$Command = "gradlew compileJava"
+        [string]$Command = "gradlew compileJava",
+        [string]$WorkingTreeDigest = ""
     )
     [System.IO.Directory]::CreateDirectory($SpecDir) | Out-Null
+    if ([string]::IsNullOrWhiteSpace($WorkingTreeDigest)) {
+        $WorkingTreeDigest = Get-TestChangeSetDigest -SpecDir $SpecDir
+    }
     Write-TestJson -Path (Join-Path $SpecDir "compile-evidence.json") -Value ([ordered]@{
         schemaVersion = "1.0"
         exitCode = $ExitCode
         command = $Command
         executedAt = [DateTimeOffset]::UtcNow.ToString("yyyy-MM-ddTHH:mm:ssZ")
+        workingTreeDigest = $WorkingTreeDigest
     })
 }
 
@@ -4362,7 +4393,6 @@ Then:
     }
 
     Write-TestDesignReview -SpecDir $p0Spec -Status "NEEDS_FIX"
-    Write-TestCompileEvidence -SpecDir $p0Spec
     $p0JavaDir = Join-Path $TestRoot "test\quality"
     [System.IO.Directory]::CreateDirectory($p0JavaDir) | Out-Null
     [System.IO.File]::WriteAllText(
@@ -4371,8 +4401,7 @@ Then:
         $Utf8NoBom
     )
     $p0CovFix = Get-Content -LiteralPath $p0Cov -Raw | ConvertFrom-Json -AsHashtable
-    $p0Risk = & $ScriptPath -Operation AssessRisk -Path $p0Spec 2>&1 | Out-String
-    $p0Digest = ($p0Risk | ConvertFrom-Json).changeSetDigest
+    $p0Digest = Get-TestChangeSetDigest -SpecDir $p0Spec
     $p0CovFix.cases[0].status = "VERIFIED"
     $p0CovFix["executionEvidence"] = [ordered]@{
         command = "pwsh test"
@@ -4385,6 +4414,7 @@ Then:
         failedCount = 0
     }
     [System.IO.File]::WriteAllText($p0Cov, ($p0CovFix | ConvertTo-Json -Depth 10), $Utf8NoBom)
+    Write-TestCompileEvidence -SpecDir $p0Spec -WorkingTreeDigest $p0Digest
     $verifyNeedsFix = & $ScriptPath -Operation VerifyCompletion -Path (Join-Path $p0Spec "00_workflow_state.json") 2>&1 | Out-String
     if ($LASTEXITCODE -eq 0 -or $verifyNeedsFix -notmatch "NEEDS_FIX") {
         throw "VerifyCompletion T3 must fail on NEEDS_FIX design-reviewer report. Output: $verifyNeedsFix"
@@ -4395,6 +4425,19 @@ Then:
     if ($LASTEXITCODE -ne 0 -or $verifyWarn -notmatch "VERIFY_COMPLETION_PASS" -or $verifyWarn -notmatch "PASS_WITH_WARNINGS") {
         throw "VerifyCompletion T3 must pass with PASS_WITH_WARNINGS + compile-evidence.json. Output: $verifyWarn"
     }
+
+    Write-TestDesignReview -SpecDir $p0Spec -Status "PASS_WITH_WARNINGS" -OmitDesignSha
+    $verifyNoSha = & $ScriptPath -Operation VerifyCompletion -Path (Join-Path $p0Spec "00_workflow_state.json") 2>&1 | Out-String
+    if ($LASTEXITCODE -eq 0 -or $verifyNoSha -notmatch "审查对象 sha256") {
+        throw "VerifyCompletion T3 must fail when 07_design_review.md omits 06 sha256. Output: $verifyNoSha"
+    }
+    Write-TestDesignReview -SpecDir $p0Spec -Status "PASS_WITH_WARNINGS"
+    Write-TestCompileEvidence -SpecDir $p0Spec -WorkingTreeDigest ("0" * 64)
+    $verifyStaleCompile = & $ScriptPath -Operation VerifyCompletion -Path (Join-Path $p0Spec "00_workflow_state.json") 2>&1 | Out-String
+    if ($LASTEXITCODE -eq 0 -or $verifyStaleCompile -notmatch "workingTreeDigest stale") {
+        throw "VerifyCompletion T3 must fail when compile-evidence.json digest does not match the workspace. Output: $verifyStaleCompile"
+    }
+    Write-TestCompileEvidence -SpecDir $p0Spec -WorkingTreeDigest $p0Digest
 
     # Isolated workspace: shared $TestRoot later contains nested git fixtures whose
     # source would otherwise be attributed to this T2 feature on a non-VCS scan.

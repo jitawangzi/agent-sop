@@ -206,8 +206,8 @@ AI 编码工具百花齐放（Claude Code、Copilot、Cursor、Antigravity、Pi�
 
 **为什么这么设计**：
 - `LintSpecs`（`doctor.ps1 -Feature` 也会调）只扫当前功能目录：缺 00、未覆盖条款、PLAN 占位/MISSING 载体，实现中途就能修。
-- T3 Complete 必须有 `07_design_review.md`，状态 `PASS` 或 `PASS_WITH_WARNINGS`；`NEEDS_FIX` 或无文件失败。
-- T3 编译看 `compile-evidence.json`（command + exitCode=0 + executedAt），不把构建目录存在当证据。
+- T3 Complete 必须有 `07_design_review.md`，状态 `PASS` 或 `PASS_WITH_WARNINGS`，且 `审查对象 sha256` 等于当前 `06_design_contract.md`；`NEEDS_FIX`、无文件或 SHA 漂移失败。
+- T3 编译看 `compile-evidence.json`（command + exitCode=0 + executedAt + workingTreeDigest 匹配当前工作区），不把构建目录存在当证据。
 - T2 `test-evidence.json` 可选；一旦提交就必须 exitCode=0。
 - `SyncCoverage` 从测试计划 Given/When/Then 与 `载体:` 推断字段，并打印 `MISSING:`，少留 `__TODO__` 假矩阵。
 
@@ -225,7 +225,7 @@ AI 编码工具百花齐放（Claude Code、Copilot、Cursor、Antigravity、Pi�
 
 1. **单一真源**：`.ai-sop` 是唯一可编辑标准流程；`.claude/skills`、`.agents/skills` 是投影，手工改被 hash 校验拒绝。
 2. **生产编辑需归属**：编辑 `src/com|WebRoot|config` 必须有 session-bound owner；无归属则拦截。
-3. **独立审查隔离**：design-reviewer 必须独立 subagent 派发（不同 session/run ID），禁止内联自审。T3 Complete 必须能在功能目录读到 `07_design_review.md` 且状态为 PASS / PASS_WITH_WARNINGS。
+3. **独立审查隔离**：design-reviewer 必须独立 subagent 派发（不同 session/run ID），禁止内联自审。T3 Complete 必须能在功能目录读到 `07_design_review.md` 且状态为 PASS / PASS_WITH_WARNINGS，审查对象 sha256 与当前 06 一致。
 4. **已批准产物不可篡改**：01/06 批准后 SHA 锁定，改动触发 ValidateTestCoverage 拦截。
 5. **能力准入不静默降级**：未知能力默认 BLOCKED，明确输出缺口，不偷偷降级跑 T3。
 6. **lock 引用已发布 commit**：禁 branch/tag/latest/未发布 SHA，保证可复现。

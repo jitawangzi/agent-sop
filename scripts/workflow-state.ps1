@@ -3631,6 +3631,40 @@ function Read-ReviewReportStatus {
     return $null
 }
 
+function Read-ReviewReportDesignSha {
+    param([string]$ReportPath)
+    if ([string]::IsNullOrWhiteSpace($ReportPath) -or -not (Test-Path -LiteralPath $ReportPath -PathType Leaf)) {
+        return $null
+    }
+    $text = [System.IO.File]::ReadAllText($ReportPath)
+    if ($text -match '(?im)(?:审查对象\s*sha256|artifactSha256|designSha256)\s*[:：]\s*([a-fA-F0-9]{64})') {
+        return $Matches[1].ToLowerInvariant()
+    }
+    return $null
+}
+
+function Get-SpecWorkspaceDigest {
+    param(
+        [string]$SpecDir,
+        [string]$WorkspaceRoot
+    )
+    if ([string]::IsNullOrWhiteSpace($WorkspaceRoot) -or -not (Test-Path -LiteralPath $WorkspaceRoot)) {
+        return $null
+    }
+    $baseline = "0"
+    if (-not [string]::IsNullOrWhiteSpace($SpecDir)) {
+        try {
+            $resolved = Get-AuthoritativeFeatureBaseline -SpecDir $SpecDir -WorkspaceRoot $WorkspaceRoot
+            if (-not [string]::IsNullOrWhiteSpace($resolved)) { $baseline = $resolved }
+        } catch {}
+    }
+    try {
+        return Get-ChangeSetDigest -WorkspaceRoot $WorkspaceRoot -Baseline $baseline
+    } catch {
+        return $null
+    }
+}
+
 function Test-DesignReviewGate {
     param([string]$SpecDir)
     $path = Find-DesignReviewReportPath -SpecDir $SpecDir
@@ -3644,6 +3678,27 @@ function Test-DesignReviewGate {
     }
     $status = Read-ReviewReportStatus -ReportPath $path
     if ($status -in @("PASS", "PASS_WITH_WARNINGS")) {
+        $desPath = Join-Path $SpecDir "06_design_contract.md"
+        if (Test-Path -LiteralPath $desPath -PathType Leaf) {
+            $expected = Get-AiSopArtifactHash -Path $desPath
+            $recorded = Read-ReviewReportDesignSha -ReportPath $path
+            if ([string]::IsNullOrWhiteSpace($recorded)) {
+                return [pscustomobject]@{
+                    Ok = $false
+                    Status = $status
+                    Path = $path
+                    Problem = "07_design_review.md missing 审查对象 sha256 — must match 06_design_contract.md (re-run design-reviewer after 06 changes)"
+                }
+            }
+            if ($recorded -ne $expected) {
+                return [pscustomobject]@{
+                    Ok = $false
+                    Status = $status
+                    Path = $path
+                    Problem = "07_design_review.md sha256 $recorded does not match 06_design_contract.md ($expected) — review is stale"
+                }
+            }
+        }
         return [pscustomobject]@{ Ok = $true; Status = $status; Path = $path; Problem = $null }
     }
     if ([string]::IsNullOrWhiteSpace($status)) {
@@ -3686,7 +3741,10 @@ function Get-CommandEvidenceProblem {
     param(
         [string]$EvidencePath,
         [int]$MaxAgeDays = 7,
-        [switch]$RequireTestCounts
+        [switch]$RequireTestCounts,
+        [switch]$RequireWorkingTreeDigest,
+        [string]$WorkspaceRoot = "",
+        [string]$SpecDir = ""
     )
     if ([string]::IsNullOrWhiteSpace($EvidencePath) -or -not (Test-Path -LiteralPath $EvidencePath -PathType Leaf)) {
         return "missing"
@@ -3714,6 +3772,20 @@ function Get-CommandEvidenceProblem {
     }
     if ($RequireTestCounts -and ($names -contains "testCount") -and [int]$obj.testCount -lt 1) {
         return "testCount=$($obj.testCount)"
+    }
+    $needDigest = $RequireWorkingTreeDigest -or ($names -contains "workingTreeDigest")
+    if ($needDigest) {
+        $recorded = [string]$obj.workingTreeDigest
+        if ([string]::IsNullOrWhiteSpace($recorded) -or $recorded -notmatch '^[a-fA-F0-9]{64}$') {
+            return "workingTreeDigest missing"
+        }
+        $current = Get-SpecWorkspaceDigest -SpecDir $SpecDir -WorkspaceRoot $WorkspaceRoot
+        if ([string]::IsNullOrWhiteSpace($current)) {
+            return "workingTreeDigest could not be verified (workspace digest unavailable)"
+        }
+        if ($recorded.ToLowerInvariant() -ne $current.ToLowerInvariant()) {
+            return "workingTreeDigest stale (recompile on current code; recorded $recorded current $current)"
+        }
     }
     return $null
 }
@@ -3857,7 +3929,7 @@ function Invoke-SpecLint {
 
     $wsRoot = Resolve-AiSopWorkspaceRoot -StartPath $SpecDir
     $compilePath = Find-CommandEvidencePath -SpecDir $SpecDir -WorkspaceRoot $wsRoot -FileName "compile-evidence.json"
-    $compileProblem = Get-CommandEvidenceProblem -EvidencePath $compilePath
+    $compileProblem = Get-CommandEvidenceProblem -EvidencePath $compilePath -RequireWorkingTreeDigest -WorkspaceRoot $wsRoot -SpecDir $SpecDir
     if ($isVerify) {
         if ($compileProblem) {
             [void]$failures.Add("compile-evidence.json: $compileProblem — build/classes directory is not compile proof")
@@ -5683,7 +5755,7 @@ switch ($Operation) {
                 if ([string]::IsNullOrWhiteSpace($testEvPath)) {
                     $checks.Add("[?] 相关测试/回归(无 test-evidence.json，AI 自报)")
                 } else {
-                    $testEvProblem = Get-CommandEvidenceProblem -EvidencePath $testEvPath -RequireTestCounts
+                    $testEvProblem = Get-CommandEvidenceProblem -EvidencePath $testEvPath -RequireTestCounts -WorkspaceRoot $wsRoot -SpecDir $specDir
                     if ($testEvProblem) {
                         $failures.Add("test-evidence.json: $testEvProblem")
                         $checks.Add("[X] 相关测试/回归(test-evidence.json: $testEvProblem)")
@@ -5730,7 +5802,8 @@ switch ($Operation) {
             $checks.Add("[X] tier 未知(feature-state.json 缺失或未设 tier)")
         }
         $compileEvPath = Find-CommandEvidencePath -SpecDir $specDir -WorkspaceRoot $wsRoot -FileName "compile-evidence.json"
-        $compileEvProblem = Get-CommandEvidenceProblem -EvidencePath $compileEvPath
+        $needCompileDigest = ($effectiveTier -eq "T3") -or (-not [string]::IsNullOrWhiteSpace($compileEvPath))
+        $compileEvProblem = Get-CommandEvidenceProblem -EvidencePath $compileEvPath -RequireWorkingTreeDigest:$needCompileDigest -WorkspaceRoot $wsRoot -SpecDir $specDir
         if ($effectiveTier -eq "T3") {
             if ($compileEvProblem) {
                 $failures.Add("compile-evidence.json: $compileEvProblem — build/classes directory is not compile proof")

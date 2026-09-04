@@ -153,12 +153,12 @@ brainstorming（需求 → 确认 → design-architect 产出 06）
 |---|---|---|
 | `BLOCKER` | 宏观规范根本违反 / 设计级数据安全风险 / 必然返工 | 是——必须修复后重审 |
 | `MAJOR` | 设计完整性重要遗漏（状态清理/集群隔离/锁内重操作）/ 跨模块边界错 | 是 |
-| `MINOR` | 规范偏离 / 潜在风险 / 契约条款不完整 | 是 |
+| `MINOR` | 规范偏离 / 潜在风险 / 契约条款不完整 | 否——`PASS_WITH_WARNINGS`，不阻断 |
 | `INFO` | 文档完善 / 描述优化建议 | 否——可记录，不阻塞 |
 
-**门禁规则**：存在任何 `BLOCKER`/`MAJOR`/`MINOR` 未修复时，**不得交给人工确认**；由 controller 回派 `design-architect` 修正后重审。`INFO` 可记录在报告，不阻塞人工确认（由人工决定是否采纳）。
+**门禁规则**：存在任何 `BLOCKER`/`MAJOR` 未修复时，**不得交给人工确认**；由 controller 回派 `design-architect` 修正后重审。`MINOR`/`INFO` 记为 `PASS_WITH_WARNINGS`，不阻断人工确认（由人工决定是否采纳）。
 
-**循环熔断（最多 3 轮）**：design-reviewer 审查 → design-architect 修正 → 重审，最多循环 **3 轮**。第 3 轮后仍有 `BLOCKER`/`MAJOR`/`MINOR` 未修复时，**停止机器闭环，交人工确认**——由人决定：接受当前方案 / 手动介入修正 / 退回重做。这防止 design-architect 与 design-reviewer（两个 AI）共享盲点导致死循环。熔断时在报告中标注"已达 3 轮上限，交人工"。
+**循环熔断（最多 2 轮）**：design-reviewer 审查 → design-architect 修正 → 重审，最多循环 **2 轮**。第 2 轮后：若仅剩 `MINOR`/`INFO`，自动豁免通过（`PASS_WITH_WARNINGS`）；若仍有 `BLOCKER`/`MAJOR`，**停止机器闭环，交人工确认**——由人决定：接受当前方案 / 手动介入修正 / 退回重做。**阻断级（`BLOCKER`/`MAJOR`）可判 `NEEDS_FIX`**；**建议级（`MINOR`/`INFO`）不得判 `NEEDS_FIX`**。这防止 design-architect 与 design-reviewer（两个 AI）共享盲点导致死循环。熔断时在报告中标注"已达 2 轮上限，交人工"。
 
 ### AUDIT-EXEMPT 例外认可
 工程实践存在"规则上不通过但有意允许"的反模式（如通常服务端不下发配置表给客户端，某些特殊场景允许）。这类**有意为之的例外**应在设计契约条款行上以 `[AUDIT-EXEMPT: 原因]` 显式声明。
@@ -169,12 +169,13 @@ brainstorming（需求 → 确认 → design-architect 产出 06）
 
 ## 输出格式
 
-审查结论必须写入功能目录 `07_design_review.md`（`VerifyCompletion` 读取此文件；无文件或状态不是 PASS / PASS_WITH_WARNINGS 则 T3 不能 Complete）。同时把同一份结论返回给 Superpowers controller（不写 `.ai-sop/runtime/`）。
+审查结论必须写入功能目录 `07_design_review.md`（`VerifyCompletion` 读取此文件；无文件、状态不是 PASS / PASS_WITH_WARNINGS、或 `审查对象 sha256` 与当前 `06_design_contract.md` 不一致则 T3 不能 Complete）。同时把同一份结论返回给 Superpowers controller（不写 `.ai-sop/runtime/`）。
 
 ```
 ## 设计方案审查结论
 
 审查对象：<06_design_contract.md 路径>
+审查对象 sha256：<06 规范化 SHA-256，与 Approve -Gate design / Status 的 sha256 相同>
 审查状态：PASS | PASS_WITH_WARNINGS | NEEDS_FIX
 
 ### 发现（按级别）
@@ -192,7 +193,7 @@ INFO:
 - 标记 N/A 的项及原因
 
 ### 结论
-- PASS：无 BLOCKER/MAJOR/MINOR，可交人工确认。
+- PASS：无 BLOCKER/MAJOR，可交人工确认。
 - PASS_WITH_WARNINGS：仅剩 MINOR/INFO，可交人工确认。
 - NEEDS_FIX：<需回 design-architect 修正的具体问题清单>，修正后重审。
 

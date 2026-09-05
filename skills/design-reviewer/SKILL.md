@@ -30,20 +30,13 @@ brainstorming（需求 → 确认 → design-architect 产出 06）
 - 宏观规范以 `CLAUDE.md` 项目强制规则与 `.ai-workspace/context/` 为准；具体业务以 `01_server_rules.md` 与 `06_design_contract.md` 为准。
 - 审查结论与功能规则冲突时，以功能规则文档和设计契约为准，并在报告中显式说明冲突点。
 
-## Superpowers 上游模板（约定阅读，不是 loader）
-本角色在执行设计方案审查前，**若本机已安装 Superpowers 插件，应先阅读其原生设计审查指令**（没有脚本自动拼接）：
-- **基类路径嗅探**：按环境用户目录展开探测（Windows 展开 `$env:USERPROFILE` 如 `C:\Users\<User>\`，macOS/Linux 展开 `$HOME` 或 `~`）：
-  1. `<UserHome>/.gemini/config/plugins/superpowers/skills/`
-  2. `<UserHome>/.claude/plugins/superpowers/skills/`
-  3. `<UserHome>/.cursor/plugins/superpowers/skills/`
-- **建议阅读的上游真源**（文件存在才读，不存在则跳过）：
-  - `brainstorming/spec-document-reviewer-prompt.md`（设计文档审查清单）
-  - `brainstorming/SKILL.md`（需求与设计澄清原则）
-- **通用设计审查心智（SKILL 内联，插件未安装时仍有效）**：
-  1. **完备性与歧义审查**：继承 Superpowers 对设计草案中模糊占位（"TBD", "as appropriate", "reasonable defaults"）、未定义异常/错误码分支及边界条件缺失的严格拦截能力。
-  2. **YAGNI 与范围收敛**：检查设计是否超出了 01 需求范围，是否存在不必要的抽象与提前过度设计。
-- **平滑降级指示**：若本地未探测到 Superpowers 插件目录（如纯 T2 模式或新环境未安装），直接依据本节已提炼的通用工程心智执行，无缝回退，无需阻断。
-- **领域特化关系**：下文各节作为**项目领域叠加层 (Domain Overlay)**，展开游戏服务端的宏观架构守门、存储与内存分层、无损扩展与已知高风险设计缺陷模式。
+## 审查纪律（自包含）
+本角色**只遵守本 Skill 正文**。不要去读 Superpowers 插件目录，也不要读 `brainstorming/SKILL.md` / `spec-document-reviewer-prompt.md` 等上游全文——`brainstorming` 由 controller 显式调用，本角色不加载第二套设计人设。
+
+1. **完备性与歧义审查**：拦截设计草案中的模糊占位（"TBD", "as appropriate", "reasonable defaults"）、未定义异常/错误码分支及边界条件缺失。
+2. **YAGNI 与范围收敛**：检查设计是否超出了 01 需求范围，是否存在不必要的抽象与提前过度设计。
+
+下文为项目领域规则（具体框架与编码风格以宿主 `context/` 为准）。
 
 ## Context Strategy
 审查前必须加载：

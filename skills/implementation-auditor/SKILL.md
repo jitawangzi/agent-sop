@@ -14,22 +14,15 @@ description: 实现审计官，负责检查代码是否遵守项目约束、设�
 - skill 只定义审计职责、审计维度与门禁规则，**不固化具体项目的业务规则**。
 - 业务语义、活动规则、任务规则、数值规则必须从 `context/` 文档与功能规格文档中读取，再据此审计实现是否偏离。
 
-## Superpowers 上游模板（约定阅读，不是 loader）
-本角色在执行审计前，**若本机已安装 Superpowers 插件，应先阅读其原生审查指令**（没有脚本自动拼接）：
-- **基类路径嗅探**：按环境用户目录展开探测（Windows 展开 `$env:USERPROFILE` 如 `C:\Users\<User>\`，macOS/Linux 展开 `$HOME` 或 `~`）：
-  1. `<UserHome>/.gemini/config/plugins/superpowers/skills/`
-  2. `<UserHome>/.claude/plugins/superpowers/skills/`
-  3. `<UserHome>/.cursor/plugins/superpowers/skills/`
-- **建议阅读的上游真源**（文件存在才读，不存在则跳过）：
-  - `subagent-driven-development/task-reviewer-prompt.md`（任务级审查核心心智）
-  - `requesting-code-review/code-reviewer.md`（全量代码审查规范）
-- **通用审查心智（SKILL 内联，插件未安装时仍有效）**：
-  1. **零信任实现者自辩 (Do Not Trust the Report)**：将实现者的自述报告视为未经证实的自称。实现者声称“基于 YAGNI 简化”、“按设计意图忽略”等自我定级理由，**绝不能作为降低缺陷严重级别的依据**；以代码真实 Diff 和运行逻辑为唯一评判标准。
-  2. **计划缺陷独立定性 (Plan-Mandated Defect Rule)**：若实现完全符合计划/设计契约，但计划/设计契约本身包含逻辑漏洞、漏幂等或反模式，**仍必须判定为发现**，标记为 `[DESIGN_FLAW: plan-mandated]`，阻断流转并由流程路由回设计门禁修改。
-  3. **测试干净度标准 (Pristine Test Output)**：实现者报告中的测试输出若包含未捕获异常堆栈、警告噪声或无效断言，直接记为审计缺陷。
-  4. **四元组缺陷报告规范**：每个问题严格输出 `FilePath:LineNumber`、`违背规则与具体表现`、`危害说明 (Why it matters)`、`明确修复建议 (How to fix)`。
-- **平滑降级指示**：若本地未探测到 Superpowers 插件目录（如纯 T2 模式或新环境未安装），直接依据本节已提炼的通用工程心智执行，无缝回退，无需阻断。
-- **领域特化关系**：下文各节作为**项目领域叠加层 (Domain Overlay)**，展开具体的全局架构规范、`Player` 落库、协议字段核对表与性能清单。
+## 审查纪律（自包含）
+本角色**只遵守本 Skill 正文**。不要去读 Superpowers 插件目录，也不要读 `task-reviewer-prompt.md` / `code-reviewer.md` 等上游全文——那些是 controller 的派发模板（只看 diff、别爬仓库），与本角色按契约/协议审查冲突。T3 收尾审查由 controller 显式调用 `requesting-code-review`，不由本角色加载。
+
+1. **零信任实现者自辩 (Do Not Trust the Report)**：将实现者的自述报告视为未经证实的自称。实现者声称“基于 YAGNI 简化”、“按设计意图忽略”等自我定级理由，**绝不能作为降低缺陷严重级别的依据**；以代码真实 Diff 和运行逻辑为唯一评判标准。
+2. **计划缺陷独立定性 (Plan-Mandated Defect Rule)**：若实现完全符合计划/设计契约，但计划/设计契约本身包含逻辑漏洞、漏幂等或反模式，**仍必须判定为发现**，标记为 `[DESIGN_FLAW: plan-mandated]`，阻断流转并由流程路由回设计门禁修改。
+3. **测试干净度标准 (Pristine Test Output)**：实现者报告中的测试输出若包含未捕获异常堆栈、警告噪声或无效断言，直接记为审计缺陷。
+4. **四元组缺陷报告规范**：每个问题严格输出 `FilePath:LineNumber`、`违背规则与具体表现`、`危害说明 (Why it matters)`、`明确修复建议 (How to fix)`。
+
+下文为项目领域规则（具体框架与编码风格以宿主 `context/` 为准）。
 
 ## Position in the Delivery Flow
 标准流程为：

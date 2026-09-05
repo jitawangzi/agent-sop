@@ -118,11 +118,11 @@ brainstorming 节点按需咨询 `design-architect`；设计产出后由 `design
 
 任何编辑规范产物的专家调用都属于修改型工作，需要活动的 Superpowers owner ID；只读的咨询性 review 不需要。
 
-**Superpowers 原生模板约定 (Base + Overlay，无 loader)**：
-本项目专家 Skill 不把 Superpowers prompt 复制进仓库，而是约定模型先读 SKILL.md，再按其中路径去读本机 Superpowers 插件模板（`implementer-prompt.md`、`task-reviewer-prompt.md`、`code-reviewer.md`、`test-driven-development` 等）。**没有脚本做 Slot Injection 或动态拼接**。插件升级不会自动注入新能力；未安装插件时按 SKILL 内联心智降级。
+**专家 Skill 自包含（禁止再读 Superpowers 原生全文）**：
+专家执行单元只读本仓库对应 `SKILL.md`。**不要**再去读本机 Superpowers 插件模板（`implementer-prompt.md`、`task-reviewer-prompt.md`、`code-reviewer.md`、`test-driven-development` 等）——那些是 controller 派发/流程模板，与专家 overlay（按协议走查等）冲突。需要的通用纪律已内联在专家 Skill 正文。T3 编排仍由 controller 显式调用 Superpowers 流程 skill。
 - **Controller 派发子智能体时的显式 Skill 注入契约 (Prompt Injection Contract)**：
   Controller 在派发 subagent 时，必须在 subagent prompt 的开头显式指明其角色与对应 Skill 路径（这是 prompt 文本约定，不是文件 loader）：
-  - 派发实现者：Prompt 必须包含 `【角色与规范】你的角色是 implementation-engine，请首先读取并严格遵守 .ai-sop/skills/implementation-engine/SKILL.md 的实现规范与 Base+Overlay 动态继承体系。`
+  - 派发实现者：Prompt 必须包含 `【角色与规范】你的角色是 implementation-engine，请首先读取并严格遵守 .ai-sop/skills/implementation-engine/SKILL.md 的实现规范。`
   - 派发内审者：Prompt 必须包含 `【角色与规范】你的角色是 implementation-auditor（或 logic-auditor），请首先读取并严格遵守 .ai-sop/skills/implementation-auditor/SKILL.md 的审计规范。` **并且必须粘贴本 Task 实现者返回的【编译证据】**（`command` + `exitCode=0` + 成功摘录）。缺编译证据不得派发。
   - 派发设计审查者：Prompt 必须包含 `【角色与规范】你的角色是 design-reviewer，请首先读取并严格遵守 .ai-sop/skills/design-reviewer/SKILL.md 的审查规范。`
   - 调用 `writing-plans`：必须先遵守本文件「writing-plans Task 粒度」。紧耦合小改动默认 1 个 Task；禁止把 2–5 分钟 Step 写成多个 Task。

@@ -170,16 +170,16 @@ AI 编码工具百花齐放（Claude Code、Copilot、Cursor、Antigravity、Pi�
 
 **价值**：CI 稳定绿（串行），想快可并行（接受 flake）；开发时不被弹窗打扰。
 
-### 决策10：Superpowers 原生模板是约定阅读，不是 loader
+### 决策10：专家 Skill 自包含；Superpowers 只给控制器调用
 
-**问题**：Superpowers 作为底层调度器持续演进。若把其 prompt 文本硬编码复制到项目专家 Skill 中，会分叉；若声称「运行时自动合成」，但仓库里没有拼接脚本，文档会骗人。
+**问题**：曾声称专家 Skill「运行时继承」Superpowers 原生模板，或要求模型去读 `task-reviewer-prompt.md` / `implementer-prompt.md` / `code-reviewer.md`。那些文件是 **controller 派发模板**（只看 diff、别爬仓库、再派 general-purpose subagent），与本项目专家 overlay（按协议走查、编译证据、领域 checklist）冲突。模型也不会稳定去读；文档若写成「会先读上游」是假保证。
 
-**为什么这么设计**：采用“**约定阅读（Base）+ 领域特化（Overlay）**”，**不是 Slot Injection loader**：
-- **约定 Base**：专家 SKILL.md 列出本机 Superpowers 插件路径（`implementer-prompt.md`、`task-reviewer-prompt.md`、`code-reviewer.md`、`test-driven-development` 等），**要求模型在执行前自己去读**。没有任何脚本把这些文件拼进 Skill 或 subagent prompt。
-- **Overlay**：SKILL.md 其余章节才是项目领域规则（由宿主 context 注入，SOP 核心保持领域中立）。
-- **降级**：本机未安装 Superpowers 时，按 SKILL 内已提炼的通用工程心智执行，不阻断。
+**为什么这么设计**：
+- T3 **控制器**用 Skill 工具显式调用 Superpowers **流程** skill（`brainstorming`、`writing-plans`、`subagent-driven-development`、`requesting-code-review`）。
+- 专家执行单元（`implementation-engine` / `implementation-auditor` / `logic-auditor` / `design-reviewer`）**只读本仓库对应 SKILL.md**。需要的通用纪律已内联在 Skill 正文。
+- **禁止**专家 subagent 再去嗅探/阅读 Superpowers 插件目录。无 loader、无拼接脚本。插件升级不会自动进入专家审查。
 
-**价值**：Skill 正文不复制一份会过期的 Superpowers prompt；上游能力是否生效取决于模型是否真的去读了那些文件。插件升级**不会**零成本自动获得新能力。
+**价值**：一套人设，不打架；T3 编排仍用 Superpowers 流程节点。
 
 ### 决策11：04 只对旧系统扩展强制（绿场 T3 不造假材料）
 

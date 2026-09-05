@@ -23,8 +23,8 @@
     {
       "source": "distribution/templates/root/AGENTS.md",
       "target": "AGENTS.md",
-      "sourceBlobSha256": "dd5061ccba1c0de03028b5a874b81f13cf44823f952a0ea115c20bf54eb71c71",
-      "targetSha256": "dd5061ccba1c0de03028b5a874b81f13cf44823f952a0ea115c20bf54eb71c71",
+      "sourceBlobSha256": "430d2f8c8a0f2530b75aa8609009ce7903fd4d6dc30ee2c3cb14cdb5b28c9db0",
+      "targetSha256": "430d2f8c8a0f2530b75aa8609009ce7903fd4d6dc30ee2c3cb14cdb5b28c9db0",
       "legacySha256": "b5b14791a133603ab8113d15baaf9472158b04bb3391d18da3d778ac87e96f5b",
       "encoding": "utf8-no-bom",
       "lineEnding": "lf"

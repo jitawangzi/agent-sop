@@ -44,21 +44,14 @@ description: 高风险逻辑审计官，专门细查方法级、分支级与链�
 - 具体业务语义、状态定义、返回契约、奖励规则、活动规则必须从 `context/` 文档、`01_server_rules.md`、`06_design_contract.md` 与实际代码接口中读取
 - skill 本体不直接写死某个项目的业务分支语义
 
-## Superpowers 上游模板（约定阅读，不是 loader）
-本角色在执行高风险逻辑审计前，**若本机已安装 Superpowers 插件，应先阅读其原生指令**（没有脚本自动拼接）：
-- **基类路径嗅探**：按环境用户目录展开探测（Windows 展开 `$env:USERPROFILE` 如 `C:\Users\<User>\`，macOS/Linux 展开 `$HOME` 或 `~`）：
-  1. `<UserHome>/.gemini/config/plugins/superpowers/skills/`
-  2. `<UserHome>/.claude/plugins/superpowers/skills/`
-  3. `<UserHome>/.cursor/plugins/superpowers/skills/`
-- **建议阅读的上游真源**（文件存在才读，不存在则跳过）：
-  - `subagent-driven-development/task-reviewer-prompt.md`（Part 1: Spec Compliance 与 Part 2: Code Quality 核心规范）
-  - `systematic-debugging/SKILL.md`（根因推演与深度防御心智）
-- **通用审查心智（SKILL 内联，插件未安装时仍有效）**：
-  1. **零信任与客观逻辑推演**：以代码实际控制流与数据流为准，不依赖实现者的注释解释与自述承诺。
-  2. **严密边界分支穷尽 (Branch Exhaustiveness)**：继承 Superpowers 对冷门分支、边界空值、异常处理的极限审查标准。
-  3. **四元组缺陷报告规范**：输出 `FilePath:LineNumber` + `缺陷与语义偏差` + `危害说明 (Why it matters)` + `修复方案 (How to fix)`。
-- **平滑降级指示**：若本地未探测到 Superpowers 插件目录（如纯 T2 模式或新环境未安装），直接依据本节已提炼的通用工程心智执行，无缝回退，无需阻断。
-- **领域特化关系**：下文各节作为**项目领域叠加层 (Domain Overlay)**，展开方法级语义一致性（如变量同名异义嗅探）、状态流转时序闭环、`Player` 资源落库防御与游戏专项逻辑核验。
+## 审查纪律（自包含）
+本角色**只遵守本 Skill 正文**。不要去读 Superpowers 插件目录，也不要读 `task-reviewer-prompt.md` / `systematic-debugging/SKILL.md` 等上游全文——那些是 controller 的流程/派发模板，与本角色方法级走查冲突。T3 的 `systematic-debugging` 由 controller 显式调用，不由本角色加载。
+
+1. **零信任与客观逻辑推演**：以代码实际控制流与数据流为准，不依赖实现者的注释解释与自述承诺。
+2. **严密边界分支穷尽 (Branch Exhaustiveness)**：冷门分支、边界空值、异常处理必须逐条核对，不得只审主路径。
+3. **四元组缺陷报告规范**：输出 `FilePath:LineNumber` + `缺陷与语义偏差` + `危害说明 (Why it matters)` + `修复方案 (How to fix)`。
+
+下文为项目领域规则（具体框架与编码风格以宿主 `context/` 为准）。
 
 ## Project-Specific Extension Loading Rule
 在执行逻辑审计前，必须判断是否需要加载项目专项扩展文档。

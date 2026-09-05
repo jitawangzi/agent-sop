@@ -293,6 +293,28 @@ Invoke-Test "project-manifest.json validates and settings hash matches" {
     Assert-Equal $settingsProj.targetSha256 $hash "claude-settings.json targetSha256 must match LF-normalized bytes"
 }
 
+Invoke-Test "project-manifest projection and blob hashes match source files" {
+    $manifestPath = Join-Path $ClaudeRoot "distribution\project-manifest.json"
+    $manifest = Get-Content -Raw -LiteralPath $manifestPath | ConvertFrom-Json
+    foreach ($p in @($manifest.projections)) {
+        $src = Join-Path $ClaudeRoot $p.source
+        Assert-True (Test-Path -LiteralPath $src -PathType Leaf) "projection source missing: $($p.source)"
+        $bytes = Get-AiSopProjectionBytes -SourcePath $src
+        $hash = ([System.Security.Cryptography.SHA256]::Create().ComputeHash($bytes) | ForEach-Object { $_.ToString("x2") }) -join ""
+        Assert-Equal $p.sourceBlobSha256 $hash "sourceBlobSha256 drift: $($p.source)"
+        if ((Get-AiSopProjectionVerifyMode -Projection $p) -ne "json-hooks-merge") {
+            Assert-Equal $p.targetSha256 $hash "targetSha256 drift: $($p.target)"
+        }
+    }
+    $toolPolicyPath = Join-Path $ClaudeRoot $manifest.toolPolicy.path
+    $toolHash = Get-AiSopSha256 -Path $toolPolicyPath
+    Assert-Equal $manifest.toolPolicy.blobSha256 $toolHash "toolPolicy.blobSha256 must match file hash"
+    $certPath = Join-Path $ClaudeRoot $manifest.certification.path
+    $certHash = Get-AiSopSha256 -Path $certPath
+    Assert-Equal $manifest.certification.blobSha256 $certHash "certification.blobSha256 must match file hash"
+    Assert-True ($manifest.sourceCommit -match '^[0-9a-f]{40}$') "sourceCommit must be 40-char hex"
+}
+
 Invoke-Test "json-hooks-merge preserves extra JSON keys and injects SOP hooks" {
     $tmp = Join-Path ([System.IO.Path]::GetTempPath()) ("aisop-hooks-merge-" + [guid]::NewGuid().ToString("N").Substring(0,8))
     New-Item -ItemType Directory -Path $tmp | Out-Null

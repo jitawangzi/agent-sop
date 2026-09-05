@@ -6,6 +6,7 @@ param()
 $ErrorActionPreference = "Stop"
 
 $ScriptsRoot = Split-Path -Parent $PSScriptRoot
+. (Join-Path $ScriptsRoot "hidden-process.ps1")
 $ClaudeRoot = Split-Path -Parent $ScriptsRoot
 $DispatcherScript = Join-Path $ScriptsRoot "hook-dispatcher.ps1"
 $OwnerScript = Join-Path $ScriptsRoot "workflow-owner.ps1"
@@ -402,6 +403,9 @@ try {
     )
     Assert-True ($agToolEscape.Envelope -match '"decision"\s*:') (
         "T1 Antigravity PRE_TOOL_USE envelope missing decision: $($agToolEscape.Envelope)"
+    )
+    Assert-Equal $escape.ReasonCode "T1_ESCAPE" (
+        "T1 malformed payload must still ALLOW after parse failure."
     )
     # Explicit 0 beats .ai-sop/.guard-disabled so later assertions exercise Guard.
     $env:SERVER_NEW_SKIP_OWNER_GUARD = "0"
@@ -1051,6 +1055,57 @@ try {
     $normalMax = ($samples | Measure-Object -Maximum).Maximum
     Assert-True ($normalMax -lt 1000) (
         "Normal dispatcher path exceeded 1000ms: max=${normalMax}ms."
+    )
+
+    $missingDepsDir = Join-Path $TestRoot "missing-deps"
+    [System.IO.Directory]::CreateDirectory($missingDepsDir) | Out-Null
+    Copy-Item -LiteralPath $DispatcherScript -Destination (Join-Path $missingDepsDir "hook-dispatcher.ps1")
+    $missingDispatcher = Join-Path $missingDepsDir "hook-dispatcher.ps1"
+    $pwshExe = (Get-Process -Id $PID).Path
+
+    function Invoke-HiddenHookScript {
+        param(
+            [string]$File,
+            [string]$EventHint,
+            [string]$OutName
+        )
+        $outFile = Join-Path $TestRoot "$OutName.out"
+        $errFile = Join-Path $TestRoot "$OutName.err"
+        $proc = Start-AiSopHiddenProcess `
+            -FilePath $pwshExe `
+            -ArgumentList @("-NoProfile", "-File", $File, "-EventHint", $EventHint) `
+            -RedirectStandardOutput $outFile `
+            -RedirectStandardError $errFile `
+            -PassThru
+        $proc.WaitForExit()
+        return [pscustomobject]@{
+            ExitCode = $proc.ExitCode
+            Output = [System.IO.File]::ReadAllText($outFile)
+        }
+    }
+
+    $deny = Invoke-HiddenHookScript -File $missingDispatcher -EventHint PRE_TOOL_USE -OutName missing-deps-deny
+    Assert-Equal $deny.ExitCode 2 "missing deps PRE_TOOL_USE must exit 2"
+    Assert-True ($deny.Output -match "SOP_DEGRADED_MISSING_DEPS") "missing deps PRE_TOOL_USE must name reason"
+    Assert-True ($deny.Output -match '"decision"\s*:\s*"deny"') "missing deps PRE_TOOL_USE must DENY"
+    $allow = Invoke-HiddenHookScript -File $missingDispatcher -EventHint SESSION_START -OutName missing-deps-allow
+    Assert-Equal $allow.ExitCode 0 "missing deps SESSION_START must exit 0"
+    Assert-True ($allow.Output -match '"decision"\s*:\s*"ALLOW"') "missing deps SESSION_START must ALLOW"
+
+    $wrapRoot = Join-Path $TestRoot "wrapper-ws"
+    [System.IO.Directory]::CreateDirectory((Join-Path $wrapRoot ".agents")) | Out-Null
+    $wrapperSrc = Join-Path $ClaudeRoot "distribution\templates\hooks\hook-wrapper.ps1"
+    Copy-Item -LiteralPath $wrapperSrc -Destination (Join-Path $wrapRoot ".agents\hook-wrapper.ps1")
+    $wrapperPath = Join-Path $wrapRoot ".agents\hook-wrapper.ps1"
+    $wrapDeny = Invoke-HiddenHookScript -File $wrapperPath -EventHint PRE_TOOL_USE -OutName wrap-deny
+    Assert-Equal $wrapDeny.ExitCode 2 "wrapper missing dispatcher PRE_TOOL_USE must exit 2"
+    Assert-True ($wrapDeny.Output -match '"decision"\s*:\s*"deny"') (
+        "wrapper missing dispatcher PRE_TOOL_USE must DENY"
+    )
+    $wrapAllow = Invoke-HiddenHookScript -File $wrapperPath -EventHint SESSION_START -OutName wrap-allow
+    Assert-Equal $wrapAllow.ExitCode 0 "wrapper missing dispatcher SESSION_START must exit 0"
+    Assert-True ($wrapAllow.Output -match '"decision"\s*:\s*"ALLOW"') (
+        "wrapper missing dispatcher SESSION_START must ALLOW"
     )
 
     Write-Output (

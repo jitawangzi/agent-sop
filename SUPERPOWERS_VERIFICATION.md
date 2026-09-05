@@ -49,7 +49,7 @@
 
 ### F. 生产代码编辑 Guard（归属强制）
 
-- [ ] **F1**：未 Claim 归属前，编辑 `src\com\**`/`WebRoot\**`/`config\**` 被 guard 拒绝，stderr 提示"requires ACTIVE feature owner"。
+- [ ] **F1**：未 Claim 归属前，编辑默认生产路径（`src/`、`pkg/`、`WebRoot/`、`config/` 等，见 `Get-AiSopProductionPatterns`）被 guard 拒绝，stderr 提示"requires ACTIVE feature owner"。
 - [ ] **F2**：Claim 归属后（`SUPERPOWERS`），编辑生产代码被放行。
 - [ ] **F3**：归属用 `SUPERPOWERS`（不再是 `CUSTOM_SKILLS`），`agent` 字段反映实际工具：
   ```powershell

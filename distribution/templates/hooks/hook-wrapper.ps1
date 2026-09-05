@@ -2,14 +2,14 @@
 #
 # This file lives in the ROOT Git repo (NOT in the .ai-sop submodule), so it
 # is always present on disk after a fresh clone, even before `git submodule
-# update --init`. It breaks the self-lock deadlock where a missing
-# hook-dispatcher.ps1 (uninitialized submodule) blocks all tool calls —
-# including the very command needed to initialize the submodule.
+# update --init`. Write-ish hooks DENY when dispatcher is missing (fail-closed).
+# Session hooks ALLOW so `git submodule update --init` can still run.
 #
 # hooks.json / settings.json point here via `pwsh -NoProfile -File <this>`.
-# This wrapper checks whether the real dispatcher exists; if not, it outputs
-# a permissive ALLOW result and exits 0 with empty stderr (so harnesses that
-# treat stderr as failure still pass). If the dispatcher exists, it forwards.
+# This wrapper checks whether the real dispatcher exists; if not, write-ish
+# events (PRE_TOOL_USE / PRE_INVOCATION / empty hint) DENY so production edits
+# cannot skip Guard. Session lifecycle events ALLOW so `git submodule update
+# --init` can still run from a session hook.
 param(
     [string]$EventHint = ""
 )
@@ -31,9 +31,14 @@ $dispatcher = Join-Path $PSScriptRoot '..' '.ai-sop' 'scripts' 'hook-dispatcher.
 
 # Resolve to absolute for Test-Path (relative paths can be cwd-sensitive).
 if (-not (Test-Path -LiteralPath $dispatcher -PathType Leaf)) {
-    # Submodule not initialized or dispatcher missing — graceful degradation.
-    # Output a permissive ALLOW result (some harnesses parse stdout as JSON).
-    # stderr is intentionally empty so harnesses don't misinterpret it as failure.
+    # Submodule not initialized: fail-closed on write-ish events so production
+    # edits cannot skip Guard. Session lifecycle still ALLOW so the human can
+    # run `git submodule update --init` from a session hook.
+    $writeish = $EventHint -in @("", "PRE_TOOL_USE", "PRE_INVOCATION")
+    if ($writeish) {
+        Write-Output '{"decision":"deny","permissionDecision":"deny","reasonCode":"SOP_DEGRADED_MISSING_DEPS"}'
+        exit 2
+    }
     Write-Output '{"decision":"ALLOW","reasonCode":"SOP_DEGRADED_MISSING_DEPS"}'
     exit 0
 }

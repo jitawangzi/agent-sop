@@ -44,16 +44,16 @@ description: 高风险逻辑审计官，专门细查方法级、分支级与链�
 - 具体业务语义、状态定义、返回契约、奖励规则、活动规则必须从 `context/` 文档、`01_server_rules.md`、`06_design_contract.md` 与实际代码接口中读取
 - skill 本体不直接写死某个项目的业务分支语义
 
-## Superpowers Upstream Dynamic Base (动态继承原生基线)
-本角色在执行高风险逻辑审计前，**必须动态读取并继承本地 Superpowers 最新原生指令**：
+## Superpowers 上游模板（约定阅读，不是 loader）
+本角色在执行高风险逻辑审计前，**若本机已安装 Superpowers 插件，应先阅读其原生指令**（没有脚本自动拼接）：
 - **基类路径嗅探**：按环境用户目录展开探测（Windows 展开 `$env:USERPROFILE` 如 `C:\Users\<User>\`，macOS/Linux 展开 `$HOME` 或 `~`）：
   1. `<UserHome>/.gemini/config/plugins/superpowers/skills/`
   2. `<UserHome>/.claude/plugins/superpowers/skills/`
   3. `<UserHome>/.cursor/plugins/superpowers/skills/`
-- **必读基类真源**：
+- **建议阅读的上游真源**（文件存在才读，不存在则跳过）：
   - `subagent-driven-development/task-reviewer-prompt.md`（Part 1: Spec Compliance 与 Part 2: Code Quality 核心规范）
   - `systematic-debugging/SKILL.md`（根因推演与深度防御心智）
-- **通用审查心智自动继承**：
+- **通用审查心智（SKILL 内联，插件未安装时仍有效）**：
   1. **零信任与客观逻辑推演**：以代码实际控制流与数据流为准，不依赖实现者的注释解释与自述承诺。
   2. **严密边界分支穷尽 (Branch Exhaustiveness)**：继承 Superpowers 对冷门分支、边界空值、异常处理的极限审查标准。
   3. **四元组缺陷报告规范**：输出 `FilePath:LineNumber` + `缺陷与语义偏差` + `危害说明 (Why it matters)` + `修复方案 (How to fix)`。

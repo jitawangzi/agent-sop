@@ -240,6 +240,16 @@ function Get-AiSopWorkflowTransactionRegistryRoot {
     return Join-Path (Get-AiSopWorkflowBaseAppDataRoot) "Transactions/$scope"
 }
 
+function Get-AiSopStuckTransactionJournals {
+    param([string]$WorkspacePath = $null)
+
+    $txRoot = Get-AiSopWorkflowTransactionRegistryRoot -WorkspacePath $WorkspacePath
+    if (-not (Test-Path -LiteralPath $txRoot -PathType Container)) {
+        return @()
+    }
+    return @(Get-ChildItem -LiteralPath $txRoot -Filter "*.json" -File)
+}
+
 function Get-AiSopWorkflowSessionRegistryRoot {
     param([string]$WorkspacePath = $null)
 

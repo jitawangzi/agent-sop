@@ -1000,6 +1000,22 @@ Invoke-AiSopWorkflowTransaction `
         Get-AiSopWorkflowTransactionProof -TransactionId $sortedTx
     ) "APPLIED" "Committed transaction proof was not discoverable."
 
+    $stuckPrev = $env:SERVER_NEW_WORKFLOW_TRANSACTION_REGISTRY
+    $stuckDir = Join-Path $TestRoot "stuck-scan"
+    $env:SERVER_NEW_WORKFLOW_TRANSACTION_REGISTRY = $stuckDir
+    try {
+        Assert-Equal @(Get-AiSopStuckTransactionJournals).Count 0 (
+            "empty transaction registry must report no stuck journals."
+        )
+        [System.IO.Directory]::CreateDirectory($stuckDir) | Out-Null
+        [System.IO.File]::WriteAllText((Join-Path $stuckDir "stuck.json"), "{}", $Utf8NoBom)
+        Assert-Equal @(Get-AiSopStuckTransactionJournals).Count 1 (
+            "json leftover in transaction registry must be reported as stuck."
+        )
+    } finally {
+        $env:SERVER_NEW_WORKFLOW_TRANSACTION_REGISTRY = $stuckPrev
+    }
+
     Write-Output "All workflow transaction tests passed."
 } finally {
     foreach ($name in @(

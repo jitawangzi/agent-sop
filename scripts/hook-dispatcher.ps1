@@ -21,9 +21,9 @@ $script:DispatcherWorkspaceRoot = Split-Path -Parent (
     $script:DispatcherClaudeRoot
 )
 
-# Graceful degradation: if the .ai-sop submodule is not initialized or
-# dependency scripts are missing, do NOT block tool calls (exit 0 + warn).
-# A missing submodule should not paralyze every AI tool invocation.
+# Missing dispatcher deps: fail-closed on write-ish hook events so production
+# edits cannot proceed without Guard. Session lifecycle events still ALLOW so
+# `git submodule update --init` / installer can run from a session hook.
 $script:DispatcherMissingDeps = [System.Collections.Generic.List[string]]::new()
 foreach ($dependency in @(
     "hook-event-normalizer.ps1",
@@ -39,17 +39,20 @@ foreach ($dependency in @(
     }
 }
 if ($script:DispatcherMissingDeps.Count -gt 0) {
-    # Write warning to a log file (NOT stderr) — some harnesses treat any
-    # stderr output as command failure. Silent exit 0 + permissive ALLOW on
-    # stdout so tool calls are not blocked.
     try {
         $logDir = Join-Path ([System.IO.Path]::GetTempPath()) "ai-sop-hook"
         New-Item -ItemType Directory -Path $logDir -Force | Out-Null
         Add-Content -LiteralPath (Join-Path $logDir "degraded.log") `
             -Value ("[" + [DateTimeOffset]::UtcNow.ToString("o") + "] .ai-sop submodule not initialized or hook deps missing. Run 'git submodule update --init' then the ai-sop installer. Missing: " + ($script:DispatcherMissingDeps -join '; '))
     } catch {}
-    # Permissive ALLOW result on stdout (JSON envelope), exit 0.
+    $writeish = $EventHint -in @("", "PRE_TOOL_USE", "PRE_INVOCATION")
+    if ($writeish) {
+        Write-Output '{"decision":"deny","permissionDecision":"deny","reasonCode":"SOP_DEGRADED_MISSING_DEPS"}'
+        if ($script:DispatcherWasDotSourced) { return }
+        exit 2
+    }
     Write-Output '{"decision":"ALLOW","reasonCode":"SOP_DEGRADED_MISSING_DEPS"}'
+    if ($script:DispatcherWasDotSourced) { return }
     exit 0
 }
 
@@ -920,7 +923,32 @@ function Invoke-AiSopHookDispatcher {
     $watch = [System.Diagnostics.Stopwatch]::StartNew()
     $agent = Get-AiSopDispatcherInferredAgent -RawPayload $RawPayload
     try {
-        # 1. T1 is deliberately evaluated before parsing or state access.
+        # Total workflow budget for this hook pass. 750ms was too tight for a
+        # cold session Register (measured ~915ms including transaction
+        # recovery), so default to 5s; overridable for locked-down or very
+        # slow environments via SERVER_NEW_WORKFLOW_HOOK_DEADLINE_MS.
+        $dispatcherDeadlineMs = 10000
+        $dispatcherDeadlineEnv = [string]$env:SERVER_NEW_WORKFLOW_HOOK_DEADLINE_MS
+        if (
+            -not [string]::IsNullOrWhiteSpace($dispatcherDeadlineEnv) -and
+            [int]::TryParse($dispatcherDeadlineEnv, [ref]$dispatcherDeadlineEnv)
+        ) {
+            $dispatcherDeadlineMs = [int]$dispatcherDeadlineEnv
+        }
+        $deadlineUtc = [DateTimeOffset]::UtcNow.AddMilliseconds($dispatcherDeadlineMs)
+
+        # Parse before T1_ESCAPE so classification still happens. Human escape
+        # (env / .guard-disabled) then skips owner/journal work. Prefer
+        # .guard-token.json over a global switch. If parse fails, T1 still
+        # ALLOW so a broken SOP cannot lock the human out.
+        $hookEvent = ConvertTo-AiSopHookEvent `
+            -RawPayload $RawPayload `
+            -EventHint $EventHint `
+            -TrustedWorkspaceRoot $TrustedWorkspaceRoot `
+            -AcceptedAt $AcceptedAt `
+            -DeadlineUtc $deadlineUtc
+        $agent = [string]$hookEvent.agent
+
         if (Test-AiSopGuardEscapeEnabled) {
             $watch.Stop()
             return New-AiSopDispatcherResult `
@@ -937,29 +965,6 @@ function Invoke-AiSopHookDispatcher {
                 -ExitCode 0 `
                 -DurationMs $watch.ElapsedMilliseconds
         }
-
-        # Total workflow budget for this hook pass. 750ms was too tight for a
-        # cold session Register (measured ~915ms including transaction
-        # recovery), so default to 5s; overridable for locked-down or very
-        # slow environments via SERVER_NEW_WORKFLOW_HOOK_DEADLINE_MS.
-        $dispatcherDeadlineMs = 10000
-        $dispatcherDeadlineEnv = [string]$env:SERVER_NEW_WORKFLOW_HOOK_DEADLINE_MS
-        if (
-            -not [string]::IsNullOrWhiteSpace($dispatcherDeadlineEnv) -and
-            [int]::TryParse($dispatcherDeadlineEnv, [ref]$dispatcherDeadlineEnv)
-        ) {
-            $dispatcherDeadlineMs = [int]$dispatcherDeadlineEnv
-        }
-        $deadlineUtc = [DateTimeOffset]::UtcNow.AddMilliseconds($dispatcherDeadlineMs)
-
-        # 2. Strict native-shape parsing and semantic normalization.
-        $hookEvent = ConvertTo-AiSopHookEvent `
-            -RawPayload $RawPayload `
-            -EventHint $EventHint `
-            -TrustedWorkspaceRoot $TrustedWorkspaceRoot `
-            -AcceptedAt $AcceptedAt `
-            -DeadlineUtc $deadlineUtc
-        $agent = [string]$hookEvent.agent
 
         # 3. Every authoritative read follows transaction recovery.
         Invoke-AiSopWorkflowTransactionRecovery `
@@ -1055,6 +1060,21 @@ function Invoke-AiSopHookDispatcher {
         $watch.Stop()
         if ([string]::IsNullOrWhiteSpace($agent)) {
             $agent = Get-AiSopDispatcherInferredAgent -RawPayload $RawPayload
+        }
+        if (Test-AiSopGuardEscapeEnabled) {
+            return New-AiSopDispatcherResult `
+                -Agent $agent `
+                -Decision ALLOW `
+                -ReasonCode T1_ESCAPE `
+                -Envelope (
+                    ConvertTo-AiSopDispatcherEnvelope `
+                        -Agent $agent `
+                        -EventHint $EventHint `
+                        -Decision ALLOW `
+                        -ReasonCode T1_ESCAPE
+                ) `
+                -ExitCode 0 `
+                -DurationMs $watch.ElapsedMilliseconds
         }
         $reason = [string]$_.Exception.Message
         if ($reason -notmatch "^[A-Z][A-Z0-9_]*$") {

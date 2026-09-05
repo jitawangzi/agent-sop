@@ -241,7 +241,7 @@ AI 可在一次响应内同时呈递 `01_server_rules.md` 与 `06_design_contrac
 
 被调用时：使用专家的领域 checklist 与交付格式，把发现返回给 Superpowers controller，**不接管编排、不写 `.ai-sop/runtime/`**。
 
-**原生能力动态继承（Base + Overlay）**：本项目专家 Skill 底层动态继承 Superpowers 本地安装的最新原生模板（`implementer-prompt.md`、`task-reviewer-prompt.md`、`code-reviewer.md`、`test-driven-development`、`systematic-debugging`），自动吸收其升级熔断、零信任自评、RED/GREEN 证据链、Plan-Mandated 缺陷独立定性与 Pristine 零噪声测试等通用工程纪律；当 Superpowers 插件更新时，所有专家 Skill 自动获得最新工程能力，无需修改项目代码。若本地未安装 Superpowers 插件，Skill 自动平滑降级为内联通用心智执行。Controller 派发 subagent 时必须在 prompt 首行显式指定专家 Skill 路径（如 `【角色与规范】你的角色是 implementation-engine，请首先读取并严格遵守 .ai-sop/skills/implementation-engine/SKILL.md`）。
+**原生能力约定（Base + Overlay，无 loader）**：本项目专家 Skill **约定**模型先读 SKILL.md，再按其中列出的路径去读本机 Superpowers 插件里的原生模板（`implementer-prompt.md`、`task-reviewer-prompt.md`、`code-reviewer.md`、`test-driven-development`、`systematic-debugging`）。**没有脚本把这些文件拼接进 Skill**；插件更新不会自动注入。未安装 Superpowers 时按 SKILL 内联心智降级。Controller 派发 subagent 时必须在 prompt 首行显式指定专家 Skill 路径（如 `【角色与规范】你的角色是 implementation-engine，请首先读取并严格遵守 .ai-sop/skills/implementation-engine/SKILL.md`）。
 
 ## 功能归属
 
@@ -297,7 +297,7 @@ pwsh -NoProfile -File ./.ai-sop/scripts/workflow-owner.ps1 -Operation Transfer `
 
 ## 生产代码编辑 Guard
 
-PreToolUse hook 在每次文件编辑前运行 `guard-production-edit.ps1`（各 harness 共用：hook 命令统一指向 `./.ai-sop/scripts/hook-dispatcher.ps1`；Claude Code 经 `.claude/settings.json`，其它经 `.agents/hooks.json`/`.cursor/hooks.json`/`.github/hooks/ai-sop.json`）。编辑 `src\com\**`、`WebRoot\**`、`config\**` 前，**必须存在 ACTIVE 的 `SUPERPOWERS` owner**，否则被拒绝。`AI_SOP_SKIP_OWNER_GUARD=1`（或旧版 `SERVER_NEW_SKIP_OWNER_GUARD=1`）仅对非功能型一次性小改生效；为绕过归属而设它是流程违规。guard 异常可手动关（`.ai-sop/.guard-disabled`）。**更推荐用一次性令牌**：写 `.ai-sop/.guard-token.json`（`{feature, reason, operator, expiresAt}`），guard 仅当 feature 匹配且未过期时放行，过期自动删除，防 `.guard-disabled` 被遗忘导致后续任务无防护。
+PreToolUse hook 在每次文件编辑前运行 `guard-production-edit.ps1`（各 harness 共用：hook 命令统一指向 `./.ai-sop/scripts/hook-dispatcher.ps1`；Claude Code 经 `.claude/settings.json`，其它经 `.agents/hooks.json`/`.cursor/hooks.json`/`.github/hooks/ai-sop.json`）。编辑默认生产路径（`src/`、`pkg/`、`cmd/`、`internal/`、`app/`、`lib/`、`WebRoot/`、`config/`、`include/`；宿主可用 `.ai-sop/config/project-policy.json` 的 `productionPatterns` 覆盖）前，**必须存在 ACTIVE 的 `SUPERPOWERS` owner**，否则被拒绝。`AI_SOP_SKIP_OWNER_GUARD=1`（或旧版 `SERVER_NEW_SKIP_OWNER_GUARD=1`）仅对非功能型一次性小改生效；为绕过归属而设它是流程违规。guard 异常可手动关（`.ai-sop/.guard-disabled`）。**更推荐用一次性令牌**：写 `.ai-sop/.guard-token.json`（`{feature, reason, operator, expiresAt}`），guard 仅当 feature 匹配且未过期时放行，过期自动删除，防 `.guard-disabled` 被遗忘导致后续任务无防护。
 
 **Guard 绕过合规提醒**：若 AI 发现 `AI_SOP_SKIP_OWNER_GUARD=1` 或 `SERVER_NEW_SKIP_OWNER_GUARD=1` 开启但当前任务涉及复杂/多文件代码变更，必须在开始前 Warning 提醒用户：“当前开启了 Guard 绕过，此修改将不记录归属且跳过审查。请确认是否为临时小改；若非小改请关闭该变量并走正常归属流程。”AI 不得在复杂变更时默记配合用户违规而不提醒。
 
@@ -335,7 +335,7 @@ pwsh -NoProfile -File .\.ai-sop\scripts\workflow-state.ps1 -Operation LintSpecs 
 
 **Complete 前硬门禁（VerifyCompletion 内嵌执行）**：`workflow-owner.ps1 -Operation Complete` 内部已嵌入 `VerifyCompletion` 硬门禁检验。在释放归属锁前，脚本会自动在后台先调用 `VerifyCompletion`：T3 严格校验门禁 APPROVED+SHA / coverage 无占位与 carrier 错误 / `07_design_review.md` 审查状态为 PASS 或 PASS_WITH_WARNINGS 且 `审查对象 sha256` 与当前 06 一致 / `compile-evidence.json`（exitCode=0 且 `workingTreeDigest` 匹配当前工作区，有 `build/classes` 不算编译过）；仅当 AssessRisk 命中 TYPE_EXTENSION/PUBLIC_ROUTING 或风险无法评估时才要求 `04_change_impact.json` 有效且未过期；类型或公共分发扩展时再校验 8 切面完成度 / feature-state 阶段非初始。T2：无 `test-evidence.json` 时测试项仍为自报；若该文件存在则必须 exitCode=0。实现中途用 `LintSpecs -Phase PLAN` 提前看缺 00/未覆盖条款/MISSING 载体。**若 VerifyCompletion 检验未通过（非 0），Complete 会直接抛出错误并拒绝释放归属锁**。AI 亦可事先调用 `workflow-state.ps1 -Operation VerifyCompletion -Path .../00_workflow_state.json` 提前确认是否达到完成标准。
 
-**T3（6 项全过）**：
+**T3 完成清单（机检项 1–3 由 `VerifyCompletion` 强制；第 4–6 项为 AI 自报，机器不读 08/09）**：
 
 | # | 条件 | 验证命令 | 成功输出 | 失败恢复 |
 |---|---|---|---|---|

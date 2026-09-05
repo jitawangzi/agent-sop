@@ -1114,6 +1114,96 @@ try {
     $fsContent2 = Get-Content -LiteralPath $featStatePath -Raw | ConvertFrom-Json
     Assert-Equal $fsContent2.tier "T3" "Explicit Claim with -Tier T3 must write tier=T3"
 
+    $t2SpecFeature = New-TestFeature "OwnerT2WithExistingSpecs"
+    [System.IO.File]::WriteAllText(
+        (Join-Path $t2SpecFeature.Spec "01_server_rules.md"),
+        "# BR",
+        $Utf8NoBom
+    )
+    [System.IO.File]::WriteAllText(
+        (Join-Path $t2SpecFeature.Spec "06_design_contract.md"),
+        "# DC",
+        $Utf8NoBom
+    )
+    $t2SpecSession = New-Session `
+        -Feature $t2SpecFeature `
+        -Agent CLAUDE_CODE `
+        -NativeSessionId "native-t2-specs"
+    New-Grant `
+        -Feature $t2SpecFeature `
+        -Session $t2SpecSession `
+        -Operation Claim `
+        -Agent CLAUDE_CODE `
+        -OwnerId "t2-spec-owner" `
+        -Suffix "t2-spec-claim" | Out-Null
+    $t2SpecWarns = $null
+    & $OwnerScript `
+        -Operation Claim `
+        -SpecDirectory $t2SpecFeature.Spec `
+        -Feature $t2SpecFeature.Feature `
+        -Workflow SUPERPOWERS `
+        -Agent CLAUDE_CODE `
+        -OwnerId "t2-spec-owner" `
+        -Tier T2 `
+        -WarningAction Continue `
+        -WarningVariable t2SpecWarns | Out-Null
+    $t2SpecMsg = (@($t2SpecWarns) | ForEach-Object { $_.Message }) -join " "
+    Assert-True ($t2SpecMsg -match "SPEC_HAS_DESIGN_ARTIFACTS") (
+        "T2 Claim on a dir with 01/06 must warn, not fail. Got: $t2SpecMsg"
+    )
+
+    $skipVerifyFeature = New-TestFeature "OwnerSkipVerifyHooks"
+    $skipSession = New-Session `
+        -Feature $skipVerifyFeature `
+        -Agent CLAUDE_CODE `
+        -NativeSessionId "native-skip-verify"
+    New-Grant `
+        -Feature $skipVerifyFeature `
+        -Session $skipSession `
+        -Operation Claim `
+        -Agent CLAUDE_CODE `
+        -OwnerId "skip-verify-owner" `
+        -Suffix "skip-verify-claim" | Out-Null
+    Invoke-Owner `
+        -Feature $skipVerifyFeature `
+        -Operation Claim `
+        -Workflow SUPERPOWERS `
+        -Agent CLAUDE_CODE `
+        -OwnerId "skip-verify-owner" `
+        -Tier T3 | Out-Null
+    New-Grant `
+        -Feature $skipVerifyFeature `
+        -Session $skipSession `
+        -Operation Complete `
+        -Agent CLAUDE_CODE `
+        -OwnerId "skip-verify-owner" `
+        -Suffix "skip-verify-complete" | Out-Null
+    $env:AI_SOP_SKIP_COMPLETION_VERIFY = "1"
+    try {
+        Assert-Fails -Message "SKIP_COMPLETION_VERIFY without AI_SOP_TEST_HOOKS must not skip production Complete." -Action {
+            Invoke-Owner `
+                -Feature $skipVerifyFeature `
+                -Operation Complete `
+                -Workflow SUPERPOWERS `
+                -Agent CLAUDE_CODE `
+                -OwnerId "skip-verify-owner" `
+                -Tier T3
+        }
+        $env:AI_SOP_TEST_HOOKS = "1"
+        Invoke-Owner `
+            -Feature $skipVerifyFeature `
+            -Operation Complete `
+            -Workflow SUPERPOWERS `
+            -Agent CLAUDE_CODE `
+            -OwnerId "skip-verify-owner" `
+            -Tier T3 | Out-Null
+        $skippedOwner = Read-OwnerRecord "OwnerSkipVerifyHooks"
+        Assert-Equal $skippedOwner.status "COMPLETE" "Complete must succeed when SKIP_COMPLETION_VERIFY and AI_SOP_TEST_HOOKS are both set."
+    } finally {
+        Remove-Item Env:AI_SOP_SKIP_COMPLETION_VERIFY -ErrorAction SilentlyContinue
+        Remove-Item Env:AI_SOP_TEST_HOOKS -ErrorAction SilentlyContinue
+    }
+
     # 3. Test Complete with embedded VerifyCompletion
     # For $tierTestFeature (tier=T3, but no gates approved): Complete must fail because VerifyCompletion fails
     New-Grant `

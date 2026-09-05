@@ -90,19 +90,6 @@
     {
       "match": {
         "kind": "EXACT",
-        "value": "find_by_name"
-      },
-      "nativeShapes": [
-        "ANTIGRAVITY"
-      ],
-      "canonicalName": "GLOB",
-      "toolClass": "SAFE_NON_EDIT",
-      "argumentProfile": "GLOB",
-      "targetExtractor": "NONE"
-    },
-    {
-      "match": {
-        "kind": "EXACT",
         "value": "Grep"
       },
       "nativeShapes": [
@@ -149,19 +136,6 @@
       },
       "nativeShapes": [
         "COPILOT_GITHUB_NATIVE"
-      ],
-      "canonicalName": "SEARCH",
-      "toolClass": "SAFE_NON_EDIT",
-      "argumentProfile": "SEARCH",
-      "targetExtractor": "NONE"
-    },
-    {
-      "match": {
-        "kind": "EXACT",
-        "value": "grep_search"
-      },
-      "nativeShapes": [
-        "ANTIGRAVITY"
       ],
       "canonicalName": "SEARCH",
       "toolClass": "SAFE_NON_EDIT",

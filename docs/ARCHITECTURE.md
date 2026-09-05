@@ -170,16 +170,16 @@ AI 编码工具百花齐放（Claude Code、Copilot、Cursor、Antigravity、Pi�
 
 **价值**：CI 稳定绿（串行），想快可并行（接受 flake）；开发时不被弹窗打扰。
 
-### 决策10：Superpowers 原生能力动态继承（Base + Overlay 架构）
+### 决策10：Superpowers 原生模板是约定阅读，不是 loader
 
-**问题**：Superpowers 作为底层调度器持续演进，不断推出更成熟的通用工程心智（如升级熔断、零信任自评、RED/GREEN 证据链、Pristine 测试标准）。若把 Superpowers 的 prompt 文本硬编码复制到项目的各专家 Skill 中，会导致**分叉与脱节（Upstream Drift）**——Superpowers 更新后，自定义 Skill 无法自动获得新能力。
+**问题**：Superpowers 作为底层调度器持续演进。若把其 prompt 文本硬编码复制到项目专家 Skill 中，会分叉；若声称「运行时自动合成」，但仓库里没有拼接脚本，文档会骗人。
 
-**为什么这么设计**：采用“**动态基类继承（Base）+ 领域特化叠加（Overlay）**”模式：
-- **底层基类**：自定义 Skill 在运行时动态读取并继承本地 Superpowers 安装实例的原生模板（`implementer-prompt.md`、`task-reviewer-prompt.md`、`code-reviewer.md`、`test-driven-development` 等），自动吸收最新的通用工程纪律；
-- **上层特化**：自定义 Skill 专注于维护游戏服务端的特化架构规则（`Player` 落库时机、Redis/Mongo 分层、多版本混跑、双协议增量兼容）；
-- **动态合成**：控制器派发时，通过 Slot Injection 将领域规则注入到 Superpowers 原生模板骨架中。
+**为什么这么设计**：采用“**约定阅读（Base）+ 领域特化（Overlay）**”，**不是 Slot Injection loader**：
+- **约定 Base**：专家 SKILL.md 列出本机 Superpowers 插件路径（`implementer-prompt.md`、`task-reviewer-prompt.md`、`code-reviewer.md`、`test-driven-development` 等），**要求模型在执行前自己去读**。没有任何脚本把这些文件拼进 Skill 或 subagent prompt。
+- **Overlay**：SKILL.md 其余章节才是项目领域规则（由宿主 context 注入，SOP 核心保持领域中立）。
+- **降级**：本机未安装 Superpowers 时，按 SKILL 内已提炼的通用工程心智执行，不阻断。
 
-**价值**：Superpowers 插件更新后，项目专家 Skill **零成本自动持续获得最新通用工程与审查能力**，永不分叉、永不落后。
+**价值**：Skill 正文不复制一份会过期的 Superpowers prompt；上游能力是否生效取决于模型是否真的去读了那些文件。插件升级**不会**零成本自动获得新能力。
 
 ### 决策11：04 只对旧系统扩展强制（绿场 T3 不造假材料）
 

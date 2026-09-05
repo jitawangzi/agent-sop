@@ -1,14 +1,14 @@
 {
   "schemaVersion": "1.0",
-  "sourceCommit": "924e5ed6218d6e32d39893d395724578b8719c8f",
+  "sourceCommit": "ca207c477c5a9d5aedc484131528db8849b7abc6",
   "sourceUrl": "https://github.com/jitawangzi/agent-sop.git",
   "toolPolicy": {
     "path": "config/hook-tool-policy.json",
-    "blobSha256": "b163aa7bf5cc933544d9d7e873386c93be50ce26c7fe8dd58221ea34cda0e8b8"
+    "blobSha256": "4f7d65637992d73eafc277c82153c4f6bee27a4375d5fe185308da9768f7eee5"
   },
   "certification": {
     "path": "distribution/harness-certification.json",
-    "blobSha256": "52989925d1c72c4ff7eac20be5930194fb33bcc5273c32d81b75456fd78b265d"
+    "blobSha256": "41c9114e1f2e32e67505aff16c4365d4357dc6c0b75e95615b45080669d7be4a"
   },
   "projections": [
     {
@@ -23,8 +23,8 @@
     {
       "source": "distribution/templates/root/AGENTS.md",
       "target": "AGENTS.md",
-      "sourceBlobSha256": "c08e0e63adc9ec02d86f02ea7a4b81512fe31fdd01b31e80a83c76aea319132b",
-      "targetSha256": "c08e0e63adc9ec02d86f02ea7a4b81512fe31fdd01b31e80a83c76aea319132b",
+      "sourceBlobSha256": "dd5061ccba1c0de03028b5a874b81f13cf44823f952a0ea115c20bf54eb71c71",
+      "targetSha256": "dd5061ccba1c0de03028b5a874b81f13cf44823f952a0ea115c20bf54eb71c71",
       "legacySha256": "b5b14791a133603ab8113d15baaf9472158b04bb3391d18da3d778ac87e96f5b",
       "encoding": "utf8-no-bom",
       "lineEnding": "lf"
@@ -95,8 +95,8 @@
     {
       "source": "distribution/templates/hooks/hook-wrapper.ps1",
       "target": ".agents/hook-wrapper.ps1",
-      "sourceBlobSha256": "541a33709587458e9d30a516b4960803f364c8e3d71e67e9511db2be778fbd2b",
-      "targetSha256": "541a33709587458e9d30a516b4960803f364c8e3d71e67e9511db2be778fbd2b",
+      "sourceBlobSha256": "12d9fb7fce11e224e6cd76dd366d638ff3aa586f9a141f20c08aabbda9557e9e",
+      "targetSha256": "12d9fb7fce11e224e6cd76dd366d638ff3aa586f9a141f20c08aabbda9557e9e",
       "legacySha256": "",
       "encoding": "utf8-no-bom",
       "lineEnding": "lf"
@@ -104,8 +104,8 @@
     {
       "source": "distribution/templates/hooks/hook-wrapper.ps1",
       "target": ".claude/hook-wrapper.ps1",
-      "sourceBlobSha256": "541a33709587458e9d30a516b4960803f364c8e3d71e67e9511db2be778fbd2b",
-      "targetSha256": "541a33709587458e9d30a516b4960803f364c8e3d71e67e9511db2be778fbd2b",
+      "sourceBlobSha256": "12d9fb7fce11e224e6cd76dd366d638ff3aa586f9a141f20c08aabbda9557e9e",
+      "targetSha256": "12d9fb7fce11e224e6cd76dd366d638ff3aa586f9a141f20c08aabbda9557e9e",
       "legacySha256": "",
       "encoding": "utf8-no-bom",
       "lineEnding": "lf"
@@ -113,8 +113,8 @@
     {
       "source": "distribution/templates/hooks/hook-wrapper.ps1",
       "target": ".cursor/hook-wrapper.ps1",
-      "sourceBlobSha256": "541a33709587458e9d30a516b4960803f364c8e3d71e67e9511db2be778fbd2b",
-      "targetSha256": "541a33709587458e9d30a516b4960803f364c8e3d71e67e9511db2be778fbd2b",
+      "sourceBlobSha256": "12d9fb7fce11e224e6cd76dd366d638ff3aa586f9a141f20c08aabbda9557e9e",
+      "targetSha256": "12d9fb7fce11e224e6cd76dd366d638ff3aa586f9a141f20c08aabbda9557e9e",
       "legacySha256": "",
       "encoding": "utf8-no-bom",
       "lineEnding": "lf"
@@ -122,8 +122,8 @@
     {
       "source": "distribution/templates/hooks/hook-wrapper.ps1",
       "target": ".github/hook-wrapper.ps1",
-      "sourceBlobSha256": "541a33709587458e9d30a516b4960803f364c8e3d71e67e9511db2be778fbd2b",
-      "targetSha256": "541a33709587458e9d30a516b4960803f364c8e3d71e67e9511db2be778fbd2b",
+      "sourceBlobSha256": "12d9fb7fce11e224e6cd76dd366d638ff3aa586f9a141f20c08aabbda9557e9e",
+      "targetSha256": "12d9fb7fce11e224e6cd76dd366d638ff3aa586f9a141f20c08aabbda9557e9e",
       "legacySha256": "",
       "encoding": "utf8-no-bom",
       "lineEnding": "lf"

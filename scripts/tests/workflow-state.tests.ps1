@@ -279,12 +279,14 @@ function Complete-TestSuperpowersOwner {
         Out-Null
     try {
         $env:AI_SOP_SKIP_COMPLETION_VERIFY = "1"
+        $env:AI_SOP_TEST_HOOKS = "1"
         & $OwnerScriptPath -Operation Complete -SpecDirectory $SpecDirectory `
             -Feature $Feature -Workflow SUPERPOWERS -Agent $Agent `
             -OwnerId $OwnerId |
             Out-Null
     } finally {
         Remove-Item Env:AI_SOP_SKIP_COMPLETION_VERIFY -ErrorAction SilentlyContinue
+        Remove-Item Env:AI_SOP_TEST_HOOKS -ErrorAction SilentlyContinue
     }
 }
 

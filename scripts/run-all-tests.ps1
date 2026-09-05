@@ -2,14 +2,14 @@
 
 # Aggregates and runs all workflow test suites under the tests directory.
 # Each suite runs in its own pwsh subprocess so per-suite environment overrides
-# cannot leak into siblings. Suites are parallel by default (each uses a unique
-# guid-based temp registry and independent env, so they are isolated); pass
-# -Serial for sequential execution. Exit code is 0 only when every suite (and,
-# when requested, gradlew compileJava) passes; used as the pre-completion gate
-# and the CI entry point.
+# cannot leak into siblings. Default is serial (timing-sensitive suites stay
+# stable). Pass -Parallel to run suites concurrently (faster, may flake).
+# Exit code is 0 only when every suite (and, when requested, gradlew
+# compileJava) passes; used as the pre-completion gate and the CI entry point.
 #
 # Usage:
 #   pwsh -NoProfile -File .\.ai-sop\scripts\run-all-tests.ps1
+#   pwsh -NoProfile -File .\.ai-sop\scripts\run-all-tests.ps1 -Parallel
 #   pwsh -NoProfile -File .\.ai-sop\scripts\run-all-tests.ps1 -Serial
 #   pwsh -NoProfile -File .\.ai-sop\scripts\run-all-tests.ps1 -Suite workflow-owner
 #   pwsh -NoProfile -File .\.ai-sop\scripts\run-all-tests.ps1 -IncludeCompile
@@ -26,12 +26,19 @@ param(
 
     [switch]$Serial,
 
+    [switch]$Parallel,
+
     [int]$MaxParallel = 0
 )
 
 $ErrorActionPreference = "Stop"
 
 . (Join-Path $PSScriptRoot "hidden-process.ps1")
+
+if ($Serial -and $Parallel) {
+    throw "Specify either -Serial or -Parallel, not both."
+}
+$script:UseParallel = [bool]$Parallel
 
 function Invoke-TestSuiteSerial {
     param([string]$File)
@@ -148,13 +155,13 @@ if ($Suite) {
 }
 
 if (-not $Quiet) {
-    $mode = if ($Parallel) { "parallel" } else { "serial" }
+    $mode = if ($script:UseParallel) { "parallel" } else { "serial" }
     Write-Host "Running $($allFiles.Count) test suite(s) from $TestsRoot ($mode)" -ForegroundColor Cyan
 }
 
 $results = @()
 
-if (-not $Parallel) {
+if (-not $script:UseParallel) {
     foreach ($file in $allFiles) {
         $stopwatch = [System.Diagnostics.Stopwatch]::StartNew()
         $result = Invoke-TestSuiteSerial -File $file.FullName

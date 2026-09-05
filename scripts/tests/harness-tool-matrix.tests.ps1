@@ -166,6 +166,11 @@ try {
         toolSummary = "Search"
     } "SAFE_NON_EDIT" "find_by_name"
 
+    Assert-ToolAuthorized "ANTIGRAVITY" "find_by_name" @{
+        path = $TestWorkspace
+        pattern = "*.md"
+    } "SAFE_NON_EDIT" "find_by_name path+pattern"
+
     Assert-ToolAuthorized "ANTIGRAVITY" "grep_search" @{
         SearchPath = $TestWorkspace
         Query = "DC-01"
@@ -283,6 +288,30 @@ try {
     } else {
         $FailCount++
         Write-Host "  FAIL  [COPILOT] edit" -ForegroundColor Red
+    }
+
+    Write-Host "`n=== 5. EXACT tool names unique per nativeShape ===" -ForegroundColor Cyan
+    $policy = Get-Content -Raw -LiteralPath $PolicyPath | ConvertFrom-Json
+    $seen = [System.Collections.Generic.HashSet[string]]::new(
+        [System.StringComparer]::Ordinal
+    )
+    $dupes = [System.Collections.Generic.List[string]]::new()
+    foreach ($entry in @($policy.tools)) {
+        if ([string]$entry.match.kind -ne "EXACT") { continue }
+        $value = [string]$entry.match.value
+        foreach ($shape in @($entry.nativeShapes)) {
+            $key = "$shape|$value"
+            if (-not $seen.Add($key)) {
+                $dupes.Add($key)
+            }
+        }
+    }
+    if ($dupes.Count -eq 0) {
+        $PassCount++
+        Write-Host "  PASS  no duplicate EXACT (nativeShape, name) pairs" -ForegroundColor Green
+    } else {
+        $FailCount++
+        Write-Host "  FAIL  duplicate EXACT tools: $($dupes -join '; ')" -ForegroundColor Red
     }
 
 } finally {

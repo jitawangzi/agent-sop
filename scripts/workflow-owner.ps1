@@ -1099,8 +1099,11 @@ switch ($Operation) {
             throw "WORKFLOW_OWNER_SESSION_MISMATCH"
         }
 
-        # Verify completion before releasing ownership (test teardowns use AI_SOP_SKIP_COMPLETION_VERIFY env)
-        $skipVerify = ($env:AI_SOP_SKIP_COMPLETION_VERIFY -eq "1" -or $env:AI_SOP_SKIP_COMPLETION_VERIFY -eq "true")
+        # Verify completion before releasing ownership. Production ignores
+        # AI_SOP_SKIP_COMPLETION_VERIFY unless AI_SOP_TEST_HOOKS=1 (test suites only).
+        $skipRequested = ($env:AI_SOP_SKIP_COMPLETION_VERIFY -eq "1" -or $env:AI_SOP_SKIP_COMPLETION_VERIFY -eq "true")
+        $testHooks = ($env:AI_SOP_TEST_HOOKS -eq "1" -or $env:AI_SOP_TEST_HOOKS -eq "true")
+        $skipVerify = $skipRequested -and $testHooks
         if (-not $skipVerify) {
             $stateScript = Join-Path $PSScriptRoot "workflow-state.ps1"
             if (Test-Path -LiteralPath $stateScript -PathType Leaf) {
@@ -1312,6 +1315,14 @@ if (-not [string]::IsNullOrWhiteSpace($ResolvedSpecDirectory)) {
                     } catch {
                         Write-Warning "Failed to update existing feature-state.json: $_"
                     }
+                }
+                $hasReq = Test-Path -LiteralPath (Join-Path $ResolvedSpecDirectory "01_server_rules.md") -PathType Leaf
+                $hasDes = Test-Path -LiteralPath (Join-Path $ResolvedSpecDirectory "06_design_contract.md") -PathType Leaf
+                if (
+                    ($hasReq -or $hasDes) -and
+                    $effectiveTier -ne "T3"
+                ) {
+                    Write-Warning "SPEC_HAS_DESIGN_ARTIFACTS: spec directory already has 01_server_rules.md / 06_design_contract.md. T2 Claim succeeded, but Complete/VerifyCompletion treats this feature as T3. Open a new FeatureName for an independent T2 hotfix."
                 }
             } catch {
                 Write-Warning "Failed to sync feature-state.json: $_"

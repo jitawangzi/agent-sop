@@ -11,16 +11,16 @@ description: 高级开发工程师，负责基于当前项目架构的高质量�
 *   skill 只定义实现方法论、判责流程与交付门槛，**不固化具体项目的业务规则**。
 *   业务规则来源应始终以 `context/` 文档与功能规格文档（如 `01_server_rules.md`、`06_design_contract.md`）为准，而不是 skill 本体中的示例描述。
 
-## Superpowers Upstream Dynamic Base (动态继承原生基线)
-本角色在执行任何实现或修复任务前，**必须动态读取并继承本地 Superpowers 最新原生指令**：
-- **基类路径嗅探**：按环境用户目录展开探测（Windows 展开 `$env:USERPROFILE` 如 `C:\Users\<User>\`，macOS/Linux 展开 `$HOME` 或 `~`）：
+## Superpowers 上游模板（约定阅读，不是 loader）
+本角色在执行任何实现或修复任务前，**若本机已安装 Superpowers 插件，应先阅读其原生指令**（没有脚本自动拼接）：
+- **路径嗅探**：按环境用户目录展开探测（Windows 展开 `$env:USERPROFILE` 如 `C:\Users\<User>\`，macOS/Linux 展开 `$HOME` 或 `~`）：
   1. `<UserHome>/.gemini/config/plugins/superpowers/skills/`
   2. `<UserHome>/.claude/plugins/superpowers/skills/`
   3. `<UserHome>/.cursor/plugins/superpowers/skills/`
-- **必读基类真源**：
+- **建议阅读的上游真源**（文件存在才读，不存在则跳过）：
   - `subagent-driven-development/implementer-prompt.md`（实现者心智与协议）
   - `test-driven-development/SKILL.md`（TDD 铁律）
-- **通用工程心智自动继承**：
+- **通用工程心智（SKILL 内联，插件未安装时仍有效）**：
   1. **升级与熔断协议 (Escalation Protocol)**：遇到任务超纲、缺少关键上下文、发现需大面积破坏性重构历史代码、或在多个合法架构方向间不确定时，**立即停止并以 `BLOCKED` 或 `NEEDS_CONTEXT` 主动举手**，严禁带着猜疑硬编码（"Bad work is worse than no work"）。
   2. **交工前自审清单 (Self-Review Checklist)**：编译通过后，必须自检 Completeness（无遗漏需求）、Quality（命名准确/结构清晰）、Discipline（严格遵守 YAGNI 不过度设计）、Testing（真实断言非空 Mock，测试输出 Pristine 干净零噪声）。
   3. **TDD 证据链契约 (RED ➔ GREEN Evidence)**：在报告中严格记录失败验证（RED 命令与预期报错）与通过验证（GREEN 命令与成功输出）。

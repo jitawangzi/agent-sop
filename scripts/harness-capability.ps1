@@ -184,7 +184,8 @@ function New-AiSopHarnessCapabilityRecord {
     # default; real environments may differ (e.g. an internal-proxy Copilot without
     # subagent, a Cursor build with broken subagent dispatch). A local override lets the
     # user downgrade a capability so the SOP does not force T3 subagent dispatch and
-    # crash/hang. Override file format:
+    # crash/hang. Overrides are one-way: true → false only (cannot upgrade BLOCKED
+    # to STRICT). Override file format:
     #   { "CLAUDE_CODE": { "subagent": false, "_reason": "this build's subagent broken" } }
     # Only capability booleans are merged; _reason is surfaced in evidence.note.
     $overridePath = Join-Path $ClaudeRoot ".harness-capability-override.json"
@@ -206,8 +207,12 @@ function New-AiSopHarnessCapabilityRecord {
                         if ($val -isnot [bool]) {
                             try { $val = [bool]::Parse([string]$val) } catch { continue }
                         }
-                        if ($merged[$name] -ne $val) { $changed += "$name=$val" }
-                        $merged[$name] = $val
+                        # Downgrade only: true → false. BLOCKED tools cannot
+                        # self-upgrade to STRICT via a local override file.
+                        if ($merged[$name] -eq $true -and $val -eq $false) {
+                            $merged[$name] = $false
+                            $changed += "$name=False"
+                        }
                     }
                 }
                 if ($changed.Count -gt 0) {

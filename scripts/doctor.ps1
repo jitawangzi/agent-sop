@@ -164,19 +164,15 @@ $txScript = Join-Path $SopRoot "scripts/workflow-transaction.ps1"
 if (Test-Path -LiteralPath $txScript -PathType Leaf) {
     try {
         . $txScript
-        $txRoot = Get-AiSopWorkflowTransactionRegistryRoot -WorkspacePath $WorkspaceRoot
-        $stuck = @()
-        if (Test-Path -LiteralPath $txRoot -PathType Container) {
-            $stuck = @(Get-ChildItem -LiteralPath $txRoot -Filter "*.json" -File)
-        }
+        $stuck = @(Get-AiSopStuckTransactionJournals -WorkspacePath $WorkspaceRoot)
         if ($stuck.Count -gt 0) {
             $names = ($stuck | ForEach-Object { $_.FullName }) -join "; "
-            Add-Check "Transaction journals" $true "WARN: stuck journal(s) will DENY every hook until inspected/removed: $names"
+            Add-Check "Transaction journals" $false "FAIL: stuck journal(s) will DENY every hook until inspected/removed: $names"
         } else {
             Add-Check "Transaction journals" $true "none"
         }
     } catch {
-        Add-Check "Transaction journals" $true "WARN: could not scan transaction registry: $($_.Exception.Message)"
+        Add-Check "Transaction journals" $false "FAIL: could not scan transaction registry: $($_.Exception.Message)"
     }
 }
 

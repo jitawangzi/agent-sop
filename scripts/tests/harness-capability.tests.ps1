@@ -142,6 +142,25 @@ Invoke-Test "Local override absent -> static table unchanged" {
     }
 }
 
+Invoke-Test "Local override cannot upgrade PI subagent -> stays BLOCKED" {
+    $origClaudeRoot = $ClaudeRoot
+    $tempRoot = Join-Path ([System.IO.Path]::GetTempPath()) ("cap-upgrade-" + [guid]::NewGuid().ToString("N"))
+    [System.IO.Directory]::CreateDirectory($tempRoot) | Out-Null
+    try {
+        $script:ClaudeRoot = $tempRoot
+        $overridePath = Join-Path $tempRoot ".harness-capability-override.json"
+        $overrideJson = '{"PI":{"subagent":true,"_reason":"attempted upgrade"}}'
+        [System.IO.File]::WriteAllText($overridePath, $overrideJson, [System.Text.UTF8Encoding]::new($false))
+        $r = New-AiSopHarnessCapabilityRecord -A "PI" -R "CLI" -Ver "1.0" -OsVal "Windows" -Pwsh "7.4"
+        Assert-Equal "BLOCKED" $r.decision "override must not upgrade PI to STRICT"
+        Assert-True ($r.capabilities.subagent -eq $false) "PI subagent stays false"
+        Assert-True (-not ($r.evidence.note -match "LOCAL OVERRIDE applied")) "upgrade-only override must not apply"
+    } finally {
+        $script:ClaudeRoot = $origClaudeRoot
+        Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue
+    }
+}
+
 Write-Host ""
 Write-Host ("{0} capability tests passed, {1} failed" -f $script:PassCount, $script:FailCount) -ForegroundColor Cyan
 if ($script:FailCount -gt 0) { exit 1 } else { exit 0 }

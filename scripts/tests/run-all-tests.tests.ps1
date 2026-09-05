@@ -26,11 +26,17 @@ function Clear-FakeSuites {
 }
 
 function Invoke-Runner {
-    param([string]$SuiteFilter = "")
+    param(
+        [string]$SuiteFilter = "",
+        [switch]$Parallel
+    )
 
     $argList = @("-NoProfile", "-File", $RunnerScript, "-TestsRoot", $TestsDir, "-Quiet")
     if ($SuiteFilter) {
         $argList += @("-Suite", $SuiteFilter)
+    }
+    if ($Parallel) {
+        $argList += "-Parallel"
     }
     & {
         $ErrorActionPreference = 'Continue'
@@ -100,6 +106,14 @@ try {
     }
     if ($LASTEXITCODE -ne 0) {
         throw "Expected exit 0 for missing tests root; got exit $LASTEXITCODE"
+    }
+
+    # 7. -Parallel with two passing suites -> exit 0
+    Clear-FakeSuites
+    New-FakeSuite "par-a" 'Write-Output "All par-a tests passed."'
+    New-FakeSuite "par-b" 'Write-Output "All par-b tests passed."'
+    Assert-ExitZero -Message "parallel passing suites exit 0" -Action {
+        Invoke-Runner -Parallel
     }
 
     Write-Output "All run-all-tests tests passed."

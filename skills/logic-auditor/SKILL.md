@@ -272,7 +272,7 @@ description: 高风险逻辑审计官，专门细查方法级、分支级与链�
 1. `01_server_rules.md`
 2. `06_design_contract.md`
 3. `.ai-workspace/context/business-logic-pattern.md`
-4. `.ai-workspace/context/coding-style.md`
+4. `.ai-workspace/context/coding-style.md`（**默认工程规范**，必须用 Read 打开；06 不得违反其中硬规则）
 5. 如涉及协议，加载 `.ai-workspace/context/proto-rules.md`
 6. 如涉及静态配置，加载 `.ai-workspace/context/config-rules.md`
 7. `.ai-workspace/context/project-summary.md`

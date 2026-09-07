@@ -155,7 +155,7 @@ description: 实现审计官，负责检查代码是否遵守项目约束、设�
 - A2 JavaDoc / 属性注释 / 修改原有代码注释是否达标
 - A3 复杂、反直觉、兼容性逻辑是否补设计原因注释
 - A4 日志与错误处理是否保留足够上下文
-- B1 Action / Help / Command ID / 命名结构是否合规
+- B1 Action / Help / Command ID / **字段简写（新增 Redis/Mongo 对象字段）** / 命名结构是否合规
 - B2 统一返回、错误码、日志、`ProcessHelper.MessageCommonCheck` 是否正确使用
 - B3.1 Redis + Mongo 角色定位、回填方式、持久化责任是否正确
 - B3.2 Redis Key / Redis 操作规范是否正确
@@ -264,7 +264,7 @@ description: 实现审计官，负责检查代码是否遵守项目约束、设�
 在审计前，必须主动加载：
 1. `01_server_rules.md`
 2. `06_design_contract.md`
-3. `.ai-workspace/context/coding-style.md`
+3. `.ai-workspace/context/coding-style.md`（**默认工程规范**，必须用 Read 打开；06 不得违反其中硬规则）
 4. `.ai-workspace/context/business-logic-pattern.md`
 5. 如涉及静态配置，加载 `.ai-workspace/context/config-rules.md`
 6. 如涉及协议，加载 `.ai-workspace/context/proto-rules.md`
@@ -308,7 +308,8 @@ description: 实现审计官，负责检查代码是否遵守项目约束、设�
      - `MessageCommonCheck`
      - 错误返回结构
      - Redis/Mongo 读写定位
-     - Key 规范
+     - Key 规范（`GameParam` 等 Redis key，不是 JSON 对象字段名）
+     - **B1 字段简写**：本次新增的 Redis/Mongo 对象字段是否按 `coding-style.md` 简写（与 06 字面一致但未简写 → `[DESIGN_FLAW: plan-mandated]`，不得 PASS）
      - 单流程对象复用
      - 轻前重后
      - Fast-Fail

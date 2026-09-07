@@ -39,10 +39,10 @@ brainstorming（需求 → 确认 → design-architect 产出 06）
 下文为项目领域规则（具体框架与编码风格以宿主 `context/` 为准）。
 
 ## Context Strategy
-审查前必须加载：
+审查前必须用 Read 打开（文件存在时），不得只凭本 Skill 概括：
 - `project-summary.md`（架构、模块、存储职责）
 - `business-logic-pattern.md`（可复用业务模式）
-- `coding-style.md`（编码、兼容、性能、错误处理、Redis/Mongo 对象字段简写；与 implementation-engine / implementation-auditor **同一文件**）
+- `coding-style.md`（**默认工程规范**；与 implementation-engine / implementation-auditor 同一文件。06 不得违反其中硬规则）
 - `proto-rules.md`（协议规则）
 - `config-rules.md`（静态配置，若设计涉及配置）
 - `.ai-workspace/context/business-patterns/` 下与功能相关的专题

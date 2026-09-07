@@ -182,13 +182,17 @@ AI 可在一次响应内同时呈递 `01_server_rules.md` 与 `06_design_contrac
 
 **Context 版本头**：每个 context 文件首行有 `<!-- context-meta owner:X reviewedAt:YYYY-MM expiresAt:YYYY-MM -->`。`doctor.ps1` 检查过期打 WARN。AI 读过期 context 时应提示用户“context 文件 `<file>` 已过期（<expiresAt>），仍以代码为准，建议更新”。
 
-**知识真源位阶**：当 context 文档与实际代码/配置逻辑发生冲突时，以**实际运行代码与现行配置**为准（代码 > 06 设计契约 > context 知识库）。AI 发现冲突时不得按旧 context “修正”实际正确的生产代码，应向用户提示“context 文档『<文件>』的描述与实际代码不符，可能已漂移，建议更新 context”。
+**知识真源位阶**（两套冲突，不要混成「06 总是大于 context」）：
+1. **代码 vs 过期 context**：context 与实际运行代码/现行配置冲突时，以代码为准，提示 context 可能漂移。不得按旧 context 去改已经正确的生产代码。
+2. **强制规范 vs 本功能 06**：`.ai-workspace/context/coding-style.md`（协议相关再加 `proto-rules.md`）是项目**默认工程规范**。`06` 只约束本功能方案，**不得违反**其中硬规则。冲突时以强制规范为准，记设计缺陷，`ResetApproval -Gate design`；禁止以「已批契约 / 与 06 一致」结案。经人工确认的 `[AUDIT-EXEMPT]` 除外。
+
+**默认工程规范（设计 / 实现 / 审计）**：`design-architect`、`design-reviewer`、`implementation-engine`、`implementation-auditor`、`logic-auditor` 在开始工作前必须用 Read **打开** `.ai-workspace/context/coding-style.md`（文件存在时），不得只凭 Skill 或 06 的摘要代替原文。无该文件则 INFO 降级，不阻断。Controller 派发这些角色时必须在 prompt 里写上同一句【默认工程规范】（见 adapter）。
 
 **Context 缺失时的降级与反哺**：当核心 context（如 `coding-style.md`）缺失时，AI 应通过直接读取项目现有核心基类（如 `BaseManager`、`GameParam`、`DateUtil`）推断编码风格，不阻断流程；并在任务完成后主动向用户提示：“检测到缺少 `coding-style.md`，是否需要我根据当前项目代码自动生成一份？”
 
 ## 项目强制规则
 
-项目编码/架构强制规则（Java/Spring 分层、MongoDB/Redis、XLSDataManager、DateUtil、GameParam、协议发送、GM fixture 等）统一定义在 `.ai-workspace/context/coding-style.md` 与 `.ai-workspace/context/config-rules.md`，始终阅读并遵守——不在此重复，避免漂移。`design-architect` / `design-reviewer` / `implementation-engine` / `implementation-auditor` **加载同一份** `coding-style.md`。新增 Redis/Mongo 对象字段须在设计阶段写出**存储键**（按该文件简写）并与**协议键**分列；不得拖到实现才发现全称存储键。
+项目编码/架构强制规则统一定义在 `.ai-workspace/context/coding-style.md` 与 `.ai-workspace/context/config-rules.md`，不在本文件重复。上述设计/实现/审计角色以 `coding-style.md` 为默认规范；`06` 不得违反。新增 Redis/Mongo 对象字段的存储键按该文件简写，协议键走 `proto-rules.md`。
 
 ## 规范功能产物
 
@@ -243,7 +247,7 @@ AI 可在一次响应内同时呈递 `01_server_rules.md` 与 `06_design_contrac
 
 被调用时：使用专家的领域 checklist 与交付格式，把发现返回给 Superpowers controller，**不接管编排、不写 `.ai-sop/runtime/`**。
 
-**专家 Skill 自包含**：实现者/审查员只遵守 `.ai-sop/skills/<role>/SKILL.md`。**不要**去读 Superpowers 插件里的 `implementer-prompt.md`、`task-reviewer-prompt.md`、`code-reviewer.md` 等（那是流程编排/派发模板，与专家 overlay 冲突）。T3 由 controller 用 Skill 工具显式调用 Superpowers 流程 skill。Controller 派发 subagent 时必须在 prompt 首行指定专家 Skill 路径（如 `【角色与规范】你的角色是 implementation-engine，请首先读取并严格遵守 .ai-sop/skills/implementation-engine/SKILL.md`）。
+**专家 Skill 自包含**：实现者/审查员只遵守 `.ai-sop/skills/<role>/SKILL.md`。**不要**去读 Superpowers 插件里的 `implementer-prompt.md`、`task-reviewer-prompt.md`、`code-reviewer.md` 等（那是流程编排/派发模板，与专家 overlay 冲突）。T3 由 controller 用 Skill 工具显式调用 Superpowers 流程 skill。Controller 派发 subagent 时必须在 prompt 首行指定专家 Skill 路径，并附【默认工程规范】（见 `.ai-sop/workflows/superpowers-adapter.md` 派发契约）。
 
 ## 功能归属
 

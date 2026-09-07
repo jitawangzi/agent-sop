@@ -122,10 +122,12 @@ brainstorming 节点按需咨询 `design-architect`；设计产出后由 `design
 **专家 Skill 自包含（禁止再读 Superpowers 原生全文）**：
 专家执行单元只读本仓库对应 `SKILL.md`。**不要**再去读本机 Superpowers 插件模板（`implementer-prompt.md`、`task-reviewer-prompt.md`、`code-reviewer.md`、`test-driven-development` 等）——那些是 controller 派发/流程模板，与专家 overlay（按协议走查等）冲突。需要的通用纪律已内联在专家 Skill 正文。T3 编排仍由 controller 显式调用 Superpowers 流程 skill。
 - **Controller 派发子智能体时的显式 Skill 注入契约 (Prompt Injection Contract)**：
-  Controller 在派发 subagent 时，必须在 subagent prompt 的开头显式指明其角色与对应 Skill 路径（这是 prompt 文本约定，不是文件 loader）：
-  - 派发实现者：Prompt 必须包含 `【角色与规范】你的角色是 implementation-engine，请首先读取并严格遵守 .ai-sop/skills/implementation-engine/SKILL.md 的实现规范。`
-  - 派发内审者：Prompt 必须包含 `【角色与规范】你的角色是 implementation-auditor（或 logic-auditor），请首先读取并严格遵守 .ai-sop/skills/implementation-auditor/SKILL.md 的审计规范。` **并且必须粘贴本 Task 实现者返回的【编译证据】**（`command` + `exitCode=0` + 成功摘录）。缺编译证据不得派发。
-  - 派发设计审查者：Prompt 必须包含 `【角色与规范】你的角色是 design-reviewer，请首先读取并严格遵守 .ai-sop/skills/design-reviewer/SKILL.md 的审查规范。`
+  Controller 在派发 subagent 时，必须在 subagent prompt 的开头显式指明其角色与对应 Skill 路径（这是 prompt 文本约定，不是文件 loader），并附同一句默认规范（文件存在才要求 Read）：
+  - **【默认工程规范】**（`design-architect` / `design-reviewer` / `implementation-engine` / `implementation-auditor` / `logic-auditor` 均须带上）：`请用 Read 打开 .ai-workspace/context/coding-style.md（若存在）；它是本角色的默认工程规范，已批 06 不得违反其中硬规则（无 [AUDIT-EXEMPT] 不得用「符合契约」开脱）。不得只凭 Skill 摘要代替阅读原文。`
+  - 派发架构师：Prompt 必须包含 `【角色与规范】你的角色是 design-architect，请首先读取并严格遵守 .ai-sop/skills/design-architect/SKILL.md。` + 【默认工程规范】
+  - 派发实现者：Prompt 必须包含 `【角色与规范】你的角色是 implementation-engine，请首先读取并严格遵守 .ai-sop/skills/implementation-engine/SKILL.md 的实现规范。` + 【默认工程规范】
+  - 派发内审者：Prompt 必须包含 `【角色与规范】你的角色是 implementation-auditor（或 logic-auditor），请首先读取并严格遵守 .ai-sop/skills/implementation-auditor/SKILL.md（或 logic-auditor/SKILL.md）的审计规范。` + 【默认工程规范】 **并且必须粘贴本 Task 实现者返回的【编译证据】**（`command` + `exitCode=0` + 成功摘录）。缺编译证据不得派发。
+  - 派发设计审查者：Prompt 必须包含 `【角色与规范】你的角色是 design-reviewer，请首先读取并严格遵守 .ai-sop/skills/design-reviewer/SKILL.md 的审查规范。` + 【默认工程规范】
   - 调用 `writing-plans`：必须先遵守本文件「writing-plans Task 粒度」。紧耦合小改动默认 1 个 Task；禁止把 2–5 分钟 Step 写成多个 Task。
 
 ## 三层审查定位（职责不重叠）

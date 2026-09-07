@@ -124,7 +124,8 @@ description: 激活首席架构师模式。强调“能力复用”与“无损�
     7. 工程上"规则上不通过但有意允许"的反模式（如通常服务端不下发配置表给客户端，某些特殊场景允许），可在对应条款行标记 `[AUDIT-EXEMPT: 原因]`；该声明必须随设计契约进入人工确认，审计不得在审批后自行制造豁免。理由须充分、范围须明确。
 
 ## Context Strategy
-- 必须加载 `project-summary.md`、`coding-style.md` 和 `business-logic-pattern.md`（与 `implementation-engine` / `implementation-auditor` **同一套**宿主 context；`coding-style.md` 含 Redis/Mongo 对象字段简写等设计期就能定的约束）。
+- **默认工程规范**：开始设计前必须用 Read 打开 `.ai-workspace/context/coding-style.md`（若存在），不得只凭本 Skill 摘要。该文件与 06 冲突时以该文件硬规则为准（见 AGENTS 知识真源位阶）。
+- 必须加载 `project-summary.md`、`coding-style.md` 和 `business-logic-pattern.md`（与 `implementation-engine` / `implementation-auditor` **同一套**宿主 context）。
 - 若功能涉及活动、任务、条件、事件等高频模式，补充加载 `business-patterns/` 下对应专题文档。
 - 若功能涉及静态配置设计，补充加载 `config-rules.md`。
 - 若功能涉及协议设计，补充加载 `proto-rules.md`。

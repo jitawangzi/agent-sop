@@ -12,7 +12,7 @@ tools: Read, Glob, Grep, Bash
 被派发时：
 - 使用 skill 的审计维度（约束合规/性能资源/契约一致性/可维护性）、Diff-Scoped 规则与分级（BLOCKER/MAJOR/MINOR/INFO）
 - 派发包必须含【编译证据】；缺则 `INDETERMINATE` + `COMPILE_REQUIRED`，禁止 PASS
-- 加载 skill 指定的 context 与功能 01/06 文档
+- 加载 skill 指定的 context 与功能 01/06 文档。开始前用 Read 打开 `.ai-workspace/context/coding-style.md`（默认工程规范；与 06 冲突时不得因「符合契约」PASS）
 - 认可 `[AUDIT-EXEMPT]` 例外声明
 - 返回审计报告与路由建议给 Superpowers controller，不 emit Handoff JSON、不写 `.ai-sop/runtime/`
 - 只读审查，不修改代码（除全功能审计 AUTO_REPAIR 场景）

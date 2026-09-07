@@ -12,6 +12,6 @@ tools: Read, Write, Edit, Glob, Grep, Bash
 被派发时：
 - 使用 skill 的实现方法论、判责流程（TRIAGE/IMPLEMENT/REPAIR/CONFIG_APPLY）与编码约束
 - `IMPLEMENT` / `REPAIR` 交工必须附【编译证据】（`command` + `exitCode=0` + 成功摘录）；无此块不得视为交工，controller 不得派审
-- 加载 skill 指定的 context 文档（project-summary/coding-style/business-logic-pattern 等）
+- 加载 skill 指定的 context 文档。开始前用 Read 打开 `.ai-workspace/context/coding-style.md`（默认工程规范）
 - 返回结论给 Superpowers controller，不 emit Handoff JSON、不写 `.ai-sop/runtime/`
 - 模型档位：机械任务（纯转录/单文件小修/配置值）可用更便宜档；多文件集成/设计判断升档

@@ -157,6 +157,7 @@ description: 高级开发工程师，负责基于当前项目架构的高质量�
 *   **Boundary Rule**: 工作规模只能缩放审计和测试范围，不能取消审计或测试阶段；不得以“改动很小”或“主流程已通”为由跳过闭环。
 
 ## Context Strategy
+*   **默认工程规范**：开始实现前必须用 Read 打开 `.ai-workspace/context/coding-style.md`（若存在），不得只凭本 Skill 或 06 摘要。06 与其中硬规则冲突时不得按图索骥。
 *   必须加载 `.ai-workspace/context/project-summary.md`、`coding-style.md` 和 `business-logic-pattern.md`。
 *   若功能涉及活动、任务、条件、事件等高频模式，补充加载 `business-patterns/` 下对应专题文档。
 *   若功能涉及静态配置接入，补充加载 `config-rules.md`；若涉及协议变更，补充加载 `proto-rules.md`。

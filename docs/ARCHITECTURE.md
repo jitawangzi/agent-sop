@@ -223,7 +223,9 @@ AI 编码工具百花齐放（Claude Code、Copilot、Cursor、Antigravity、Pi�
 
 **为什么这么设计**：
 - 设计与实现/审计引用**同一路径** `.ai-workspace/context/coding-style.md`，不在 SOP Skill 里再抄简写例子（领域中立）。
-- `design-reviewer` **A2 存储选型**含对象字段简写（对照同一份 `coding-style.md`；缺项或全称存储键 = MAJOR）。**A6** 仍是协议核对表（缺表/违规 = BLOCKER）。二者力度不同，不单列成与 A6 同级的「字段专项」。
+- Controller 派发 `design-architect` / `design-reviewer` / `implementation-engine` / `implementation-auditor` / `logic-auditor` 时必须带【默认工程规范】：用 Read 打开该文件；`06` 不得违反其中硬规则（拆开「代码 vs 过期 context」与「强制规范 vs 本功能 06」两套位阶）。
+- `design-reviewer` **A2 存储选型**含对象字段简写（MAJOR）。**A6** 仍是协议核对表（BLOCKER）。
+- 实现审计 Phase 2「至少显式检查」点名 B1 字段简写，避免只把 B1 理解成类名。
 - 已批 06 仍写全称存储键时，`implementation-engine` 不得按图索骥，`implementation-auditor` 标 `[DESIGN_FLAW: plan-mandated]`。
 - adapter **覆盖** SDD 的静默连跑：每个 subagent 返回后先给用户可见进度。
 

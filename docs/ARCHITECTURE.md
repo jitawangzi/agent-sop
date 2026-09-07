@@ -223,7 +223,7 @@ AI 编码工具百花齐放（Claude Code、Copilot、Cursor、Antigravity、Pi�
 
 **为什么这么设计**：
 - 设计与实现/审计引用**同一路径** `.ai-workspace/context/coding-style.md`，不在 SOP Skill 里再抄简写例子（领域中立）。
-- `design-reviewer` **A2b** 与 A6 同级：新持久化对象字段必须给出简写存储键并与协议键分列；缺项或全称存储键 = MAJOR。
+- `design-reviewer` **A2 存储选型**含对象字段简写（对照同一份 `coding-style.md`；缺项或全称存储键 = MAJOR）。**A6** 仍是协议核对表（缺表/违规 = BLOCKER）。二者力度不同，不单列成与 A6 同级的「字段专项」。
 - 已批 06 仍写全称存储键时，`implementation-engine` 不得按图索骥，`implementation-auditor` 标 `[DESIGN_FLAW: plan-mandated]`。
 - adapter **覆盖** SDD 的静默连跑：每个 subagent 返回后先给用户可见进度。
 

@@ -243,7 +243,7 @@ AI 可在一次响应内同时呈递 `01_server_rules.md` 与 `06_design_contrac
 
 被调用时：使用专家的领域 checklist 与交付格式，把发现返回给 Superpowers controller，**不接管编排、不写 `.ai-sop/runtime/`**。
 
-**专家 Skill 自包含**：实现者/审查员只遵守 `.ai-sop/skills/<role>/SKILL.md`。**不要**去读 Superpowers 插件里的 `implementer-prompt.md`、`task-reviewer-prompt.md`、`code-reviewer.md` 等（那是流程编排/派发模板，与专家 overlay 冲突）。T3 由 controller 用 Skill 工具显式调用 Superpowers 流程 skill。Controller 派发 subagent 时必须在 prompt 首行指定专家 Skill 路径（如 `【角色与规范】你的角色是 implementation-engine，请首先读取并严格遵守 .ai-sop/skills/implementation-engine/SKILL.md`）。派发 `design-reviewer` 时须要求覆盖 A2b（同一份 `coding-style.md`：持久化存储键 vs 协议键）。
+**专家 Skill 自包含**：实现者/审查员只遵守 `.ai-sop/skills/<role>/SKILL.md`。**不要**去读 Superpowers 插件里的 `implementer-prompt.md`、`task-reviewer-prompt.md`、`code-reviewer.md` 等（那是流程编排/派发模板，与专家 overlay 冲突）。T3 由 controller 用 Skill 工具显式调用 Superpowers 流程 skill。Controller 派发 subagent 时必须在 prompt 首行指定专家 Skill 路径（如 `【角色与规范】你的角色是 implementation-engine，请首先读取并严格遵守 .ai-sop/skills/implementation-engine/SKILL.md`）。
 
 ## 功能归属
 

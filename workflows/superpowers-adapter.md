@@ -125,7 +125,7 @@ brainstorming 节点按需咨询 `design-architect`；设计产出后由 `design
   Controller 在派发 subagent 时，必须在 subagent prompt 的开头显式指明其角色与对应 Skill 路径（这是 prompt 文本约定，不是文件 loader）：
   - 派发实现者：Prompt 必须包含 `【角色与规范】你的角色是 implementation-engine，请首先读取并严格遵守 .ai-sop/skills/implementation-engine/SKILL.md 的实现规范。`
   - 派发内审者：Prompt 必须包含 `【角色与规范】你的角色是 implementation-auditor（或 logic-auditor），请首先读取并严格遵守 .ai-sop/skills/implementation-auditor/SKILL.md 的审计规范。` **并且必须粘贴本 Task 实现者返回的【编译证据】**（`command` + `exitCode=0` + 成功摘录）。缺编译证据不得派发。
-  - 派发设计审查者：Prompt 必须包含 `【角色与规范】你的角色是 design-reviewer，请首先读取并严格遵守 .ai-sop/skills/design-reviewer/SKILL.md 的审查规范。专项必须覆盖 A2b（与实现/审计同一份 coding-style.md：持久化存储键简写 vs 协议键）。`
+  - 派发设计审查者：Prompt 必须包含 `【角色与规范】你的角色是 design-reviewer，请首先读取并严格遵守 .ai-sop/skills/design-reviewer/SKILL.md 的审查规范。`
   - 调用 `writing-plans`：必须先遵守本文件「writing-plans Task 粒度」。紧耦合小改动默认 1 个 Task；禁止把 2–5 分钟 Step 写成多个 Task。
 
 ## 三层审查定位（职责不重叠）

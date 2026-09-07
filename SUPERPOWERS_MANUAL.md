@@ -460,7 +460,7 @@ Superpowers 会校验当前文件、写入归属与确认状态，然后自动�
 | 整体收尾 | 全部 Task 后 | 流程合规 + 整体一致性 | Superpowers `requesting-code-review` |
 | 全功能审计（可选手动） | 交付后按需 | 跨任务契约一致 + 整体游戏状态正确性 | `workflow-orchestrator` AUDIT_ONLY 全盘（见下） |
 
-- 单任务内审：`implementation-auditor` 覆盖实现/契约合规；状态机、奖励结算、多资源扣除、兼容补偿、重试幂等等高风险项路由 `logic-auditor`。审查发现问题 → 回派实现者修复并再编译 → 重新审查 → 通过才标记完成。**未附【编译证据】（`exitCode=0`）不得派内审**；审计官不是编译器，不得对未编译代码给 PASS。**`VerifyCompletion` 不读这两份报告**（仍为 subagent 回传自报）；机器硬门禁分层见 `docs/QUALITY_GATES.md`。
+- 单任务内审：`implementation-auditor` 覆盖实现/契约合规；状态机、奖励结算、多资源扣除、兼容补偿、重试幂等等高风险项路由 `logic-auditor`。审查发现问题 → 回派实现者修复并再编译 → 重新审查 → 通过才标记完成。**未附【编译证据】（`exitCode=0`）不得派内审**；审计官不是编译器，不得对未编译代码给 PASS。**`VerifyCompletion` 不读这两份报告**（仍为 subagent 回传自报）；机器硬门禁分层见 `docs/QUALITY_GATES.md`。**每个 subagent 返回后必须先向用户输出可见进度再派下一步**；Superpowers 原生 SDD「不要汇报进度」对本项目不生效（见 adapter「人机交互」）。
 - 业务代码修复后必须重新编译、重新审查、重新验证。先前内审 PASS 作废，收尾 `requesting-code-review` 不能替代被作废的任务内审。
 - controller / 编排会话不得自己改生产代码来补编译错误，一律回派 `implementation-engine` `REPAIR`。
 - QA 完成标准是已规划的覆盖场景返回成功，而不是仅编译通过或服务启动成功。

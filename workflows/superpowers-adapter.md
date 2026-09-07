@@ -94,6 +94,7 @@ implementation-engine（一次只做一个 Task）
 - 只有完整的 `01_server_rules.md` 与 `06_design_contract.md` 需要最终确认。
 - 设计最终确认后自动继续，除非需求/设计变得模糊或环境被阻塞。
 - 不要让用户选择执行策略；当任务可独立 review 时默认采用 `subagent-driven-development`。
+- **子代理进度可见（覆盖 Superpowers SDD）**：原生 `subagent-driven-development` 写「不要向人汇报进度 / progress summaries waste time」——**对本项目不生效**。每个独立 subagent（`design-reviewer` / `design-architect` / `implementation-engine` / `implementation-auditor` / `logic-auditor`）**返回后、发起下一串工具或下一个 subagent 之前**，controller 必须先向用户输出可见进度（1–3 行）：谁完成、结论（PASS/FAIL/阻塞/已交编译证据）、下一步。预计超过约 10 秒的编译/测试/门禁扫描，开始前同样先报正在跑什么。禁止 subagent 已 idle 后连续静默调工具，导致主窗口像卡死。回复末尾状态行不能替代本条。
 
 ## 领域专家（执行单元，非流程节点）
 
@@ -124,7 +125,7 @@ brainstorming 节点按需咨询 `design-architect`；设计产出后由 `design
   Controller 在派发 subagent 时，必须在 subagent prompt 的开头显式指明其角色与对应 Skill 路径（这是 prompt 文本约定，不是文件 loader）：
   - 派发实现者：Prompt 必须包含 `【角色与规范】你的角色是 implementation-engine，请首先读取并严格遵守 .ai-sop/skills/implementation-engine/SKILL.md 的实现规范。`
   - 派发内审者：Prompt 必须包含 `【角色与规范】你的角色是 implementation-auditor（或 logic-auditor），请首先读取并严格遵守 .ai-sop/skills/implementation-auditor/SKILL.md 的审计规范。` **并且必须粘贴本 Task 实现者返回的【编译证据】**（`command` + `exitCode=0` + 成功摘录）。缺编译证据不得派发。
-  - 派发设计审查者：Prompt 必须包含 `【角色与规范】你的角色是 design-reviewer，请首先读取并严格遵守 .ai-sop/skills/design-reviewer/SKILL.md 的审查规范。`
+  - 派发设计审查者：Prompt 必须包含 `【角色与规范】你的角色是 design-reviewer，请首先读取并严格遵守 .ai-sop/skills/design-reviewer/SKILL.md 的审查规范。专项必须覆盖 A2b（与实现/审计同一份 coding-style.md：持久化存储键简写 vs 协议键）。`
   - 调用 `writing-plans`：必须先遵守本文件「writing-plans Task 粒度」。紧耦合小改动默认 1 个 Task；禁止把 2–5 分钟 Step 写成多个 Task。
 
 ## 三层审查定位（职责不重叠）

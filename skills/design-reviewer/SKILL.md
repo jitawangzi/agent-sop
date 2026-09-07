@@ -42,7 +42,7 @@ brainstorming（需求 → 确认 → design-architect 产出 06）
 审查前必须加载：
 - `project-summary.md`（架构、模块、存储职责）
 - `business-logic-pattern.md`（可复用业务模式）
-- `coding-style.md`（编码、兼容、性能、错误处理规范）
+- `coding-style.md`（编码、兼容、性能、错误处理、Redis/Mongo 对象字段简写；与 implementation-engine / implementation-auditor **同一文件**）
 - `proto-rules.md`（协议规则）
 - `config-rules.md`（静态配置，若设计涉及配置）
 - `.ai-workspace/context/business-patterns/` 下与功能相关的专题
@@ -60,6 +60,14 @@ brainstorming（需求 → 确认 → design-architect 产出 06）
 - 新业务持久化是否以 **MongoDB 为持久真源**、**Redis 为缓存/实时状态**，方案有无把该落 Mongo 的数据放进 Redis 当主存，或反之。
 - MyBatis 是否仅限遗留链路；新业务是否误用了 MyBatis。
 - 数据所有权（核心模型 / 功能模块 / 临时状态）是否在设计契约中说明依据。
+
+### A2b 持久化对象字段 vs 协议字段（程序性核对）
+规则源与 `implementation-engine` / `implementation-auditor` **同一文件**：`.ai-workspace/context/coding-style.md`（Redis/Mongo 对象字段简写）+ `.ai-workspace/context/proto-rules.md`（对外协议字段）。条文不在本 Skill 重复。
+- 必读 coding-style 中对象字段简写条目，不靠记忆。
+- `06` 每新增 Redis/Mongo 对象字段必须给出**存储键**（按该条目简写）。同一语义若对客户端暴露，必须**另列协议键**（默认不简写）。
+- 缺存储键、存储键为未简写全称、或把协议名 / 历史未简写字段对称当作新存储键 = **MAJOR**（设计期可定；放过会锁进 SHA，实现按图索骥）。
+- 仅协议变更、无新持久化对象字段：本项 N/A，须在「专项检查覆盖」写明。
+- 宿主无 `coding-style.md`：本项 N/A + INFO（与 AGENTS context 缺失降级一致），不阻断。
 
 ### A3 静态数据
 - 涉及静态数据时是否使用 `XLSDataManager`，方案有无引入非规范静态数据来源。
@@ -182,7 +190,7 @@ INFO:
 - ...
 
 ### 专项检查覆盖
-- 已检查的 A/B/C 项
+- 已检查的 A/B/C 项（**必须含 A2b**：通过 / N/A 及原因 / 发现级别）
 - 标记 N/A 的项及原因
 
 ### 结论

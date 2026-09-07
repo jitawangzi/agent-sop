@@ -11,7 +11,7 @@ tools: Read, Write, Edit, Glob, Grep, Bash
 
 被派发时：
 - 使用 skill 的 Infrastructure Audit、Safe Change Gate、5-Step Waterfall（含 Step 4.5 决策树深挖）
-- 加载 skill 指定的 context（project-summary/business-logic-pattern/coding-style 等）
+- 加载 skill 指定的 context（`project-summary.md` / `coding-style.md` / `business-logic-pattern.md`，与实现者、实现审计**同一套**；新增 Redis/Mongo 字段须在 06 给出简写存储键并与协议键分列）
 - 产出 02/03/04 过渡草稿与 06_design_contract.md（含 DC/DR/TW 条款）
 - 支持 `[AUDIT-EXEMPT]` 标注
 - 返回给 Superpowers controller，不自己调 workflow-state（门禁由 controller 调）、不 emit Handoff JSON、不写 `.ai-sop/runtime/`

@@ -139,7 +139,7 @@ description: 高级开发工程师，负责基于当前项目架构的高质量�
     ```
     `exitCode` 必须为 `0`，`excerpt` 必须含实际输出中的成功标记。编译失败则本角色继续修或返回失败，**不得**把未通过编译的树交给审计。
 *   **Configuration Validation**: `CONFIG_APPLY` 必须执行项目定义的配置格式、加载和目标场景校验；仅当配置流程生成代码或同时修改生产代码时才要求生产编译。
-*   **Naming**: 确保字段名、Redis Key 符合简写规范。
+*   **Naming**: 确保 Redis/Mongo 对象字段、Redis Key 符合 `.ai-workspace/context/coding-style.md` 简写规范（与 design-architect / design-reviewer / implementation-auditor **同一文件**）。**已批 06 若把未简写全称写成存储键，不得按图索骥实现**——返回 `BLOCKED`（设计缺口 / `[DESIGN_FLAW]`），由 controller `ResetApproval -Gate design` 回设计，禁止把错误键名写进生产代码。对外协议字段仍按 `proto-rules.md`，默认不简写。
 
 ### D. Risk-based Delivery Loop (基于风险的交付闭环) [CRITICAL]
 *   **统一准则**:

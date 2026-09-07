@@ -217,6 +217,18 @@ AI 编码工具百花齐放（Claude Code、Copilot、Cursor、Antigravity、Pi�
 
 **价值**：假绿口从「口头说审查过/编译过」变成功能目录里的可读文件；过期证据用 digest / 06 SHA 绑死。完整分层、机器 vs 自报、明确不做的下一刀见 [`docs/QUALITY_GATES.md`](QUALITY_GATES.md)。
 
+### 决策13：设计与实现共用同一份 coding-style；SDD 必须报进度
+
+**问题**：实现/审计已强制加载 `coding-style.md`（含 Redis/Mongo 对象字段简写），`design-architect` 的 Context Strategy 却漏载该文件，`design-reviewer` 虽列入必读但专项全在协议（A6），存储键全称能进 06 并锁进 SHA。实现者按契约字面落地，审计对契约打勾。另：Superpowers SDD 要求「不要向人汇报进度」，Antigravity 等宿主在子代理 idle 后若父会话只调工具、不吐文本，主窗口会像卡死。
+
+**为什么这么设计**：
+- 设计与实现/审计引用**同一路径** `.ai-workspace/context/coding-style.md`，不在 SOP Skill 里再抄简写例子（领域中立）。
+- `design-reviewer` **A2b** 与 A6 同级：新持久化对象字段必须给出简写存储键并与协议键分列；缺项或全称存储键 = MAJOR。
+- 已批 06 仍写全称存储键时，`implementation-engine` 不得按图索骥，`implementation-auditor` 标 `[DESIGN_FLAW: plan-mandated]`。
+- adapter **覆盖** SDD 的静默连跑：每个 subagent 返回后先给用户可见进度。
+
+**价值**：简写在锁 SHA 前拦住；主会话不再用「Thinking」代替进度。
+
 ---
 
 ## 三、关键不变量（设计契约的核心约束）

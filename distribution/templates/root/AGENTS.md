@@ -188,7 +188,7 @@ AI 可在一次响应内同时呈递 `01_server_rules.md` 与 `06_design_contrac
 
 ## 项目强制规则
 
-项目编码/架构强制规则（Java/Spring 分层、MongoDB/Redis、XLSDataManager、DateUtil、GameParam、协议发送、GM fixture 等）统一定义在 `.ai-workspace/context/coding-style.md` 与 `.ai-workspace/context/config-rules.md`，始终阅读并遵守——不在此重复，避免漂移。
+项目编码/架构强制规则（Java/Spring 分层、MongoDB/Redis、XLSDataManager、DateUtil、GameParam、协议发送、GM fixture 等）统一定义在 `.ai-workspace/context/coding-style.md` 与 `.ai-workspace/context/config-rules.md`，始终阅读并遵守——不在此重复，避免漂移。`design-architect` / `design-reviewer` / `implementation-engine` / `implementation-auditor` **加载同一份** `coding-style.md`。新增 Redis/Mongo 对象字段须在设计阶段写出**存储键**（按该文件简写）并与**协议键**分列；不得拖到实现才发现全称存储键。
 
 ## 规范功能产物
 
@@ -237,11 +237,13 @@ AI 可在一次响应内同时呈递 `01_server_rules.md` 与 `06_design_contrac
 
 **审查铁律（仅 T3 严格适用）**：每个 Task **先编译通过再内审**。顺序：`implementation-engine` 交【编译证据】（`command` + `exitCode=0` + 成功摘录）→ 才派 `implementation-auditor` / `logic-auditor` → spec 合规审查 → 代码质量审查（顺序不可颠倒）→ 修复回派实现者并再编译 → 重新审查 → 通过才标记该 Task 完成。engine 未返回或无编译证据时**禁止**派审计官，禁止与实现者并行派审，禁止一条 prompt 打包多个 Task 后立刻审。controller / 编排会话**不得自己改生产代码或测试源**（编译失败或审计要修一律回派 `implementation-engine` `REPAIR`）。生产代码再改后，先前内审 PASS 作废，必须再编译再审。同文件修改绝不并行派多个实现者。T3 绝不跳过独立审查（哪怕 1 行）。最终审查 `requesting-code-review` 独立于 subagent 内审，禁止跳过，也**不能**替代被作废的任务内审。T2 快速修改降为 AI 自审 + 编译/测试硬验证。
 
+**子代理进度可见（覆盖 Superpowers SDD）**：原生 SDD「不要向人汇报进度」**对本项目不生效**。每个独立 subagent 返回后、下一串工具或下一个 subagent 之前，controller 必须先向用户输出 1–3 行可见进度（谁完成、结论、下一步）。长编译/测试开始前同样先报。禁止子代理已结束后静默连跑，导致主窗口像卡死。状态行不能替代本条。详见 `superpowers-adapter.md`「人机交互」。
+
 **模型分级调度**：派发 subagent 时按角色复杂度选档（最强/标准/便宜），显式指定 model 不省略。`design-architect`/`design-reviewer`/`requesting-code-review`/`logic-auditor` 用最强档；一般实现/合规/`requirement-analyst` 用标准档；机械转录/单文件小修/配置改动用便宜档。修复循环 R4-5 升一档。详见 `.ai-sop/workflows/superpowers-adapter.md`。
 
 被调用时：使用专家的领域 checklist 与交付格式，把发现返回给 Superpowers controller，**不接管编排、不写 `.ai-sop/runtime/`**。
 
-**专家 Skill 自包含**：实现者/审查员只遵守 `.ai-sop/skills/<role>/SKILL.md`。**不要**去读 Superpowers 插件里的 `implementer-prompt.md`、`task-reviewer-prompt.md`、`code-reviewer.md` 等（那是流程编排/派发模板，与专家 overlay 冲突）。T3 由 controller 用 Skill 工具显式调用 Superpowers 流程 skill。Controller 派发 subagent 时必须在 prompt 首行指定专家 Skill 路径（如 `【角色与规范】你的角色是 implementation-engine，请首先读取并严格遵守 .ai-sop/skills/implementation-engine/SKILL.md`）。
+**专家 Skill 自包含**：实现者/审查员只遵守 `.ai-sop/skills/<role>/SKILL.md`。**不要**去读 Superpowers 插件里的 `implementer-prompt.md`、`task-reviewer-prompt.md`、`code-reviewer.md` 等（那是流程编排/派发模板，与专家 overlay 冲突）。T3 由 controller 用 Skill 工具显式调用 Superpowers 流程 skill。Controller 派发 subagent 时必须在 prompt 首行指定专家 Skill 路径（如 `【角色与规范】你的角色是 implementation-engine，请首先读取并严格遵守 .ai-sop/skills/implementation-engine/SKILL.md`）。派发 `design-reviewer` 时须要求覆盖 A2b（同一份 `coding-style.md`：持久化存储键 vs 协议键）。
 
 ## 功能归属
 

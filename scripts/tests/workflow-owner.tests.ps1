@@ -315,8 +315,8 @@ try {
     . $SessionScript
     . $GrantScript
 
-    # Four current harnesses create only session-bound Owner 1.1 records.
-    foreach ($agent in @("CLAUDE_CODE", "COPILOT", "ANTIGRAVITY", "CURSOR")) {
+    # Current STRICT harnesses create only session-bound Owner 1.1 records.
+    foreach ($agent in @("CLAUDE_CODE", "COPILOT", "ANTIGRAVITY", "CURSOR", "CODEX")) {
         $name = "Owner$($agent.Replace('_', ''))"
         $feature = New-TestFeature $name
         $ownerId = "owner-$($agent.ToLowerInvariant())"
@@ -441,6 +441,39 @@ try {
         -OwnerId "no-grant-owner"
     $compOwner = Read-OwnerRecord "NoGrantFeature"
     Assert-Equal $compOwner.status "COMPLETE" "Direct complete without pre-grant failed."
+
+    # Codex direct execution must bind the native desktop task identity rather
+    # than falling back to a process-scoped synthetic session.
+    $savedCodexSessionId = $env:CODEX_SESSION_ID
+    try {
+        $env:CODEX_SESSION_ID = "codex-native-session-test"
+        $codexFeature = New-TestFeature "CodexDirectClaim"
+        Invoke-Owner `
+            -Feature $codexFeature `
+            -Operation Claim `
+            -Workflow SUPERPOWERS `
+            -Agent CODEX `
+            -OwnerId "codex-direct-owner" |
+            Out-Null
+        $codexOwner = Read-OwnerRecord "CodexDirectClaim"
+        $codexSession = Get-AiSopWorkflowSession `
+            -SessionKey $codexOwner.sessionBinding.sessionKey
+        Assert-Equal $codexSession.Record.nativeSessionIdSha256 (
+            Get-AiSopWorkflowSha256 "codex-native-session-test"
+        ) "Codex direct Claim did not use CODEX_SESSION_ID."
+        Invoke-Owner `
+            -Feature $codexFeature `
+            -Operation Complete `
+            -Workflow SUPERPOWERS `
+            -Agent CODEX `
+            -OwnerId "codex-direct-owner" |
+            Out-Null
+        Assert-Equal (Read-OwnerRecord "CodexDirectClaim").status "COMPLETE" (
+            "Codex direct Claim owner did not complete."
+        )
+    } finally {
+        $env:CODEX_SESSION_ID = $savedCodexSessionId
+    }
 
     # Validate must re-read and re-check the session after acquiring the final
     # session -> owner -> grant lock set. SessionEnd wins this ordered barrier.

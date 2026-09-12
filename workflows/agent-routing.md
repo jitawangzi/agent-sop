@@ -1,6 +1,6 @@
 # 基于 Agent 的工作流路由
 
-五个 harness 统一使用 Superpowers 作为顶层调度器；无需 workflow-mode 提示。
+六个 harness 统一使用 Superpowers 作为顶层调度器；无需 workflow-mode 提示。
 
 | Agent | 顶层调度器 | Workflow owner 值 | agent 值 |
 |---|---|---|---|
@@ -8,6 +8,7 @@
 | GitHub Copilot | Superpowers | `SUPERPOWERS` | `COPILOT` |
 | Antigravity IDE/CLI | Superpowers | `SUPERPOWERS` | `ANTIGRAVITY` |
 | Cursor | Superpowers | `SUPERPOWERS` | `CURSOR` |
+| Codex | Superpowers | `SUPERPOWERS` | `CODEX` |
 | Pi | Superpowers（能力准入 BLOCKED，只 T2） | `SUPERPOWERS` | `PI` |
 
 `CUSTOM_SKILLS` 与 `GEMINI` 作为兼容身份保留（供历史运行恢复等场景）；新流程统一使用 `SUPERPOWERS`，新的 Google-agent 任务使用 `ANTIGRAVITY`，与 Antigravity 选用的模型无关。
@@ -41,4 +42,3 @@
 - **Dev Agent** 持有活动的 Workflow Owner 归属，主导业务代码修改与测试执行；
 - **Reviewer Agent** 作为独立只读审计角色，通过 `scripts/review-mailbox.ps1` 与规格产物 `review-mailbox.json` 进行结构化交互（详见 `workflows/dual-agent-review.md`）；
 - 审查者无需 Claim 写归属，通过标准信箱契约输出 `APPROVED` / `REJECTED` 判定，驱动主开发 Agent 进行闭环修复。
-

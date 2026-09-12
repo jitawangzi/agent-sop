@@ -28,7 +28,7 @@
   },
   "$defs": {
     "agent": {
-      "enum": ["CLAUDE_CODE", "COPILOT", "ANTIGRAVITY", "CURSOR", "PI"]
+      "enum": ["CLAUDE_CODE", "COPILOT", "ANTIGRAVITY", "CURSOR", "CODEX", "PI"]
     },
     "runtime": {
       "enum": ["CLI", "APP", "SDK_LOCAL", "CLOUD"]

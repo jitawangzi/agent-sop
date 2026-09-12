@@ -50,7 +50,7 @@
       "type": "object",
       "additionalProperties": false,
       "properties": {
-        "agent": { "enum": ["CLAUDE_CODE", "COPILOT", "ANTIGRAVITY", "CURSOR", "PI", ""] },
+        "agent": { "enum": ["CLAUDE_CODE", "COPILOT", "ANTIGRAVITY", "CURSOR", "CODEX", "PI", ""] },
         "ownerId": { "type": "string" }
       }
     },

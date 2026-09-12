@@ -23,7 +23,7 @@ function Get-AiSopWorkflowSessionKey {
     [CmdletBinding()]
     param(
         [Parameter(Mandatory)]
-        [ValidateSet("CLAUDE_CODE", "COPILOT", "ANTIGRAVITY", "CURSOR", "PI")]
+        [ValidateSet("CLAUDE_CODE", "COPILOT", "ANTIGRAVITY", "CURSOR", "CODEX", "PI")]
         [string]$Agent,
 
         [Parameter(Mandatory)]
@@ -332,7 +332,7 @@ function Invoke-AiSopWorkflowSession {
         [string]$Operation,
 
         [Parameter(Mandatory)]
-        [ValidateSet("CLAUDE_CODE", "COPILOT", "ANTIGRAVITY", "CURSOR", "PI")]
+        [ValidateSet("CLAUDE_CODE", "COPILOT", "ANTIGRAVITY", "CURSOR", "CODEX", "PI")]
         [string]$Agent,
 
         [Parameter(Mandatory)]

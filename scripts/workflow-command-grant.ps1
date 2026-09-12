@@ -67,7 +67,7 @@ function Resolve-AiSopWorkflowOwnerTuple {
 
     if (
         $Workflow -cne "SUPERPOWERS" -or
-        $Agent -notin @("CLAUDE_CODE", "COPILOT", "ANTIGRAVITY", "CURSOR", "PI") -or
+        $Agent -notin @("CLAUDE_CODE", "COPILOT", "ANTIGRAVITY", "CURSOR", "CODEX", "PI") -or
         $OwnerId -notmatch "^[A-Za-z0-9._:-]+$" -or
         $Feature -notmatch
             "^[A-Za-z0-9](?:[A-Za-z0-9._-]*[A-Za-z0-9_-])?$"

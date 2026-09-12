@@ -7,7 +7,7 @@
 
 [CmdletBinding()]
 param(
-    [ValidateSet("CLAUDE_CODE", "COPILOT", "ANTIGRAVITY", "CURSOR", "PI", "")]
+    [ValidateSet("CLAUDE_CODE", "COPILOT", "ANTIGRAVITY", "CURSOR", "CODEX", "PI", "")]
     [string]$Agent = "",
 
     [ValidateSet("CLI", "APP", "SDK_LOCAL", "CLOUD", "")]
@@ -119,6 +119,26 @@ function Get-AiSopKnownCapability {
                     sessionMechanism = "conversation_id"
                     subagentMechanism = "native"
                     note = ""
+                }
+            }
+        }
+        "CODEX" {
+            if ($R -notin @("CLI", "APP")) { return $null }
+            return @{
+                capabilities = [ordered]@{
+                    skillDiscovery = $true   # .agents/skills
+                    subagent       = $true   # collaboration subagents
+                    blockingHook   = $false  # no project hook adapter yet
+                    workspace      = $true
+                    pauseResume    = $true   # persistent Codex task/thread
+                    evidence       = $true   # independent subagent task + transcript
+                }
+                evidence = [ordered]@{
+                    skillPath = ".agents/skills"
+                    hookConfig = "none (project hook adapter unavailable)"
+                    sessionMechanism = "CODEX_SESSION_ID"
+                    subagentMechanism = "collaboration subagent"
+                    note = "No blocking project hook; subagent+evidence satisfy T3 admission"
                 }
             }
         }
@@ -246,7 +266,7 @@ function New-AiSopHarnessCapabilityRecord {
 # Build the probe set.
 $probeSet = @()
 if ($All -or ($Agent -eq "" -and $Runtime -eq "")) {
-    foreach ($a in @("CLAUDE_CODE","COPILOT","ANTIGRAVITY","CURSOR","PI")) {
+    foreach ($a in @("CLAUDE_CODE","COPILOT","ANTIGRAVITY","CURSOR","CODEX","PI")) {
         $probeSet += @{ agent = $a; runtime = "CLI" }
     }
 } elseif ($Agent -ne "" -and $Runtime -ne "") {
@@ -254,7 +274,7 @@ if ($All -or ($Agent -eq "" -and $Runtime -eq "")) {
 } elseif ($Agent -ne "") {
     $probeSet += @{ agent = $Agent; runtime = "CLI" }
 } else {
-    foreach ($a in @("CLAUDE_CODE","COPILOT","ANTIGRAVITY","CURSOR","PI")) {
+    foreach ($a in @("CLAUDE_CODE","COPILOT","ANTIGRAVITY","CURSOR","CODEX","PI")) {
         $probeSet += @{ agent = $a; runtime = "CLI" }
     }
 }

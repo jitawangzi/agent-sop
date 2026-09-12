@@ -84,7 +84,7 @@ description: 人工手动片段编排器。在 Superpowers 主流程之外，手
 pwsh -NoProfile -File .\.ai-sop\scripts\workflow-owner.ps1 -Operation Claim `
   -SpecDirectory ".ai-workspace\specs\features\<FeatureName>" `
   -Feature "<FeatureName>" -Workflow SUPERPOWERS `
-  -Agent "<CLAUDE_CODE|COPILOT|ANTIGRAVITY|CURSOR|PI>" -OwnerId "<run-id>"
+  -Agent "<CLAUDE_CODE|COPILOT|ANTIGRAVITY|CURSOR|CODEX|PI>" -OwnerId "<run-id>"
 ```
 
 成功停止前用同一身份 `Complete`；失败或阻塞保留归属供恢复。验证与完成使用同一 owner ID。

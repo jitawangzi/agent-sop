@@ -84,6 +84,7 @@
             "COPILOT",
             "ANTIGRAVITY",
             "CURSOR",
+            "CODEX",
             "GEMINI",
             "PI"
           ]
@@ -148,6 +149,7 @@
                   "COPILOT",
                   "ANTIGRAVITY",
                   "CURSOR",
+                  "CODEX",
                   "GEMINI",
                   "PI"
                 ]
@@ -191,6 +193,7 @@
             "COPILOT",
             "ANTIGRAVITY",
             "CURSOR",
+            "CODEX",
             "PI"
           ]
         },

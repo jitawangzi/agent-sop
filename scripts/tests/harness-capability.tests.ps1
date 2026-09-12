@@ -58,6 +58,14 @@ Invoke-Test "Cursor CLI -> STRICT" {
     Assert-Equal "STRICT" $r.decision "decision"
 }
 
+Invoke-Test "Codex App -> STRICT without claiming hook support" {
+    $r = New-AiSopHarnessCapabilityRecord -A "CODEX" -R "APP" -Ver "desktop" -OsVal "Windows" -Pwsh "7.4"
+    Assert-Equal "STRICT" $r.decision "decision"
+    Assert-True ($r.capabilities.subagent -eq $true) "subagent true"
+    Assert-True ($r.capabilities.evidence -eq $true) "evidence true"
+    Assert-True ($r.capabilities.blockingHook -eq $false) "blockingHook must remain false"
+}
+
 Invoke-Test "Copilot CLI -> STRICT (subagent+evidence confirmed for T3 review)" {
     $r = New-AiSopHarnessCapabilityRecord -A "COPILOT" -R "CLI" -Ver "1.0.80" -OsVal "Windows" -Pwsh "7.4"
     Assert-Equal "STRICT" $r.decision "decision"
@@ -94,7 +102,7 @@ Invoke-Test "Full probe output is schema-valid (All)" {
     $json = ($out -join "`n")
     $json | Test-Json -SchemaFile $SchemaPath | Out-Null
     $obj = $json | ConvertFrom-Json
-    Assert-Equal 5 @($obj.harnesses).Count "5 harness records"
+    Assert-Equal 6 @($obj.harnesses).Count "6 harness records"
 }
 
 Invoke-Test "releaseDecision MIXED when some STRICT some BLOCKED" {

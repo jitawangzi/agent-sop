@@ -1384,10 +1384,10 @@ try {
         throw "JSON artifact hashes must ignore CRLF vs LF after the same normalize as markdown."
     }
     # 从当前非 Claude harness 开始, 直接回归已复现的跨 harness mutation 拒绝.
-    foreach ($mutationAgent in @("COPILOT", "ANTIGRAVITY", "CLAUDE_CODE", "CURSOR")) {
+    foreach ($mutationAgent in @("COPILOT", "ANTIGRAVITY", "CLAUDE_CODE", "CURSOR", "CODEX")) {
         Assert-SuperpowersMutationAccepted -Agent $mutationAgent
     }
-    foreach ($approvalAgent in @("CLAUDE_CODE", "COPILOT", "ANTIGRAVITY", "CURSOR")) {
+    foreach ($approvalAgent in @("CLAUDE_CODE", "COPILOT", "ANTIGRAVITY", "CURSOR", "CODEX")) {
         Assert-NoRuntimeApprovalAccepted -Agent $approvalAgent
     }
     Assert-CustomSkillsNoRuntimeApprovalRejected

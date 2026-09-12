@@ -327,8 +327,8 @@ AI 编码工具百花齐放（Claude Code、Copilot、Cursor、Antigravity、Pi�
 - Manifest（`.ai-sop/distribution/project-manifest.json`）：声明 7 个单文件投影的 source/target/hash。
 
 ### Owner/Session（.ai-sop/scripts/workflow-owner.ps1 等）
-- 功能归属：Claim/Validate/Complete，SUPERPOWERS + 五端（CLAUDE_CODE/COPILOT/ANTIGRAVITY/CURSOR/PI）。
-- Owner 1.1 需 session + AST 校验的 command grant；PI 经 `pi-adapter/bootstrap-pi-session.ps1` 注册。
+- 功能归属：Claim/Validate/Complete，SUPERPOWERS + 六端（CLAUDE_CODE/COPILOT/ANTIGRAVITY/CURSOR/CODEX/PI）。
+- Owner 1.1 需 session + AST 校验的 command grant；Codex 直接使用 `CODEX_SESSION_ID`，PI 经 `pi-adapter/bootstrap-pi-session.ps1` 注册。
 - 双人工批准（requirement + design）+ SHA 锁定 + 篡改检测。
 
 ### Guard（.ai-sop/scripts/guard-production-edit.ps1）

@@ -49,6 +49,7 @@
         "CLAUDE_CODE",
         "COPILOT",
         "CURSOR",
+        "CODEX",
         "AIDER",
         "CUSTOM"
       ]
@@ -60,6 +61,7 @@
         "CLAUDE_CODE",
         "ANTIGRAVITY",
         "CURSOR",
+        "CODEX",
         "GPT_4O",
         "CUSTOM"
       ]

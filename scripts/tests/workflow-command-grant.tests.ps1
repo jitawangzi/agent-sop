@@ -254,7 +254,7 @@ try {
     }
 
     # Every supported harness may issue a grant only from its own active session.
-    foreach ($agent in @("CLAUDE_CODE", "COPILOT", "ANTIGRAVITY", "CURSOR")) {
+    foreach ($agent in @("CLAUDE_CODE", "COPILOT", "ANTIGRAVITY", "CURSOR", "CODEX")) {
         $workspace = New-TestWorkspace "workspace-$($agent.ToLowerInvariant())"
         $feature = "Feature$($agent.Replace('_', ''))"
         [System.IO.Directory]::CreateDirectory(

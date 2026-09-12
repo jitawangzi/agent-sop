@@ -1,6 +1,6 @@
 # 共享功能产物契约
 
-各 harness（Claude Code / Copilot / Antigravity / Cursor / Pi）统一走 Superpowers，共享：
+各 harness（Claude Code / Copilot / Antigravity / Cursor / Codex / Pi）统一走 Superpowers，共享：
 
 `.ai-workspace/specs/features/<FeatureName>/`
 
@@ -23,7 +23,7 @@
 
 Superpowers 在 `docs/superpowers/` 下的 plan/ledger 是执行记录，不替代规范产物。主流程不使用 `.ai-sop/runtime/`（仅手动全功能审计的 `AUDIT_ONLY` 场景按需使用，不进主流程必经链）。
 
-权威 owner 注册表是机器本地的，所有 worktree 共享。归属身份统一为 `SUPERPOWERS` workflow + Agent 字段（`CLAUDE_CODE`/`COPILOT`/`ANTIGRAVITY`/`CURSOR`/`PI`）+ 不可变的功能运行 `ownerId`。
+权威 owner 注册表是机器本地的，所有 worktree 共享。归属身份统一为 `SUPERPOWERS` workflow + Agent 字段（`CLAUDE_CODE`/`COPILOT`/`ANTIGRAVITY`/`CURSOR`/`CODEX`/`PI`）+ 不可变的功能运行 `ownerId`。
 
 ## 人工把关阶段
 

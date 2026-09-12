@@ -98,7 +98,7 @@ param(
     [string]$BlockReason = "",
     [ValidateSet("CUSTOM_SKILLS", "SUPERPOWERS")]
     [string]$OwnerWorkflow = $(if (-not [string]::IsNullOrWhiteSpace($env:AI_SOP_WORKFLOW_OWNER_WORKFLOW)) { $env:AI_SOP_WORKFLOW_OWNER_WORKFLOW } else { $env:SERVER_NEW_WORKFLOW_OWNER_WORKFLOW }),
-    [ValidateSet("CLAUDE_CODE", "COPILOT", "ANTIGRAVITY", "CURSOR", "GEMINI", "PI")]
+    [ValidateSet("CLAUDE_CODE", "COPILOT", "ANTIGRAVITY", "CURSOR", "CODEX", "GEMINI", "PI")]
     [string]$OwnerAgent = $(if (-not [string]::IsNullOrWhiteSpace($env:AI_SOP_WORKFLOW_OWNER_AGENT)) { $env:AI_SOP_WORKFLOW_OWNER_AGENT } else { $env:SERVER_NEW_WORKFLOW_OWNER_AGENT }),
     [string]$OwnerId = $(if (-not [string]::IsNullOrWhiteSpace($env:AI_SOP_WORKFLOW_OWNER_ID)) { $env:AI_SOP_WORKFLOW_OWNER_ID } else { $env:SERVER_NEW_WORKFLOW_OWNER_ID }),
     [ValidateSet("PLAN", "VERIFY")]
@@ -866,7 +866,7 @@ function Invoke-WithMutationOwnership {
     if (
         (
             $OwnerWorkflow -ceq "SUPERPOWERS" -and
-            @("CLAUDE_CODE", "COPILOT", "ANTIGRAVITY", "CURSOR", "PI") -cnotcontains
+            @("CLAUDE_CODE", "COPILOT", "ANTIGRAVITY", "CURSOR", "CODEX", "PI") -cnotcontains
                 $OwnerAgent
         ) -or
         (

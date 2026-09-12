@@ -2,7 +2,7 @@
 
 ## 归属
 
-**Superpowers 是本项目唯一的过程引擎，五个 harness（Claude Code / GitHub Copilot / Antigravity / Cursor / Pi）统一使用它**（STRICT 工具跑 T3，BLOCKED 工具 Pi 只 T2，见 `harness-capability.ps1`）。`workflow-orchestrator` 不再作为顶层调度器，而是**Superpowers 主流程之外的人工手动片段编排器**（当前=全功能审计，可扩展）；不使用状态机/runtime/Handoff，编排靠人工驱动。
+**Superpowers 是本项目唯一的过程引擎，六个 harness（Claude Code / GitHub Copilot / Antigravity / Cursor / Codex / Pi）统一使用它**（STRICT 工具跑 T3，BLOCKED 工具 Pi 只 T2，见 `harness-capability.ps1`）。`workflow-orchestrator` 不再作为顶层调度器，而是**Superpowers 主流程之外的人工手动片段编排器**（当前=全功能审计，可扩展）；不使用状态机/runtime/Handoff，编排靠人工驱动。
 
 ## 流程
 
@@ -244,4 +244,4 @@ PreToolUse hook 在每次文件编辑前运行 `guard-production-edit.ps1`（各
 Superpowers ledger 存储生成的功能 owner ID。成功交付或成功的修改型独立工作以同一身份调用 `workflow-owner.ps1 -Operation Complete`。失败或阻塞的运行保留活动归属以便恢复。
 在恢复运行或任何修改规范产物/生产代码的批次前，以同一身份调用 `workflow-owner.ps1 -Operation Validate`。只读审计不 Claim 归属。
 
-各 harness 统一 `SUPERPOWERS` 归属，`agent` 字段区分实际工具（CLAUDE_CODE/COPILOT/ANTIGRAVITY/CURSOR/PI）。`CUSTOM_SKILLS`/`GEMINI` 作为兼容身份保留（供历史运行恢复等场景）。PI 的 Claim 经 `pi-adapter/bootstrap-pi-session.ps1` 注册 session。
+各 harness 统一 `SUPERPOWERS` 归属，`agent` 字段区分实际工具（CLAUDE_CODE/COPILOT/ANTIGRAVITY/CURSOR/CODEX/PI）。`CUSTOM_SKILLS`/`GEMINI` 作为兼容身份保留（供历史运行恢复等场景）。Codex 的直接 Claim 使用 `CODEX_SESSION_ID` 注册 session；PI 的 Claim 经 `pi-adapter/bootstrap-pi-session.ps1` 注册 session。

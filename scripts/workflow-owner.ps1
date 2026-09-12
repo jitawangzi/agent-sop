@@ -31,6 +31,7 @@ param(
         "COPILOT",
         "ANTIGRAVITY",
         "CURSOR",
+        "CODEX",
         "GEMINI",
         "PI"
     )]
@@ -208,7 +209,7 @@ function Assert-OwnerIdentity {
 function Assert-NewOwnerPair {
     if (
         $Workflow -cne "SUPERPOWERS" -or
-        $Agent -notin @("CLAUDE_CODE", "COPILOT", "ANTIGRAVITY", "CURSOR", "PI")
+        $Agent -notin @("CLAUDE_CODE", "COPILOT", "ANTIGRAVITY", "CURSOR", "CODEX", "PI")
     ) {
         throw "WORKFLOW_OWNER_NEW_PRIVILEGE_DENIED"
     }
@@ -275,7 +276,12 @@ function Get-ExactGrant {
             throw "COMMAND_GRANT_NOT_FOUND"
         }
         $ws = Get-OwnerWorkspacePath
-        $nativeSessionId = if (-not [string]::IsNullOrWhiteSpace($env:ANTIGRAVITY_SESSION_ID)) {
+        $nativeSessionId = if (
+            $Agent -eq "CODEX" -and
+            -not [string]::IsNullOrWhiteSpace($env:CODEX_SESSION_ID)
+        ) {
+            $env:CODEX_SESSION_ID
+        } elseif (-not [string]::IsNullOrWhiteSpace($env:ANTIGRAVITY_SESSION_ID)) {
             $env:ANTIGRAVITY_SESSION_ID
         } elseif (-not [string]::IsNullOrWhiteSpace($env:AI_SESSION_ID)) {
             $env:AI_SESSION_ID

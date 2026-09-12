@@ -17,10 +17,10 @@ param(
     [string]$MailboxPath,
     [string]$ProjectRoot,
 
-    [ValidateSet("ANTIGRAVITY", "CLAUDE_CODE", "COPILOT", "CURSOR", "AIDER", "CUSTOM")]
+    [ValidateSet("ANTIGRAVITY", "CLAUDE_CODE", "COPILOT", "CURSOR", "CODEX", "AIDER", "CUSTOM")]
     [string]$DevAgent = "ANTIGRAVITY",
 
-    [ValidateSet("COPILOT", "CLAUDE_CODE", "ANTIGRAVITY", "CURSOR", "GPT_4O", "CUSTOM")]
+    [ValidateSet("COPILOT", "CLAUDE_CODE", "ANTIGRAVITY", "CURSOR", "CODEX", "GPT_4O", "CUSTOM")]
     [string]$ReviewerAgent = "COPILOT",
 
     [int]$MaxRounds = 4,

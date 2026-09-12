@@ -104,6 +104,31 @@
       "probedAt": "2026-08-21T06:11:38.5208978+00:00"
     },
     {
+      "agent": "CODEX",
+      "runtime": "APP",
+      "productVersion": "unknown",
+      "os": "",
+      "pwshVersion": "",
+      "capabilities": {
+        "skillDiscovery": true,
+        "subagent": true,
+        "blockingHook": false,
+        "workspace": true,
+        "pauseResume": true,
+        "evidence": true
+      },
+      "decision": "STRICT",
+      "decisionReason": "all critical capabilities satisfied",
+      "evidence": {
+        "skillPath": ".agents/skills",
+        "hookConfig": "none (project hook adapter unavailable)",
+        "sessionMechanism": "CODEX_SESSION_ID",
+        "subagentMechanism": "collaboration subagent",
+        "note": "No blocking project hook; subagent+evidence satisfy T3 admission"
+      },
+      "probedAt": "2026-09-12T07:47:19.9922751+00:00"
+    },
+    {
       "agent": "PI",
       "runtime": "CLI",
       "productVersion": "unknown",

@@ -1,6 +1,6 @@
 # Superpowers 流程实战验证清单
 
-多个 harness（Claude Code / GitHub Copilot / Antigravity / Cursor / Pi）统一使用 Superpowers 作为唯一过程引擎。本文档是一份**实战验证清单**：用一个真实小功能走一遍完整流程，逐项确认流程落地正确。各工具能力差异见 `.ai-sop/scripts/harness-capability.ps1`（STRICT 可跑 T3，BLOCKED 只 T2）。
+多个 harness（Claude Code / GitHub Copilot / Antigravity / Cursor / Codex / Pi）统一使用 Superpowers 作为唯一过程引擎。本文档是一份**实战验证清单**：用一个真实小功能走一遍完整流程，逐项确认流程落地正确。各工具能力差异见 `.ai-sop/scripts/harness-capability.ps1`（STRICT 可跑 T3，BLOCKED 只 T2）。
 
 ## 前置准备
 
@@ -56,7 +56,7 @@
   pwsh -NoProfile -File .\.ai-sop\scripts\workflow-owner.ps1 -Operation Claim `
     -SpecDirectory ".ai-workspace\specs\features/<FeatureName>" `
     -Feature "<FeatureName>" -Workflow SUPERPOWERS `
-    -Agent "<CLAUDE_CODE|COPILOT|ANTIGRAVITY|CURSOR|PI>" -OwnerId "<run-id>"
+    -Agent "<CLAUDE_CODE|COPILOT|ANTIGRAVITY|CURSOR|CODEX|PI>" -OwnerId "<run-id>"
   ```
 
 ### G. 完成验证

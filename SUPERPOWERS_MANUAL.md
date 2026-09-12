@@ -1,6 +1,6 @@
 # Superpowers 自动化开发指南
 
-本指南说明多个 harness（Claude Code / GitHub Copilot / Antigravity / Cursor / Pi）如何使用本项目的 AI SOP 完成游戏服务端开发。**T3 由 Superpowers 过程引擎编排；T2/T1/快通道用 AGENTS.md + 专家 Skills，不调用 Superpowers**。领域专家 Skill 被强制绑定调用；详见 `.ai-sop/workflows/superpowers-adapter.md`。各 harness 共享 `.ai-workspace/context/` 与规范化功能产物。各工具的能力差异（能跑 T3 还是只 T2）见 `.ai-sop/scripts/harness-capability.ps1` 的 STRICT/BLOCKED 判定。
+本指南说明多个 harness（Claude Code / GitHub Copilot / Antigravity / Cursor / Codex / Pi）如何使用本项目的 AI SOP 完成游戏服务端开发。**T3 由 Superpowers 过程引擎编排；T2/T1/快通道用 AGENTS.md + 专家 Skills，不调用 Superpowers**。领域专家 Skill 被强制绑定调用；详见 `.ai-sop/workflows/superpowers-adapter.md`。各 harness 共享 `.ai-workspace/context/` 与规范化功能产物。各工具的能力差异（能跑 T3 还是只 T2）见 `.ai-sop/scripts/harness-capability.ps1` 的 STRICT/BLOCKED 判定。
 
 ## 🧭 用户任务极简判定树
 
@@ -88,11 +88,11 @@ pwsh -NoProfile -File .\.ai-sop\scripts\workflow-owner.ps1 -Operation Claim `
   -SpecDirectory ".ai-workspace\specs\features/<FeatureName>" `
   -Feature "<FeatureName>" `
   -Workflow SUPERPOWERS `
-  -Agent "<CLAUDE_CODE|COPILOT|ANTIGRAVITY|CURSOR|PI>" `
+  -Agent "<CLAUDE_CODE|COPILOT|ANTIGRAVITY|CURSOR|CODEX|PI>" `
   -OwnerId "<superpowers-run-id>"
 ```
 
-`agent` 值取自实际工具，而非底层模型。注意 PI 因核心无 subagent，能力准入判定为 BLOCKED（只 T2，不能跑自动 T3 独立审查），其 Claim 经 `pi-adapter/bootstrap-pi-session.ps1` 注册 session。*注意：已有 01/06 规格产物的功能目录，后续修改均按 T3 门禁收尾（`VerifyCompletion` 自动升档校验）；若对已有功能进行 T2 快速热修，请开新 FeatureName（如 `HotfixShopLimit20260821`）。*
+`agent` 值取自实际工具，而非底层模型。Codex 使用 `CODEX`，直接 Claim 时从 `CODEX_SESSION_ID` 注册 session。注意 PI 因核心无 subagent，能力准入判定为 BLOCKED（只 T2，不能跑自动 T3 独立审查），其 Claim 经 `pi-adapter/bootstrap-pi-session.ps1` 注册 session。*注意：已有 01/06 规格产物的功能目录，后续修改均按 T3 门禁收尾（`VerifyCompletion` 自动升档校验）；若对已有功能进行 T2 快速热修，请开新 FeatureName（如 `HotfixShopLimit20260821`）。*
 
 恢复任务或开始新的修改批次前用同一身份执行 `Validate`；功能成功交付后执行 `Complete`。失败或阻塞时不要 Complete，以便原会话恢复：
 
@@ -100,12 +100,12 @@ pwsh -NoProfile -File .\.ai-sop\scripts\workflow-owner.ps1 -Operation Claim `
 pwsh -NoProfile -File .\.ai-sop\scripts\workflow-owner.ps1 -Operation Validate `
   -SpecDirectory ".ai-workspace\specs\features/<FeatureName>" `
   -Feature "<FeatureName>" -Workflow SUPERPOWERS `
-  -Agent "<CLAUDE_CODE|COPILOT|ANTIGRAVITY|CURSOR|PI>" -OwnerId "<superpowers-run-id>"
+  -Agent "<CLAUDE_CODE|COPILOT|ANTIGRAVITY|CURSOR|CODEX|PI>" -OwnerId "<superpowers-run-id>"
 
 pwsh -NoProfile -File .\.ai-sop\scripts\workflow-owner.ps1 -Operation Complete `
   -SpecDirectory ".ai-workspace\specs\features/<FeatureName>" `
   -Feature "<FeatureName>" -Workflow SUPERPOWERS `
-  -Agent "<CLAUDE_CODE|COPILOT|ANTIGRAVITY|CURSOR|PI>" -OwnerId "<superpowers-run-id>"
+  -Agent "<CLAUDE_CODE|COPILOT|ANTIGRAVITY|CURSOR|CODEX|PI>" -OwnerId "<superpowers-run-id>"
 ```
 
 ## 生产代码编辑 Guard
@@ -612,4 +612,3 @@ svn commit -m "ShopBuyLimit: 实现商城物品每日限购与跨天重置"
 | `WORKFLOW_LOCK_TIMEOUT` | 并发文件锁竞争或磁盘 IO 延迟 | 检查是否有其他进程卡死，重新执行即可（脚本会自动进行指数退避重试）。 |
 | `GATE_NOT_APPROVED` / `HASH_DRIFT` | 需求/设计文档批准后被非受控修改 | 纯文本润色运行 `workflow-state.ps1 -Operation UpdateHash -Gate <requirement\|design>`；业务修改运行 `ResetApproval` 后重新确认。 |
 | `COVERAGE_UNCOVERED_CLAUSES` | 01/06 新增了 BR/DC 条款但 05 未覆盖 | 运行 `workflow-state.ps1 -Operation SyncCoverage` 同步用例，并在 05 中补齐条款 ID 关联。 |
-

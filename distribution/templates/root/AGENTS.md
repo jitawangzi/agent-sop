@@ -1,8 +1,8 @@
 # 项目 Agent 指令（公共真源）
 
-> 各 AI 工具（Claude Code / GitHub Copilot / Antigravity / Cursor / Pi）统一加载本文件作为项目指令。工具专属差异见各自的根 md（如 CLAUDE.md）。本文件是单一真源，勿在其它文件重复维护。
+> 各 AI 工具（Claude Code / GitHub Copilot / Antigravity / Cursor / Codex / Pi）统一加载本文件作为项目指令。工具专属差异见各自的根 md（如 CLAUDE.md）。本文件是单一真源，勿在其它文件重复维护。
 
-> **能力分流提示**：若当前工具能力准入为 BLOCKED（见末节“能力准入”），只跑 T2——你无需读 T3/brainstorming/design-reviewer/subagent 等节，直接看“执行强度分层（T 档）”的 T2 + 末节能力准入即可。STRICT 工具（Claude Code / Antigravity / Cursor / Copilot）可跑 T3 完整流程。
+> **能力分流提示**：若当前工具能力准入为 BLOCKED（见末节“能力准入”），只跑 T2——你无需读 T3/brainstorming/design-reviewer/subagent 等节，直接看“执行强度分层（T 档）”的 T2 + 末节能力准入即可。STRICT 工具（Claude Code / Antigravity / Cursor / Copilot / Codex）可跑 T3 完整流程。
 
 ## 工作流归属
 
@@ -108,8 +108,8 @@
 - **生产源码严禁快通道**：涉及生产代码任何修改（`src/**`、`pkg/**`、`internal/**` 等哪怕 1 行）**严禁走快通道**，至少 T2。
 - 快通道是独立档位（完成条件 2 项：编译通过 + 纯数值/文档检查），**不是 T2**（T2 是 5 项）。
 
-**BLOCKED 工具的 T2 降级处理（STRICT 工具如 Claude Code / Antigravity / Cursor / Copilot 原生支持 T3，直接跑完整 Superpowers 流程，严禁弹出 T2 拦截）**：
-- **STRICT 工具（Claude Code / Antigravity / Cursor / Copilot）**：按变更类默认档位执行（新功能、行为/契约/协议/存储变更走 T3），直接执行 Superpowers 流程，严禁自称仅支持 T2 或拦截！
+**BLOCKED 工具的 T2 降级处理（STRICT 工具如 Claude Code / Antigravity / Cursor / Copilot / Codex 原生支持 T3，直接跑完整 Superpowers 流程，严禁弹出 T2 拦截）**：
+- **STRICT 工具（Claude Code / Antigravity / Cursor / Copilot / Codex）**：按变更类默认档位执行（新功能、行为/契约/协议/存储变更走 T3），直接执行 Superpowers 流程，严禁自称仅支持 T2 或拦截！
 - **BLOCKED 工具（如 Pi，最高支持 T2）**：实际执行档位 = MIN(用户指定档位, T2)。在 BLOCKED 工具下：若用户未表达流程意图且为已有行为缺陷修复，静默以 T2 执行；若用户消息含“需求/草案/设计/评审/T3”任一词，或变更是新功能/新协议/新存储/用户点名需求，必须提示：“`[SOP 拦截] 工具 <工具名> 因无 subagent（能力准入 BLOCKED），无法执行 T3 独立审查。建议：切换到 STRICT 工具（Claude Code / Antigravity / Cursor / Copilot），或回复‘仍按 T2 实现’。`”
 - 已有行为的单点逻辑修复保持静默 T2，不拦截。
 
@@ -263,7 +263,7 @@ AI 可在一次响应内同时呈递 `01_server_rules.md` 与 `06_design_contrac
 pwsh -NoProfile -File .\.ai-sop\scripts\workflow-owner.ps1 -Operation Claim `
   -SpecDirectory ".ai-workspace\specs\features\<FeatureName>" `
   -Feature "<FeatureName>" -Workflow SUPERPOWERS `
-  -Agent "<CLAUDE_CODE|COPILOT|ANTIGRAVITY|CURSOR|PI>" `
+  -Agent "<CLAUDE_CODE|COPILOT|ANTIGRAVITY|CURSOR|CODEX|PI>" `
   -OwnerId "<superpowers-run-id>" `
   -Tier "<T2|T3>"
 ```
@@ -275,7 +275,7 @@ pwsh -NoProfile -File .\.ai-sop\scripts\workflow-owner.ps1 -Operation Claim `
 pwsh -NoProfile -File .\.ai-sop\scripts\workflow-owner.ps1 -Operation Validate `
   -SpecDirectory ".ai-workspace\specs\features\<FeatureName>" `
   -Feature "<FeatureName>" -Workflow SUPERPOWERS `
-  -Agent "<CLAUDE_CODE|COPILOT|ANTIGRAVITY|CURSOR|PI>" `
+  -Agent "<CLAUDE_CODE|COPILOT|ANTIGRAVITY|CURSOR|CODEX|PI>" `
   -OwnerId "<superpowers-run-id>"
 ```
 
@@ -285,7 +285,7 @@ pwsh -NoProfile -File .\.ai-sop\scripts\workflow-owner.ps1 -Operation Validate `
 pwsh -NoProfile -File .\.ai-sop\scripts\workflow-owner.ps1 -Operation Complete `
   -SpecDirectory ".ai-workspace\specs\features\<FeatureName>" `
   -Feature "<FeatureName>" -Workflow SUPERPOWERS `
-  -Agent "<CLAUDE_CODE|COPILOT|ANTIGRAVITY|CURSOR|PI>" `
+  -Agent "<CLAUDE_CODE|COPILOT|ANTIGRAVITY|CURSOR|CODEX|PI>" `
   -OwnerId "<superpowers-run-id>"
 ```
 
@@ -395,7 +395,7 @@ SVN 是团队源码真源。本项目基于 **SVN 分支**开发（不是 trunk 
 ## 能力准入（工具能跑什么）
 
 各工具有能力差异，见 `.ai-sop/scripts/harness-capability.ps1`（STRICT/BLOCKED 判定）：
-- **STRICT**（Claude Code、Cursor、Copilot、Antigravity）：有独立 subagent + 审查证据，可跑 T3 完整流程（含独立审查）。
+- **STRICT**（Claude Code、Cursor、Copilot、Antigravity、Codex）：有独立 subagent + 审查证据，可跑 T3 完整流程（含独立审查）。
 - **BLOCKED**（Pi）：缺关键能力（核心无独立 subagent 审查），只能 T2。BLOCKED 不代表工具差，是该能力暂未确认；真机认证后可升 STRICT。
 
 无 subagent 的工具跑 T3 时独立审查实为自审（共享盲区），失 T3 价值——故能力准入判 BLOCKED 只 T2。详见 `.ai-sop/docs/ARCHITECTURE.md`。
@@ -452,7 +452,7 @@ pwsh -NoProfile -File ./.ai-sop/scripts/workflow-owner.ps1 -Operation ForceRelea
 | 术语 | 一句话 | 详参 |
 |---|---|---|
 | Superpowers | 流程技能包（brainstorming/writing-plans/SDD 等），T3 需要，T2 不需要 | 本文件"关于 Superpowers" + `.ai-sop/SUPERPOWERS_VERIFICATION.md` |
-| harness | AI 编码工具的统称（Claude Code/Copilot/Antigravity/Cursor/Pi） | `.ai-sop/docs/ARCHITECTURE.md` |
+| harness | AI 编码工具的统称（Claude Code/Copilot/Antigravity/Cursor/Codex/Pi） | `.ai-sop/docs/ARCHITECTURE.md` |
 | T 档 | 执行强度档位（T3 完整/T2 快速/T1 急速/快通道） | 本文件"执行强度分层" |
 | 能力准入 | 工具能力判定（STRICT 可 T3/BLOCKED 只 T2） | 本文件"能力准入" + `harness-capability.ps1` |
 | 归属 Claim | 功能开发权的认领，生成不可变 ownerId | 本文件"功能归属" |

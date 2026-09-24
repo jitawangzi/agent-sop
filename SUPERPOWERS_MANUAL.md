@@ -330,12 +330,13 @@ AI 收尾：requesting-code-review 与 logic-auditor 必须走 Mode E / Protocol
 所属功能：<FeatureName>。
 规格目录：.ai-workspace/specs/features/<FeatureName>/。
 
-依次执行 implementation-auditor 和 logic-auditor。
+优先派发独立子代理（Subagent）依次执行 implementation-auditor 和 logic-auditor 并汇总报告；若当前环境不支持子代理，则在主会话严格以只读审计角色依次执行。
 audit_fix_policy=REPORT_ONLY。
 审计范围仅限目标类及其必要的直接调用链，不扩大到整个仓库，不修改代码。
 ```
 
 如果该类不归属于某个具体功能，可以删除“所属功能”和“规格目录”两行，但必须提供类文件路径和必要的契约来源。
+> **说明**：全盘审计涉及深层调用链路与大量源码走查，推荐优先使用独立子代理（Subagent）隔离运行，避免海量上下文挤占主会话；在不支持子代理的环境下会自动降级在当前会话执行。
 
 ### 13. 对指定类的方法执行全盘审计
 
@@ -347,7 +348,7 @@ audit_fix_policy=REPORT_ONLY。
 所属功能：<FeatureName>。
 规格目录：.ai-workspace/specs/features/<FeatureName>/。
 
-依次执行 implementation-auditor 和 logic-auditor。
+优先派发独立子代理（Subagent）依次执行 implementation-auditor 和 logic-auditor 并汇总报告；若当前环境不支持子代理，则在主会话严格以只读审计角色依次执行。
 audit_fix_policy=REPORT_ONLY。
 以目标方法、分支和必要调用链为审计边界，不扩大到整个类或仓库，不修改代码。
 ```
@@ -355,7 +356,7 @@ audit_fix_policy=REPORT_ONLY。
 ### 14. 只执行实现审计
 
 ```text
-仅执行 implementation-auditor。
+优先派发独立子代理（Subagent）执行 implementation-auditor（若不支持则在主会话执行）。
 审核范围：<类、方法、文件列表或变更集>。
 重点检查：<契约一致性、架构规范、性能、兼容性等；可省略>。
 只输出审计报告，不修改代码。
@@ -364,7 +365,7 @@ audit_fix_policy=REPORT_ONLY。
 ### 15. 只执行高风险逻辑审计
 
 ```text
-仅执行 logic-auditor。
+优先派发独立子代理（Subagent）执行 logic-auditor（若不支持则在主会话执行）。
 审核范围：<类、方法或核心链路>。
 重点检查：<状态机、复杂分支、结算、幂等、补偿、资源扣除等>。
 只输出审计报告，不修改代码。

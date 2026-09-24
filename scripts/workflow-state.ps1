@@ -2,7 +2,7 @@
 
 [CmdletBinding()]
 param(
-    [Parameter(Mandatory = $true)]
+    [Parameter(Mandatory = $false)]
     [ValidateSet(
         "InitApproval",
         "ValidateApproval",
@@ -109,6 +109,10 @@ param(
 )
 
 $ErrorActionPreference = "Stop"
+
+if ([string]::IsNullOrWhiteSpace($Operation)) {
+    throw "WORKFLOW_OPERATION_REQUIRED: -Operation parameter is required."
+}
 $RuntimePathWasBound = $PSBoundParameters.ContainsKey("RuntimePath")
 
 $ClaudeRoot = Split-Path -Parent $PSScriptRoot
@@ -5735,7 +5739,8 @@ switch ($Operation) {
 
             # T1/T2/FAST_TRACK: compile artifact check is non-blocking (advisory); Claim validity is workflow-owner.ps1 Validate's job
             if ($effectiveTier -eq "T2") {
-                $checks.Add("[?] 归属 Validate(owner.ps1 -Operation Validate,另跑)")
+                $featName = Split-Path -Leaf $specDir
+                $checks.Add("[?] 归属 Validate(workflow-owner.ps1 -Operation Validate -Feature $featName,另跑)")
                 $testEvPath = Find-CommandEvidencePath -SpecDir $specDir -WorkspaceRoot $wsRoot -FileName "test-evidence.json"
                 if ([string]::IsNullOrWhiteSpace($testEvPath)) {
                     $checks.Add("[?] 相关测试/回归(无 test-evidence.json，AI 自报)")

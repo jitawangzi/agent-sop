@@ -278,6 +278,7 @@ pwsh -NoProfile -File .\.ai-sop\scripts\workflow-owner.ps1 -Operation Validate `
   -Agent "<CLAUDE_CODE|COPILOT|ANTIGRAVITY|CURSOR|CODEX|PI>" `
   -OwnerId "<superpowers-run-id>"
 ```
+*注：已 Claim 的功能执行 Validate / Check 时，仅传 `-Feature "<FeatureName>"` 即可，脚本会自动从工作区解析规格目录并补全活动归属。*
 
 成功交付后 `Complete`：
 
@@ -356,7 +357,7 @@ pwsh -NoProfile -File .\.ai-sop\scripts\workflow-state.ps1 -Operation LintSpecs 
 
 | # | 条件 | 验证命令 | 成功输出 |
 |---|---|---|---|
-| 1 | 归属 Claim | `workflow-owner.ps1 -Operation Validate` | `VALID` |
+| 1 | 归属 Claim | `workflow-owner.ps1 -Operation Validate -Feature <FeatureName>` | `VALID` |
 | 2 | 代码编译通过 | `gradlew compileJava` | `BUILD SUCCESSFUL` exit 0 |
 | 3 | 相关测试通过（路径 A JUnit 或路径 B JSP） | 可选 `test-evidence.json`（存在则必须 exitCode=0）或定向 JUnit | exit 0 / 证据文件 |
 | 4 | 相关回归（定向 JUnit，或写明无自动化及原因） | 定向 JUnit 或说明 | 有测试或说明 |

@@ -2,7 +2,7 @@
 
 [CmdletBinding()]
 param(
-    [Parameter(Mandatory = $true)]
+    [Parameter(Mandatory = $false)]
     [ValidateSet(
         "Init",
         "DevSubmit",
@@ -50,6 +50,10 @@ param(
 
 Set-StrictMode -Version Latest
 $ErrorActionPreference = "Stop"
+
+if ([string]::IsNullOrWhiteSpace($Operation)) {
+    throw "REVIEW_MAILBOX_OPERATION_REQUIRED: -Operation parameter is required."
+}
 
 $pathIdentityScript = Join-Path $PSScriptRoot "path-identity.ps1"
 if (Test-Path -LiteralPath $pathIdentityScript) {

@@ -2,7 +2,7 @@
 
 [CmdletBinding()]
 param(
-    [Parameter(Mandatory = $true)]
+    [Parameter(Mandatory = $false)]
     [ValidateSet(
         "Claim",
         "BindSession",
@@ -10,22 +10,24 @@ param(
         "Validate",
         "Complete",
         "Transfer",
-        "ForceRelease"
+        "ForceRelease",
+        "Check",
+        "Status"
     )]
     [string]$Operation,
 
-    [Parameter(Mandatory = $true)]
+    [Parameter(Mandatory = $false)]
     [string]$SpecDirectory,
 
-    [Parameter(Mandatory = $true)]
+    [Parameter(Mandatory = $false)]
     [ValidatePattern("^[A-Za-z0-9](?:[A-Za-z0-9._-]*[A-Za-z0-9_-])?$")]
     [string]$Feature,
 
-    [Parameter(Mandatory = $true)]
+    [Parameter(Mandatory = $false)]
     [ValidateSet("CUSTOM_SKILLS", "SUPERPOWERS")]
-    [string]$Workflow,
+    [string]$Workflow = "SUPERPOWERS",
 
-    [Parameter(Mandatory = $true)]
+    [Parameter(Mandatory = $false)]
     [ValidateSet(
         "CLAUDE_CODE",
         "COPILOT",
@@ -37,7 +39,7 @@ param(
     )]
     [string]$Agent,
 
-    [Parameter(Mandatory = $true)]
+    [Parameter(Mandatory = $false)]
     [ValidatePattern("^[A-Za-z0-9._:-]+$")]
     [string]$OwnerId,
 
@@ -51,28 +53,16 @@ param(
 
 $ErrorActionPreference = "Stop"
 
+if ([string]::IsNullOrWhiteSpace($Operation)) {
+    throw "WORKFLOW_OPERATION_REQUIRED: -Operation parameter is required. Allowed values: Claim, BindSession, RebindSession, Validate, Complete, Transfer, ForceRelease, Check, Status."
+}
+
 $ClaudeRoot = Split-Path -Parent $PSScriptRoot
 . (Join-Path $PSScriptRoot "path-identity.ps1")
 . (Join-Path $PSScriptRoot "workflow-transaction.ps1")
 . (Join-Path $PSScriptRoot "workflow-session.ps1")
 . (Join-Path $PSScriptRoot "workflow-command-grant.ps1")
 $SchemaPath = Join-Path $ClaudeRoot "schemas\workflow-owner.schema.json"
-$ResolvedSpecDirectory = Resolve-PhysicalPathIdentity -Path $SpecDirectory
-$MirrorPath = Join-Path $ResolvedSpecDirectory ".workflow-owner.json"
-$ownerWs = try { Get-OwnerWorkspacePath } catch { $null }
-$RegistryRoot = Get-AiSopWorkflowOwnerRegistryRoot -WorkspacePath $ownerWs
-$OwnerPath = Join-Path $RegistryRoot ($Feature.ToLowerInvariant() + ".json")
-$AcceptedAt = [DateTimeOffset]::UtcNow
-# Production budget default is 3000ms (supports subprocess verification and cross-platform IO).
-$ownerDeadlineMs = 3000
-$ownerDeadlineEnv = [string]$env:SERVER_NEW_WORKFLOW_OWNER_DEADLINE_MS
-if (
-    -not [string]::IsNullOrWhiteSpace($ownerDeadlineEnv) -and
-    [int]::TryParse($ownerDeadlineEnv, [ref]$ownerDeadlineEnv)
-) {
-    $ownerDeadlineMs = [int]$ownerDeadlineEnv
-}
-$WorkflowDeadlineUtc = $AcceptedAt.AddMilliseconds($ownerDeadlineMs)
 
 function Assert-OwnerSchema {
     param([string]$Json)
@@ -90,6 +80,9 @@ function Assert-OwnerSchema {
 }
 
 function Assert-CanonicalSpecDirectory {
+    if ([string]::IsNullOrWhiteSpace($ResolvedSpecDirectory)) {
+        throw "WORKFLOW_SPEC_DIRECTORY_INVALID"
+    }
     $trimmedDirectory = $ResolvedSpecDirectory.TrimEnd(
         [System.IO.Path]::DirectorySeparatorChar,
         [System.IO.Path]::AltDirectorySeparatorChar
@@ -129,18 +122,25 @@ function Assert-CanonicalSpecDirectory {
 }
 
 function Get-OwnerWorkspacePath {
-    $featuresDirectory = Split-Path -Parent $ResolvedSpecDirectory
-    $specsDirectory = Split-Path -Parent $featuresDirectory
-    $claudeDirectory = Split-Path -Parent $specsDirectory
-    return Resolve-PhysicalPathIdentity -Path (
-        Split-Path -Parent $claudeDirectory
-    )
+    if (-not [string]::IsNullOrWhiteSpace($ResolvedSpecDirectory)) {
+        try {
+            $featuresDirectory = Split-Path -Parent $ResolvedSpecDirectory
+            $specsDirectory = Split-Path -Parent $featuresDirectory
+            $claudeDirectory = Split-Path -Parent $specsDirectory
+            return Resolve-PhysicalPathIdentity -Path (
+                Split-Path -Parent $claudeDirectory
+            )
+        } catch {}
+    }
+    $ws = try { Resolve-AiSopWorkspaceRoot -StartPath (Get-Location).Path } catch { $null }
+    if (-not [string]::IsNullOrWhiteSpace($ws)) { return $ws }
+    return Resolve-PhysicalPathIdentity -Path (Get-Location).Path
 }
 
 function Read-Owner {
     param([switch]$AllowMissing)
 
-    if (-not [System.IO.File]::Exists($OwnerPath)) {
+    if ($null -eq $OwnerPath -or -not [System.IO.File]::Exists($OwnerPath)) {
         if ($AllowMissing) {
             return $null
         }
@@ -170,10 +170,12 @@ function Write-OwnerMirror {
     param([System.Collections.IDictionary]$Owner)
 
     try {
-        [System.IO.Directory]::CreateDirectory($ResolvedSpecDirectory) |
-            Out-Null
-        $json = ConvertTo-AiSopWorkflowCanonicalJson $Owner
-        Write-AiSopWorkflowTextAtomic -Path $MirrorPath -Text $json
+        if (-not [string]::IsNullOrWhiteSpace($ResolvedSpecDirectory)) {
+            [System.IO.Directory]::CreateDirectory($ResolvedSpecDirectory) |
+                Out-Null
+            $json = ConvertTo-AiSopWorkflowCanonicalJson $Owner
+            Write-AiSopWorkflowTextAtomic -Path $MirrorPath -Text $json
+        }
     } catch {
         Write-Warning (
             "Authoritative ownership is valid, but the readable mirror " +
@@ -204,6 +206,198 @@ function Assert-OwnerIdentity {
     ) {
         throw "WORKFLOW_OWNER_IDENTITY_MISMATCH"
     }
+}
+
+function Detect-AiSopAgentHarness {
+    if (-not [string]::IsNullOrWhiteSpace($env:ANTIGRAVITY_SESSION_ID) -or
+        -not [string]::IsNullOrWhiteSpace($env:ANTIGRAVITY_AGENT_ID)) {
+        return "ANTIGRAVITY"
+    }
+    if (-not [string]::IsNullOrWhiteSpace($env:CLAUDE_CODE)) {
+        return "CLAUDE_CODE"
+    }
+    if (-not [string]::IsNullOrWhiteSpace($env:CODEX_SESSION_ID)) {
+        return "CODEX"
+    }
+    if (-not [string]::IsNullOrWhiteSpace($env:CURSOR_VERSION)) {
+        return "CURSOR"
+    }
+    if (-not [string]::IsNullOrWhiteSpace($env:GITHUB_COPILOT)) {
+        return "COPILOT"
+    }
+    return "ANTIGRAVITY"
+}
+
+# 1. Resolve Feature from SpecDirectory or current working directory
+if ([string]::IsNullOrWhiteSpace($Feature) -and -not [string]::IsNullOrWhiteSpace($SpecDirectory)) {
+    $trimmedSpec = $SpecDirectory.TrimEnd(
+        [System.IO.Path]::DirectorySeparatorChar,
+        [System.IO.Path]::AltDirectorySeparatorChar
+    )
+    $Feature = Split-Path -Leaf $trimmedSpec
+}
+if ([string]::IsNullOrWhiteSpace($Feature)) {
+    $cwd = (Get-Location).Path
+    $parent = Split-Path -Parent $cwd
+    if ($parent -match '(?i)[\\/]features$') {
+        $Feature = Split-Path -Leaf $cwd
+        if ([string]::IsNullOrWhiteSpace($SpecDirectory)) {
+            $SpecDirectory = $cwd
+        }
+    }
+}
+
+# 2. Workspace path resolution
+$ownerWs = try { Get-OwnerWorkspacePath } catch { $null }
+if ([string]::IsNullOrWhiteSpace($ownerWs)) {
+    $ownerWs = try { Resolve-AiSopWorkspaceRoot -StartPath (Get-Location).Path } catch { $null }
+}
+if ([string]::IsNullOrWhiteSpace($ownerWs)) {
+    $ownerWs = try { Resolve-PhysicalPathIdentity -Path (Get-Location).Path } catch { (Get-Location).Path }
+}
+
+# 3. Resolve SpecDirectory from candidate folders in workspace/PWD if Feature is known
+if ([string]::IsNullOrWhiteSpace($SpecDirectory) -and -not [string]::IsNullOrWhiteSpace($Feature)) {
+    $candidates = @()
+    if (-not [string]::IsNullOrWhiteSpace($ownerWs)) {
+        $candidates += (Join-Path $ownerWs ".ai-workspace\specs\features\$Feature")
+        $candidates += (Join-Path $ownerWs ".ai-sop\specs\features\$Feature")
+    }
+    $candidates += (Join-Path (Get-Location).Path ".ai-workspace\specs\features\$Feature")
+    $candidates += (Join-Path (Get-Location).Path ".ai-sop\specs\features\$Feature")
+    foreach ($cand in $candidates) {
+        if (Test-Path -LiteralPath $cand -PathType Container) {
+            $SpecDirectory = $cand
+            break
+        }
+    }
+}
+
+$RegistryRoot = Get-AiSopWorkflowOwnerRegistryRoot -WorkspacePath $ownerWs
+$OwnerPath = if (-not [string]::IsNullOrWhiteSpace($Feature)) {
+    Join-Path $RegistryRoot ($Feature.ToLowerInvariant() + ".json")
+} else { $null }
+
+# 4. If SpecDirectory is still unknown, try reading specDirectory from existing owner registry
+if ([string]::IsNullOrWhiteSpace($SpecDirectory) -and $null -ne $OwnerPath -and [System.IO.File]::Exists($OwnerPath)) {
+    try {
+        $rawEarly = [System.IO.File]::ReadAllText($OwnerPath)
+        $objEarly = ConvertFrom-AiSopWorkflowJson -Json $rawEarly -AsHashtable
+        if ($null -ne $objEarly -and -not [string]::IsNullOrWhiteSpace($objEarly.specDirectory)) {
+            $SpecDirectory = [string]$objEarly.specDirectory
+        }
+    } catch {}
+}
+
+$ResolvedSpecDirectory = if (-not [string]::IsNullOrWhiteSpace($SpecDirectory)) {
+    try { Resolve-PhysicalPathIdentity -Path $SpecDirectory } catch { $SpecDirectory }
+} else { $null }
+$MirrorPath = if (-not [string]::IsNullOrWhiteSpace($ResolvedSpecDirectory)) {
+    Join-Path $ResolvedSpecDirectory ".workflow-owner.json"
+} else { $null }
+
+if (-not [string]::IsNullOrWhiteSpace($ResolvedSpecDirectory)) {
+    $ownerWs = try { Get-OwnerWorkspacePath } catch { $ownerWs }
+    $RegistryRoot = Get-AiSopWorkflowOwnerRegistryRoot -WorkspacePath $ownerWs
+    $OwnerPath = if (-not [string]::IsNullOrWhiteSpace($Feature)) {
+        Join-Path $RegistryRoot ($Feature.ToLowerInvariant() + ".json")
+    } else { $OwnerPath }
+}
+
+$AcceptedAt = [DateTimeOffset]::UtcNow
+# Production budget default is 3000ms (supports subprocess verification and cross-platform IO).
+$ownerDeadlineMs = 3000
+$ownerDeadlineEnv = [string]$env:SERVER_NEW_WORKFLOW_OWNER_DEADLINE_MS
+if (
+    -not [string]::IsNullOrWhiteSpace($ownerDeadlineEnv) -and
+    [int]::TryParse($ownerDeadlineEnv, [ref]$ownerDeadlineEnv)
+) {
+    $ownerDeadlineMs = [int]$ownerDeadlineEnv
+}
+$WorkflowDeadlineUtc = $AcceptedAt.AddMilliseconds($ownerDeadlineMs)
+
+# 5. Read existing owner (from registry or mirror fallback)
+$existingOwner = Read-Owner -AllowMissing
+if ($null -eq $existingOwner -and -not [string]::IsNullOrWhiteSpace($MirrorPath) -and (Test-Path -LiteralPath $MirrorPath -PathType Leaf)) {
+    try {
+        $rawMirror = [System.IO.File]::ReadAllText($MirrorPath)
+        Assert-OwnerSchema $rawMirror
+        $existingOwner = ConvertFrom-AiSopWorkflowJson -Json $rawMirror -AsHashtable
+    } catch {}
+}
+
+# 6. Auto-populate missing parameters from existing owner if present
+if ($null -ne $existingOwner) {
+    if ([string]::IsNullOrWhiteSpace($Feature) -and -not [string]::IsNullOrWhiteSpace($existingOwner.feature)) {
+        $Feature = [string]$existingOwner.feature
+    }
+    if ([string]::IsNullOrWhiteSpace($ResolvedSpecDirectory) -and -not [string]::IsNullOrWhiteSpace($existingOwner.specDirectory)) {
+        $SpecDirectory = [string]$existingOwner.specDirectory
+        $ResolvedSpecDirectory = Resolve-PhysicalPathIdentity -Path $SpecDirectory
+        $MirrorPath = Join-Path $ResolvedSpecDirectory ".workflow-owner.json"
+    }
+    if ([string]::IsNullOrWhiteSpace($Workflow)) {
+        $Workflow = if (-not [string]::IsNullOrWhiteSpace($existingOwner.workflow)) { [string]$existingOwner.workflow } else { "SUPERPOWERS" }
+    }
+    if ([string]::IsNullOrWhiteSpace($Agent)) {
+        $Agent = if (-not [string]::IsNullOrWhiteSpace($existingOwner.agent)) { [string]$existingOwner.agent } else { Detect-AiSopAgentHarness }
+    }
+    if ([string]::IsNullOrWhiteSpace($OwnerId)) {
+        $OwnerId = if (-not [string]::IsNullOrWhiteSpace($existingOwner.ownerId)) { [string]$existingOwner.ownerId } else { "" }
+    }
+} else {
+    if ([string]::IsNullOrWhiteSpace($Workflow)) {
+        $Workflow = "SUPERPOWERS"
+    }
+    if ([string]::IsNullOrWhiteSpace($Agent)) {
+        $Agent = Detect-AiSopAgentHarness
+    }
+}
+
+# 7. Check and Status read-only queries
+if ($Operation -in @("Check", "Status")) {
+    if ([string]::IsNullOrWhiteSpace($Feature)) {
+        throw "WORKFLOW_PARAMETER_MISSING: -Feature or -SpecDirectory is required for $Operation."
+    }
+    if ($null -eq $existingOwner) {
+        throw "WORKFLOW_OWNER_NOT_FOUND"
+    }
+    if ($Operation -eq "Check") {
+        if ([string]$existingOwner.status -eq "ACTIVE") {
+            Write-Output "VALID"
+            exit 0
+        } else {
+            throw "WORKFLOW_OWNER_NOT_ACTIVE: feature '$Feature' owner status is '$($existingOwner.status)'"
+        }
+    } else {
+        $statusObj = [ordered]@{
+            feature = [string]$existingOwner.feature
+            status = [string]$existingOwner.status
+            workflow = [string]$existingOwner.workflow
+            agent = [string]$existingOwner.agent
+            ownerId = [string]$existingOwner.ownerId
+            specDirectory = [string]$existingOwner.specDirectory
+            workspacePath = [string]$existingOwner.workspacePath
+            startedAt = [string]$existingOwner.startedAt
+            completedAt = [string]$existingOwner.completedAt
+        }
+        Write-Output (ConvertTo-AiSopWorkflowCanonicalJson $statusObj)
+        exit 0
+    }
+}
+
+# 8. Parameter validation for mutating/verifying operations
+if ([string]::IsNullOrWhiteSpace($Feature)) {
+    throw "WORKFLOW_PARAMETER_MISSING: -Feature or -SpecDirectory is required."
+}
+if ([string]::IsNullOrWhiteSpace($ResolvedSpecDirectory)) {
+    throw "WORKFLOW_PARAMETER_MISSING: -SpecDirectory is required or could not be resolved for feature '$Feature'."
+}
+if ($Operation -eq "Claim" -and [string]::IsNullOrWhiteSpace($OwnerId)) {
+    throw "WORKFLOW_PARAMETER_MISSING: -OwnerId is required for Claim."
+}
+if ($Operation -in @("Validate", "Complete", "BindSession", "RebindSession", "Transfer", "ForceRelease") -and [string]::IsNullOrWhiteSpace($OwnerId)) {
+    throw "WORKFLOW_PARAMETER_MISSING: -OwnerId could not be resolved for feature '$Feature'."
 }
 
 function Assert-NewOwnerPair {
@@ -251,6 +445,7 @@ function New-OwnerTarget {
 }
 
 function Get-ExactGrant {
+    $ws = Get-OwnerWorkspacePath
     try {
         return Invoke-AiSopWorkflowCommandGrant `
             -Operation Find `
@@ -261,7 +456,8 @@ function Get-ExactGrant {
             -Agent $Agent `
             -OwnerId $OwnerId `
             -AcceptedAt $AcceptedAt `
-            -DeadlineUtc $WorkflowDeadlineUtc
+            -DeadlineUtc $WorkflowDeadlineUtc `
+            -WorkspacePath $ws
     } catch {
         if ($_.Exception.Message -ne "COMMAND_GRANT_NOT_FOUND") {
             throw
@@ -275,7 +471,6 @@ function Get-ExactGrant {
         ) {
             throw "COMMAND_GRANT_NOT_FOUND"
         }
-        $ws = Get-OwnerWorkspacePath
         $nativeSessionId = if (
             $Agent -eq "CODEX" -and
             -not [string]::IsNullOrWhiteSpace($env:CODEX_SESSION_ID)
@@ -304,7 +499,8 @@ function Get-ExactGrant {
                 $existingSession = Get-AiSopWorkflowSession `
                     -SessionKey $boundKey `
                     -AcceptedAt $AcceptedAt `
-                    -DeadlineUtc $WorkflowDeadlineUtc
+                    -DeadlineUtc $WorkflowDeadlineUtc `
+                    -WorkspacePath $ws
                 if (
                     $existingSession.EffectiveStatus -eq "ACTIVE" -and
                     [string]$existingSession.Record.agent -eq $Agent -and
@@ -341,7 +537,8 @@ function Get-ExactGrant {
             -AcceptedAt $AcceptedAt `
             -TransactionId $txId `
             -GrantTtlSeconds 300 `
-            -DeadlineUtc $WorkflowDeadlineUtc
+            -DeadlineUtc $WorkflowDeadlineUtc `
+            -WorkspacePath $ws
 
         Write-Output "[INFO] Direct execution detected; auto-bootstrapped CommandGrant for session $($sessionToUse.Record.sessionKey)"
         return $newGrant
@@ -354,7 +551,8 @@ function Get-GrantSession {
     $session = Get-AiSopWorkflowSession `
         -SessionKey ([string]$Grant.Record.sessionKey) `
         -AcceptedAt $AcceptedAt `
-        -DeadlineUtc $WorkflowDeadlineUtc
+        -DeadlineUtc $WorkflowDeadlineUtc `
+        -WorkspacePath (Get-OwnerWorkspacePath)
     if (
         [string]$session.Record.agent -cne $Agent -or
         -not ([string]$session.Record.workspacePath).Equals(
@@ -535,7 +733,8 @@ function Invoke-OwnerValidate11 {
         -SessionKeys @([string]$Grant.Record.sessionKey) `
         -OwnerPath $OwnerPath `
         -Targets $grantTargets `
-        -DeadlineUtc $WorkflowDeadlineUtc
+        -DeadlineUtc $WorkflowDeadlineUtc `
+        -WorkspacePath $ownerWs
     try {
         $lockedOwner = Read-Owner
         Assert-OwnerIdentity $lockedOwner
@@ -673,6 +872,8 @@ if ($Operation -in @("Claim", "BindSession", "RebindSession", "Transfer")) {
 if ($Operation -in @("Validate", "Complete") -and $null -eq $existingOwner) {
     throw "WORKFLOW_OWNER_NOT_FOUND"
 }
+
+$transactionId = "$($Operation.ToLowerInvariant())-$([guid]::NewGuid().ToString('N'))"
 
 # ForceRelease: emergency recovery for an orphaned ACTIVE owner (previous session
 # crashed/exited without Complete). Does NOT require a live session/grant (the
@@ -989,7 +1190,8 @@ switch ($Operation) {
         $oldSession = Get-AiSopWorkflowSession `
             -SessionKey ([string]$existingOwner.sessionBinding.sessionKey) `
             -AcceptedAt $AcceptedAt `
-            -DeadlineUtc $WorkflowDeadlineUtc
+            -DeadlineUtc $WorkflowDeadlineUtc `
+            -WorkspacePath (Get-OwnerWorkspacePath)
         if (
             [string]$oldSession.Record.sessionEpochId -cne
                 [string]$existingOwner.sessionBinding.sessionEpochId -or

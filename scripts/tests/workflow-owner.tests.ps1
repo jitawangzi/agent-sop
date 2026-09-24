@@ -1394,6 +1394,41 @@ try {
             -SessionEpochId $noTrunkSession.Record.sessionEpochId
     }
 
+    # Test non-hanging parameter validation and Check/Status operations
+    Assert-Fails -Message "Missing Operation must throw WORKFLOW_OPERATION_REQUIRED" -Action {
+        & $OwnerScript
+    }
+
+    Assert-Fails -Message "Missing Feature and SpecDirectory must throw WORKFLOW_PARAMETER_MISSING" -Action {
+        & $OwnerScript -Operation Validate
+    }
+
+    $autoFeature = New-TestFeature "AutoInferFeat"
+    $autoSession = New-Session -Feature $autoFeature -Agent ANTIGRAVITY -NativeSessionId "session-autoinfer"
+    New-Grant -Feature $autoFeature -Session $autoSession -Operation Claim -Agent ANTIGRAVITY -OwnerId "auto-owner-1" -Suffix "autoinfer-claim" | Out-Null
+
+    Invoke-Owner `
+        -Feature $autoFeature `
+        -Operation Claim `
+        -Workflow SUPERPOWERS `
+        -Agent ANTIGRAVITY `
+        -OwnerId "auto-owner-1" | Out-Null
+
+    # Check with only -Feature should succeed and output VALID
+    $checkOut = & $OwnerScript -Operation Check -Feature "AutoInferFeat" -SpecDirectory $autoFeature.Spec
+    Assert-Equal ($checkOut | Out-String).Trim() "VALID" "Check operation must return VALID for active owner"
+
+    # Status with only -Feature should succeed and return JSON
+    $statusOut = & $OwnerScript -Operation Status -Feature "AutoInferFeat" -SpecDirectory $autoFeature.Spec
+    $statusParsed = $statusOut | ConvertFrom-Json
+    Assert-Equal $statusParsed.status "ACTIVE" "Status operation must return ACTIVE for active owner"
+    Assert-Equal $statusParsed.feature "AutoInferFeat" "Status operation must report correct feature"
+
+    # Validate with auto-inferred parameters (only -Feature and -SpecDirectory)
+    New-Grant -Feature $autoFeature -Session $autoSession -Operation Validate -Agent ANTIGRAVITY -OwnerId "auto-owner-1" -Suffix "autoinfer-val" | Out-Null
+    $valOut = & $OwnerScript -Operation Validate -Feature "AutoInferFeat" -SpecDirectory $autoFeature.Spec
+    Assert-Equal ($valOut | Out-String).Trim() "VALID" "Validate with auto-inferred parameters must succeed and return VALID"
+
     Write-Output "All workflow owner tests passed."
 } finally {
     foreach ($name in @(

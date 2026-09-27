@@ -277,7 +277,7 @@ pwsh -NoProfile -File ./scripts/run-all-tests.ps1
 ```
 
 ```text
-Running 17 test suite(s) from ./scripts/tests (serial)
+Running 16 test suite(s) from ./scripts/tests (serial)
 ai-sop-installer.tests                     PASS
 doc-script-contract.tests                  PASS
 e2e-t2-smoke.tests                         PASS
@@ -288,7 +288,6 @@ hidden-process.tests                       PASS
 hook-dedup.tests                           PASS
 hook-dispatcher.tests                      PASS
 hook-event-normalizer.tests                PASS
-review-mailbox.tests                       PASS
 run-all-tests.tests                        PASS
 workflow-command-grant.tests               PASS
 workflow-owner.tests                       PASS
@@ -296,7 +295,7 @@ workflow-session.tests                     PASS
 workflow-state.tests                       PASS
 workflow-transaction.tests                 PASS
 -----------------------------------------------
-17/17 test suites passed (100% GREEN)
+16/16 test suites passed (100% GREEN)
 ```
 
 ---

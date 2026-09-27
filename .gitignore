@@ -15,8 +15,6 @@ settings.local.json
 # Temporary test and staging files
 .ai-workspace-test/
 .ai-sop-staging/
-review-mailbox.json
-**/review-mailbox.json
 *.tmp
 *.lock
 *.log

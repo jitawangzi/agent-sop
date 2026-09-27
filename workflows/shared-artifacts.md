@@ -18,7 +18,6 @@
 | `07_design_review.md` | design-reviewer 机器审查结论。T3 `VerifyCompletion` 读取 `审查状态：PASS` 或 `PASS_WITH_WARNINGS`，且 `审查对象 sha256` 必须等于当前 `06_design_contract.md`；缺文件、`NEEDS_FIX` 或 SHA 漂移不能 Complete |
 | `compile-evidence.json` | 最近一次编译记录（`command` / `exitCode` / `executedAt` / `workingTreeDigest`）。T3 Complete 必填且 digest 须匹配当前工作区；`build/classes` 目录存在不算编译过 |
 | `test-evidence.json` | T2 可选测试记录。文件存在则 `VerifyCompletion` 要求 exitCode=0 |
-| `review-mailbox.json` | 跨 Agent 协同审查信箱（遵循 `schemas/review-mailbox.schema.json`） |
 | `.workflow-owner.json` | 机器级活动归属的可读镜像 |
 
 Superpowers 在 `docs/superpowers/` 下的 plan/ledger 是执行记录，不替代规范产物。主流程不使用 `.ai-sop/runtime/`（仅手动全功能审计的 `AUDIT_ONLY` 场景按需使用，不进主流程必经链）。

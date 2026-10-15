@@ -1,7 +1,7 @@
 #requires -Version 7.0
 [CmdletBinding()]
 param(
-    [Parameter(Mandatory)][ValidateSet('Discover','Status','Recover','Start','Resume','Checkpoint','Suspend','Cancel','Run','ReviewImpact','Verify','Complete')][string]$Operation,
+    [Parameter(Mandatory)][ValidateSet('Discover','Status','FollowUps','Recover','Start','Resume','Checkpoint','Suspend','Cancel','Run','ReviewImpact','Verify','Complete','ChangeTier','RecordSync','SetApplicability','AddFollowUp','CloseFollowUp')][string]$Operation,
     [string]$WorkspacePath = (Get-Location).Path,
     [string]$SpecDirectory,
     [string]$Feature,
@@ -18,13 +18,30 @@ param(
     [string[]]$CaseIds = @(),
     [string]$Profile,
     [ValidateRange(0,86400)][int]$TimeoutSeconds = 0,
-    [switch]$ForceRecovery
+    [switch]$ForceRecovery,
+    [string]$Reason,
+    [string]$UserRequest,
+    [ValidateSet('UPDATED','UNCHANGED')][string]$Documentation,
+    [ValidateSet('UPDATED','UNCHANGED','NOT_APPLICABLE')][string]$Tests,
+    [string]$Summary,
+    [ValidateSet('REQUIRED','NOT_APPLICABLE')][string]$Applicability,
+    [string]$FollowUpId,
+    [ValidateSet('documentation','test-cases','verification')][string]$FollowUpKind,
+    [string[]]$Scope = @(),
+    [string]$SourceTaskId,
+    [ValidateSet('RESOLVED','NOT_NEEDED')][string]$Disposition = 'RESOLVED',
+    [string]$Resolution
 )
 $ErrorActionPreference = 'Stop'
 . (Join-Path $PSScriptRoot 'task-context.ps1')
 . (Join-Path $PSScriptRoot 'workflow-session.ps1')
 $WorkspacePath = Resolve-PhysicalPathIdentity -Path $WorkspacePath
 $featuresRoot = Join-Path $WorkspacePath '.ai-workspace/specs/features'
+if ($Operation -eq 'FollowUps') {
+    $items = @(Get-AiSopPendingFollowUps $WorkspacePath | Where-Object { (-not $Feature -or $_.feature -ceq $Feature) -and (-not $TaskId -or $_.taskId -ceq $TaskId) })
+    @{ pendingFollowUps=$items; count=$items.Count; blocking=$false } | ConvertTo-Json -Depth 8
+    exit 0
+}
 if ($Operation -in @('Discover','Status')) {
     if (-not $Feature -and $SpecDirectory) { $Feature = Split-Path -Leaf $SpecDirectory }
     if ($Feature -and $Feature -notmatch '^[A-Za-z0-9](?:[A-Za-z0-9._-]*[A-Za-z0-9_-])?$') { throw 'FEATURE_INVALID' }
@@ -65,6 +82,7 @@ if ($Operation -eq 'Start') {
     & $ownerScript -Operation Claim @ownerArgs -TaskId $TaskId -OwnerId ('task-' + $TaskId) -Tier $Tier -Objective $Objective
     if ($LASTEXITCODE -ne 0) { throw 'TASK_START_FAILED' }
     Write-Output "TASK_STARTED:$Feature/$TaskId tier=$Tier"
+    Write-AiSopFollowUpReminder $WorkspacePath $Feature
     exit 0
 }
 if (-not $TaskId -and $owner.taskId) { $TaskId = [string]$owner.taskId }
@@ -79,6 +97,7 @@ if ($Operation -eq 'Resume' -and -not $TaskId -and $owner -and $owner.status -eq
     if (-not $Objective) { $Objective = "Continue existing feature $Feature" }
     & $ownerScript -Operation Transfer @ownerArgs -OwnerId $owner.ownerId -TaskId $TaskId -Tier $Tier -Objective $Objective
     if ($LASTEXITCODE -ne 0) { throw 'TASK_ADOPTION_FAILED' }
+    Write-AiSopFollowUpReminder $WorkspacePath $Feature
     exit 0
 }
 if (-not $TaskId) { throw 'TASK_SELECTION_REQUIRED: use Discover and select an existing task; no implicit takeover.' }
@@ -90,6 +109,7 @@ if ($Operation -eq 'Recover') {
     exit $LASTEXITCODE
 }
 if ($Operation -eq 'Resume') {
+    if ($PSBoundParameters.ContainsKey('Tier') -and $Tier -cne $task.tier) { throw 'TASK_TIER_CHANGE_REQUIRES_EXPLICIT_OPERATION: Resume preserves the original tier; use ChangeTier after resuming' }
     if (@($task.verifications | Where-Object { $_.outcome -eq 'RUNNING' }).Count) { throw 'RUN_UNFINISHED: inspect Status and Recover after execution stops' }
     if ($task.status -eq 'PAUSED') {
         & $ownerScript -Operation Claim @ownerArgs -Tier $task.tier -Objective $task.objective
@@ -103,6 +123,23 @@ if ($Operation -eq 'Resume') {
         } else { & $ownerScript -Operation Transfer @ownerArgs }
     } else { throw 'TASK_NOT_RESUMABLE: terminal task or missing local ownership; inspect/recover ownership before resuming.' }
     if ($LASTEXITCODE -ne 0) { throw 'TASK_RESUME_FAILED' }
+    Write-AiSopFollowUpReminder $WorkspacePath $Feature
+    exit 0
+}
+if ($Operation -in @('ChangeTier','RecordSync','SetApplicability','AddFollowUp','CloseFollowUp')) {
+    $update = switch ($Operation) {
+        'ChangeTier' {
+            if (-not $PSBoundParameters.ContainsKey('Tier')) { throw 'TASK_UPDATE_REQUIRED:tier' }
+            @{ operation=$Operation; tier=$Tier; reason=$Reason; userRequest=$UserRequest }
+        }
+        'RecordSync' { @{ operation=$Operation; documentation=$Documentation; tests=$Tests; summary=$Summary } }
+        'SetApplicability' { @{ operation=$Operation; kind=$Kind; status=$Applicability; reason=$Reason } }
+        'AddFollowUp' { @{ operation=$Operation; id=$FollowUpId; kind=$FollowUpKind; summary=$Summary; scope=@($Scope) } }
+        'CloseFollowUp' { @{ operation=$Operation; sourceTaskId=$SourceTaskId; id=$FollowUpId; status=$Disposition; resolution=$Resolution; userRequest=$UserRequest } }
+    }
+    & $ownerScript -Operation Checkpoint @ownerArgs -TaskUpdateJson (ConvertTo-Json -InputObject $update -Depth 8 -Compress)
+    if ($LASTEXITCODE -ne 0) { throw 'TASK_POLICY_UPDATE_FAILED' }
+    Write-Output "TASK_POLICY_UPDATED:$Operation"
     exit 0
 }
 if ($Operation -eq 'ReviewImpact') {

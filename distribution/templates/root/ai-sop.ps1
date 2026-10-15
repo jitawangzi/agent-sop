@@ -33,7 +33,19 @@ param(
     [string[]]$CaseIds = @(),
     [string]$Profile,
     [ValidateRange(0,86400)][int]$TimeoutSeconds = 0,
-    [switch]$ForceRecovery
+    [switch]$ForceRecovery,
+    [string]$Reason,
+    [string]$UserRequest,
+    [string]$Documentation,
+    [string]$Tests,
+    [string]$Summary,
+    [string]$Applicability,
+    [string]$FollowUpId,
+    [string]$FollowUpKind,
+    [string[]]$Scope = @(),
+    [string]$SourceTaskId,
+    [string]$Disposition,
+    [string]$Resolution
 )
 
 $ErrorActionPreference = "Stop"
@@ -190,6 +202,11 @@ Actions:
              Task -Operation Run -Feature X -TaskId fix-1 -Agent CODEX -Kind compile -Executable pwsh -Arguments ...
              Operations: Discover, Status, Start, Resume, Recover, Checkpoint, Suspend, Cancel, Run, ReviewImpact, Verify, Complete.
              Run accepts -Profile <name> and -TimeoutSeconds <seconds>.
+             Default tier: T2. ChangeTier requires -Tier, -Reason and -UserRequest.
+             RecordSync -Documentation UPDATED|UNCHANGED -Tests UPDATED|UNCHANGED|NOT_APPLICABLE -Summary ...
+             FollowUps lists non-blocking pending documentation/tests/verification work.
+             AddFollowUp / CloseFollowUp record or resolve an item using the active task owner.
+             SetApplicability records a concrete reason when compile/test is not applicable (T1/T2 only).
              Recover pauses orphaned tasks; -ForceRecovery confirms the old agent has stopped.
   Help       Show this help.
 
@@ -205,7 +222,7 @@ New users: run 'Doctor' first, then 'Install'.
 switch ($Action) {
     "Task" {
         $taskArgs = @{ Operation=$Operation; WorkspacePath=$WorkspaceRoot }
-        foreach ($name in @('Feature','SpecDirectory','TaskId','Tier','Objective','Agent','NextAction','Notes','Kind','Batch','Executable','Arguments','CaseIds','Profile','TimeoutSeconds','ForceRecovery')) {
+        foreach ($name in @('Feature','SpecDirectory','TaskId','Tier','Objective','Agent','NextAction','Notes','Kind','Batch','Executable','Arguments','CaseIds','Profile','TimeoutSeconds','ForceRecovery','Reason','UserRequest','Documentation','Tests','Summary','Applicability','FollowUpId','FollowUpKind','Scope','SourceTaskId','Disposition','Resolution')) {
             if ($PSBoundParameters.ContainsKey($name)) { $taskArgs[$name] = $PSBoundParameters[$name] }
         }
         & (Join-Path $WorkspaceRoot '.ai-sop/scripts/workflow-task.ps1') @taskArgs

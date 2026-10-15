@@ -2,7 +2,7 @@
 
 > 各 AI 工具（Claude Code / GitHub Copilot / Antigravity / Cursor / Codex / Pi）统一加载本文件作为项目指令。工具专属差异见各自的根 md（如 CLAUDE.md）。本文件是单一真源，勿在其它文件重复维护。
 
-> **能力分流提示**：若当前工具能力准入为 BLOCKED（见末节“能力准入”），只跑 T2——你无需读 T3/brainstorming/design-reviewer/subagent 等节，直接看“执行强度分层（T 档）”的 T2 + 末节能力准入即可。STRICT 工具（Claude Code / Antigravity / Cursor / Copilot / Codex）可跑 T3 完整流程。
+> **能力分流提示**：若当前工具能力准入为 BLOCKED（见末节“能力准入”），支持 T1/T2——你无需读 T3/brainstorming/design-reviewer/subagent 等节，直接看“执行强度分层（T 档）”的 T2 + 末节能力准入即可。STRICT 工具（Claude Code / Antigravity / Cursor / Copilot / Codex）可跑 T3 完整流程。
 
 ## 修改任务入口（优先于下文旧功能级命令）
 
@@ -15,13 +15,13 @@
 - 收尾调用 `Verify` 一次列齐缺项，再 `Complete`；T3 继续执行需求设计、审查、覆盖定义等完整步骤。需要 04 时，先核查其语义覆盖当前改动，再 `ReviewImpact` 记录分析哈希与输入指纹。
 - `TaskId` 是一次独立修改，SDD 计划中的 Task/Step 是该修改内部的执行单元。T1/T2 不额外写整套计划文档。
 
-**执行强度属于本次任务。** 用户明确指定 T1/T2 时保留该档位，不因功能有旧 01/06/04 或旧失败记录自动升 T3。风险扫描提供具体建议；发现范围超出原任务时及时说明，不能到收尾才强加完整流程。未指定强度时仍按变更类选择：新功能/契约变更建议 T3，已有行为局部修复建议 T2；T1 仅由用户显式指定。下文高危“强制升档”描述仅适用于未接入 taskId 的旧兼容路径。
+**执行强度属于本次任务。** 用户明确指定 T1/T2 时保留该档位，不因功能有旧 01/06/04 或旧失败记录自动升 T3。风险扫描提供具体建议；发现范围超出原任务时及时说明，不能到收尾才强加完整流程。未指定强度一律默认 T2；T1/T3 由用户选择。Agent 判断影响范围并提出具体建议，不自行升降档，也不因协议、存储或风险关键词要求重复确认。旧功能级校验只供兼容恢复，新修改必须使用 Task 入口。
 
 **状态与异常恢复**：`ai-sop.ps1 Status -Feature <功能>` 与 Task Status 使用同一任务状态，Discover 用于快速发现。缺本地归属或异常中断时先检查 Status，再 Recover → Resume；原会话仍活跃时先确认旧 Agent 已停止，再使用 ForceRecovery 并记录 Notes。检测到本机验证进程仍运行时不可接管。旧 ForceRelease 也同步暂停任务，不代表验收通过。
 
 **验证命令配置**：常用编译/测试命令可配置在 `.ai-workspace/context/verification-commands.json`，使用 `Run -Profile <名称>`；配置属于宿主上下文，不写入核心引擎。Run 会先记 RUNNING，再持续输出日志；超时/失败/中断不能复用更早成功结果。Status 的执行证据结果和已记录批准不替代完整 T3 Verify。
 
-**任务完成条件**：T1 真实编译/基础检查成功，报告未测试范围；T2 编译与相关测试/回归成功、自审及文档提醒；T3 完整规格和审查门禁加当前任务证据。测试环境失败可以暂停交接，不能写成通过。本次任务 DONE 不代表旧 T3 或整个功能已全面验收。
+**任务完成条件**：T1 真实编译/基础检查成功，报告未测试范围；T2 编译与相关测试成功，并用 RecordSync 记录受影响需求、设计与测试的同步结果；T3 完整规格和审查门禁加当前任务证据。T1/T2 无独立代码审核环节。测试环境失败可以暂停交接，不能写成通过。本次任务 DONE 不代表旧 T3 或整个功能已全面验收。
 
 **并行边界**：不同功能使用独立工作区和测试数据；同功能多独立主会话并行暂不支持，可由一个主 Agent 协调辅助工作。无跨机器分布式锁，不保证发现未同步的远端会话。Session/Grant/本地 owner 不随 Git 变成新工作区权限。跨工作区先 Suspend、保存规格/任务及相同代码，再在新工作区 Resume；合并结果重新验证。
 
@@ -29,7 +29,7 @@
 
 ## 工作流归属
 
-**Superpowers 是本项目的唯一顶层开发调度器（T3）；T2/T1/快通道用本文件 + 专家 Skills，不调用 Superpowers。**
+**Superpowers 是本项目的唯一顶层开发调度器（T3）；T2/T1用本文件 + 专家 Skills，不调用 Superpowers。**
 
 完整开发任务从 Superpowers `brainstorming` 开始，按 `.ai-sop/workflows/superpowers-adapter.md` 执行。Superpowers 技能必须显式调用，禁止跳过或自行判断"改动太小不需要"：
 
@@ -41,19 +41,19 @@
 | 4 | `superpowers:requesting-code-review` | 全部 Task 完成后**必须显式调用**，派最终 code reviewer 审查整体实现。禁止用普通 Agent 替代 |
 | 5 | `superpowers:verification-before-completion` | 声称完成前必须编译/测试验证，禁止"应该可以了"就标记完成 |
 
-**design-reviewer 审查硬证据约束**：设计产出 `06_design_contract.md` 后、进入 `writing-plans` 前，**必须**先经 `design-reviewer` 机器审查并附审查报告。报告须含审查状态（PASS/NEEDS_FIX/PASS_WITH_WARNINGS）、发现分级（BLOCKER/MAJOR/MINOR/INFO）、专项检查覆盖说明、循环轮次。`PASS_WITH_WARNINGS`（仅剩 MINOR/INFO 豁免）是合法通过状态，不等同篡改。**无审查报告不得进入 writing-plans**——靠"设计已自审"或"方案没问题"等无证据说法跳过审查不成立。快通道（纯配置/纯文档）可跳过本约束。
+**design-reviewer 审查硬证据约束**：设计产出 `06_design_contract.md` 后、进入 `writing-plans` 前，**必须**先经 `design-reviewer` 机器审查并附审查报告。报告须含审查状态（PASS/NEEDS_FIX/PASS_WITH_WARNINGS）、发现分级（BLOCKER/MAJOR/MINOR/INFO）、专项检查覆盖说明、循环轮次。`PASS_WITH_WARNINGS`（仅剩 MINOR/INFO 豁免）是合法通过状态，不等同篡改。**无审查报告不得进入 writing-plans**——靠"设计已自审"或"方案没问题"等无证据说法跳过审查不成立。T1/T2 不受本 T3 约束。
 
 **design-reviewer 闭环熔断（防 Token 风暴）**：机器闭环**最多 2 轮**（审查→修正→重审）。第 2 轮后：若仅剩 `MINOR`/`INFO` 未决问题，自动豁免通过（状态 `PASS_WITH_WARNINGS`，记入报告）；若仍存在 `BLOCKER`/`MAJOR`，强制退出机器循环，呈递人工在批准阶段裁决。**阻断级（`BLOCKER`/`MAJOR`）可判 `NEEDS_FIX`**，触发闭环修复，计入 2 轮熔断；**建议级（`MINOR`/`INFO`）不得判 `NEEDS_FIX`**，记为 `PASS_WITH_WARNINGS` 不阻断，避免挑刺震荡。详见 `superpowers-adapter.md`。
 
-**需求与设计确认为两道独立门禁（默认禁止合并）**：默认两道门禁独立确认（先人工确认 01 调 `workflow-state.ps1 -Operation Approve -Gate requirement`，再确认 06 调 `Approve -Gate design`）。仅当满足【T3 小改动合并呈递豁免】条件（用户显式要求且 DC≤3 且无存储迁移）时，允许在一次响应中同时呈递 01 与 06，用户单次确认后后台分别调用两次 Approve 写入门禁。除该豁免外，不得随意合并呈递。
+**需求与设计确认为两道独立门禁（默认禁止合并）**：默认两道门禁独立确认（仅 T3：先人工确认 01 调 `workflow-state.ps1 -Operation Approve -Gate requirement`，再确认 06 调 `Approve -Gate design`）。仅当满足【T3 小改动合并呈递豁免】条件（用户显式要求且 DC≤3 且无存储迁移）时，允许在一次响应中同时呈递 01 与 06，用户单次确认后后台分别调用两次 Approve 写入门禁。除该豁免外，不得随意合并呈递。
 
 **人工确认必须写入门禁状态**：每次人工确认（需求/设计）后，**必须**调用 `workflow-state.ps1 -Operation Approve -Gate <requirement|design>` 写入 `APPROVED` 状态与 SHA-256。口头确认不等于门禁通过——后续 `ValidateTestCoverage` 会校验 APPROVED 状态，未写入会阻塞或被绕过。
 
-**已批准文档修改必须 ResetApproval + 重新确认（硬约束）**：`01` / `06` 经人工确认后，任何**改变业务逻辑/契约语义**的修改（包括 design-reviewer 闭环修正、字段取值规则调整、实现期可测性回写、补 DC/DR/TW 条款等）都**必须先 `workflow-state.ps1 -Operation ResetApproval -Gate <requirement|design>` 作废当前批准**，修改后重新走确认 + Approve。`ResetApproval -Gate requirement` 同时重置 design 门禁（需求变了设计也得重审）。
+**已批准文档的版本边界**：T1 延期同步时记录具体待办；T2 修改已批准语义时先 ResetApproval，使旧批准不再代表新文档，随后记录本次用户需求依据并完成同步，不要求补完整 T3 批准。下次相关 T3 验收再确认当前版本。纯文字润色沿用下条规则。**T3 的重新确认要求**：`01` / `06` 经人工确认后，任何**改变业务逻辑/契约语义**的修改（包括 design-reviewer 闭环修正、字段取值规则调整、实现期可测性回写、补 DC/DR/TW 条款等）都**必须先 `workflow-state.ps1 -Operation ResetApproval -Gate <requirement|design>` 作废当前批准**，修改后重新走确认 + Approve。`ResetApproval -Gate requirement` 同时重置 design 门禁（需求变了设计也得重审）。
 
-**纯文本润色豁免（UpdateHash，不作废批准）**：仅修改错别字、标点、格式、措辞等**不改变业务逻辑/契约语义**的内容时，用 `workflow-state.ps1 -Operation UpdateHash -Gate <requirement|design>` 只更新哈希值而不作废 APPROVED 状态，避免一个小错别字雪崩回需求评审。UpdateHash 须在 commit message 注明“纯文本润色，不改语义”。AI 判断不准是否纯润色时，**保守用 ResetApproval** 走重新确认——宁可重审，不可滥用 UpdateHash 绕过门禁。
+**纯文本润色豁免（UpdateHash，不作废批准）**：仅修改错别字、标点、格式、措辞等**不改变业务逻辑/契约语义**的内容时，用 `workflow-state.ps1 -Operation UpdateHash -Gate <requirement|design>` 只更新哈希值而不作废 APPROVED 状态，避免一个小错别字雪崩回需求评审。UpdateHash 须在 commit message 注明“纯文本润色，不改语义”。AI 判断不准是否纯润色时使用 ResetApproval；T2 记录变化依据，T3 重新确认，不滥用 UpdateHash。
 
-**按需调用**：
+**T3 按需调用（下列复现和审查流程不强加给 T1/T2）**：
 - `superpowers:systematic-debugging` — bug 与异常行为，**不要自己猜根因**。**排查前先复现 bug**：优先路径 A（JUnit/JVM 内）快速复现；若必须走路径 B（JSP 业务验证）则接受其成本。**确认问题真实存在后再排查根因**。判责走 `implementation-engine` 的 TRIAGE Judge，须判到 4 类之一：`[IMPL_FAILURE]` 实现缺陷→修代码；`[DESIGN_FLAW]` 设计缺陷→改需求/设计不修代码；`[TEST_ERROR]`/`[INVALID]` 测试错/误报→不改服务端只输出证据；`[CLIENT_ISSUE]` 客户端问题→不改服务端。**判责结论必须附复现证据（硬约束）**：下结论前先跑复现测试，结论附测试输出。修复 3 次仍未通过复现，**停止改代码**——回头重新复现、重新判责、查是否 `[DESIGN_FLAW]`，不堆砌投机修复掩盖症状。
 - `superpowers:receiving-code-review` — 接收审查结果
 
@@ -65,28 +65,31 @@
 
 **Skill 分级见下文三列表**（T3 必调 / T3 按需 / 全档禁用）。上表仅 T3 编排顺序。
 
-**关于 Superpowers**：Superpowers 是一个流程技能包，提供 brainstorming/writing-plans/subagent-driven-development 等流程技能。**T2/快通道/T1 完全不依赖 Superpowers**——这些档位直接用原生提示词 + 本项目专家 Skills 或单轮上下文推进，严禁报错停机。只有 T3 完整流程才需要 Superpowers。若 T3 所需的 Superpowers 技能不可用，**停止并明确告知用户**：“T3 完整流程需要 Superpowers 技能包。请按 `.ai-sop/SUPERPOWERS_VERIFICATION.md` 安装/激活，或降级为 T2 快速修改。”——不要静默切换、不要假装在跑。
+**关于 Superpowers**：Superpowers 是一个流程技能包，提供 brainstorming/writing-plans/subagent-driven-development 等流程技能。**T2/T1 完全不依赖 Superpowers**——这些档位直接用原生提示词 + 本项目专家 Skills 或单轮上下文推进，严禁报错停机。只有 T3 完整流程才需要 Superpowers。若 T3 所需的 Superpowers 技能不可用，**停止并明确告知用户**：“T3 完整流程需要 Superpowers 技能包。请按 `.ai-sop/SUPERPOWERS_VERIFICATION.md` 安装/激活，或降级为 T2 快速修改。”——不要静默切换、不要假装在跑。
 
 ## 执行强度分层（T 档）
 
-**实际执行档位**由单条规则唯一确定：
-`实际执行档位 = MIN(用户显式指定 || 变更类默认, 当前工具最高支持档位)`
+**档位表示本次任务的交付流程强度，风险分析不决定档位。** 默认 T2，人工显式选择优先；接管继承原档位，独立新任务重新使用默认值或用户选择。
 
-| 变更类 | 默认档位 |
-|---|---|
-| 行为/契约/协议/存储结构变更、新玩法、命中高危语义触发器 | T3 |
-| 已有行为的缺陷修复、单点非高危逻辑调整 | T2（用户可显式升 T3） |
-| 纯配置数值 / 纯文档措辞 | 快通道 |
+| 档位 | 必做工作 | 可省略的流程 |
+|---|---|---|
+| T1 极速 | 明确修改目标，完成实现，真实编译通过；确有延期事项才记录 FollowUp | 需求设计同步、补充测试、头脑风暴、正式计划、独立审核 |
+| T2 快速（默认） | 明确需求和验收点，完成实现，同步受影响的需求/设计/用例，编译与相关测试通过 | 头脑风暴、重复需求设计批准、正式计划、独立审核 |
+| T3 完整 | 完整 Superpowers 需求、设计、计划、实现、审核与验证流程 | 可复用仍适用于当前版本和范围的已有成果，不重复执行已满足的步骤 |
 
-- **T3**：完整 Superpowers 流程（brainstorming → 需求确认 → design-reviewer → 设计确认 → writing-plans → subagent-driven-development + TDD → 审计 → requesting-code-review → verification-before-completion）。覆盖：**新功能、行为/契约/协议/存储变更**、需求补充以及**命中高危语义触发器的增量扩展**。
+**T1 的实现边界**：协议源文件、生成代码和使程序生效所必需的配置都属于实现，不能按“文档后补”延期。修复使代码恢复到既有约定时无需修改正确的设计；注释修正也不自动欠设计或测试。真实延期的字段说明、行为规则、用例或验证，分别用 AddFollowUp 记录，禁止仅留在聊天里。
 
-  **语义风险分档原则（小 diff ≠ 小风险，强制升 T3 规则）**：
-  即使修改代码量极少（如仅 5~10 行），只要命中以下 **【五大高危语义触发器】** 之一，**严禁按 T2 快速修改跳过设计与审计**，必须强制走 T3（或执行完整的 `Mode D: Behavior Impact Audit` 行为影响审计与双重审查）：
-  1. **类型/策略扩展**：新增业务类型（`type`）、枚举（`Enum`）、配置表新增类型行、新增策略类或子处理器；
-  2. **公共分发修改**：修改了公共路由、分发器、消息映射表（`switch-case` / `Map<Integer, Handler>` / `Interceptor`）；
-  3. **状态与存储**：涉及 `Player` 内存变异、Redis/Mongo 读写、跨天/周期重置、资源增减或奖励发放；
-  4. **兼容与并发**：涉及新老数据反序列化兼容、多版本滚更混跑、分布式锁或异步任务；
-  5. **多分支入口**：在已有 Action/Help 的主干入口中插入了新的条件分支。
+**T2 的轻量闭环**：用户已给出的明确需求可直接作为依据，只澄清关键歧义。按实际影响更新相关条款、设计段落和测试，不强制新增整套 01/06/05 或重复写计划。已有文档仍正确、已有用例覆盖充分时记录 UNCHANGED 及依据。完成前 RecordSync（Documentation=UPDATED/UNCHANGED；Tests=UPDATED/UNCHANGED/NOT_APPLICABLE；Summary=具体同步范围和依据）。机器只校验记录完整，内容正确性由 Agent 核实。相关单元/模拟测试为常规选择，不默认启动完整业务环境；集成验证缺口须如实说明并按任务目标安排。
+
+**人工改档**：任务开始后只能用 ChangeTier，带目标 Tier、Reason 和 UserRequest（人工原话或准确摘录）。用户已经选择 T1/T2 时不再次确认风险。Agent 可以建议额外验证或 T3，但不以建议阻止已明确的任务；实际语义不明或范围超出授权时询问具体问题。ChangeTier 保留全部历史验证、批准与待办，不把失败改成通过；Resume 不接受顺便改档。
+
+**待同步提醒（非门禁）**：AddFollowUp 在来源任务中记录 documentation / test-cases / verification，含稳定 ID、具体 Summary 和 Scope。没有实际延期就不创建。Start/Resume 自动检查：同功能列详细事项，其他功能仅显示当前工作区待办数量；提醒后继续，不要求确认、不自动扩展范围、不因待办升档或阻止完成。每次启动/接管提示一次，执行中不重复催办。用户暂不处理时保留 PENDING；实际完成用 CloseFollowUp 记 RESOLVED、具体 Resolution 和处理任务；人工明确无需处理时记 NOT_NEEDED、原因和 UserRequest。旧任务 DONE 不会隐藏待办，新 T2 完成也不会自动清除旧待办。只在当前工作区可见，跨工作区须同步规格仓库。
+
+**适用性**：只保留三个新任务档位。纯文档等任务仍用 T1/T2；确无构建/可执行行为影响时，用 SetApplicability 对 compile/test 分别记录 NOT_APPLICABLE 和具体理由（绑定当前输入）。RecordSync 的 Tests=NOT_APPLICABLE 仅说明用例同步，不自动豁免测试执行。源码注释修改仍默认编译；配置修改需判断真实影响。环境故障、缺少测试或测试失败不能冒充“不适用”，不能用空命令伪造 PASS。T3 不使用轻量豁免。FAST_TRACK 只读兼容历史任务，不创建第四档新任务。
+
+**工具能力**：T1/T2 不依赖 Superpowers 或独立 subagent。用户选 T3 但环境缺能力时说明缺口，由用户选择更换工具或改档，不自动降档、不因“协议/设计”等词拦截默认 T2。
+
+以下影响、覆盖与独立审查要求仅在 **T3** 下执行；T1/T2 可引用分析建议，但不因此新增完整流程门禁。
 
   **04 强制范围**：`04_change_impact.json` 不是所有 T3 的必交件。仅当 `AssessRisk` 命中 `TYPE_EXTENSION` 或 `PUBLIC_ROUTING`（旧系统扩展），或风险无法评估（`WORKSPACE_UNRESOLVED` / `VCS_ERROR` / `VCS_UNAVAILABLE` / overlay git+SVN 但生产 SVN 扫不到 / 规格无法定位生产文件）时，`VerifyCompletion` 才强制 04。绿场 T3 有 01/06 + 覆盖矩阵即可 Complete；缺 04 不失败。若 04 已存在，仍会校验有效且未过期。混合仓里过期的 overlay git SHA（或功能目录缺 baseline）在 SVN 工作副本可用时按 SVN 评估，不因 `INVALID_BASELINE` 中断。`AssessRisk` 只扫本功能规格能定位到的生产文件，不把整棵脏工作副本算进本功能。
 
@@ -112,29 +115,6 @@
   - 8 个必填切面里超过 4 个 `N_A`
   `VerifyCompletion` 还会读 `CHARACTERIZATION` Case 的 `automationCarrier#method` 方法体：空 `@Test`、没有调用、或方法里不出现 `variantKeys`/`entryPointIds` 字面量，一律 `TYPE_EXTENSION_COVERAGE_INCOMPLETE`。同一条表征 Case 还必须有非 `N_A` 的 `assertions.persistenceColdReload`（含 `coldReloadEntity`），且方法体出现 `selectById` / `getById` / `findById` / `reloadFresh` 一类再读存储的调用——只断言协议回包算假绿。这仍不能证明运行时打到了旧分发，但能挡住“JSON 填了、测试是空方法”和“测了入口、没冷读库”的假覆盖。
 
-  Bug 修复不固定为 T3——看变更触及什么（如修一个 -1 语义的数值边界 = T2；修协议字段解析逻辑或状态变异 = T3）。
-- **T2（用户显式"快速修改"）**：跳过 brainstorming/需求确认/design-reviewer/设计确认/writing-plans；保留归属 Claim、编译、验证、回归、文档待更新提醒。仅限**未命中上述高危触发器**的已有行为纯局部单点修复。
-
-  **T2 执行路径（豁免 + 单命令直达）**：T2 跳过 writing-plans，故不调用 `subagent-driven-development`。T2 下**单命令直达**：用户下达 T2 指令后，AI 在单次响应内自动串联【Claim 归属 → 代码修改 → 编译 → 相关测试 → 交付完成】。**编译/测试可能超单轮超时**，允许一次进度回复（“编译中，下一轮继续”），不要求全部单 turn 完成；硬节点保留。最终 `requesting-code-review` 降为 AI 自审 + 附编译/验证证据。T2 保留归属 Claim、编译、验证、回归四个硬节点。
-- **T1（用户显式"急速修改"，极少用）**：跳过完整流程节点，保留本次任务归属与真实编译/基础检查。用户已明确选择 T1 时不重复要求确认，最终说明未验证范围。旧 guard 逃生口仅作兼容恢复，不作为任务模式常规入口。
-- **快通道（AI 自动识别）**：纯配置数值变更（`CONFIG_VALUE_CHANGE`）或纯文档变更（`DOC_ONLY`）自动走**快通道**（跳门禁，完成条件 2 项：编译通过 + 纯数值/文档检查；**非 T2**，T2 是 5 项）。其余按上方实际执行档位公式确定。
-
-**快通道边界（硬约束）**：快通道**仅限 `config/**` 等目录下的纯数据文件**（CSV/配置表数值）。**涉及生产代码（如 `src/**`、`pkg/**`、`internal/**`、`app/**` 等）任何修改**（哪怕 1 行）不得走快通道，至少 T2（认领归属+编译+测试）。改关键枚举值/协议字段名/存储结构不是纯配置，须走 T3。
-
-**T 档触发词（中英文）**：T2 = "快速修改"/"简单需求直接实现"/"simple fix"/"quick change"/"just implement"；T1 = "急速修改"/"直接改"/"rush"/"ASAP"；快通道 = AI 自动识别纯配置/纯文档。快通道边界：只改配置文件/CSV 数值（不改业务语义/协议/存储结构）= 纯配置；只改 .md 文档（不改业务规则/技术契约）= 纯文档。改枚举值/协议字段名/存储结构 **不是** 纯配置，须走 T3。
-
-**T 档升降规则**：开始为 T2 发现需要设计评审的，可向用户建议升 T3（"这个改动比预期复杂，建议走完整 T3 流程"），用户同意后升档。开始为 T3 发现可简化的，不可自行降档，须用户显式同意。
-
-**快通道边界与判定铁律（杜绝配置漏洞，消除冲突）**：
-- **真快通道（仅限纯数值/纯文档）**：仅限既有配置项的**纯数值调整**（如调整既有道具数量、既有掉落概率数值）或 `.md` **错别字/措辞润色**（不改业务规则/技术契约/配置结构）。AI 单轮静默直达，免确认，最终回复附标 `[FastTrack] 仅纯配置数值/文档变更，已自动应用快通道`。
-- **结构/类型变更严禁快通道（强制升档）**：凡涉及配置表**新增类型行、新增列、新增枚举、修改字段类型或影响加载逻辑的结构变动**，命中高危语义触发器，**严禁按快通道或普通 T2 跳过设计与审计**！必须强制走 T3（或执行完整的 `Mode D: Behavior Impact Audit` 行为影响审计与双重审查）。
-- **生产源码严禁快通道**：涉及生产代码任何修改（`src/**`、`pkg/**`、`internal/**` 等哪怕 1 行）**严禁走快通道**，至少 T2。
-- 快通道是独立档位（完成条件 2 项：编译通过 + 纯数值/文档检查），**不是 T2**（T2 是 5 项）。
-
-**BLOCKED 工具的 T2 降级处理（STRICT 工具如 Claude Code / Antigravity / Cursor / Copilot / Codex 原生支持 T3，直接跑完整 Superpowers 流程，严禁弹出 T2 拦截）**：
-- **STRICT 工具（Claude Code / Antigravity / Cursor / Copilot / Codex）**：按变更类默认档位执行（新功能、行为/契约/协议/存储变更走 T3），直接执行 Superpowers 流程，严禁自称仅支持 T2 或拦截！
-- **BLOCKED 工具（如 Pi，最高支持 T2）**：实际执行档位 = MIN(用户指定档位, T2)。在 BLOCKED 工具下：若用户未表达流程意图且为已有行为缺陷修复，静默以 T2 执行；若用户消息含“需求/草案/设计/评审/T3”任一词，或变更是新功能/新协议/新存储/用户点名需求，必须提示：“`[SOP 拦截] 工具 <工具名> 因无 subagent（能力准入 BLOCKED），无法执行 T3 独立审查。建议：切换到 STRICT 工具（Claude Code / Antigravity / Cursor / Copilot），或回复‘仍按 T2 实现’。`”
-- 已有行为的单点逻辑修复保持静默 T2，不拦截。
 
 ## 两类工作：全新功能 vs 旧系统扩展（隐蔽缺陷投入点）
 
@@ -262,7 +242,7 @@ AI 可在一次响应内同时呈递 `01_server_rules.md` 与 `06_design_contrac
 
 **审查必须独立上下文**：审查者（`design-reviewer`/`implementation-auditor`/`logic-auditor`/`requesting-code-review`）必须用独立 subagent 上下文，不能用同一会话自审（共享盲区）。**允许用宿主 subagent 机制加载本项目专家 Skill 提示词**（如 Copilot 的 `Task` 工具加载 `implementation-engine` 提示词）——禁的是“同上下文自审”，不是“用宿主 subagent 载入”。
 
-**审查铁律（仅 T3 严格适用）**：每个 Task **先编译通过再内审**。顺序：`implementation-engine` 交【编译证据】（`command` + `exitCode=0` + 成功摘录）→ 才派 `implementation-auditor` / `logic-auditor` → spec 合规审查 → 代码质量审查（顺序不可颠倒）→ 修复回派实现者并再编译 → 重新审查 → 通过才标记该 Task 完成。engine 未返回或无编译证据时**禁止**派审计官，禁止与实现者并行派审，禁止一条 prompt 打包多个 Task 后立刻审。controller / 编排会话**不得自己改生产代码或测试源**（编译失败或审计要修一律回派 `implementation-engine` `REPAIR`）。生产代码再改后，先前内审 PASS 作废，必须再编译再审。同文件修改绝不并行派多个实现者。T3 绝不跳过独立审查（哪怕 1 行）。最终审查 `requesting-code-review` 独立于 subagent 内审，禁止跳过，也**不能**替代被作废的任务内审。T2 快速修改降为 AI 自审 + 编译/测试硬验证。
+**审查铁律（仅 T3 严格适用）**：每个 Task **先编译通过再内审**。顺序：`implementation-engine` 交【编译证据】（`command` + `exitCode=0` + 成功摘录）→ 才派 `implementation-auditor` / `logic-auditor` → spec 合规审查 → 代码质量审查（顺序不可颠倒）→ 修复回派实现者并再编译 → 重新审查 → 通过才标记该 Task 完成。engine 未返回或无编译证据时**禁止**派审计官，禁止与实现者并行派审，禁止一条 prompt 打包多个 Task 后立刻审。controller / 编排会话**不得自己改生产代码或测试源**（编译失败或审计要修一律回派 `implementation-engine` `REPAIR`）。生产代码再改后，先前内审 PASS 作废，必须再编译再审。同文件修改绝不并行派多个实现者。T3 绝不跳过独立审查（哪怕 1 行）。最终审查 `requesting-code-review` 独立于 subagent 内审，禁止跳过，也**不能**替代被作废的任务内审。T2 完成相关规格/用例同步与编译/测试，不要求独立审核节点。
 
 **子代理进度可见（覆盖 Superpowers SDD）**：原生 SDD「不要向人汇报进度」**对本项目不生效**。每个独立 subagent 返回后、下一串工具或下一个 subagent 之前，controller 必须先向用户输出 1–3 行可见进度（谁完成、结论、下一步）。长编译/测试开始前同样先报。禁止子代理已结束后静默连跑，导致主窗口像卡死。状态行不能替代本条。详见 `superpowers-adapter.md`「人机交互」。
 
@@ -278,9 +258,9 @@ AI 可在一次响应内同时呈递 `01_server_rules.md` 与 `06_design_contrac
 
 **Guard 拦截时 AI 自动 Claim**：当用户直接下达修改指令且当前无 Active Owner 时，AI 收到 Guard 拦截后**不得把报错抛给用户**，而应自动在后台生成临时 ownerId 并静默执行 Claim，然后重试编辑。仅在 Claim 失败或归属冲突时才提示用户。
 
-功能开始时自动 Claim 归属，生成不可变 owner ID 持久化到 Superpowers ledger。各 harness 统一 `SUPERPOWERS` 归属（`-Workflow SUPERPOWERS` 是归属身份标识，**不等于依赖 Superpowers 技能包**——T2/快通道不依赖 Superpowers 技能，但仍用此归属身份），`agent` 字段区分实际工具：
+功能开始时自动 Claim 归属，生成不可变 owner ID 持久化到 Superpowers ledger。各 harness 统一 `SUPERPOWERS` 归属（`-Workflow SUPERPOWERS` 是归属身份标识，**不等于依赖 Superpowers 技能包**——T2/T1不依赖 Superpowers 技能，但仍用此归属身份），`agent` 字段区分实际工具：
 
-**FeatureName 命名规则**：用 PascalCase 英文（`[A-Z][A-Za-z0-9]+`，如 `ShopExchangeBuyLimit`、`DailySignInReward`）。从用户话术提取并回显：“将以 `<FeatureName>` 认领，不对请立刻改名”。目录不存在则建。T2 小改也需 feature 名（热修用 `HotfixShopLimit20260821`，无连字符）。*注意：已有 01/06 规格产物的功能目录，后续修改均按 T3 门禁收尾；若需独立 T2 快速修改请开新 FeatureName。*
+**FeatureName 命名规则**：用 PascalCase 英文（`[A-Z][A-Za-z0-9]+`，如 `ShopExchangeBuyLimit`、`DailySignInReward`）。从用户话术提取并回显：“将以 `<FeatureName>` 认领，不对请立刻改名”。目录不存在则建。T2 小改也需 feature 名（热修用 `HotfixShopLimit20260821`，无连字符）。已有功能继续使用原 FeatureName，新建独立 taskId；历史 01/06 不改变任务档位。
 
 ```powershell
 pwsh -NoProfile -File .\.ai-sop\scripts\workflow-owner.ps1 -Operation Claim `
@@ -363,7 +343,7 @@ pwsh -NoProfile -File .\.ai-sop\scripts\workflow-state.ps1 -Operation LintSpecs 
 
 完成条件**按档位分**（`workflow-state.ps1 -Operation Status` 显示当前 tier + 门禁 SHA；`workflow-state.ps1 -Operation CheckCompletion -Path .../00_workflow_state.json` 输出机检 ASCII checklist（门禁 SHA/coverage/`07`/`compile-evidence.json`/SVN status）。**机检项 [v]=pass/[X]=fail，人工项 [?]=需 AI 验证**。`CheckCompletion` 是诊断（exit 0）；硬失败只在 `VerifyCompletion` / `Complete`。AI 据下表 + CheckCompletion 结果逐项检查并报告）：
 
-**Complete 前硬门禁（VerifyCompletion 内嵌执行）**：`workflow-owner.ps1 -Operation Complete` 内部已嵌入 `VerifyCompletion` 硬门禁检验。在释放归属锁前，脚本会自动在后台先调用 `VerifyCompletion`：T3 严格校验门禁 APPROVED+SHA / coverage 无占位与 carrier 错误 / `07_design_review.md` 审查状态为 PASS 或 PASS_WITH_WARNINGS 且 `审查对象 sha256` 与当前 06 一致 / `compile-evidence.json`（exitCode=0 且 `workingTreeDigest` 匹配当前工作区，有 `build/classes` 不算编译过）；仅当 AssessRisk 命中 TYPE_EXTENSION/PUBLIC_ROUTING 或风险无法评估时才要求 `04_change_impact.json` 有效且未过期；类型或公共分发扩展时再校验 8 切面完成度 / feature-state 阶段非初始。T2：无 `test-evidence.json` 时测试项仍为自报；若该文件存在则必须 exitCode=0。实现中途用 `LintSpecs -Phase PLAN` 提前看缺 00/未覆盖条款/MISSING 载体。**若 VerifyCompletion 检验未通过（非 0），Complete 会直接抛出错误并拒绝释放归属锁**。AI 亦可事先调用 `workflow-state.ps1 -Operation VerifyCompletion -Path .../00_workflow_state.json` 提前确认是否达到完成标准。
+**Complete 前硬门禁**：新任务由 Task Complete 调用 VerifyCompletion -TaskId。T1 检查真实编译；T2 检查真实编译、相关测试及 RecordSync；T3 另外检查批准与当前规格哈希、设计审核、覆盖映射及适用的影响分析。T1/T2 的明确适用性说明按上文处理。失败不释放为已完成，可 Suspend 保留问题并释放执行占用。机器不以 FollowUp 标记阻断任何档位；T3 仍需解决实际相关规格和验证缺口。旧 compile-evidence.json/test-evidence.json 仅用于未迁移的功能级兼容路径，新任务不手写这些执行记录。
 
 **T3 完成清单（机检项 1–3 由 `VerifyCompletion` 强制；第 4–6 项为 AI 自报，机器不读 08/09）**：
 
@@ -371,22 +351,22 @@ pwsh -NoProfile -File .\.ai-sop\scripts\workflow-state.ps1 -Operation LintSpecs 
 |---|---|---|---|---|
 | 1 | 需求与设计已确认 | `workflow-state.ps1 -Operation Status -Path .../00_workflow_state.json` | `gate=requirement status=APPROVED` + `gate=design status=APPROVED` + `hashMatch=MATCH` | `ResetApproval` + 修改 + `Approve` |
 | 2 | 测试计划与覆盖矩阵已创建/更新 | `workflow-state.ps1 -Operation ValidateTestCoverage -Path .../05_test_coverage.json` | `VALID` | 补 05_test_plan.md + 05_test_coverage.json |
-| 3 | 代码编译通过 | 功能目录 `compile-evidence.json`（command + exitCode=0 + executedAt + workingTreeDigest） | `VERIFY_COMPLETION_PASS` 含编译证据 | 重跑编译并写入证据（digest 须匹配当前工作区），目录存在不算 |
+| 3 | 代码编译通过 | Task Run -Kind compile | 当前输入下真实成功 | 修复后重新执行编译 |
 | 4 | 必要全局审计与逻辑审计通过 | `implementation-auditor` + `logic-auditor` 报告 PASS | **AI 据独立 subagent 报告自报**（`VerifyCompletion` 不读 08/09） | 修复发现 + 重审 |
 | 5 | 目标自动化场景通过 | `run-all-tests.ps1 -IncludeCompile` + 定向 JUnit | exit 0 | 修测试 + 重跑 |
 | 6 | 中途失败已修复、复审和回归 | 检查无未解决发现 | 无未解决发现 | 补修复 + 回归 |
 
-**T2（5 项，跳过需求/设计/测试计划门禁）**：
+**T2 完成清单（新任务使用 Task 验证）**：
 
 | # | 条件 | 验证命令 | 成功输出 |
 |---|---|---|---|
-| 1 | 归属 Claim | `workflow-owner.ps1 -Operation Validate -Feature <FeatureName>` | `VALID` |
-| 2 | 代码编译通过 | `gradlew compileJava` | `BUILD SUCCESSFUL` exit 0 |
-| 3 | 相关测试通过（路径 A JUnit 或路径 B JSP） | 可选 `test-evidence.json`（存在则必须 exitCode=0）或定向 JUnit | exit 0 / 证据文件 |
-| 4 | 相关回归（定向 JUnit，或写明无自动化及原因） | 定向 JUnit 或说明 | 有测试或说明 |
-| 5 | **文档待更新提醒** | AI 输出提醒 | 提醒已输出 |
+| 1 | 当前任务归属 | Task Start / Resume | 当前任务 ACTIVE |
+| 2 | 代码编译通过 | Task Run -Kind compile | exit 0，输入有效 |
+| 3 | 相关测试通过 | Task Run 的真实测试结果 | exit 0，输入有效 |
+| 4 | 受影响需求、设计与测试同步 | Task RecordSync | 已更新，或说明无需更新的依据 |
+| 5 | 如实报告范围与缺口 | 区分未覆盖、环境阻塞和不适用 | 不把未执行写成通过 |
 
-**快通道（2 项）**：编译通过 + 纯数值/文档检查。**T1（1 项）**：本任务真实编译/基础检查通过，报告未验证范围。
+**T1**：本任务真实编译/基础检查通过，报告未验证范围；确有延期才创建非阻断待同步项。纯文档适用性按上文三档规则处理。
 
 最终结论表述为“已覆盖场景通过”，不得宣称绝对无缺陷。
 
@@ -420,13 +400,13 @@ SVN 是团队源码真源。本项目基于 **SVN 分支**开发（不是 trunk 
 
 各工具有能力差异，见 `.ai-sop/scripts/harness-capability.ps1`（STRICT/BLOCKED 判定）：
 - **STRICT**（Claude Code、Cursor、Copilot、Antigravity、Codex）：有独立 subagent + 审查证据，可跑 T3 完整流程（含独立审查）。
-- **BLOCKED**（Pi）：缺关键能力（核心无独立 subagent 审查），只能 T2。BLOCKED 不代表工具差，是该能力暂未确认；真机认证后可升 STRICT。
+- **BLOCKED**（Pi）：缺关键能力（核心无独立 subagent 审查），支持 T1/T2。BLOCKED 不代表工具差，是该能力暂未确认；真机认证后可升 STRICT。
 
-无 subagent 的工具跑 T3 时独立审查实为自审（共享盲区），失 T3 价值——故能力准入判 BLOCKED 只 T2。详见 `.ai-sop/docs/ARCHITECTURE.md`。
+无 subagent 的工具跑 T3 时独立审查实为自审（共享盲区），失 T3 价值——故能力准入判 BLOCKED 支持 T1/T2。详见 `.ai-sop/docs/ARCHITECTURE.md`。
 
 **静态表是声明值，非运行时探测**：`harness-capability.ps1` 的 known-capability 表是"该工具声明应具备"的能力（静态默认）。真实环境可能因内网代理/工具版本/特定 shell 而降级（如某 Copilot 插件无 subagent、某 Cursor build 派发 subagent 失败）。两种应对：
 - **本机覆盖**：若本机环境某 STRICT 工具实际不支持 subagent/evidence，写 `.ai-sop/.harness-capability-override.json`（gitignored，不共享）降级该能力。格式 `{"CLAUDE_CODE":{"subagent":false,"_reason":"此 build 的 subagent 失效"}}`。`harness-capability.ps1` 合并覆盖后重判（STRICT→BLOCKED），`doctor.ps1` 提示覆盖存在。覆盖文件是本机降级的诚实记录，不静默。
-- **派 subagent 失败时优雅降级**：T3 流程中若派 subagent 遇 `Tool not found`/无响应/超时，**不得重试挂死**——视为该工具本机 subagent 能力失效，输出 `[SOP 降级] 当前环境 subagent 派发失败，T3 独立审查不可用，自动降级为 T2 自审 + 附失败证据，或写 override 后重试`。降级后按 T2 完成（自审 + 编译 + 验证），不阻塞交付。
+- **T3 子代理不可用**：保留当前任务进度并说明缺失能力，提出切换工具或人工改档的选项；不能静默按 T2 完成。已经选择 T1/T2 的任务不依赖独立子代理，不因此拦截。
 
 ## AI 回复状态行（必带）
 
@@ -477,8 +457,8 @@ pwsh -NoProfile -File ./.ai-sop/scripts/workflow-owner.ps1 -Operation ForceRelea
 |---|---|---|
 | Superpowers | 流程技能包（brainstorming/writing-plans/SDD 等），T3 需要，T2 不需要 | 本文件"关于 Superpowers" + `.ai-sop/SUPERPOWERS_VERIFICATION.md` |
 | harness | AI 编码工具的统称（Claude Code/Copilot/Antigravity/Cursor/Codex/Pi） | `.ai-sop/docs/ARCHITECTURE.md` |
-| T 档 | 执行强度档位（T3 完整/T2 快速/T1 急速/快通道） | 本文件"执行强度分层" |
-| 能力准入 | 工具能力判定（STRICT 可 T3/BLOCKED 只 T2） | 本文件"能力准入" + `harness-capability.ps1` |
+| T 档 | 执行强度档位（T3 完整/T2 快速/T1 极速） | 本文件"执行强度分层" |
+| 能力准入 | 工具能力判定（STRICT 可 T3/BLOCKED 支持 T1/T2） | 本文件"能力准入" + `harness-capability.ps1` |
 | 归属 Claim | 功能开发权的认领，生成不可变 ownerId | 本文件"功能归属" |
 | 门禁 | 需求/设计的人工批准状态（APPROVED + SHA） | 本文件"人工 review 阶段" |
 | design-reviewer | 机器设计审查（独立 subagent，T3 必需） | 本文件"工作流归属" |
@@ -486,4 +466,4 @@ pwsh -NoProfile -File ./.ai-sop/scripts/workflow-owner.ps1 -Operation ForceRelea
 | UpdateHash | 纯文本润色后只更哈希不作废批准 | 本文件"纯文本润色豁免" |
 | Transfer | 换工具时转交归属 | 本文件"工具切换与归属接管" |
 | ForceRelease | 原 session 丢失时强制释放归属 | 本文件"归属超时与强制释放" |
-| 快通道 | 纯配置/纯文档自动走快通道（独立档位，完成条件 2 项，非 T2） | 本文件"T 档触发词" |
+| FAST_TRACK | 旧档位兼容标记；新任务用 T1/T2 适用性说明 | 本文件“执行强度分层” |

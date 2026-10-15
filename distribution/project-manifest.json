@@ -14,18 +14,18 @@
     {
       "source": "distribution/templates/root/CLAUDE.md",
       "target": "CLAUDE.md",
-      "sourceBlobSha256": "92bebe5c475de01e480311abe623ab55a714066267decdda906789d3bf86d1f5",
-      "targetSha256": "92bebe5c475de01e480311abe623ab55a714066267decdda906789d3bf86d1f5",
-      "legacySha256": "83d4eaf4753d1a56df0b090569178a279c93aaf831fffba03307bb083fb17fa1",
+      "sourceBlobSha256": "20305dfa8014985dc84755abfcbc27651961b05fd8821766c90db8aae36a01d3",
+      "targetSha256": "20305dfa8014985dc84755abfcbc27651961b05fd8821766c90db8aae36a01d3",
+      "legacySha256": "92bebe5c475de01e480311abe623ab55a714066267decdda906789d3bf86d1f5",
       "encoding": "utf8-no-bom",
       "lineEnding": "lf"
     },
     {
       "source": "distribution/templates/root/AGENTS.md",
       "target": "AGENTS.md",
-      "sourceBlobSha256": "25903e4b86512c55ac3f7e7aee50f1c7ab4557e276cd9322619c731a180574dc",
-      "targetSha256": "25903e4b86512c55ac3f7e7aee50f1c7ab4557e276cd9322619c731a180574dc",
-      "legacySha256": "4c3cbc535fee83141539bd0f9702ce300e6b9233e02efd7645b381e35472229c",
+      "sourceBlobSha256": "119c50614fd7d04cf453fa3a88e709ad9f07530e6ae4a7983f9d8d97f0993710",
+      "targetSha256": "119c50614fd7d04cf453fa3a88e709ad9f07530e6ae4a7983f9d8d97f0993710",
+      "legacySha256": "25903e4b86512c55ac3f7e7aee50f1c7ab4557e276cd9322619c731a180574dc",
       "encoding": "utf8-no-bom",
       "lineEnding": "lf"
     },
@@ -50,9 +50,9 @@
     {
       "source": "distribution/templates/root/ai-sop.ps1",
       "target": "ai-sop.ps1",
-      "sourceBlobSha256": "559596303d23f80e2a6b8e10d8473e2825720f2decb389f58e1d5c658c4d9534",
-      "targetSha256": "559596303d23f80e2a6b8e10d8473e2825720f2decb389f58e1d5c658c4d9534",
-      "legacySha256": "394cd0587305d2f382cd4bea79d87daf61190435a35c1a132bb74fc9135b377c",
+      "sourceBlobSha256": "1e06296ebb5e97239f17b3935f68bea1022cd99689fd0e8f02b49b44f15ab1e7",
+      "targetSha256": "1e06296ebb5e97239f17b3935f68bea1022cd99689fd0e8f02b49b44f15ab1e7",
+      "legacySha256": "559596303d23f80e2a6b8e10d8473e2825720f2decb389f58e1d5c658c4d9534",
       "encoding": "utf8-no-bom",
       "lineEnding": "lf"
     },

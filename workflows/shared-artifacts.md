@@ -7,9 +7,9 @@
 `.ai-workspace/specs/features/<Feature>/tasks/<taskId>/task.json`，符合引擎的 `schemas/workflow-task.schema.json`。
 
 `.ai-workspace/` 保存项目级上下文，`.ai-workspace/specs/` 保存业务功能规格；两者可以是各自独立的 Git 仓库。此布局下，前者忽略 `specs/` 是正常的仓库边界：规格及任务记录应在后者提交、同步，不能仅提交前者。验证记录分别保存代码、项目上下文、功能规格实际所属的 Git 根目录及提交号。
-这里的修改任务与 SDD 计划里的 Task/Step 不同，不要求为 T1/T2 编写需求、设计或计划。
+这里的修改任务与 SDD 计划里的 Task/Step 不同，T1 可延期同步，T2 按影响同步相关需求、设计与测试；不要求额外创建整套规格或计划。
 
-- 功能长期存在；任务有固定目标、T1/T2/T3、不可变 ownerId；Agent/session 可以更换。
+- 功能长期存在；任务有固定目标、独立 T1/T2/T3（默认 T2）、不可变 ownerId；Agent/session 可以更换。
 - 使用 `workflow-task.ps1` 或根入口 `ai-sop.ps1 Task`。先 Discover，确定是 Start、Resume 还是原任务收尾；仅讨论不认领，有歧义只询问候选任务。
 - Start 为独立修改创建新记录，不继承历史成功证据，不修改功能级进度和批准。
 - Resume 保持 taskId/ownerId/tier。ACTIVE 任务用 Transfer；PAUSED 任务重新 Claim。旧 ACTIVE owner 可显式 Resume 收编为任务，保留批准但重新采集执行证据。
@@ -28,9 +28,14 @@ Status 与 Discover 共用摘要；Status 额外检查执行证据的当前输�
 
 任务执行记录中的 `inputs-v1` 是源码等验证输入的内容快照，不使用 Git status、暂存状态或基线 diff。其清单保存在每次执行记录中，可定位过期文件。审查 baseline 仍用于分析修改范围，不与验证输入指纹混用。
 
-`Run` 执行真实命令并记录退出码、输入前后指纹和批次；失败同样保留。T1 至少成功编译；T2/T3 还需成功测试。不同批次可累计，但每个批次最后一次必须成功且适用于当前输入；T3 用 `CaseIds` 映射覆盖矩阵的用例，不用测试条数替代覆盖。CaseIds 是控制器根据实际输出提供的映射，当前不解析所有测试框架的报告，也不宣称防止伪造测试命令。
+`Run` 执行真实命令并记录退出码、输入前后指纹和批次；失败同样保留。T1 至少成功编译；T2/T3 还需成功测试；T2 还需 RecordSync 说明相关规格/用例已同步或无需更新。T1/T2 对确无适用验证的纯文档任务可用 SetApplicability 记录具体原因，不能用于环境故障、缺少测试或测试失败。不同批次可累计，但每个批次最后一次必须成功且适用于当前输入；T3 用 `CaseIds` 映射覆盖矩阵的用例，不用测试条数替代覆盖。CaseIds 是控制器根据实际输出提供的映射，当前不解析所有测试框架的报告，也不宣称防止伪造测试命令。
 
 T3 的 04 仍须满足 schema、固定 baseline 和语义完整性。人工/Agent 确认分析仍覆盖当前改动后，运行 `ReviewImpact` 将分析文件哈希和当前输入指纹绑定到任务；不能盲目用该命令刷新过期分析。需求/设计批准及 07 哈希检查保持有效。
+
+
+任务记录可包含 `tierHistory`、`syncReview`、`applicability`、`followUps`，旧格式仍可读取。ChangeTier 记录人工请求和原因，不删除历史验证；Resume 不顺便改档。T2 的 RecordSync 记录 Agent 对受影响文档/测试的核对结论，机器不证明语义一致性，也不新增文档哈希门禁。
+
+FollowUp 存在来源任务内，PENDING 不参与 Verify/Complete。Start/Resume 提示同功能详情和其他功能数量；FollowUps 汇总当前工作区可见事项。CloseFollowUp 由同功能活动任务通过 Checkpoint 两阶段事务更新来源与当前任务，保留来源任务状态和归属身份。关闭需具体依据；NOT_NEEDED 还需人工请求，暂不处理不清除标记。跨仓库先同步规格 Git，不把这些资料当成本地执行权限。操作示例见 `SUPERPOWERS_MANUAL.md`。
 
 下面的功能级执行证据规则保留给未接入 taskId 的旧流程；新任务优先使用上述入口，历史证据文件不参与 T1/T2 的任务完成判断。
 

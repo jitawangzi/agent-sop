@@ -8,7 +8,7 @@
 
 ### Skill 工具显式调用
 
-Claude Code 用 **Skill 工具**显式调用 Superpowers 技能（`superpowers:brainstorming` 等，见 AGENTS.md 工作流归属表）。**仅 T3 调用 Superpowers**；T2/T1/快通道不调用，直接用 AGENTS.md + 专家 Skills 推进。
+Claude Code 用 **Skill 工具**显式调用 Superpowers 技能（`superpowers:brainstorming` 等，见 AGENTS.md 工作流归属表）。**仅 T3 调用 Superpowers**；T2/T1不调用，直接用 AGENTS.md + 专家 Skills 推进。
 
 ### subagent_type 派发语法
 

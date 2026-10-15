@@ -16,7 +16,7 @@
 
 ## 归属
 
-**Superpowers 是本项目唯一的过程引擎，六个 harness（Claude Code / GitHub Copilot / Antigravity / Cursor / Codex / Pi）统一使用它**（STRICT 工具跑 T3，BLOCKED 工具 Pi 只 T2，见 `harness-capability.ps1`）。`workflow-orchestrator` 不再作为顶层调度器，而是**Superpowers 主流程之外的人工手动片段编排器**（当前=全功能审计，可扩展）；不使用状态机/runtime/Handoff，编排靠人工驱动。
+**Superpowers 是本项目唯一的过程引擎，六个 harness（Claude Code / GitHub Copilot / Antigravity / Cursor / Codex / Pi）统一使用它**（STRICT 工具跑 T3，BLOCKED 工具 Pi 支持 T1/T2，见 `harness-capability.ps1`）。`workflow-orchestrator` 不再作为顶层调度器，而是**Superpowers 主流程之外的人工手动片段编排器**（当前=全功能审计，可扩展）；不使用状态机/runtime/Handoff，编排靠人工驱动。
 
 ## 流程
 
@@ -24,7 +24,7 @@
 
 ```text
 claim feature ownership (SUPERPOWERS)
--> [执行强度判断] T3(默认完整流程) / T2(用户指定快速) / T1(用户指定急速) / 自动快通道(纯配置/纯文档)
+-> [执行强度判断] T2(默认快速) / T1(人工选择极速) / T3(人工选择完整流程)
 -> superpowers:brainstorming
      （一轮调用，两次独立呈递：需求探索 -> 人工确认 01_server_rules.md
        -> 续做设计 -> design-architect 产出 06_design_contract.md
@@ -43,7 +43,7 @@ claim feature ownership (SUPERPOWERS)
 
 **流程关键点**：
 - 需求与设计在同一轮 `brainstorming` skill 调用中连续产出，但分两次独立呈递人工确认（先确认 01 需求再确认 06 设计，不可合并确认）。
-- 设计产出后由 `design-reviewer` 做**机器闭环自审自修**（宏观规范守门 + 设计完整性自检 + 已知缺陷模式对照），不进人工门禁、不占人工时间；存在 `BLOCKER`/`MAJOR` 未修复时不交人工确认。机器闭环**最多 2 轮**（审查→修正→重审）；第 2 轮后仅剩 `MINOR`/`INFO` → 自动豁免通过（`PASS_WITH_WARNINGS`）；仍有 `BLOCKER`/`MAJOR` → 交人工确认。`design-reviewer` 阻断级（`BLOCKER`/`MAJOR`）可判 `NEEDS_FIX`，建议级（`MINOR`/`INFO`）不得判 `NEEDS_FIX`（防挑刺震荡）。**硬证据约束**：进入 `writing-plans` 前必须附 `design-reviewer` 审查报告（含 PASS/NEEDS_FIX/PASS_WITH_WARNINGS、发现分级、专项覆盖、循环轮次）；无报告不得进 writing-plans，快通道除外。**独立派发约束**：`design-reviewer` 必须用 Agent 工具作为独立 subagent 派发（`subagent_type=design-reviewer`），禁止用 `Skill()` 内联自审；NEEDS_FIX 时由 controller 回派独立的 `design-architect`（Agent 派发）修正，禁止 design-reviewer 自改方案。
+- 设计产出后由 `design-reviewer` 做**机器闭环自审自修**（宏观规范守门 + 设计完整性自检 + 已知缺陷模式对照），不进人工门禁、不占人工时间；存在 `BLOCKER`/`MAJOR` 未修复时不交人工确认。机器闭环**最多 2 轮**（审查→修正→重审）；第 2 轮后仅剩 `MINOR`/`INFO` → 自动豁免通过（`PASS_WITH_WARNINGS`）；仍有 `BLOCKER`/`MAJOR` → 交人工确认。`design-reviewer` 阻断级（`BLOCKER`/`MAJOR`）可判 `NEEDS_FIX`，建议级（`MINOR`/`INFO`）不得判 `NEEDS_FIX`（防挑刺震荡）。**硬证据约束**：进入 `writing-plans` 前必须附 `design-reviewer` 审查报告（含 PASS/NEEDS_FIX/PASS_WITH_WARNINGS、发现分级、专项覆盖、循环轮次）；本条仅适用于 T3，无报告不得进 writing-plans。**独立派发约束**：`design-reviewer` 必须用 Agent 工具作为独立 subagent 派发（`subagent_type=design-reviewer`），禁止用 `Skill()` 内联自审；NEEDS_FIX 时由 controller 回派独立的 `design-architect`（Agent 派发）修正，禁止 design-reviewer 自改方案。
 - **不前置**完整新功能测试计划（GREENFIELD）：具体新 TC 在 TDD 中产出；`ValidateTestCoverage` 在实现后做覆盖完整性校验。
 - **LEGACY_EXTENSION 例外**：旧系统加类型/改分发时，抽 1–2 个共享同一分发的 `IDENTICAL_TO_LEGACY` 表征 Case，必须在改生产代码前写好，并能在当前基线上跑绿。锁的是已有行为，不是尚未实现的新类型，也不是每个旧类型一条 Case。表征 Case 必须声明 `assertions.persistenceColdReload` 并在载体方法体再读存储。
 - `implementation-auditor`/`logic-auditor` 是 subagent **内审执行单元**，不作实现后的独立流程节点（其全盘视角由可选的全功能审计覆盖，见下）。**Complete 不读这两份报告**（自报）；机器硬门禁分层见 `docs/QUALITY_GATES.md`。
@@ -152,11 +152,11 @@ brainstorming 节点按需咨询 `design-architect`；设计产出后由 `design
 | 整体收尾 | 全部 Task 后 | 流程合规 + 整体一致性 | Superpowers `requesting-code-review` |
 | 全功能审计（可选手动） | 交付后按需 | 跨任务契约一致 + 整体游戏状态正确性 | `workflow-orchestrator` AUDIT_ONLY 全盘（见下） |
 
-**审查铁律**：每个 Task 先编译通过，再 spec 合规审查 → 代码质量审查（顺序不可颠倒）→ 发现问题则回派实现者修复并再编译 → 重新审查 → 通过才标记该 Task 完成。整体收尾 `requesting-code-review` 独立于 subagent 内审，禁止跳过（哪怕 1 行改动），也**不能**替代未编译或已过期的任务内审。
+**审查铁律（仅 T3）**：每个 Task 先编译通过，再 spec 合规审查 → 代码质量审查（顺序不可颠倒）→ 发现问题则回派实现者修复并再编译 → 重新审查 → 通过才标记该 Task 完成。整体收尾 `requesting-code-review` 独立于 subagent 内审，禁止跳过（哪怕 1 行改动），也**不能**替代未编译或已过期的任务内审。
 
 ## 模型分级调度
 
-Superpowers 控制器派发 subagent 时，应按角色复杂度选档，平衡成本与质量。**轮次比 token 单价更费钱**——便宜模型在多步任务上多轮反而更贵；但纯转录/机械任务用便宜模型省。各 harness 都支持按 subagent 指定模型（Claude Code 与 Copilot 用 frontmatter `model` / per-invocation `model` 参数；Antigravity 用 agent 定义 `model` 字段）。注意 PI 核心无 subagent（能力准入 BLOCKED，只 T2），Cursor/Copilot/Antigravity 的 subagent 能力见 `harness-capability.ps1`。
+Superpowers 控制器派发 subagent 时，应按角色复杂度选档，平衡成本与质量。**轮次比 token 单价更费钱**——便宜模型在多步任务上多轮反而更贵；但纯转录/机械任务用便宜模型省。各 harness 都支持按 subagent 指定模型（Claude Code 与 Copilot 用 frontmatter `model` / per-invocation `model` 参数；Antigravity 用 agent 定义 `model` 字段）。注意 PI 核心无 subagent（能力准入 BLOCKED，支持 T1/T2），Cursor/Copilot/Antigravity 的 subagent 能力见 `harness-capability.ps1`。
 
 用 **harness 无关的档位概念**，不写死模型名（各 harness 的可用模型不同，按其实际可选映射）：
 
@@ -196,18 +196,15 @@ Superpowers 控制器派发 subagent 时，应按角色复杂度选档，平衡�
 
 ## 执行强度分层
 
-**实际执行档位**由单条规则唯一确定：
-`实际执行档位 = MIN(用户显式指定 || 变更类默认, 当前工具最高支持档位)`
+默认 T2，人工指定优先；档位属于本次任务，接管保留，独立新任务不继承。Agent 负责影响分析与建议，不自动升降档。
 
-变更类默认：行为/契约/协议/存储结构变更、新玩法 = T3；已有行为的缺陷修复、单点逻辑调整 = T2；纯配置数值/纯文档 = 快通道。BLOCKED 工具（最高 T2）在用户未表达流程意图时静默降为 T2，用户表达 T3 流程意图时触发 `[SOP 拦截]`。
+- **T1**：完成实现与编译。确需延期的文档、测试用例或验证用 AddFollowUp 记录；无影响就不创建待办。已选择 T1 不重复确认。
+- **T2**：需求与验收点明确即可实施，同步受影响的需求、设计与用例，编译和相关测试通过；RecordSync 记录已更新或无需更新的具体依据。无需头脑风暴、正式计划、独立代码审核，也不默认启动完整业务环境。
+- **T3**：本适配器的完整 Superpowers 流程；已有成果仍适用于当前输入与范围时复用。T3 所需工具不可用时说明缺口，不自行降档。
+- **适用性**：纯文档等在 T1/T2 内通过 SetApplicability 记录不适用及理由；失败、缺测试、环境故障不是不适用。新任务没有第四档快通道。
+- **变更与提醒**：ChangeTier 必须附人工原话和原因；保留失败证据。Start/Resume 自动提示当前工作区未解决 FollowUp，不等待确认、不自动扩展任务。具体命令见 SUPERPOWERS_MANUAL.md。
 
-- **T3**（默认覆盖新功能/协议/存储/行为变更）：完整 Superpowers 流程（brainstorming → 需求确认 → design-reviewer → 设计确认 → writing-plans → subagent-driven-development + TDD → 审计 → requesting-code-review → verification-before-completion）。**只有 T3 需要 Superpowers 技能包**；T2/快通道/T1 不依赖。
-- **T2 快速**（用户显式"快速修改"/"简单需求直接实现"，或变更类默认=缺陷/单点时）：跳 brainstorming/需求设计门禁/design-reviewer/writing-plans，保留 Claim + 编译 + 验证 + 回归 + 文档待更新提醒（5 项）。
-- **T1 急速**（"急速修改"/"直接改"，极少用）：跳全部流程，仅保留编译 + guard 逃生口。AI 须先提醒 T1 风险，用户确认后执行。
-
-**快通道**（AI 自动识别，无需用户指定；**独立档位，非 T2**，完成条件 2 项：编译通过 + 纯数值/文档检查）：纯配置数值变更（`CONFIG_VALUE_CHANGE`）→ 直接实现 + 配置检查 + 受影响场景回归；纯文档变更（`DOC_ONLY`）→ 文档检查后停止。
-
-详见 AGENTS.md「执行强度分层」档位表与快通道判定树。
+T2 更新已批准规格语义需 ResetApproval，避免旧批准继续代表新版本，但无需当次重走 T3 批准；相关 T3 验收时再确认。T1 待同步项和旧任务的验收状态均不阻塞独立新任务。
 
 ## 领域门禁组件（节点级，非流程引擎）
 

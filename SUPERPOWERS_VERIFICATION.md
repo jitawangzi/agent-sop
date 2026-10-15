@@ -1,6 +1,6 @@
 # Superpowers 流程实战验证清单
 
-多个 harness（Claude Code / GitHub Copilot / Antigravity / Cursor / Codex / Pi）统一使用 Superpowers 作为唯一过程引擎。本文档是一份**实战验证清单**：用一个真实小功能走一遍完整流程，逐项确认流程落地正确。各工具能力差异见 `.ai-sop/scripts/harness-capability.ps1`（STRICT 可跑 T3，BLOCKED 只 T2）。
+多个 harness（Claude Code / GitHub Copilot / Antigravity / Cursor / Codex / Pi）统一使用 Superpowers 作为唯一过程引擎。本文档针对人工选择的 **T3**，是一份**实战验证清单**：用一个真实小功能走一遍完整流程，逐项确认流程落地正确。各工具能力差异见 `.ai-sop/scripts/harness-capability.ps1`（STRICT 可跑 T3，BLOCKED 支持 T1/T2）。
 
 ## 前置准备
 
@@ -15,14 +15,16 @@
 
 ### A. 流程入口与自动 Skill 选择
 
-- [ ] **A1**：描述任务后，AI 自动进入 `superpowers:brainstorming`，而非手动激活 `workflow-orchestrator`。
+- [ ] **A1**：明确选择 T3 后，AI 进入 `superpowers:brainstorming`，而非手动激活 `workflow-orchestrator`。
 - [ ] **A2**：AI **没有**调用 `workflow-orchestrator` 作为顶层调度器（它是手动片段编排器，仅全功能审计等手动场景用，不调度完整功能）。
 
-### B. 快通道前置判断（brainstorming 前）
+### B. 任务档位与轻量流程
 
-- [ ] **B1**：若本次是**纯配置数值变更**（只改配置/CSV 数值、业务语义不变），AI 在 brainstorming 前识别为快通道，**跳过需求与设计门禁**，直接进实现 + 配置检查 + 受影响场景回归。
-- [ ] **B2**：若本次是**纯文档变更**（不改业务规则/技术契约），AI 跳过门禁，完成文档检查后停止。
-- [ ] **B3**：若本次是新功能/业务规则变更，AI **走完整 Superpowers 流程**，未借快通道绕过门禁。
+- [ ] **B1**：未指定档位时默认 T2，受影响规格/用例同步、编译和相关测试；不进入完整 brainstorming，不因协议或存储关键词升档。
+- [ ] **B2**：人工指定 T1 时不重复确认；真实延期才 AddFollowUp，下一任务启动提醒但不阻塞、不自动补历史工作。
+- [ ] **B3**：人工选择 T3 时执行完整流程；缺能力时说明，不自动降级。
+- [ ] **B4**：纯文档任务按适用性记录理由，不使用空命令制造通过。失败/环境故障不得写成不适用。
+- [ ] **B5**：跨 Agent Resume 保留档位及待办；人工改档保留历史结果，T2 完成不清除旧待办。
 
 ### C. 人机交互与人工门禁
 

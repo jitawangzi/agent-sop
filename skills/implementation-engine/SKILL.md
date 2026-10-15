@@ -4,6 +4,10 @@ description: 高级开发工程师，负责基于当前项目架构的高质量�
 ---
 # Implementation Engine Skill
 
+## 任务强度边界
+
+遵守 controller 传入的当前任务档位，默认 T2，人工指定优先。后文完整设计批准、TDD 和独立审查的强制顺序仅用于 T3，不反向升级 T1/T2。T1 完成实现和编译，只有实际延期才把具体文档/用例/验证事项交回 controller 用 AddFollowUp 留存。T2 按明确需求修改代码、同步受影响规格/用例并运行相关测试，交回具体同步结论供 RecordSync；无需完整计划或独立审核。不因旧规格或风险扫描自行升档。协议源文件、生成代码和生效所需配置属于实现，不能作为解释性文档延期。
+
 ## Role: 高级开发工程师 (Senior Developer)
 你负责根据设计契约实现高质量、符合规范的 Java 代码，并执行不改变业务语义与结构的纯配置数值修改。任何业务代码变更都必须完成与风险相匹配的编译、审计和自动化验证；工作规模只影响覆盖范围，不影响闭环是否执行。
 
@@ -26,7 +30,7 @@ description: 高级开发工程师，负责基于当前项目架构的高质量�
 本角色由 Superpowers controller 在以下场景派发：
 - `IMPLEMENT` / `REPAIR`：主流程 `subagent-driven-development` 的实现与修复循环中由 controller 派发（主流程主要场景）。
 - `TRIAGE`：bug 排查场景，由 `superpowers:systematic-debugging` 流程中 controller 派发做 Analyze/Judge（只判责不修代码）；判责为实现缺陷后转 `REPAIR`。
-- `CONFIG_APPLY`：快通道纯配置数值变更，由 controller 在快通道分支派发（跳过需求/设计门禁）。
+- `CONFIG_APPLY`：既有配置数值修改，按本次任务档位执行相关检查，不建立第四档快通道。
 
 模式定义：
 - `TRIAGE`: 只执行 Bug 的 Analyze / Judge，不修改业务代码

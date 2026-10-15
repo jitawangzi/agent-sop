@@ -50,6 +50,7 @@ try {
     [IO.File]::WriteAllText((Join-Path $spec '06_design_contract.md'), 'legacy design')
     [IO.File]::WriteAllText((Join-Path $spec 'compile-evidence.json'), '{"exitCode":1}')
     Task Start fix-a @{ Tier='T2'; Objective='Independent fix' } | Out-Null
+    Task RecordSync fix-a @{ Documentation='UNCHANGED'; Tests='UNCHANGED'; Summary='Fixture restores existing behavior; existing regression command covers it.' } | Out-Null
     $first = Read-AiSopTask $spec 'fix-a'
     Assert ($first.tier -eq 'T2') 'Task tier changed because historical design exists'
     $env:CODEX_SESSION_ID='other-feature-session'
@@ -132,6 +133,7 @@ try {
     Task Complete fix-b | Out-Null
     # Failure in one test batch must not be hidden by a green different batch.
     Task Start fix-d @{ Tier='T2'; Objective='Batch verification' } | Out-Null
+    Task RecordSync fix-d @{ Documentation='UNCHANGED'; Tests='UNCHANGED'; Summary='Batch runner fixture; existing test cases remain applicable.' } | Out-Null
     Task Run fix-d @{ Kind='compile'; Executable='pwsh'; Arguments=@('-NoProfile','-Command','exit 0') } | Out-Null
     MustFail { Task Run fix-d @{ Kind='test'; Batch='regression'; Executable='pwsh'; Arguments=@('-NoProfile','-Command','exit 2') } } 'Failed command incorrectly returned success'
     Task Run fix-d @{ Kind='test'; Batch='unit'; Executable='pwsh'; Arguments=@('-NoProfile','-Command','exit 0') } | Out-Null

@@ -177,6 +177,12 @@ try {
         ($agentsText -match '默认 1 个 Task' -and $agentsText -match 'Step')
     Assert-Contract "adapter must define writing-plans Task granularity overlay" `
         ($adapterText -match 'writing-plans Task 粒度')
+    Assert-Contract "Task policy must default to T2 and respect human selection" `
+        ($agentsText -match '默认 T2' -and $agentsText -match '人工显式选择优先' -and $agentsText -match '不自行升降档')
+    Assert-Contract "T2 must synchronize affected artifacts without independent review" `
+        ($agentsText -match 'RecordSync' -and $agentsText -match 'T1/T2 无独立代码审核环节')
+    Assert-Contract "Deferred work must remain visible without becoming a gate" `
+        ($agentsText -match 'AddFollowUp' -and $agentsText -match 'CloseFollowUp' -and $agentsText -match '不因待办升档或阻止完成')
 
     # --- Semantic drift guards: prevent known contradiction phrases from recurring ---
     # These were real drift bugs (single-point fix not propagated). Lock them out so the
@@ -200,10 +206,12 @@ try {
         (Join-Path $workspaceRoot "AI_SOP_使用指南.md")
     )
     $bannedPhrases = [ordered]@{
-        '自动走 T2'           = "fast-track is an independent tier (not T2); use '自动走快通道' instead"
-        '默认 T3'             = "default follows change-class (缺陷/单点=T2); use '变更类默认' instead"
-        '默认T3'              = "default follows change-class; use '变更类默认' instead"
-        '不管需求多简单'      = "removed; tier follows change-class default, not blanket T3"
+        '默认 T3'             = "default is T2; human selection takes priority"
+        '默认T3'              = "default is T2; human selection takes priority"
+        '不管需求多简单'      = "removed; no blanket T3 requirement"
+        '自动降级为 T2'       = "tier changes require the human request; capability failures do not change tier"
+        '必须强制走 T3'       = "risk assessment advises scope and validation; it does not override the task tier"
+        '自动走快通道'        = "new tasks have three tiers; use applicability for pure documentation"
         'ai-sop$1'            = "leftover `$1 path artifact; use '.ai-sop\scripts\' instead"
         '拆分为 2-5 分钟可完成的小任务' = "2-5 minutes are Steps inside a Task, not Task count; see adapter writing-plans Task 粒度"
     }

@@ -5598,6 +5598,17 @@ switch ($Operation) {
                 $lightRoot = Resolve-AiSopWorkspaceRoot -StartPath $specDir
                 $problems = @(Get-AiSopTaskProblems $lightTask $lightRoot)
                 Write-Output "tier=$($lightTask.tier) phase=$($lightTask.status) task=$TaskId"
+                if ($lightTask.syncReview) { Write-Output "SYNC_REVIEW: documentation=$($lightTask.syncReview.documentation) tests=$($lightTask.syncReview.tests); $($lightTask.syncReview.summary)" }
+                if ($lightTask.applicability) {
+                    foreach ($kind in $lightTask.applicability.Keys) {
+                        if ($lightTask.applicability[$kind].status -eq 'NOT_APPLICABLE') { Write-Output "APPLICABILITY: ${kind}=NOT_APPLICABLE; $($lightTask.applicability[$kind].reason)" }
+                    }
+                }
+                if ($lightTask.tier -eq 'T1' -and $lightTask.applicability.test.status -ne 'REQUIRED') {
+                    foreach ($test in @($lightTask.verifications | Where-Object { $_.kind -eq 'test' } | Group-Object batch | ForEach-Object { @($_.Group)[-1] } | Where-Object { $_.exitCode -ne 0 })) {
+                        Write-Output "UNRESOLVED_OPTIONAL_TEST: $($test.batch) exit=$($test.exitCode); T1 completion does not claim this test passed."
+                    }
+                }
                 try {
                     $risk = Get-SemanticRiskAssessment -WorkspaceRoot $lightRoot -DeclaredTier $lightTask.tier -SpecDir $specDir
                     if ($risk.HasHighRisk) { Write-Output "RISK_ADVISORY: $($risk.TriggersHit -join ', '); explicit task tier preserved." }

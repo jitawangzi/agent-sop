@@ -202,6 +202,251 @@
           "type": "boolean"
         }
       }
+    },
+    "tierHistory": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "from",
+          "to",
+          "reason",
+          "userRequest",
+          "changedAt"
+        ],
+        "properties": {
+          "from": {
+            "enum": [
+              "T1",
+              "T2",
+              "T3"
+            ]
+          },
+          "to": {
+            "enum": [
+              "T1",
+              "T2",
+              "T3"
+            ]
+          },
+          "reason": {
+            "type": "string",
+            "pattern": "\\S"
+          },
+          "userRequest": {
+            "type": "string",
+            "pattern": "\\S"
+          },
+          "changedAt": {
+            "type": "string",
+            "format": "date-time"
+          }
+        }
+      }
+    },
+    "syncReview": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "documentation",
+        "tests",
+        "summary",
+        "recordedAt"
+      ],
+      "properties": {
+        "documentation": {
+          "enum": [
+            "UPDATED",
+            "UNCHANGED"
+          ]
+        },
+        "tests": {
+          "enum": [
+            "UPDATED",
+            "UNCHANGED",
+            "NOT_APPLICABLE"
+          ]
+        },
+        "summary": {
+          "type": "string",
+          "pattern": "\\S"
+        },
+        "recordedAt": {
+          "type": "string",
+          "format": "date-time"
+        }
+      }
+    },
+    "applicability": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [],
+      "properties": {
+        "compile": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "status",
+            "reason",
+            "recordedAt",
+            "inputDigest"
+          ],
+          "properties": {
+            "status": {
+              "enum": [
+                "REQUIRED",
+                "NOT_APPLICABLE"
+              ]
+            },
+            "reason": {
+              "type": "string",
+              "pattern": "\\S"
+            },
+            "recordedAt": {
+              "type": "string",
+              "format": "date-time"
+            },
+            "inputDigest": {
+              "type": "string",
+              "pattern": "^[0-9a-f]{64}$"
+            }
+          }
+        },
+        "test": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "status",
+            "reason",
+            "recordedAt",
+            "inputDigest"
+          ],
+          "properties": {
+            "status": {
+              "enum": [
+                "REQUIRED",
+                "NOT_APPLICABLE"
+              ]
+            },
+            "reason": {
+              "type": "string",
+              "pattern": "\\S"
+            },
+            "recordedAt": {
+              "type": "string",
+              "format": "date-time"
+            },
+            "inputDigest": {
+              "type": "string",
+              "pattern": "^[0-9a-f]{64}$"
+            }
+          }
+        }
+      }
+    },
+    "followUps": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "id",
+          "kind",
+          "summary",
+          "scope",
+          "status",
+          "createdAt"
+        ],
+        "properties": {
+          "id": {
+            "type": "string",
+            "pattern": "^[A-Za-z0-9][A-Za-z0-9_-]{0,79}$"
+          },
+          "kind": {
+            "enum": [
+              "documentation",
+              "test-cases",
+              "verification"
+            ]
+          },
+          "summary": {
+            "type": "string",
+            "pattern": "\\S"
+          },
+          "scope": {
+            "type": "array",
+            "minItems": 1,
+            "items": {
+              "type": "string",
+              "pattern": "\\S"
+            },
+            "uniqueItems": true
+          },
+          "status": {
+            "enum": [
+              "PENDING",
+              "RESOLVED",
+              "NOT_NEEDED"
+            ]
+          },
+          "createdAt": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "resolution": {
+            "type": "string",
+            "pattern": "\\S"
+          },
+          "resolvedAt": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "resolvedByTaskId": {
+            "type": "string",
+            "pattern": "^[A-Za-z0-9][A-Za-z0-9_-]{0,79}$"
+          },
+          "userRequest": {
+            "type": "string",
+            "pattern": "\\S"
+          }
+        },
+        "allOf": [
+          {
+            "if": {
+              "properties": {
+                "status": {
+                  "enum": [
+                    "RESOLVED",
+                    "NOT_NEEDED"
+                  ]
+                }
+              }
+            },
+            "then": {
+              "required": [
+                "resolution",
+                "resolvedAt",
+                "resolvedByTaskId"
+              ]
+            }
+          },
+          {
+            "if": {
+              "properties": {
+                "status": {
+                  "const": "NOT_NEEDED"
+                }
+              }
+            },
+            "then": {
+              "required": [
+                "userRequest"
+              ]
+            }
+          }
+        ]
+      }
     }
   }
 }

@@ -36,6 +36,7 @@ try {
     $rootEntry=Join-Path $workspace 'ai-sop.ps1'
     Copy-Item -LiteralPath (Join-Path (Split-Path -Parent $scripts) 'distribution/templates/root/ai-sop.ps1') -Destination $rootEntry
     Task Start @{ Tier='T2'; Objective='Recovery and streaming integration' } | Out-Null
+    Task RecordSync @{ Documentation='UNCHANGED'; Tests='UNCHANGED'; Summary='Recovery fixture uses existing command scenarios; no contract change.' } | Out-Null
     # A synchronized task record grants no execution ownership in another workspace.
     $remoteWorkspace=Join-Path $root 'receiver'
     $remoteSpec=Join-Path $remoteWorkspace '.ai-workspace/specs/features/Example'
@@ -124,6 +125,9 @@ try {
     Fails { Task Resume } 'RUN_UNFINISHED'
     Fails { Task Suspend } 'RUN_UNFINISHED'
     Fails { Task Run @{Profile='build'} } 'RUN_UNFINISHED'
+    Fails { Task ChangeTier @{Tier='T1';Reason='Requested quicker handoff';UserRequest='Use T1'} } 'RUN_UNFINISHED'
+    Task AddFollowUp @{FollowUpId='runner-doc';FollowUpKind='documentation';Summary='Explain interruption recovery';Scope=@('runtime documentation')} | Out-Null
+    Assert ((Read-AiSopTask $spec recovery).verifications[-1].outcome -eq 'RUNNING') 'Recording a follow-up changed the running verification'
     # Only terminate the Process instance created by this test, including its child.
     $runner.Kill($true); $runner.WaitForExit(5000) | Out-Null
     $runner.Dispose(); $runner=$null

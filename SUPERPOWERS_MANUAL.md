@@ -1,10 +1,10 @@
 # Superpowers 自动化开发指南
 
-> **任务模式更新**：新修改优先使用 `ai-sop.ps1 Task`。T1/T2/T3 属于本次修改，不由历史功能产物自动决定。未带 taskId 的旧命令仍保留兼容语义，下面的旧功能级证据说明不覆盖任务模式。
+> **任务模式更新**：新修改优先使用 `ai-sop.ps1 Task`。默认 T2，人工指定优先。T1/T2/T3 属于本次修改，不由风险关键词或历史功能产物自动决定。未带 taskId 的旧命令仍保留兼容语义，下面的旧功能级证据说明不覆盖任务模式。
 
 ## 任务状态、异常恢复和验证命令配置
 
-`ai-sop.ps1 Status` 与 `Task -Operation Status` 使用同一任务摘要；支持 `-Feature`、`-TaskId` 筛选。Discover 显示相同的任务/归属/会话信息而不扫描全部验证输入。摘要中的 `recordedApprovals` 是批准记录展示，`EXECUTION_EVIDENCE_CURRENT` 只说明执行证据适用，完整 T3 收尾仍使用 Verify。
+`ai-sop.ps1 Status` 与 `Task -Operation Status` 使用同一任务摘要；支持 `-Feature`、`-TaskId` 筛选。Discover 显示相同的任务/归属/会话信息而不扫描全部验证输入。摘要中的 `recordedApprovals` 是批准记录展示，`EXECUTION_EVIDENCE_CURRENT` 只说明执行证据适用；`APPLICABILITY_RECORDED` 表示含不适用声明，不是未运行的命令通过，完整 T3 收尾仍使用 Verify。
 
 正常切换 Agent 用 Resume。异常中断、本地 owner 丢失、或接收到没有本地 owner 的 ACTIVE 任务时，先 Status，再 `Task -Operation Recover`，恢复为 PAUSED 后 Resume。Recover 不把任务标成完成，不导入其他工作区的权限。若原会话仍标记 ACTIVE/IDLE，先确认旧 Agent 已停止，再显式使用 `-ForceRecovery -Notes "恢复原因"`；本机验证进程还在运行时，即使带该参数也会拒绝恢复。旧 ForceRelease 也会同步暂停任务、清除原会话绑定，使用同一事务。
 
@@ -55,25 +55,25 @@ T1/T2 的 Run 不读取历史需求设计和覆盖矩阵，历史损坏的覆盖
 5. 每阶段 `Task -Operation Checkpoint ... -NextAction "下一步" -Notes "已完成与未解决项"`；环境阻塞或离开时 `Suspend` 保存暂停并释放执行占用。取消用 Cancel，均不宣称完成。
 6. `Task -Operation Verify ...` 列齐缺失/失败批次、变化文件和 T3 规格问题；通过后 `Complete`。T3 要求的影响分析必须经检查，再用 ReviewImpact 显式记录当前分析与代码绑定，禁止盲目刷新哈希。
 
-T1 只需真实编译/基础检查，T2 还需相关测试，均不背负原功能历史 T3 收尾。涉及原契约语义变化要明确告知用户，不能把原批准当成新语义已批准。暂停任务与独立新任务可以顺序存在；同功能不同时推进两个独立主会话。
+T1 只需真实编译/基础检查；T2 还需相关测试和 RecordSync 记录受影响规格/用例的同步结果，均不背负原功能历史 T3 收尾。涉及原契约语义变化要明确告知用户，不能把原批准当成新语义已批准。暂停任务与独立新任务可以顺序存在；同功能不同时推进两个独立主会话。
 
 不同功能并行继续采用独立工作区和测试数据隔离；最终组合重新验收。跨工作区恢复先 Suspend、同步任务/规格与代码，接收端 Resume 取得本地会话。Discover/Doctor 若提示 SPECS_IGNORED，应检查提示中实际管理规格的 Git 仓库。若 `.ai-workspace` 和 `.ai-workspace/specs` 是两个独立仓库，应分别同步项目上下文和功能规格/任务记录，父仓库忽略 `specs/` 属正常隔离；工具不会擅自提交存量文档。
 
 任务内容指纹排除暂存状态、日志及常见构建输出，但保守包含公共输入。它不是完整的环境快照；服务、工具链或外部依赖变化时仍应按实际风险重新验证。详细约束见 `workflows/shared-artifacts.md`。
 
 
-本指南说明多个 harness（Claude Code / GitHub Copilot / Antigravity / Cursor / Codex / Pi）如何使用本项目的 AI SOP 完成游戏服务端开发。**T3 由 Superpowers 过程引擎编排；T2/T1/快通道用 AGENTS.md + 专家 Skills，不调用 Superpowers**。领域专家 Skill 被强制绑定调用；详见 `.ai-sop/workflows/superpowers-adapter.md`。各 harness 共享 `.ai-workspace/context/` 与规范化功能产物。各工具的能力差异（能跑 T3 还是只 T2）见 `.ai-sop/scripts/harness-capability.ps1` 的 STRICT/BLOCKED 判定。
+本指南说明多个 harness（Claude Code / GitHub Copilot / Antigravity / Cursor / Codex / Pi）如何使用本项目的 AI SOP 完成游戏服务端开发。**T3 由 Superpowers 过程引擎编排；T2/T1用 AGENTS.md + 专家 Skills，不调用 Superpowers**。领域专家 Skill 被强制绑定调用；详见 `.ai-sop/workflows/superpowers-adapter.md`。各 harness 共享 `.ai-workspace/context/` 与规范化功能产物。各工具的能力差异（能跑 T3 还是支持 T1/T2）见 `.ai-sop/scripts/harness-capability.ps1` 的 STRICT/BLOCKED 判定。
 
-## 🧭 用户任务极简判定树
+## 🧭 用户任务选择
 
-- 🐛 **日常 Bug 修复 / 单点逻辑微调** $\rightarrow$ 说 `快速修改：...`（自动按 T2 单命令直达，不打断）
-- 📄 **纯数值微调 / 错别字润色** $\rightarrow$ 直接改（自动按快通道秒级生效）
-- ✨ **新玩法活动 / 协议变更 / 存储改动** $\rightarrow$ 描述功能目标（自动按 T3 展开，需需求+设计两道确认）
-- 📑 **超复杂策划案** $\rightarrow$ 选用 `requirement-analyst` 预处理提取 BR 条款
+- 日常任务直接描述，默认 T2；用户提供的明确需求可以直接实施。
+- 时间紧时明确说“按 T1，先完成实现并编译”，可以用于紧急修复或协议调整。Agent 不重复要求确认。
+- 希望完整需求设计、计划、审核和验证时明确说“按 T3”。复杂功能建议 T3，但最终由人工决定。
+- 纯文档/配置不再构成第四档；按当前档位判断编译和测试的适用性。
 
 ## 为什么不需要声明流程模式
 
-各 harness 统一以 Superpowers 为过程引擎（仅 T3）。用户只需描述任务，Superpowers 会自动选择对应的过程 Skill：
+各 harness 统一以 Superpowers 为过程引擎（仅 T3）。用户明确选择 T3 后，Superpowers 才按阶段选择对应的过程 Skill；默认 T2 不调用这些完整流程节点：
 
 | 任务形态 | Superpowers 自动选择的 Skill |
 |---|---|
@@ -90,16 +90,17 @@ T1 只需真实编译/基础检查，T2 还需相关测试，均不背负原功�
 
 ```mermaid
 flowchart TD
-    A[用户输入指令] --> B{自动判定 T 档}
+    A[用户输入指令] --> B{人工指定或默认 T2}
     
-    B -->|快通道: 纯配置/纯文档| C[直接修改 + 回归测试/文档检查]
+    B -->|T1: 人工选择极速| C[实现 + 编译 + 必要延期记录]
+    C --> S
     
-    B -->|T2: 快速修复/单点逻辑| D[Claim 归属]
-    D --> D1[修改代码 + 项目编译]
+    B -->|T2: 默认快速| D[Start 任务 + 非阻断待同步提醒]
+    D --> D1[修改代码 + 同步相关规格与用例 + 编译]
     D1 --> D2[定向单元测试验证]
     D2 --> S[VerifyCompletion 硬门禁检验]
     
-    B -->|T3: 协议/存储/完整新功能| E[Claim 归属]
+    B -->|T3: 人工选择完整流程| E[Start 任务]
     E --> F[Superpowers brainstorming 澄清与探索]
     F --> G[产出 01_server_rules.md 需求规则]
     G --> H{人工确认需求门禁}
@@ -123,16 +124,60 @@ flowchart TD
 
 ### 执行强度档位（T 档）与提示词指定
 
-流程强度**按变更类默认 + 用户可显式指定 + 工具上限**，见 AGENTS.md「执行强度分层」档位表（行为/契约/协议/存储=T3；缺陷/单点=T2；纯数值/纯文档=快通道）。用户显式档位优先于变更类默认。
+默认 T2，人工明确选择优先。相同任务可按时间要求选择不同档位，Agent 不因风险分析自行改档。
 
-| 档 | 提示词怎么说 | 跳过 |
+| 档位 | 选择方式 | 完成要求 |
 |---|---|---|
-| **T3** | 新玩法/协议/存储：直接描述任务 | 不跳，走完整流程 |
-| **T2 快速** | “**快速修改**”/“**简单需求直接实现**”/“这个不用走完整流程” | brainstorming、需求确认、design-reviewer、设计确认、writing-plans；保留归属+编译+验证+回归 |
-| **T1 急速** | “**急速修改**”/“**直接改**”/“极速”（极少用，AI 先提醒风险确认） | 全部流程节点；仅保留编译+guard 逃生口 |
-| **快通道** | 不用说（AI 自动识别纯配置数值/纯文档） | 需求与设计门禁 |
+| T1 极速 | 人工明确选择 | 实现及真实编译；确有延期才记录待同步事项 |
+| T2 快速 | 默认，或“快速修改” | 实现、相关需求/设计/用例同步、编译与相关测试 |
+| T3 完整 | 人工要求完整流程 | 完整 Superpowers 流程，复用仍有效的成果 |
 
-日常快速修改用 **T2**（多 2-3 分钟但带验证+回归，更安全）；T1 仅极端场景（如改日志级别/临时开关）。**协议字段名变更不是 T1/T2，是 T3。** BLOCKED 工具（Pi）只能 T2；STRICT 工具（Claude Code/Cursor/Copilot/Antigravity）可跑 T3。
+工具能力不足以执行 T3 时说明缺口，不能自动降档。接管保留原任务档位；独立新任务不继承历史 T3。
+
+### 同步记录、人工改档和适用性
+
+以下命令由 Agent 根据实际工作自动执行，不要求用户填写表单。示例中的目标、范围和依据必须换成真实内容。
+
+```powershell
+& ./ai-sop.ps1 Task -Operation RecordSync -Feature Example -TaskId fix-1 -Agent CODEX `
+  -Documentation UPDATED -Tests UNCHANGED -Summary '更新 06 的响应规则；既有 ResponseTests 覆盖此次恢复行为'
+& ./ai-sop.ps1 Task -Operation ChangeTier -Feature Example -TaskId fix-1 -Agent CODEX `
+  -Tier T1 -Reason '人工要求先交付联调' -UserRequest '这次先按 T1，文档和测试稍后补'
+```
+
+RecordSync 的 UPDATED/UNCHANGED 是 Agent 的语义核对记录，不用新的文档哈希门禁证明语义正确；旧文档无需变化时无需为了完成表修改文件。T2 必须有这条简短记录，T1 不要求。T2 修改已批准规格的语义时先 ResetApproval，记录本次需求依据；无需当次走 T3 重新批准，但不得刷新哈希冒充旧批准仍覆盖新版本。
+
+ChangeTier 只改变活动任务的交付要求，保留原 taskId、ownerId、历史执行结果及 tierHistory。必须记录人工请求，不能由风险扫描或工具故障代替人工决定；失败测试不会被改成通过。恢复暂停任务先 Resume，再按人工要求改档。升级 T3 后须满足 T3 的规格、审核和测试要求，旧轻量证据不自动成为 T3 证据。
+
+纯解释性文档等确无构建或可执行行为影响时，可在 T1/T2 记录适用性：
+
+```powershell
+& ./ai-sop.ps1 Task -Operation SetApplicability -Feature Example -TaskId docs-1 -Agent CODEX `
+  -Kind compile -Applicability NOT_APPLICABLE -Reason '仅修正文档错字，无构建输入变化'
+& ./ai-sop.ps1 Task -Operation SetApplicability -Feature Example -TaskId docs-1 -Agent CODEX `
+  -Kind test -Applicability NOT_APPLICABLE -Reason '仅修正措辞，无可执行行为变化'
+```
+
+将 Applicability 设为 REQUIRED 可明确要求该验证（包括 T1 中人工要求的相关测试）。NOT_APPLICABLE 声明绑定当前输入，后续代码变化会使其过期；机器不能判断说明是否真实，Agent 必须核实。测试失败、测试缺失、环境不可用不得写成不适用；尚未解决的失败也不能用此命令豁免。T1/T2 的源码修改默认需要编译，T3 不接受轻量适用性豁免。RecordSync 的 Tests=NOT_APPLICABLE 仅描述用例同步，不替代测试执行适用性。
+
+### 待同步事项：可见但不阻塞
+
+```powershell
+& ./ai-sop.ps1 Task -Operation AddFollowUp -Feature Example -TaskId fix-1 -Agent CODEX `
+  -FollowUpId response-doc -FollowUpKind documentation -Summary '补充新响应字段含义' `
+  -Scope @('06_design_contract.md#响应字段', 'ResponseCodec#decode')
+& ./ai-sop.ps1 Task -Operation FollowUps -Feature Example
+& ./ai-sop.ps1 Task -Operation CloseFollowUp -Feature Example -TaskId sync-1 -Agent CODEX `
+  -SourceTaskId fix-1 -FollowUpId response-doc -Disposition RESOLVED -Resolution '已在 06 响应字段节补充类型、空值及兼容行为'
+```
+
+- 仅实际延期才 AddFollowUp，稳定 ID 用于避免重试重复。documentation、test-cases、verification 分别表示待补文档、待补用例、待执行验证。
+- 记录保存在来源任务的 `tasks/<taskId>/task.json`，随所属规格 Git 仓库同步。T1 完成或取消不自动隐藏 PENDING。
+- Start/Resume 自动检查当前工作区；同功能显示详细事项，其他功能最多一行数量摘要。提醒后继续，不等待用户确认、不自行加入本次工作，不反复在执行中催办。
+- 新 T2 只负责本次相关同步，不自动承担历史待办；如触及相同行为应指出关联，范围内可一起完成，范围外不扩展任务。
+- CloseFollowUp 由当前活动任务执行；可关闭同功能历史任务的待办，保持原任务 DONE/PAUSED/CANCELLED 状态，以同一事务更新来源记录和当前任务。跨功能事项在对应功能的任务中处理。
+- 实际完成记 RESOLVED，Resolution 给出文件、用例或验证结果等具体依据；人工明确不需要处理记 NOT_NEEDED，并附 UserRequest。暂不处理仍保留 PENDING，不需要额外命令。
+- Discover/Status 显示来源任务的待办，FollowUps 可集中查询。提醒查询失败仅报诊断，不阻止新任务。仅有标记不阻塞任何档位；相关 T3 整体验收仍需消除实际规格或验证缺口。
 
 ## 人机交互约定
 
@@ -154,7 +199,7 @@ pwsh -NoProfile -File .\.ai-sop\scripts\workflow-owner.ps1 -Operation Claim `
   -OwnerId "<superpowers-run-id>"
 ```
 
-`agent` 值取自实际工具，而非底层模型。Codex 使用 `CODEX`，直接 Claim 时从 `CODEX_SESSION_ID` 注册 session。注意 PI 因核心无 subagent，能力准入判定为 BLOCKED（只 T2，不能跑自动 T3 独立审查），其 Claim 经 `pi-adapter/bootstrap-pi-session.ps1` 注册 session。*注意：已有 01/06 规格产物的功能目录，后续修改均按 T3 门禁收尾（`VerifyCompletion` 自动升档校验）；若对已有功能进行 T2 快速热修，请开新 FeatureName（如 `HotfixShopLimit20260821`）。*
+`agent` 值取自实际工具，而非底层模型。Codex 使用 `CODEX`，直接 Claim 时从 `CODEX_SESSION_ID` 注册 session。注意 PI 因核心无 subagent，能力准入判定为 BLOCKED（支持 T1/T2，不能跑自动 T3 独立审查），其 Claim 经 `pi-adapter/bootstrap-pi-session.ps1` 注册 session。已有功能继续使用原 FeatureName，为每次独立修改创建 taskId；不要通过另开功能目录规避旧门禁。下面的直接 Claim 仅用于旧流程兼容，新任务使用 Task Start。
 
 恢复任务或开始新的修改批次前用同一身份执行 `Validate`；功能成功交付后执行 `Complete`。失败或阻塞时不要 Complete，以便原会话恢复：
 

@@ -1,6 +1,7 @@
 #requires -Version 7.0
 # Shared task identity and validation inputs. No project-domain assumptions.
 . (Join-Path $PSScriptRoot 'workflow-transaction.ps1')
+. (Join-Path $PSScriptRoot 'task-policy.ps1')
 
 function Get-AiSopTaskPath {
     param([string]$SpecDirectory, [string]$TaskId)
@@ -80,10 +81,20 @@ function Get-AiSopTaskProblems {
     param($Task, [string]$WorkspacePath, [string]$SpecDirectory = '')
     $problems = [Collections.Generic.List[string]]::new()
     $snapshot = Get-AiSopInputSnapshot $WorkspacePath
+    if ($Task.tier -eq 'T2' -and -not $Task.syncReview) { $problems.Add('MISSING_SYNC_REVIEW: record affected documentation and test updates, or explain why unchanged') }
     foreach ($pending in @($Task.verifications | Where-Object { $_.outcome -eq 'RUNNING' })) { $problems.Add("RUN_UNFINISHED:$($pending.runId):$(Get-AiSopRunActivity $pending $WorkspacePath)") }
     foreach ($kind in @('compile', 'test')) {
-        if ($kind -eq 'test' -and $Task.tier -eq 'T1') { continue }
+        $applicability = if ($Task.applicability) { $Task.applicability[$kind] } else { $null }
+        if ($kind -eq 'test' -and $Task.tier -eq 'T1' -and $applicability.status -ne 'REQUIRED') { continue }
         $records = @($Task.verifications | Where-Object { $_.kind -eq $kind })
+        if ($applicability.status -eq 'NOT_APPLICABLE' -and $Task.tier -ne 'T3') {
+            if ($applicability.inputDigest -cne $snapshot.digest) { $problems.Add("STALE_APPLICABILITY:$kind") }
+            $latest = @($records | Group-Object batch | ForEach-Object { @($_.Group)[-1] })
+            foreach ($record in $latest) {
+                if ($record.exitCode -ne 0 -or -not $record.inputsStable) { $problems.Add("EXECUTION_FAILED:${kind}:$($record.batch):cannot hide failure with NOT_APPLICABLE") }
+            }
+            continue
+        }
         if (-not $records.Count) { $problems.Add("MISSING_EVIDENCE:$kind"); continue }
         # Each named test batch must have a successful latest execution. A later
         # green batch cannot hide an unresolved failure in another batch.
@@ -176,7 +187,9 @@ function Get-AiSopTaskSummary {
     if ($CheckInputs) {
         try {
             $problems = @(Get-AiSopTaskProblems $Task $WorkspacePath $SpecDirectory)
-            $verification = if ($problems.Count) { 'NEEDS_ATTENTION' } else { 'EXECUTION_EVIDENCE_CURRENT' }
+            $verification = if ($problems.Count) { 'NEEDS_ATTENTION' }
+                elseif ($Task.tier -ne 'T3' -and $Task.applicability -and @($Task.applicability.Values | Where-Object { $_.status -eq 'NOT_APPLICABLE' }).Count) { 'APPLICABILITY_RECORDED' }
+                else { 'EXECUTION_EVIDENCE_CURRENT' }
             $diagnostics += $problems
         } catch { $verification='UNAVAILABLE'; $diagnostics += $_.Exception.Message }
     }
@@ -185,6 +198,10 @@ function Get-AiSopTaskSummary {
         ownerStatus=$ownerStatus; sessionStatus=$sessionStatus; verification=$verification
         recordedApprovals=(Get-AiSopRecordedApprovals $SpecDirectory)
         nextAction=$Task.nextAction; suggestedAction=$action; notes=$Task.notes; runs=$runs
+        syncReview=$Task.syncReview; applicability=$Task.applicability
+        tierHistory=@($Task.tierHistory | Where-Object { $null -ne $_ })
+        pendingFollowUps=@($Task.followUps | Where-Object { $_.status -eq 'PENDING' })
+        failedVerifications=@($Task.verifications | Group-Object kind,batch | ForEach-Object { @($_.Group)[-1] } | Where-Object { $_.exitCode -ne 0 -and $_.outcome -ne 'RUNNING' } | ForEach-Object { @{ kind=$_.kind; batch=$_.batch; exitCode=$_.exitCode; outcome=$_.outcome } })
         diagnostics=$diagnostics; updatedAt=$Task.updatedAt
     }
 }

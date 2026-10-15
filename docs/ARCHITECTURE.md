@@ -107,14 +107,14 @@ AI 编码工具百花齐放（Claude Code、Copilot、Cursor、Antigravity、Pi�
 
 **为什么这么设计**：`harness-capability.ps1` 探测每工具的能力并区分关键与辅助：**关键能力** = {subagent, evidence}（全满足→STRICT，任一缺失→BLOCKED）；**辅助能力** = {skillDiscovery, blockingHook, workspace, pauseResume}（记录但不 gating）。未知默认 BLOCKED（不静默降级）。T3 核心是独立审查，需要 subagent 派发独立上下文的审查者且能产出 evidence；pauseResume/blockingHook/skillDiscovery 影响体验与可用性，但不决定能否做独立审查。
 
-**为什么 evidence 是关键能力**：T3 核心是独立审查（design-reviewer 必须独立 subagent 派发，禁止内联自审）。无 subagent 的工具无法独立派发，evidence=false→BLOCKED，只能 T2。
+**为什么 evidence 是关键能力**：T3 核心是独立审查（design-reviewer 必须独立 subagent 派发，禁止内联自审）。无 subagent 的工具无法独立派发，evidence=false→BLOCKED，支持 T1/T2。
 
 **考虑过的替代**：
 - 都允许 T3，靠人自觉选工具：人会忘/图省事，T3 审查失效——否决。
 - 静默降级（弱工具自动跑 T2）：无提醒，质量隐性下降——否决（要明确输出缺口）。
 - 全局禁用某工具：太死板，工具升级后不能自动升档——否决。
 
-**价值**："Pi 只 T2"从文档约束变可查询判定；未知工具默认 BLOCKED 防止静默降级；工具能力升级后校准表即可升 STRICT。
+**价值**："Pi 支持 T1/T2"从文档约束变可查询判定；未知工具默认 BLOCKED 防止静默降级；工具能力升级后校准表即可升 STRICT。
 
 ### 决策7：Installer + Lock + Manifest（为什么需要版本锁和投影校验）
 
@@ -306,15 +306,15 @@ AI 编码工具百花齐放（Claude Code、Copilot、Cursor、Antigravity、Pi�
 
 ## 四、能力准入（STRICT/BLOCKED）
 
-`harness-capability.ps1` 对每个工具判定能跑 T3 还是只 T2：
+`harness-capability.ps1` 对每个工具判定能跑 T3 还是支持 T1/T2：
 - **关键能力** = {subagent, evidence}（全满足→STRICT，任一缺失→BLOCKED）
 - **辅助能力** = {skillDiscovery, blockingHook, workspace, pauseResume}（记录，不 gating）
 - 全关键满足 → STRICT（可跑 T3 自动实现+独立审查）
-- 任一关键缺失/未知 → BLOCKED（只能 T2，明确输出缺口，不静默降级）
+- 任一关键缺失/未知 → BLOCKED（支持 T1/T2，明确输出缺口，不静默降级）
 
 当前判定（`distribution/harness-capability.json`，由 `harness-capability.ps1 -All` 生成的快照；运行时以脚本探测为准）：
 - STRICT：Claude Code/CLI、Copilot/CLI、Antigravity/CLI、Cursor/CLI（均有 subagent+evidence；Copilot/Antigravity 的 pauseResume 待 P3 真机确认，但 pauseResume 是辅助能力不影响 STRICT 判定）
-- BLOCKED：Pi/CLI（核心无 subagent→无 evidence，只能 T2）
+- BLOCKED：Pi/CLI（核心无 subagent→无 evidence，支持 T1/T2）
 
 判定命令：`pwsh -NoProfile -File ./.ai-sop/scripts/harness-capability.ps1 -All`
 

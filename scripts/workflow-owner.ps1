@@ -57,6 +57,7 @@ param(
     [string]$NextAction = "",
     [string]$Notes = "",
     [string]$EvidencePath,
+    [string]$TaskUpdateJson,
     [switch]$ImpactReviewed,
     [switch]$ForceRecovery,
     [string]$Baseline = $null
@@ -979,7 +980,7 @@ if ($TaskId) {
         if ($Operation -eq 'Claim' -and $taskBefore.status -ne 'PAUSED') { throw 'TASK_NOT_RESUMABLE' }
         if ($Operation -ne 'Claim' -and $taskBefore.status -ne 'ACTIVE') { throw 'TASK_NOT_ACTIVE' }
         $taskAfter = Copy-WorkflowRecord $taskBefore
-        if ($PSBoundParameters.ContainsKey('Tier') -and $Tier -cne $taskBefore.tier) { throw 'TASK_TIER_IMMUTABLE' }
+        if ($PSBoundParameters.ContainsKey('Tier') -and $Tier -cne $taskBefore.tier) { throw 'TASK_TIER_CHANGE_REQUIRES_EXPLICIT_OPERATION: use Task ChangeTier with the human request' }
         $Tier = [string]$taskBefore.tier
     } elseif ($Operation -eq 'Transfer' -and -not $existingOwner.taskId -and $Objective) {
         $taskAfter = [ordered]@{
@@ -1499,6 +1500,12 @@ if ($null -ne $taskAfter) {
     $taskAfter.updatedAt = $AcceptedAt.ToString('o')
     if ($PSBoundParameters.ContainsKey('NextAction')) { $taskAfter.nextAction = $NextAction }
     if ($PSBoundParameters.ContainsKey('Notes')) { $taskAfter.notes = $Notes }
+    if ($TaskUpdateJson) {
+        if ($Operation -ne 'Checkpoint' -or $EvidencePath -or $ImpactReviewed) { throw 'TASK_UPDATE_REQUIRES_SEPARATE_CHECKPOINT' }
+        $policyUpdate = ConvertFrom-AiSopWorkflowJson $TaskUpdateJson -AsHashtable
+        $related = Update-AiSopTaskPolicy -Task $taskAfter -Update $policyUpdate -SpecDirectory $ResolvedSpecDirectory -WorkspacePath $ownerWs -At $AcceptedAt.ToString('o')
+        if ($related) { $targets += New-OwnerTarget -Path $related.path -Kind TASK -SchemaId TASK -After $related.after -BeforeExists $true -Before $related.before }
+    }
     if ($ImpactReviewed) {
         if ($Operation -ne 'Checkpoint') { throw 'IMPACT_REQUIRES_CHECKPOINT' }
         $impactPath = Join-Path $ResolvedSpecDirectory '04_change_impact.json'
@@ -1665,7 +1672,7 @@ if (-not [string]::IsNullOrWhiteSpace($ResolvedSpecDirectory)) {
                     ($hasReq -or $hasDes) -and
                     $effectiveTier -ne "T3"
                 ) {
-                    Write-Warning "SPEC_HAS_DESIGN_ARTIFACTS: spec directory already has 01_server_rules.md / 06_design_contract.md. T2 Claim succeeded, but Complete/VerifyCompletion treats this feature as T3. Open a new FeatureName for an independent T2 hotfix."
+                    Write-Warning "SPEC_HAS_DESIGN_ARTIFACTS: this legacy owner still uses feature-level approval gates. Use Task Resume to adopt it, or Start an independent task after releasing it; do not create another feature merely to select T1/T2."
                 }
             } catch {
                 Write-Warning "Failed to sync feature-state.json: $_"

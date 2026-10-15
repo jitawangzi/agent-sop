@@ -7,6 +7,7 @@
 - T1/T2 使用任务自己的档位和验证，不因历史 T3 规格自动升档；无需创建完整计划。
 - T3 沿用本适配器的需求设计、独立审查和覆盖要求。调用 `workflow-state.ps1` 的 ValidateChangeImpact、ValidateTestCoverage、VerifyCompletion 时带 `-TaskId`，避免误走旧执行证据规则。
 - 用 `Task Run` 执行编译和测试并留存真实结果；T3 测试批次提供实际覆盖的 CaseIds。原有文字编译摘录用于审查上下文，不能替代执行记录。
+- T3 Start 固定任务基线。用 `Task Changes` 获取本次内容差异，04 的 taskId/baseline/baselineInputDigest/changedFiles/changeSetDigest 必须对应当前任务；用 SetCaseScope 登记本次必测 CaseIds 和理由，包含 04 要求的回归用例。其他未开发用例不作为本任务执行要求，整体规格覆盖定义仍检查。可选 JUnitReports + CaseMap 从报告映射结果。
 - 检查 04 分析后使用 `Task ReviewImpact` 记录当前绑定；最终 `Task Verify`、`Task Complete` 只完成本次修改。
 - 状态统一通过根 Status 或 Task Status 查询；异常中断或归属丢失用 Recover → Resume。发现 RUNNING 先检查实际进程和日志，不能覆盖旧运行记录。常用验证命令可由宿主 context/verification-commands.json 提供，用 Run -Profile 调用。
 - 中断或环境阻塞用 Checkpoint/Suspend，释放执行占用并保留未完成项；独立后续任务另建身份。接管 Resume 保留原身份和档位。

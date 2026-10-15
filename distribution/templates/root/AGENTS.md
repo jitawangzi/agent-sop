@@ -25,6 +25,10 @@
 
 **任务完成条件**：T1 真实编译/基础检查成功，报告未测试范围；T2 编译与相关测试成功，并用 RecordSync 记录受影响需求、设计与测试的同步结果；T3 完整规格和审查门禁加当前任务证据。T1/T2 无独立代码审核环节。测试环境失败可以暂停交接，不能写成通过。本次任务 DONE 不代表旧 T3 或整个功能已全面验收。
 
+**T3 任务范围**：Start 固定修改前内容基线，功能长期批准基线独立保留。用 `Task Changes` 读取本次新增/修改/删除范围；需要 04 时，taskId、baseline、baselineInputDigest、changedFiles、changeSetDigest 必须匹配该范围，ReviewImpact 保存的 `.ai-workspace/specs/.artifacts/changes/` 清单随 specs 同步。用 `SetCaseScope -CaseIds ... -Reason ...` 登记本次必测用例，包含 04 的 requiredRegressionCases；规格变化后重新核对。其他未开发用例不强制本次执行，整体规格覆盖定义仍检查。旧活动 T3 缺基线时只可 SetBaseline 指向可信修改前清单，不能以修改后现场补造；历史 DONE 不迁移。T1/T2 不新增上述步骤。可选 JUnitReports + CaseMap 从本次 JUnit XML 映射结果，不能用旧/跳过/失败报告充当通过。
+
+**损坏结果恢复**：InspectRecovery 只读定位 task/owner/session/待入账结果问题。待入账结果损坏且原执行已停止时，可显式 Recover -QuarantineInvalidEvidence -Reason，先保存原字节再以事务记中断，Resume 后重跑；本地备份在 `.ai-workspace/.runtime/quarantine/`。损坏权限记录不能删除后猜测重建，须可信备份或事务恢复。
+
 **并行边界**：不同功能使用独立工作区和测试数据；同功能多独立主会话并行暂不支持，可由一个主 Agent 协调辅助工作。无跨机器分布式锁，不保证发现未同步的远端会话。Session/Grant/本地 owner 不随 Git 变成新工作区权限。跨工作区先 Suspend、保存规格/任务及相同代码，再在新工作区 Resume；合并结果重新验证。
 
 完整命令及边界见 `.ai-sop/workflows/shared-artifacts.md` 和 `.ai-sop/docs/QUALITY_GATES.md`。以下 `workflow-owner.ps1 -Operation Claim/Complete` 等为旧兼容入口，新修改优先使用 Task，避免重用功能级执行状态。

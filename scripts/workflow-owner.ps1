@@ -60,6 +60,8 @@ param(
     [string]$TaskUpdateJson,
     [switch]$ImpactReviewed,
     [switch]$ForceRecovery,
+    [switch]$QuarantineInvalidEvidence,
+    [string]$RecoveryReason,
     [switch]$ConfirmTakeover,
     [switch]$RetryEvidence,
     [switch]$CreateTaskOnly,
@@ -889,6 +891,8 @@ $transactionId = "$($Operation.ToLowerInvariant())-$([guid]::NewGuid().ToString(
 # Recovery is an explicit repair, not a successful completion or an inherited
 # permission. ForceRelease remains the compatibility spelling for forced repair.
 if ($Operation -in @('ForceRelease','Recover')) {
+    if ($QuarantineInvalidEvidence -and [string]::IsNullOrWhiteSpace($RecoveryReason)) { throw 'QUARANTINE_REASON_REQUIRED' }
+    $quarantined=@()
     $forced = $ForceRecovery -or $Operation -eq 'ForceRelease'
     if ($Operation -eq 'ForceRelease' -and ($null -eq $existingOwner -or $existingOwner.status -ne 'ACTIVE')) { throw 'WORKFLOW_OWNER_NOT_ACTIVE' }
     if (-not $TaskId -and $existingOwner.taskId) { $TaskId = $existingOwner.taskId }
@@ -922,17 +926,29 @@ if ($Operation -in @('ForceRelease','Recover')) {
             if ($activity -in @('REMOTE_UNKNOWN','UNCONFIRMED') -and -not $forced) { throw 'REMOTE_RUN_UNCONFIRMED: confirm original execution stopped, then use ForceRecovery' }
             $pendingPath = Get-AiSopRunEvidencePath $ResolvedSpecDirectory $TaskId $run.runId
             if ($activity -eq 'INTERRUPTED' -and [IO.File]::Exists($pendingPath)) {
-                $pendingResult = ConvertFrom-AiSopWorkflowJson ([IO.File]::ReadAllText($pendingPath)) -AsHashtable
-                if ($pendingResult.outcome -ne 'RUNNING') {
-                    Assert-AiSopRunEvidence -Evidence $pendingResult -Previous $run -Task $recoveryTask -WorkspacePath $ownerWs -Retry
-                    $recoveredTask.verifications = @($recoveredTask.verifications | ForEach-Object { if ($_.runId -ceq $run.runId) { $pendingResult } else { $_ } })
-                    continue
+                try {
+                    $pendingResult = ConvertFrom-AiSopWorkflowJson ([IO.File]::ReadAllText($pendingPath)) -AsHashtable
+                    # Validate the entire task shape as well as execution identity.
+                    $probe=Copy-WorkflowRecord $recoveryTask
+                    $probe.verifications=@($pendingResult)
+                    Assert-AiSopWorkflowJsonSchema -Json (ConvertTo-AiSopWorkflowCanonicalJson $probe) -SchemaId TASK
+                    if ($pendingResult.outcome -eq 'RUNNING') {
+                        if ((ConvertTo-AiSopWorkflowCanonicalJson $pendingResult) -cne (ConvertTo-AiSopWorkflowCanonicalJson $run)) { throw 'RUN_PENDING_IDENTITY_MISMATCH' }
+                    } else {
+                        Assert-AiSopRunEvidence -Evidence $pendingResult -Previous $run -Task $recoveryTask -WorkspacePath $ownerWs -Retry
+                        $recoveredTask.verifications = @($recoveredTask.verifications | ForEach-Object { if ($_.runId -ceq $run.runId) { $pendingResult } else { $_ } })
+                        continue
+                    }
+                } catch {
+                    if (-not $QuarantineInvalidEvidence) { throw "PENDING_EVIDENCE_INVALID: $pendingPath; $($_.Exception.Message); inspect with Task InspectRecovery, then Recover -QuarantineInvalidEvidence -Reason if the result cannot be trusted" }
+                    $quarantined += Save-AiSopInvalidEvidence $pendingPath $ownerWs $Feature $TaskId $run.runId $_.Exception.Message
                 }
             }
             $run.outcome = 'INTERRUPTED'; $run.exitCode = -2; $run.inputsStable = $false
         }
         $recoveredTask.status = 'PAUSED'; $recoveredTask.updatedAt = $AcceptedAt.ToString('o')
         $recoveredTask['lastRecovery'] = @{ at=$AcceptedAt.ToString('o'); reason=$(if ($Notes) { $Notes } else { 'Explicit ownership recovery' }); forced=[bool]$forced }
+        if ($quarantined.Count) { $recoveredTask.lastRecovery.quarantinedEvidence=$quarantined; $recoveredTask.lastRecovery.reason=$RecoveryReason }
         $targets += New-OwnerTarget -Path $recoveryTaskPath -Kind TASK -SchemaId TASK -After $recoveredTask -BeforeExists $true -Before $recoveryTask
     }
     # Include orphaned local session bindings even when the owner file was lost.
@@ -959,6 +975,13 @@ if ($Operation -in @('ForceRelease','Recover')) {
         if (-not $existingOwner -and (Test-Path -LiteralPath $OwnerPath)) { throw 'WORKFLOW_TRANSACTION_PRECONDITION_FAILED' }
         Invoke-AiSopWorkflowTransaction -Operation RECOVER -Feature $Feature -OwnerPath $OwnerPath -SessionKeys $sessionKeys -Targets $targets -TransactionId $transactionId -DeadlineUtc $WorkflowDeadlineUtc -WorkspacePath $ownerWs -LocksAlreadyHeld | Out-Null
     } finally { Exit-AiSopWorkflowLocks $recoveryLocks.Locks }
+    foreach ($entry in $quarantined) {
+        $original=Resolve-AiSopWorkspaceChild $ownerWs $entry.originalPath
+        $backup=Resolve-AiSopWorkspaceChild $ownerWs $entry.backupPath
+        if ([IO.File]::Exists($original) -and [IO.File]::Exists($backup) -and
+            (Get-FileHash -LiteralPath $original).Hash.ToLowerInvariant() -ceq $entry.sha256 -and
+            (Get-FileHash -LiteralPath $backup).Hash.ToLowerInvariant() -ceq $entry.sha256) { Remove-Item -LiteralPath $original }
+    }
     if ($releasedOwner) { Write-OwnerMirror $releasedOwner }
     Write-Output 'TASK_RECOVERED: paused; Resume establishes local execution ownership'
     exit 0
@@ -1525,24 +1548,36 @@ if ($null -ne $taskAfter) {
     if ($Operation -eq 'Transfer' -and $ConfirmTakeover) {
         $taskAfter.notes = ($taskAfter.notes + "`nConfirmed takeover at $($AcceptedAt.ToString('o')); session=$($session.Record.sessionKey)").Trim()
     }
+    if (-not $taskBefore -and -not $taskAfter.baseline) {
+        $taskAfter['baseline']=New-AiSopTaskBaseline -WorkspacePath $ownerWs -Tier $taskAfter.tier -CaptureInputs:($Operation -eq 'Claim')
+        if ($Operation -ne 'Claim') { $taskAfter.baseline.source='ADOPTED' }
+    }
     if ($TaskUpdateJson) {
         if ($Operation -ne 'Checkpoint' -or $EvidencePath -or $ImpactReviewed) { throw 'TASK_UPDATE_REQUIRES_SEPARATE_CHECKPOINT' }
         $policyUpdate = ConvertFrom-AiSopWorkflowJson $TaskUpdateJson -AsHashtable
         $related = Update-AiSopTaskPolicy -Task $taskAfter -Update $policyUpdate -SpecDirectory $ResolvedSpecDirectory -WorkspacePath $ownerWs -At $AcceptedAt.ToString('o')
         if ($related) { $targets += New-OwnerTarget -Path $related.path -Kind TASK -SchemaId TASK -After $related.after -BeforeExists $true -Before $related.before }
     }
+    $taskChanges=$null
     if ($ImpactReviewed) {
         if ($Operation -ne 'Checkpoint') { throw 'IMPACT_REQUIRES_CHECKPOINT' }
         $impactPath = Join-Path $ResolvedSpecDirectory '04_change_impact.json'
         if (-not [IO.File]::Exists($impactPath)) { throw "IMPACT_ARTIFACT_MISSING: $impactPath; write and review the impact analysis before ReviewImpact" }
         $impactRaw = Get-Content -LiteralPath $impactPath -Raw
         if (-not ($impactRaw | Test-Json -SchemaFile (Join-Path $ClaudeRoot 'schemas/change-impact.schema.json'))) { throw 'IMPACT_SCHEMA_INVALID' }
+        $taskChanges=$null
+        if ($taskAfter.tier -eq 'T3') {
+            $impact=ConvertFrom-AiSopWorkflowJson $impactRaw -AsHashtable
+            $taskChanges=Assert-AiSopTaskImpactBinding $taskAfter $impact $ownerWs
+            Save-AiSopTaskChangeManifest $taskChanges $ownerWs | Out-Null
+        }
         $taskAfter['impactReview'] = @{
             artifactHash=(Get-FileHash -LiteralPath $impactPath -Algorithm SHA256).Hash.ToLowerInvariant()
-            inputDigest=(Get-AiSopInputSnapshot (Get-OwnerWorkspacePath)).digest
+            inputDigest=$(if ($taskChanges) { $taskChanges.inputDigest } else { (Get-AiSopInputSnapshot (Get-OwnerWorkspacePath)).digest })
             reviewedAt=$AcceptedAt.ToString('o')
         }
     }
+    if ($taskChanges) { $taskAfter.impactReview.changeSetDigest=$taskChanges.changeSetDigest }
     if ($EvidencePath) {
         if ($Operation -ne 'Checkpoint') { throw 'EVIDENCE_REQUIRES_CHECKPOINT' }
         $evidence = ConvertFrom-AiSopWorkflowJson ([IO.File]::ReadAllText($EvidencePath)) -AsHashtable

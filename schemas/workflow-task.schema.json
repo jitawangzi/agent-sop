@@ -158,6 +158,67 @@
           "inputsRef": {
             "type": "string",
             "pattern": "^[0-9a-f]{64}$"
+          },
+          "diagnostic": {
+            "type": "string"
+          },
+          "reportEvidence": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "format",
+              "passedCaseIds",
+              "reports"
+            ],
+            "properties": {
+              "format": {
+                "const": "JUNIT"
+              },
+              "passedCaseIds": {
+                "type": "array",
+                "uniqueItems": true,
+                "items": {
+                  "type": "string"
+                }
+              },
+              "reports": {
+                "type": "array",
+                "minItems": 1,
+                "items": {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "required": [
+                    "path",
+                    "sha256",
+                    "testCount",
+                    "failed",
+                    "skipped"
+                  ],
+                  "properties": {
+                    "path": {
+                      "type": "string",
+                      "minLength": 1
+                    },
+                    "sha256": {
+                      "type": "string",
+                      "pattern": "^[0-9a-f]{64}$"
+                    },
+                    "testCount": {
+                      "type": "integer",
+                      "minimum": 0
+                    },
+                    "failed": {
+                      "type": "integer",
+                      "minimum": 0
+                    },
+                    "skipped": {
+                      "type": "integer",
+                      "minimum": 0
+                    }
+                  }
+                }
+              }
+            }
           }
         },
         "oneOf": [
@@ -204,6 +265,10 @@
         "reviewedAt": {
           "type": "string",
           "format": "date-time"
+        },
+        "changeSetDigest": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
         }
       }
     },
@@ -225,6 +290,41 @@
         },
         "forced": {
           "type": "boolean"
+        },
+        "quarantinedEvidence": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "originalPath",
+              "backupPath",
+              "sha256",
+              "diagnostic",
+              "machine",
+              "workspace"
+            ],
+            "properties": {
+              "originalPath": {
+                "type": "string"
+              },
+              "backupPath": {
+                "type": "string"
+              },
+              "sha256": {
+                "type": "string"
+              },
+              "diagnostic": {
+                "type": "string"
+              },
+              "machine": {
+                "type": "string"
+              },
+              "workspace": {
+                "type": "string"
+              }
+            }
+          }
         }
       }
     },
@@ -471,6 +571,128 @@
             }
           }
         ]
+      }
+    },
+    "baseline": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "vcs",
+        "revision",
+        "capturedAt",
+        "source"
+      ],
+      "properties": {
+        "vcs": {
+          "enum": [
+            "git",
+            "svn",
+            "none"
+          ]
+        },
+        "revision": {
+          "type": "string",
+          "minLength": 1
+        },
+        "capturedAt": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "source": {
+          "enum": [
+            "START",
+            "ADOPTED"
+          ]
+        },
+        "inputsRef": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        },
+        "inputDigest": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        },
+        "reason": {
+          "type": "string",
+          "minLength": 1
+        }
+      },
+      "dependentRequired": {
+        "inputsRef": [
+          "inputDigest"
+        ],
+        "inputDigest": [
+          "inputsRef"
+        ]
+      }
+    },
+    "caseScope": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "caseIds",
+        "reason",
+        "specDigest",
+        "recordedAt"
+      ],
+      "properties": {
+        "caseIds": {
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": {
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "reason": {
+          "type": "string",
+          "minLength": 1
+        },
+        "specDigest": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        },
+        "recordedAt": {
+          "type": "string",
+          "format": "date-time"
+        }
+      }
+    },
+    "caseScopeHistory": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "caseIds",
+          "reason",
+          "specDigest",
+          "recordedAt"
+        ],
+        "properties": {
+          "caseIds": {
+            "type": "array",
+            "minItems": 1,
+            "uniqueItems": true,
+            "items": {
+              "type": "string",
+              "minLength": 1
+            }
+          },
+          "reason": {
+            "type": "string",
+            "minLength": 1
+          },
+          "specDigest": {
+            "type": "string",
+            "pattern": "^[0-9a-f]{64}$"
+          },
+          "recordedAt": {
+            "type": "string",
+            "format": "date-time"
+          }
+        }
       }
     }
   }

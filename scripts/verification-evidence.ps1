@@ -22,6 +22,8 @@ function Get-AiSopRunDefinitionDigest {
         caseIds=@($Record.caseIds | Sort-Object -Unique)
         profile=[string]$Record.context.profile; profileDigest=[string]$Record.context.profileDigest
     }
+    # Preserve digests of pre-mapping records when the optional format is absent.
+    if ($Record.context.junitConfiguration) { $definition.junitConfiguration=$Record.context.junitConfiguration }
     return Get-AiSopWorkflowSha256 (ConvertTo-AiSopWorkflowCanonicalJson $definition)
 }
 
@@ -31,6 +33,7 @@ function Assert-AiSopRunEvidence {
     if (($Evidence.outcome -eq 'RUNNING' -and ($Evidence.exitCode -ne -2 -or $Evidence.inputsStable)) -or
         ($Evidence.outcome -eq 'PASSED' -and ($Evidence.exitCode -ne 0 -or -not $Evidence.inputsStable)) -or
         ($Evidence.outcome -in @('FAILED','TIMED_OUT','INTERRUPTED') -and $Evidence.exitCode -eq 0)) { throw 'RUN_RESULT_INCONSISTENT' }
+    Assert-AiSopJUnitResult $Evidence
     $ctx = $Evidence.context
     foreach ($key in @('protocol','taskId','ownerId','workspace','runnerMachine','runnerPid','runnerStartedAt','engineScriptHash','sessionKey','sessionEpochId','definitionDigest')) {
         if ([string]::IsNullOrWhiteSpace([string]$ctx[$key])) { throw "RUN_CONTEXT_REQUIRED:$key" }

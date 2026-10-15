@@ -34,7 +34,7 @@ Status/Discover 默认输出简明文本，列出未完成任务及仍有待同�
 }
 ```
 
-脚本由宿主提供。执行 `Task -Operation Run -Feature Example -TaskId fix-1 -Agent CODEX -Profile build` 即可调用；配置采用参数数组，工作目录固定为宿主根目录。T3 测试配置可加 `caseIds`。Profile 不与显式 Kind/Executable/Arguments/Batch/CaseIds 混用，避免实际命令与配置不一致；超时可用 `-TimeoutSeconds` 覆盖，0 表示不限制。
+脚本由宿主提供。执行 `Task -Operation Run -Feature Example -TaskId fix-1 -Agent CODEX -Profile build` 即可调用；配置采用参数数组，工作目录固定为宿主根目录。T3 测试配置可加 `caseIds`。Profile 不与显式 Kind/Executable/Arguments/Batch/CaseIds/JUnitReports/CaseMap 混用，避免实际命令与配置不一致；超时可用 `-TimeoutSeconds` 覆盖，0 表示不限制。
 
 Run 在启动前持久保存 RUNNING，再持续输出并写入任务日志，结束时更新为 PASSED、FAILED 或 TIMED_OUT。异常退出可能留下 RUNNING；Status 根据本机进程身份（PID 与启动时间）区分仍运行和已中断，Recover 将已停止的尝试记为 INTERRUPTED。远端进程无法本地确认，需要先确认原执行已停止。超时会终止本次启动的进程树并记录退出码 124。查看实时日志可使用 PowerShell 的 Get-Content -Wait；停止运行器后，后续 Agent 应检查是否还有遗留子进程。
 
@@ -43,6 +43,52 @@ Run 自动续期当前绑定会话，不重新激活已结束或已转移的会�
 同一 kind/batch 的重跑保持命令、Profile 和 CaseIds 范围一致。确需更换时在 Run 提供 `-Reason "调整验证命令/范围的具体原因"`，保留旧尝试及替换关联；不得改用无关成功命令掩盖失败。修复代码后用原命令重跑不需要额外参数。
 
 T1/T2 的 Run 不读取历史需求设计和覆盖矩阵，历史损坏的覆盖 JSON 不会阻断轻量编译/测试。完整 T3 测试仍绑定规格摘要。未结束的运行会阻止 Complete、Suspend 和接管；失败/中断的必需测试批次需要同批次成功复跑，不能用旧成功记录覆盖。
+
+## T3 的任务基线和必测范围
+
+新任务记录 `baseline`：VCS 类型和启动时版本用于追溯；T3 Start 还保存启动时的完整输入清单。功能 owner/feature-state 的长期基线不因此改变。T1/T2 Start 不增加全量内容扫描，也不要求下面的 T3 范围登记。
+
+在宿主根目录运行：
+
+```powershell
+& ./ai-sop.ps1 Task -Operation Changes -Feature Example -TaskId change-1
+& ./ai-sop.ps1 Task -Operation SetCaseScope -Feature Example -TaskId change-1 -Agent CODEX `
+  -CaseIds @('TC-CURRENT', 'TC-REGRESSION') -Reason '本次调整的行为及共享路径回归'
+```
+
+`Changes` 为只读 JSON，返回任务基线到当前输入的新增、修改、删除文件及前后哈希、`changeSetDigest`。未改变的启动前脏文件不属于本任务差异；暂存/提交不会改变该摘要。编译和测试仍绑定保守的完整输入，不能因文件不在任务差异中而忽略共享依赖变化。
+
+T3 确需 04 影响分析时，在 `.ai-workspace/specs/features/<Feature>/04_change_impact.json` 填入当前 `taskId`、`baseline`（任务的 revision）、`baselineInputDigest`、`changedFiles`（完整差异路径）及 `changeSetDigest`，并实际更新行为分析。ReviewImpact 校验绑定并保存 `.ai-workspace/specs/.artifacts/changes/<sha256>.json`；后续 Verify 再检查文件、输入和差异清单。该清单与 inputs 清单一起在 specs 仓库同步。不要用旧功能基线计算出的 diff 哈希填入任务模式。语义扫描按任务差异文件筛选；同一文件在启动前已有改动时仍保守纳入 VCS diff，无法读取差异时要求影响分析，不静默跳过。
+
+SetCaseScope 记录本任务必测用例和原因，保留变更历史。ID 必须存在于覆盖矩阵，且包含当前 04 声明的 requiredRegressionCases；需求、设计或测试定义修改后需重新核对登记。T3 验证这些用例的载体、断言及执行结果，不把功能内其他尚未开发用例强制加入本次执行；功能规格批准、哈希及整体覆盖定义仍检查。不能通过缩小范围掩盖已发生的失败批次。
+
+旧 ACTIVE T3、从旧 owner 收编的任务或 T1/T2 升为 T3，可能没有启动前内容清单。这时 Changes/Verify 明确提示 TASK_BASELINE_REQUIRED；仅在确有可信的修改前清单时使用 `Task -Operation SetBaseline ... -BaselineInputsRef <sha256> -Reason "修改前清单的来源依据"`，清单须已同步到 inputs 目录，设定后不可重置。缺乏修改前清单时应先从可信代码版本恢复该快照，不能把修改后的现场伪装成原始基线。历史 DONE 不需要迁移，接收新记录的各 Agent 引擎须同步升级。
+
+## 可选 JUnit XML 映射
+
+宿主维护映射文件，例如 `.ai-workspace/context/junit-case-map.json`：
+
+```json
+{
+  "schemaVersion": "1.0",
+  "cases": [{ "id": "TC-CURRENT", "className": "example.CheckTest", "name": "currentBehavior" }]
+}
+```
+
+```powershell
+& ./ai-sop.ps1 Task -Operation Run -Feature Example -TaskId change-1 -Agent CODEX `
+  -Kind test -Batch regression -Executable pwsh -Arguments @('-NoProfile', '-File', './scripts/test.ps1') `
+  -JUnitReports @('build/test-results/TEST-example.CheckTest.xml') `
+  -CaseMap '.ai-workspace/context/junit-case-map.json'
+```
+
+Profile 可使用 `junitReports` 和 `caseMap` 同名字段。配置二者后不另传 CaseIds，成功用例从本次报告的精确 classname/name 映射生成。报告路径是宿主内的明确文件，不支持 glob；命令须生成或更新报告，旧文件、缺失、跳过、映射未命中、失败/错误均不能充当通过，进程退出 0 也不例外。重复同名测试必须全部通过。输出目录应按实际构建配置排除，不能为通过检查而排除源码。映射和报告路径绑定批次定义，调整需 Reason；原始 XML 可保留本地，持久执行记录保存报告摘要及通过的 CaseIds。此功能核对正常工具输出，不证明本地进程无法伪造 XML；T1/T2 不强制启用。
+
+## 损坏执行结果的恢复
+
+先用 `Task -Operation InspectRecovery -Feature Example -TaskId change-1` 只读检查 task、owner、session 和待入账结果。任务/权限记录损坏时需可信备份或事务恢复，不能删除后猜测重建。待入账结果损坏或身份不匹配时，默认 Recover 明确报错；确认原执行停止且结果不可信后，可用 `Recover -QuarantineInvalidEvidence -Reason "损坏原因和重跑安排"`，会话仍活跃时还需 ForceRecovery。
+
+隔离先原样备份到 `.ai-workspace/.runtime/quarantine/`，再通过恢复事务把尝试记为 INTERRUPTED、任务记为 PAUSED，并在 lastRecovery 保留路径和哈希。成功提交且原文件未变化后才清除原待入账文件；事务失败保留原文件。备份留在源机器，接管端能看到审计引用但不要求同步备份，也不会把坏结果当成功。Resume 后重跑相关批次。
 
 ## 独立修改、续做与暂停
 
@@ -58,7 +104,7 @@ T1/T2 的 Run 不读取历史需求设计和覆盖矩阵，历史损坏的覆盖
   -Kind test -Batch regression -Executable pwsh -Arguments @('-NoProfile', '-File', './scripts/test.ps1')
 ```
 
-命令和脚本路径由宿主工程提供，以上仅展示参数形式。原生可执行程序直接调用；Windows 批处理可经显式 `pwsh -Command` 调用，参数作为数组传递，不拼接不可信 shell 文本。T3 测试带 `-CaseIds @('TC01','TC02')`，根据真实运行结果映射；框架报告的自动解析暂不包含在本版本。
+命令和脚本路径由宿主工程提供，以上仅展示参数形式。原生可执行程序直接调用；Windows 批处理可经显式 `pwsh -Command` 调用，参数作为数组传递，不拼接不可信 shell 文本。T3 测试带 `-CaseIds @('TC-ONE','TC-TWO')`，根据真实运行结果映射；也可选用下方 JUnit XML 映射；其他框架仍由控制器依据真实输出声明 CaseIds。
 
 可执行文件的相对路径按宿主工作区解析，与调用端当前目录无关。`.ps1` 使用 `pwsh -File`；`.bat/.cmd` 使用显式宿主调用，直接传给 Executable 会得到明确诊断。SVN CLI 缺失仅跳过 Run 的版本号注记并提示；真正依赖 SVN 的基线/版本操作仍需要相应工具。
 

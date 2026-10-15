@@ -20,13 +20,13 @@
 - 跨工作区迁移：先在原工作区 Suspend，持久保存任务和相同代码，再在新工作区 Resume；新工作区重新取得本地会话，证据必须在当地重新校验。缺本地 owner 的 ACTIVE 记录仅供诊断，禁止静默继承权限。
 - 功能整体验收与轻量任务 DONE 不同。T1/T2 不替旧 T3 收尾；共享代码修改和合并后仍需重新验证集成结果。
 
-Recover 是显式恢复动作：任务转为 PAUSED，匹配的本地 owner 释放、session 解绑，通过 RECOVER 两阶段事务一起完成。没有本地 owner 时只恢复任务记录，Resume 再建立本地权限；ACTIVE/IDLE 会话需要确认停止后显式 ForceRecovery，本机仍存活的验证进程不能强制绕过。ForceRelease 使用相同恢复逻辑。任务保存 lastRecovery 审计说明。
+Recover 是显式恢复动作：任务转为 PAUSED，匹配的本地 owner 释放、session 解绑，通过 RECOVER 两阶段事务一起完成。没有本地 owner 时只恢复任务记录，Resume 再建立本地权限；ACTIVE/IDLE 会话需要确认停止后显式 ForceRecovery，本机仍存活的验证进程不能强制绕过。ForceRelease 使用相同恢复逻辑。任务保存 lastRecovery 审计说明。InspectRecovery 提供只读诊断；损坏待入账结果须在原执行停止后显式 QuarantineInvalidEvidence + Reason，先备份原字节，恢复事务记中断及审计，提交后再清除未变化的原文件。备份在本机 `.ai-workspace/.runtime/quarantine/`；损坏 task/owner/session 仍须可信备份或事务恢复。
 
 验证记录可带 runId 和 outcome：RUNNING 在进程启动前写入，后续检查点更新同一尝试；终态为 PASSED/FAILED/TIMED_OUT/INTERRUPTED，旧无 outcome 记录保持兼容。一次任务只允许运行一个验证命令。PID、启动时间、机器和工作区仅用于诊断进程，不是跨机器权限凭证；RUNNING 不被当成成功，恢复后保留中断结果。日志是逐步写入的辅助材料，任务状态与证据依然通过事务更新。
 
 Status 与 Discover 共用摘要；Status 额外检查执行证据的当前输入，Discover 不做全工作区哈希扫描。历史批准按 recordedApprovals 展示，完整验收仍是 Verify。项目命令配置位于 `.ai-workspace/context/verification-commands.json`，遵守引擎 schemas/verification-commands.schema.json；配置选项包含命令参数数组、批次、超时和 CaseIds。
 
-任务执行记录中的 `inputs-v2` 是源码等验证输入的内容快照，不使用 Git status、暂存状态或基线 diff。配置 `.ai-workspace/context/verification-inputs.json` 后使用绑定配置摘要的 `inputs-v3`；include 补充输入、exclude 带理由排除生成文件/目录，仍覆盖未被排除的公共输入。新记录用 `inputsRef` 引用 `.ai-workspace/specs/.artifacts/inputs/<sha256>.json` 的去重清单，可定位过期文件；清单与任务都须在 specs 仓库持久化及同步，缺失/损坏不降级为通过。旧内嵌 inputs 继续兼容，旧引擎读取新记录前需要升级。算法版本参与摘要，旧 v1 证据不能换哈希继续充当新证据。审查 baseline 仍用于分析修改范围，不与验证输入指纹混用。
+任务执行记录中的 `inputs-v2` 是源码等验证输入的内容快照，不使用 Git status、暂存状态或基线 diff。配置 `.ai-workspace/context/verification-inputs.json` 后使用绑定配置摘要的 `inputs-v3`；include 补充输入、exclude 带理由排除生成文件/目录，仍覆盖未被排除的公共输入。新记录用 `inputsRef` 引用 `.ai-workspace/specs/.artifacts/inputs/<sha256>.json` 的去重清单，可定位过期文件；清单与任务都须在 specs 仓库持久化及同步，缺失/损坏不降级为通过。旧内嵌 inputs 继续兼容，旧引擎读取新记录前需要升级。算法版本参与摘要，旧 v1 证据不能换哈希继续充当新证据。任务 baseline 与功能长期 baseline 分离：T3 Start 的 inputsRef/inputDigest 固定修改前内容，Changes 生成任务差异清单；ReviewImpact 保存到 `.ai-workspace/specs/.artifacts/changes/<sha256>.json`。inputs/changes 清单均须同步。T1/T2 Start 只记版本注记，不扫描全量输入。
 
 新日志使用本地 `.ai-workspace/.runtime/verification/<Feature>/<taskId>/<runId>.log`，目录带本地忽略规则；跨工作区不要求同步日志，旧任务日志仍支持读取。清单是不可变辅助产物，先原子写入再通过两阶段事务保存任务引用，失败可能留下无引用清单，但不出现假的已提交任务状态。暂不自动清理清单，避免删掉其他任务或未同步工作区仍使用的证据。
 
@@ -34,9 +34,11 @@ Status/Discover 默认文本显示未完成任务和有待同步项的历史任�
 
 新执行记录绑定任务、原会话 epoch、命令及用例范围。RUNNING 必须先入账，终态通过同一 runId 更新；同批次更换验证定义需 Reason，保留历史。`<runId>.pending.json` 为原子保存的待入账结果，失败时不得删除；RetryEvidence 只重试同一终态，Recover 在原进程已停止且本机绑定一致时可保存该结果。运行器续期不复活已结束/已转移会话。跨仍活跃会话的 Resume/Transfer 需 ConfirmTakeover；当前调用身份不能从原 owner 推断。
 
-`Run` 执行真实命令并记录退出码、输入前后指纹和批次；失败同样保留。T1 至少成功编译；T2/T3 还需成功测试；T2 还需 RecordSync 说明相关规格/用例已同步或无需更新。T1/T2 对确无适用验证的纯文档任务可用 SetApplicability 记录具体原因，不能用于环境故障、缺少测试或测试失败。不同批次可累计，但每个批次最后一次必须成功且适用于当前输入；T3 用 `CaseIds` 映射覆盖矩阵的用例，不用测试条数替代覆盖。CaseIds 是控制器根据实际输出提供的映射，当前不解析所有测试框架的报告，也不宣称防止伪造测试命令。
+`Run` 执行真实命令并记录退出码、输入前后指纹和批次；失败同样保留。T1 至少成功编译；T2/T3 还需成功测试；T2 还需 RecordSync 说明相关规格/用例已同步或无需更新。T1/T2 对确无适用验证的纯文档任务可用 SetApplicability 记录具体原因，不能用于环境故障、缺少测试或测试失败。不同批次可累计，但每个批次最后一次必须成功且适用于当前输入；T3 用 `CaseIds` 映射覆盖矩阵的用例，不用测试条数替代覆盖。CaseIds 默认由控制器根据实际输出提供；可选 JUnitReports + CaseMap 时由新鲜 JUnit XML 的精确 classname/name 和通过结果生成，映射及报告路径不可在同次执行中更换。未支持的报告格式仍使用显式映射，不宣称防止同权限进程伪造输出。
 
-T3 的 04 仍须满足 schema、固定 baseline 和语义完整性。人工/Agent 确认分析仍覆盖当前改动后，运行 `ReviewImpact` 将分析文件哈希和当前输入指纹绑定到任务；不能盲目用该命令刷新过期分析。需求/设计批准及 07 哈希检查保持有效。
+T3 通过 SetCaseScope 登记必测用例和理由，保留 caseScopeHistory；范围须含当前 04 的 requiredRegressionCases，规格变化后重新核对。Verify 只对这些用例要求完成载体、断言和本次执行，功能整体覆盖定义和批准仍校验。
+
+T3 的 04 须满足 schema、任务 baseline 和语义完整性，taskId、baselineInputDigest、changedFiles、changeSetDigest 与 Changes 完整一致。旧活动 T3 缺修改前清单时必须显式 SetBaseline 并说明可信来源，不能用当前修改结果补造；历史 DONE 不迁移。人工/Agent 确认分析仍覆盖当前改动后，运行 `ReviewImpact` 将分析文件哈希和当前输入指纹绑定到任务；不能盲目用该命令刷新过期分析。需求/设计批准及 07 哈希检查保持有效。
 
 
 任务记录可包含 `tierHistory`、`syncReview`、`applicability`、`followUps`，旧格式仍可读取。ChangeTier 记录人工请求和原因，不删除历史验证；Resume 不顺便改档。T2 的 RecordSync 记录 Agent 对受影响文档/测试的核对结论，机器不证明语义一致性，也不新增文档哈希门禁。

@@ -3,10 +3,12 @@
 
 function Update-AiSopTaskPolicy {
     param($Task, $Update, [string]$SpecDirectory, [string]$WorkspacePath, [string]$At)
-    if ($Update.operation -in @('ChangeTier','SetApplicability') -and @($Task.verifications | Where-Object { $_.outcome -eq 'RUNNING' }).Count) {
+    if ($Update.operation -in @('ChangeTier','SetApplicability','SetBaseline','SetCaseScope') -and @($Task.verifications | Where-Object { $_.outcome -eq 'RUNNING' }).Count) {
         throw 'RUN_UNFINISHED: finish or recover execution before changing verification requirements'
     }
     $allowed = switch ($Update.operation) {
+        'SetCaseScope' { @('operation','caseIds','reason') }
+        'SetBaseline' { @('operation','inputsRef','reason') }
         'ChangeTier' { @('operation','tier','reason','userRequest') }
         'RecordSync' { @('operation','documentation','tests','summary') }
         'SetApplicability' { @('operation','kind','status','reason') }
@@ -19,7 +21,19 @@ function Update-AiSopTaskPolicy {
         if ([string]::IsNullOrWhiteSpace($Value)) { throw "TASK_UPDATE_REQUIRED:$Name" }
     }
     switch ($Update.operation) {
-        'ChangeTier' {
+        'SetCaseScope' { Set-AiSopTaskCaseScope $Task @($Update.caseIds) $Update.reason $SpecDirectory $At }
+        'SetBaseline' {
+            Require-Text $Update.reason 'reason'
+            if ($Task.baseline.inputsRef) { throw 'TASK_BASELINE_IMMUTABLE' }
+            $path=Get-AiSopInputManifestPath $WorkspacePath $Update.inputsRef
+            if (-not [IO.File]::Exists($path)) { throw 'TASK_BASELINE_MANIFEST_MISSING' }
+            $candidate=ConvertFrom-AiSopWorkflowJson ([IO.File]::ReadAllText($path)) -AsHashtable
+            $snapshot=Read-AiSopVerificationInputs @{inputsRef=$Update.inputsRef;inputDigest=$candidate.digest} $WorkspacePath
+            if (-not $Task.baseline) { $Task['baseline']=@{vcs='none';revision='0';capturedAt=$At;source='ADOPTED'} }
+            $Task.baseline.inputsRef=$Update.inputsRef; $Task.baseline.inputDigest=$snapshot.digest
+            $Task.baseline.source='ADOPTED'; $Task.baseline.reason=$Update.reason
+        }
+        'ChangeTier'  {
             if ($Update.tier -notin @('T1','T2','T3')) { throw 'TASK_TIER_INVALID' }
             Require-Text $Update.reason 'reason'
             Require-Text $Update.userRequest 'userRequest'

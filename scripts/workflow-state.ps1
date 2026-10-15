@@ -1967,7 +1967,7 @@ function Validate-ChangeImpactState {
     }
 
     $specDir = Split-Path -Parent $ImpactPath
-    Assert-FeatureBaselineIntegrity -SpecDir $specDir -ProposedBaseline $impact.baseline
+    if (-not $TaskId -or (Read-AiSopTask $specDir $TaskId).tier -ne 'T3') { Assert-FeatureBaselineIntegrity -SpecDir $specDir -ProposedBaseline $impact.baseline }
 
     $wsRoot = Resolve-AiSopWorkspaceRoot -StartPath $specDir
     if ([string]::IsNullOrWhiteSpace($wsRoot)) {
@@ -1976,6 +1976,11 @@ function Validate-ChangeImpactState {
     if ($TaskId) {
         $taskRecord = Read-AiSopTask $specDir $TaskId
         $artifactHash = (Get-FileHash -LiteralPath $ImpactPath -Algorithm SHA256).Hash.ToLowerInvariant()
+        if ($taskRecord.tier -eq 'T3') {
+            Assert-AiSopTaskImpactBinding $taskRecord $impact $wsRoot $script:TaskValidationContext -CheckReview -ArtifactHash $artifactHash | Out-Null
+            Assert-ExtensionImpactCompleteness -Impact $impact -WorkspaceRoot $wsRoot -Baseline $impact.baseline -SpecDir $specDir
+            return $impact
+        }
         $inputDigest = (Get-AiSopValidationSnapshot $wsRoot $script:TaskValidationContext).digest
         if (-not $taskRecord.impactReview -or $taskRecord.impactReview.artifactHash -cne $artifactHash -or $taskRecord.impactReview.inputDigest -cne $inputDigest) {
             throw 'IMPACT_REVIEW_REQUIRED: inspect current analysis and code, then workflow-task ReviewImpact; do not rewrite old successful evidence digests.'
@@ -2016,7 +2021,7 @@ function Test-IsTypeExtensionRisk {
 
 function Test-IsFailClosedRisk {
     param($TriggersHit)
-    $opaque = @("WORKSPACE_UNRESOLVED", "VCS_ERROR", "VCS_UNAVAILABLE", "HYBRID_PRODUCTION_VCS_UNSCANNED", "FEATURE_SCOPE_UNRESOLVED")
+    $opaque = @("WORKSPACE_UNRESOLVED", "VCS_ERROR", "VCS_UNAVAILABLE", "HYBRID_PRODUCTION_VCS_UNSCANNED", "FEATURE_SCOPE_UNRESOLVED", "TASK_SCOPE_UNAVAILABLE", "TASK_DIFF_INCOMPLETE")
     foreach ($t in @($TriggersHit)) {
         if ($opaque -contains [string]$t) { return $true }
     }
@@ -2097,6 +2102,10 @@ function Get-WorkspaceChangedRelativePaths {
         [string]$Baseline,
         [string]$SpecDir = $null
     )
+    if ($TaskId -and $SpecDir) {
+        $scopeTask=Read-AiSopTask $SpecDir $TaskId
+        if ($scopeTask.tier -eq 'T3') { return [string[]]@((Get-AiSopTaskChanges $scopeTask $WorkspaceRoot $script:TaskValidationContext).manifest.changes | ForEach-Object { $_.path }) }
+    }
     $paths = [System.Collections.Generic.HashSet[string]]::new([System.StringComparer]::OrdinalIgnoreCase)
     if ([string]::IsNullOrWhiteSpace($WorkspaceRoot) -or -not (Test-Path -LiteralPath $WorkspaceRoot)) {
         return [string[]]@()
@@ -2643,6 +2652,14 @@ function Get-SemanticRiskAssessment {
     $isSvn = Test-Path -LiteralPath (Join-Path $WorkspaceRoot ".svn")
     $isHybrid = $isGit -and $isSvn
 
+    $taskDelta=$null
+    if ($TaskId -and $SpecDir) {
+        $scopeTask=Read-AiSopTask $SpecDir $TaskId
+        if ($scopeTask.tier -eq 'T3') {
+            try { $taskDelta=Get-AiSopTaskChanges $scopeTask $WorkspaceRoot $script:TaskValidationContext; $Baseline=$scopeTask.baseline.revision }
+            catch { return [pscustomobject]@{TriggersHit=@('TASK_SCOPE_UNAVAILABLE');Details=@($_.Exception.Message);MinRequiredTier='T3';HasHighRisk=$true;Baseline=$Baseline} }
+        }
+    }
     # 1. Resolve baseline from authoritative state or VCS
     $effectiveBaseline = if (-not [string]::IsNullOrWhiteSpace($Baseline)) {
         $Baseline
@@ -2795,7 +2812,20 @@ function Get-SemanticRiskAssessment {
         $locators = @(Get-FeatureSpecLocators -SpecDir $SpecDir)
     }
     $scopedDiff = $fullDiff
-    if ($locators.Count -gt 0) {
+    if ($taskDelta) {
+        $kept=[Text.StringBuilder]::new(); $seen=[Collections.Generic.HashSet[string]]::new([StringComparer]::Ordinal)
+        $taskPaths=@($taskDelta.manifest.changes | ForEach-Object { $_.path })
+        foreach ($block in [regex]::Matches($fullDiff, '(?ms)(?:diff --git a/([^\r\n]+?)\s+b/[^\r\n]+|\+\+\+\s+(?:b/)?([^\r\n]+))(?:(?!diff --git|\+\+\+).)*')) {
+            $rawPath=if ($block.Groups[1].Success) { $block.Groups[1].Value } else { $block.Groups[2].Value }
+            $relative=Get-NormalizedDiffBlockPath -Raw $rawPath
+            if ($relative -cin $taskPaths) { [void]$seen.Add($relative); [void]$kept.AppendLine($block.Value) }
+        }
+        $scopedDiff=$kept.ToString()
+        if (@($taskPaths | Where-Object { -not $seen.Contains($_) }).Count) {
+            $triggersHit.Add('TASK_DIFF_INCOMPLETE'); $details.Add('Some task changes lack a readable VCS diff; inspect the content change manifest and provide impact analysis.')
+        }
+        $details.Add('Task delta limits the scan; inherited workspace changes are not attributed to this task. VCS diff may conservatively include prior edits in the same changed file.')
+    } elseif ($locators.Count -gt 0) {
         $kept = [System.Text.StringBuilder]::new()
         $prodTotal = 0
         $prodKept = 0
@@ -3161,6 +3191,10 @@ function Get-CoveragePlaceholderWarnings {
     $coverageSchema = Join-Path $SchemaRoot "test-coverage.schema.json"
     $coverage = Read-JsonObject -FilePath $CoveragePath -SchemaPath $coverageSchema
     $isPlanPhase = ($Phase -ieq "PLAN")
+    if ($TaskId -and -not $isPlanPhase) {
+        $scopeTask=Read-AiSopTask (Split-Path -Parent $CoveragePath) $TaskId
+        $coverage.cases=@($coverage.cases | Where-Object { $_.id -cin $scopeTask.requiredCaseIds })
+    }
 
     foreach ($case in $coverage.cases) {
         $caseId = [string]$case.id
@@ -3485,7 +3519,6 @@ function Get-CoveragePlaceholderWarnings {
     $mustCheckEvidence = (-not $isPlanPhase) -or ($null -ne $coverage.executionEvidence)
     if ($TaskId -and $mustCheckEvidence) {
         $taskRecord = Read-AiSopTask (Split-Path -Parent $CoveragePath) $TaskId
-        $taskRecord.requiredCaseIds = @($coverage.cases | ForEach-Object { $_.id })
         foreach ($problem in @(Get-AiSopTaskProblems $taskRecord (Resolve-AiSopWorkspaceRoot -StartPath (Split-Path -Parent $CoveragePath)) (Split-Path -Parent $CoveragePath) $script:TaskValidationContext)) { $errors.Add($problem) }
     }
     if ($mustCheckEvidence -and -not $TaskId) {
@@ -5186,6 +5219,17 @@ switch ($Operation) {
             } | ConvertTo-Json -Depth 5 | Write-Output
         }
         
+        # Task risk is diagnostic and uses the task baseline; do not persist a
+        # task-specific digest into the long-lived feature approval records.
+        if ($TaskId) {
+            $riskTask=Read-AiSopTask $specDir $TaskId
+            if ($riskTask.tier -eq 'T3') {
+                $delta=Get-AiSopTaskChanges $riskTask $wsRoot $script:TaskValidationContext
+                $risk=Get-SemanticRiskAssessment -WorkspaceRoot $wsRoot -Baseline $riskTask.baseline.revision -DeclaredTier $riskTask.tier -SpecDir $specDir
+                [pscustomobject]@{ workspaceRoot=$wsRoot; taskId=$TaskId; baseline=$riskTask.baseline.revision; changeSetDigest=$delta.changeSetDigest; declaredTier=$riskTask.tier; minRequiredTier=$risk.MinRequiredTier; hasHighRisk=$risk.HasHighRisk; triggersHit=@($risk.TriggersHit); details=@($risk.Details); evaluatedAt=[DateTimeOffset]::UtcNow.ToString('o') } | ConvertTo-Json -Depth 5 | Write-Output
+                break
+            }
+        }
         # Verify baseline integrity & get authoritative baseline
         Assert-FeatureBaselineIntegrity -SpecDir $specDir -ProposedBaseline $Baseline
         $effectiveBaseline = if (-not [string]::IsNullOrWhiteSpace($Baseline)) {
@@ -5703,6 +5747,15 @@ switch ($Operation) {
             # Change impact: required for TYPE_EXTENSION/PUBLIC_ROUTING, or when risk cannot be assessed.
             $impactPath = Join-Path $specDir "04_change_impact.json"
             $impactOk = Test-Path -LiteralPath $impactPath -PathType Leaf
+            if ($impactOk -and $currentTask) {
+                try {
+                    $existingImpact=ConvertFrom-AiSopWorkflowJson ([IO.File]::ReadAllText($impactPath)) -AsHashtable
+                    if ($existingImpact.taskId -cne $currentTask.taskId) {
+                        $impactOk=$false
+                        $checks.Add('[i] Historical impact analysis belongs to another task; current task risk determines whether a new analysis is required')
+                    }
+                } catch { } # Malformed current artifacts retain the normal diagnostic.
+            }
             $extRisk = Get-SemanticRiskAssessment -WorkspaceRoot $wsRoot -SpecDir $specDir
             $impactRequired = Test-ChangeImpactRequired -TriggersHit $extRisk.TriggersHit
             if (-not $impactOk) {
@@ -5730,6 +5783,7 @@ switch ($Operation) {
                     # Cross-validation with 05_test_coverage.json
                     if ($covOk) {
                         $covObj = Read-JsonObject -FilePath $covPath -SchemaPath (Join-Path $SchemaRoot "test-coverage.schema.json")
+                        if ($currentTask) { $covObj.cases=@($covObj.cases | Where-Object { $_.id -cin $currentTask.requiredCaseIds }) }
                         $coveredInvariants = [System.Collections.Generic.HashSet[string]]::new([System.StringComparer]::OrdinalIgnoreCase)
                         $declaredCases = [System.Collections.Generic.HashSet[string]]::new([System.StringComparer]::OrdinalIgnoreCase)
                         foreach ($c in $covObj.cases) {

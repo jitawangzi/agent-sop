@@ -57,7 +57,28 @@
             "type": "integer",
             "minimum": 0,
             "maximum": 86400
+          },
+          "junitReports": {
+            "type": "array",
+            "minItems": 1,
+            "uniqueItems": true,
+            "items": {
+              "type": "string",
+              "minLength": 1
+            }
+          },
+          "caseMap": {
+            "type": "string",
+            "minLength": 1
           }
+        },
+        "dependentRequired": {
+          "junitReports": [
+            "caseMap"
+          ],
+          "caseMap": [
+            "junitReports"
+          ]
         }
       }
     }

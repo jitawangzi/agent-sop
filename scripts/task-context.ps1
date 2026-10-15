@@ -5,6 +5,9 @@
 . (Join-Path $PSScriptRoot 'verification-evidence.ps1')
 . (Join-Path $PSScriptRoot 'verification-inputs.ps1')
 . (Join-Path $PSScriptRoot 'task-diagnostics.ps1')
+. (Join-Path $PSScriptRoot 'task-scope.ps1')
+. (Join-Path $PSScriptRoot 'junit-evidence.ps1')
+. (Join-Path $PSScriptRoot 'task-recovery.ps1')
 
 function Get-AiSopTaskPath {
     param([string]$SpecDirectory, [string]$TaskId)
@@ -77,6 +80,7 @@ function Get-AiSopTaskProblems {
         try { $specDigest=Get-AiSopTaskSpecDigest $SpecDirectory $ValidationContext }
         catch { $problems.Add($_.Exception.Message) }
     }
+    foreach ($problem in @(Get-AiSopTaskScopeProblems $Task $WorkspacePath $SpecDirectory $ValidationContext)) { $problems.Add($problem) }
     if ($Task.tier -eq 'T2' -and -not $Task.syncReview) { $problems.Add('MISSING_SYNC_REVIEW: record affected documentation and test updates, or explain why unchanged') }
     foreach ($pending in @($Task.verifications | Where-Object { $_.outcome -eq 'RUNNING' })) { $problems.Add("RUN_UNFINISHED:$($pending.runId):$(Get-AiSopRunActivity $pending $WorkspacePath)") }
     foreach ($kind in @('compile', 'test')) {
@@ -96,6 +100,7 @@ function Get-AiSopTaskProblems {
         # green batch cannot hide an unresolved failure in another batch.
         foreach ($group in @($records | Group-Object batch)) {
             $record = @($group.Group)[-1]
+            try { Assert-AiSopJUnitResult $record } catch { $problems.Add($_.Exception.Message) }
             $recordInputs=$null
             try { $recordInputs=Read-AiSopVerificationInputs $record $WorkspacePath $ValidationContext }
             catch { $problems.Add($_.Exception.Message) }
@@ -113,7 +118,7 @@ function Get-AiSopTaskProblems {
     }
     if ($Task.tier -eq 'T3') {
         $latestTests = @($Task.verifications | Where-Object { $_.kind -eq 'test' } | Group-Object batch | ForEach-Object { @($_.Group)[-1] })
-        $covered = @($latestTests | Where-Object { $_.exitCode -eq 0 -and $_.inputDigest -ceq $snapshot.digest -and $_.inputsStable -and (-not $SpecDirectory -or $_.specDigest -ceq $specDigest) } | ForEach-Object { $_.caseIds } | Sort-Object -Unique)
+        $covered = @($latestTests | Where-Object { $_.exitCode -eq 0 -and $_.inputDigest -ceq $snapshot.digest -and $_.inputsStable -and (-not $SpecDirectory -or $_.specDigest -ceq $specDigest) } | ForEach-Object { if ($_.context.junitConfiguration) { $_.reportEvidence.passedCaseIds } else { $_.caseIds } } | Sort-Object -Unique)
         $missing = @($Task.requiredCaseIds | Where-Object { $_ -notin $covered })
         if ($missing.Count) { $problems.Add("UNCOVERED_CASES:$($missing -join ',')") }
     }
@@ -135,7 +140,7 @@ function Get-AiSopSpecSyncWarning {
     $repo = & git -C $existing rev-parse --show-toplevel 2>$null
     if ($LASTEXITCODE -ne 0) { return }
     $repo = Resolve-PhysicalPathIdentity -Path ([string]$repo)
-    foreach ($relative in @('features/__sop_sync_probe__/06_design_contract.md', '.artifacts/inputs/__sop_sync_probe__.json')) {
+    foreach ($relative in @('features/__sop_sync_probe__/06_design_contract.md', '.artifacts/inputs/__sop_sync_probe__.json', '.artifacts/changes/__sop_sync_probe__.json')) {
         $probe = [IO.Path]::GetRelativePath($repo, (Join-Path $specRoot $relative)).Replace('\', '/')
         $ignored = & git -C $repo check-ignore -- $probe 2>$null
         if ($LASTEXITCODE -eq 0 -and $ignored) {
@@ -203,6 +208,7 @@ function Get-AiSopTaskSummary {
         ownerStatus=$ownerStatus; sessionStatus=$sessionStatus; verification=$verification
         recordedApprovals=(Get-AiSopRecordedApprovals $SpecDirectory)
         nextAction=$Task.nextAction; suggestedAction=$action; notes=$Task.notes; runs=$runs
+        baseline=$Task.baseline; caseScope=$Task.caseScope; requiredCaseIds=@($Task.requiredCaseIds)
         syncReview=$Task.syncReview; applicability=$Task.applicability
         tierHistory=@($Task.tierHistory | Where-Object { $null -ne $_ })
         pendingFollowUps=@($Task.followUps | Where-Object { $_.status -eq 'PENDING' })

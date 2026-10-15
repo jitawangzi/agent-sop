@@ -1,7 +1,7 @@
 #requires -Version 7.0
 [CmdletBinding()]
 param(
-    [Parameter(Mandatory)][ValidateSet('Discover','Status','FollowUps','Recover','Start','Resume','Checkpoint','Suspend','Cancel','Run','RetryEvidence','ReviewImpact','Verify','Complete','ChangeTier','RecordSync','SetApplicability','AddFollowUp','CloseFollowUp')][string]$Operation,
+    [Parameter(Mandatory)][ValidateSet('Discover','Status','FollowUps','Recover','Start','Resume','Checkpoint','Suspend','Cancel','Run','RetryEvidence','ReviewImpact','Verify','Complete','ChangeTier','RecordSync','SetApplicability','AddFollowUp','CloseFollowUp','Changes','SetBaseline','SetCaseScope','InspectRecovery')][string]$Operation,
     [string]$WorkspacePath = (Get-Location).Path,
     [string]$SpecDirectory,
     [string]$Feature,
@@ -19,6 +19,7 @@ param(
     [string]$Profile,
     [ValidateRange(0,86400)][int]$TimeoutSeconds = 0,
     [switch]$ForceRecovery,
+    [switch]$QuarantineInvalidEvidence,
     [switch]$ConfirmTakeover,
     [string]$RunId,
     [string]$Reason,
@@ -35,7 +36,10 @@ param(
     [string]$Resolution,
     [switch]$Json,
     [ValidateSet('Human','JsonLines')][string]$OutputFormat = 'Human',
-    [switch]$IncludeHistory
+    [switch]$IncludeHistory,
+    [string]$BaselineInputsRef,
+    [string[]]$JUnitReports = @(),
+    [string]$CaseMap
 )
 $ErrorActionPreference = 'Stop'
 . (Join-Path $PSScriptRoot 'task-context.ps1')
@@ -84,8 +88,9 @@ $canonicalSpec = Resolve-AiSopWorkspaceChild $WorkspacePath ".ai-workspace/specs
 if ($SpecDirectory -cne $canonicalSpec) { throw 'TASK_WORKSPACE_MISMATCH' }
 $ownerScript = Join-Path $PSScriptRoot 'workflow-owner.ps1'
 $ownerPath = Join-Path (Get-AiSopWorkflowOwnerRegistryRoot -WorkspacePath $WorkspacePath) ($Feature.ToLowerInvariant() + '.json')
-$owner = if (Test-Path -LiteralPath $ownerPath) { Get-Content -LiteralPath $ownerPath -Raw | ConvertFrom-Json -AsHashtable } else { $null }
-if ($Operation -ne 'Verify') { $Agent = Resolve-AiSopInvocationAgent $Agent }
+if ($Operation -eq 'InspectRecovery') { Get-AiSopTaskRecoveryDiagnostics $SpecDirectory $TaskId $WorkspacePath $ownerPath | ConvertTo-Json -Depth 12; exit 0 }
+$owner = if ($Operation -ne 'Changes' -and (Test-Path -LiteralPath $ownerPath)) { Get-Content -LiteralPath $ownerPath -Raw | ConvertFrom-Json -AsHashtable } else { $null }
+if ($Operation -notin @('Verify','Changes')) { $Agent = Resolve-AiSopInvocationAgent $Agent }
 $ownerArgs = @{ Feature=$Feature; SpecDirectory=$SpecDirectory; Workflow='SUPERPOWERS'; Agent=$Agent }
 if ($PSBoundParameters.ContainsKey('NextAction')) { $ownerArgs.NextAction = $NextAction }
 if ($PSBoundParameters.ContainsKey('Notes')) { $ownerArgs.Notes = $Notes }
@@ -117,10 +122,11 @@ if ($Operation -eq 'Resume' -and -not $TaskId -and $owner -and $owner.status -eq
 }
 if (-not $TaskId) { throw 'TASK_SELECTION_REQUIRED: use Discover and select an existing task; no implicit takeover.' }
 $task = Read-AiSopTask $SpecDirectory $TaskId
+if ($Operation -eq 'Changes') { Get-AiSopTaskChanges $task $WorkspacePath | ConvertTo-Json -Depth 12; exit 0 }
 $ownerArgs.OwnerId = $task.ownerId
 $ownerArgs.TaskId = $TaskId
 if ($Operation -eq 'Recover') {
-    & $ownerScript -Operation Recover @ownerArgs -ForceRecovery:$ForceRecovery
+    & $ownerScript -Operation Recover @ownerArgs -ForceRecovery:$ForceRecovery -QuarantineInvalidEvidence:$QuarantineInvalidEvidence -RecoveryReason $Reason
     exit $LASTEXITCODE
 }
 if ($Operation -eq 'Resume') {
@@ -142,8 +148,10 @@ if ($Operation -eq 'Resume') {
     Write-AiSopFollowUpReminder $WorkspacePath $Feature
     exit 0
 }
-if ($Operation -in @('ChangeTier','RecordSync','SetApplicability','AddFollowUp','CloseFollowUp')) {
+if ($Operation -in @('ChangeTier','RecordSync','SetApplicability','AddFollowUp','CloseFollowUp','SetBaseline','SetCaseScope')) {
     $update = switch ($Operation) {
+        'SetBaseline' { @{operation=$Operation;inputsRef=$BaselineInputsRef;reason=$Reason} }
+        'SetCaseScope' { @{operation=$Operation;caseIds=@($CaseIds);reason=$Reason} }
         'ChangeTier' {
             if (-not $PSBoundParameters.ContainsKey('Tier')) { throw 'TASK_UPDATE_REQUIRED:tier' }
             @{ operation=$Operation; tier=$Tier; reason=$Reason; userRequest=$UserRequest }
@@ -182,7 +190,7 @@ if ($Operation -eq 'RetryEvidence') {
 # Profiles are project-owned command definitions, never engine-specific builds.
 $profileInfo = $null
 if ($Profile) {
-    foreach ($name in @('Executable','Arguments','Kind','Batch','CaseIds')) {
+    foreach ($name in @('Executable','Arguments','Kind','Batch','CaseIds','JUnitReports','CaseMap')) {
         if ($PSBoundParameters.ContainsKey($name)) { throw "PROFILE_OVERRIDE_FORBIDDEN: $name; use an explicit command instead" }
     }
     $profileInfo = Get-AiSopVerificationProfile $WorkspacePath $Profile
@@ -190,9 +198,16 @@ if ($Profile) {
     $Executable = $definition.executable; $Arguments = @($definition.arguments); $Kind = $definition.kind
     $Batch = if ($definition.batch) { $definition.batch } else { $Profile }
     $CaseIds = @($definition.caseIds)
+    $JUnitReports = @($definition.junitReports | Where-Object { $null -ne $_ }); $CaseMap = $definition.caseMap
     if (-not $PSBoundParameters.ContainsKey('TimeoutSeconds') -and $definition.timeoutSeconds) { $TimeoutSeconds = $definition.timeoutSeconds }
 }
 if (-not $Executable -or -not $Kind) { throw 'RUN_REQUIRES_EXECUTABLE_AND_KIND' }
+$junit = Get-AiSopJUnitConfiguration $WorkspacePath $JUnitReports $CaseMap
+if ($junit) {
+    if ($Kind -ne 'test') { throw 'JUNIT_TEST_ONLY' }
+    if (@($CaseIds | Where-Object { $_ }).Count) { throw 'JUNIT_CASE_IDS_FROM_MAP: omit CaseIds when using a report map' }
+    $CaseIds = @($junit.cases.id)
+}
 if ($Batch -notmatch '^[A-Za-z0-9][A-Za-z0-9_-]{0,79}$') { throw 'BATCH_ID_INVALID' }
 & $ownerScript -Operation Validate @ownerArgs | Out-Null
 if ($LASTEXITCODE -ne 0) { throw 'TASK_OWNER_INVALID' }
@@ -208,6 +223,12 @@ $context = @{
     workspace=$WorkspacePath; runnerMachine=[Environment]::MachineName; runnerPid=[string]$PID
     runnerStartedAt=[Diagnostics.Process]::GetCurrentProcess().StartTime.ToUniversalTime().ToString('o')
     engineScriptHash=(Get-FileHash -LiteralPath $PSCommandPath).Hash.ToLowerInvariant(); logPath=".ai-workspace/.runtime/verification/$Feature/$TaskId/$runId.log"
+}
+if ($junit) {
+    $junitBefore=@{}
+    foreach ($relative in $junit.reports) { $junitBefore[$relative]=Get-AiSopJUnitFileIdentity (Resolve-AiSopWorkspaceChild $WorkspacePath $relative) }
+    $context.junitConfiguration=ConvertTo-AiSopWorkflowCanonicalJson $junit
+    $context.junitBefore=ConvertTo-AiSopWorkflowCanonicalJson $junitBefore
 }
 if ($profileInfo) { $context.profile=$Profile; $context.profileDigest=$profileInfo.digest }
 foreach ($repo in @(@{name='code';path=$WorkspacePath}, @{name='context';path=(Join-Path $WorkspacePath '.ai-workspace')}, @{name='spec';path=$SpecDirectory})) {
@@ -258,15 +279,21 @@ function Update-RunLease {
         $bound.Record.boundOwnerId -cne $task.ownerId -or $bound.Record.boundFeature -cne $Feature) { throw 'RUN_SESSION_LOST: the original session is no longer active and bound' }
     if ([DateTimeOffset]::Parse($bound.Record.expiresAt) -le [DateTimeOffset]::UtcNow.AddMinutes(5)) { Save-RunEvidence }
 }
-# Persist the attempt before launch so an abrupt runner termination cannot leave
-# an older successful batch appearing to be the latest execution.
-Save-RunEvidence
+# Prepare the log before registering RUNNING: an unwritable log must not leave
+# an attempt that never launched. Registration still precedes Process.Start.
+$writer=$null; $logStream=$null
+try {
 $logPath = Get-AiSopRunLogPath $record $WorkspacePath $SpecDirectory $TaskId
 $runtimeIgnore = Resolve-AiSopWorkspaceChild $WorkspacePath '.ai-workspace/.runtime/.gitignore'
 if (-not [IO.File]::Exists($runtimeIgnore)) { Write-AiSopWorkflowTextAtomic -Path $runtimeIgnore -Text "*`n" }
 [IO.Directory]::CreateDirectory((Split-Path -Parent $logPath)) | Out-Null
 $logStream = [IO.FileStream]::new($logPath, [IO.FileMode]::Create, [IO.FileAccess]::Write, [IO.FileShare]::ReadWrite)
 $writer = [IO.StreamWriter]::new($logStream, [Text.UTF8Encoding]::new($false)); $writer.AutoFlush = $true
+} catch {
+    if ($writer) { $writer.Dispose() } elseif ($logStream) { $logStream.Dispose() }
+    throw "RUN_LOG_UNAVAILABLE: $($_.Exception.Message)"
+}
+try { Save-RunEvidence } catch { $writer.Dispose(); throw }
 $process = [Diagnostics.Process]::new()
 $info = $process.StartInfo
 $info.WorkingDirectory=$WorkspacePath; $info.UseShellExecute=$false; $info.CreateNoWindow=$true
@@ -327,6 +354,14 @@ try {
         $record.inputsStable=($before.digest -ceq $after.digest) -and (-not $bindSpecs -or $specBefore -ceq (Get-AiSopTaskSpecDigest $SpecDirectory))
         if (-not $record.inputsStable) { $record.outcome='FAILED'; if ($record.exitCode -eq 0) { $record.exitCode=1 } }
     } catch { $record.inputsStable=$false; $record.outcome='FAILED'; $record.exitCode=1 }
+    if ($junit) {
+        try { $record.reportEvidence=Read-AiSopJUnitEvidence $junit $junitBefore $WorkspacePath }
+        catch {
+            $record.diagnostic=$_.Exception.Message
+            if ($record.outcome -eq 'PASSED') { $record.outcome='FAILED'; $record.exitCode=1 }
+            Write-Host $record.diagnostic
+        }
+    }
     Save-RunEvidence
 }
 Write-Output "RUN_RESULT:$($record.outcome) exit=$($record.exitCode) log=$logPath"

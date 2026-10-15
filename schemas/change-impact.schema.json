@@ -117,6 +117,22 @@
         "type": "string",
         "pattern": "^TC-[A-Z0-9][A-Z0-9_-]*$"
       }
+    },
+    "taskId": {
+      "type": "string",
+      "minLength": 1
+    },
+    "baselineInputDigest": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$"
+    },
+    "changedFiles": {
+      "type": "array",
+      "uniqueItems": true,
+      "items": {
+        "type": "string",
+        "minLength": 1
+      }
     }
   },
   "$defs": {

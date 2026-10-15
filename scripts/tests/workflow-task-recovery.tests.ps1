@@ -134,9 +134,26 @@ try {
     $abandoned=Task Status @{OutputFormat="JsonLines"} | ConvertFrom-Json
     Assert ($abandoned.runs[0].activity -eq 'INTERRUPTED') 'Abrupt termination not diagnosed'
     Fails { Task Complete } 'RUN_UNFINISHED'
-    Task Recover @{ForceRecovery=$true;Notes='Runner terminated during test'} | Out-Null
+    $pendingPath=Get-AiSopRunEvidencePath $spec recovery $live.runId
+    [IO.File]::WriteAllText($pendingPath,'{damaged result')
+    $diagnostic=Task InspectRecovery | ConvertFrom-Json
+    Assert (@($diagnostic.records | Where-Object { $_.kind -eq 'PENDING' -and $_.status -eq 'INVALID' }).Count -eq 1) 'Corrupt pending result not diagnosed'
+    Fails { Task Recover @{ForceRecovery=$true} } 'PENDING_EVIDENCE_INVALID'
+    Assert ((Read-AiSopTask $spec recovery).verifications[-1].outcome -eq 'RUNNING') 'Rejected recovery changed task state'
+    Fails { Task Recover @{ForceRecovery=$true;QuarantineInvalidEvidence=$true} } 'QUARANTINE_REASON_REQUIRED'
+    Task Recover @{ForceRecovery=$true;QuarantineInvalidEvidence=$true;Reason='Interrupted writer left malformed result; rerun verification'} | Out-Null
     $recovered=Read-AiSopTask $spec 'recovery'
+    $backup=Resolve-AiSopWorkspaceChild $workspace $recovered.lastRecovery.quarantinedEvidence[0].backupPath
+    Assert ([IO.File]::ReadAllText($backup) -ceq '{damaged result') 'Quarantine did not preserve exact bytes'
+    Assert (-not [IO.File]::Exists($pendingPath)) 'Committed quarantine left invalid pending result'
     Assert ($recovered.verifications[-1].outcome -eq 'INTERRUPTED' -and $recovered.status -eq 'PAUSED') 'Interrupted result lost during recovery'
+    $taskPath=Get-AiSopTaskPath $spec recovery; $taskRaw=[IO.File]::ReadAllText($taskPath)
+    [IO.File]::WriteAllText($taskPath,'{damaged authority')
+    try {
+        $diagnostic=Task InspectRecovery | ConvertFrom-Json
+        Assert (@($diagnostic.records | Where-Object { $_.kind -eq 'TASK' -and $_.status -eq 'UNAVAILABLE' }).Count -eq 1) 'Damaged task authority crashed inspection'
+        Assert ([IO.File]::ReadAllText($taskPath) -ceq '{damaged authority') 'Read-only inspection rewrote authority'
+    } finally { [IO.File]::WriteAllText($taskPath,$taskRaw) }
     Task Resume | Out-Null
     Fails { Task Verify } 'Task Verify failed'
     Task Run @{Profile='check'; Reason='Restore normal regression after interruption'} | Out-Null

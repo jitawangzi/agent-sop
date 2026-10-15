@@ -36,9 +36,16 @@ try {
     $config='.ai-workspace/context/verification-inputs.json'
     Put $config ($policy | ConvertTo-Json -Depth 5)
     $configured=Get-AiSopInputSnapshot $workspace
-    Assert ($configured.algorithm -eq 'inputs-v3' -and $configured.files.ContainsKey('shared/base.txt')) 'Configured inputs dropped shared dependencies'
+    Assert ($configured.algorithm -eq 'inputs-v4' -and $configured.files.ContainsKey('shared/base.txt')) 'Configured inputs dropped shared dependencies or retained old precedence version'
     Assert ($configured.files.ContainsKey('build/handwritten.txt') -and $configured.files.ContainsKey('.ai-workspace/context/contract.txt')) 'Explicit inputs did not override default exclusions'
     Assert (-not $configured.files.ContainsKey('build/noise.txt') -and -not $configured.files.ContainsKey('.ai-workspace/context/noise.txt') -and -not $configured.files.ContainsKey('generated/output.txt')) 'Reincluded descendant brought excluded siblings into inputs'
+    # Old manifests remain readable, but cannot prove the current matching policy.
+    $legacy=@{algorithm='inputs-v3';policyDigest=$configured.policyDigest;files=$configured.files}
+    $legacy.digest=Get-AiSopInputDigest $legacy
+    $legacyRef=Save-AiSopInputManifest $legacy $workspace
+    Assert ((Read-AiSopVerificationInputs @{inputsRef=$legacyRef;inputDigest=$legacy.digest} $workspace).algorithm -eq 'inputs-v3') 'Legacy manifest no longer readable'
+    Assert ($legacy.digest -cne $configured.digest) 'New precedence reused old evidence digest'
+    [IO.File]::Delete((Get-AiSopInputManifestPath $workspace $legacyRef))
     Put 'generated/output.txt' 'new output'
     Assert ((Get-AiSopInputSnapshot $workspace).digest -ceq $configured.digest) 'Excluded generated output invalidated inputs'
     Put 'shared/base.txt' 'changed shared'
@@ -49,6 +56,29 @@ try {
         Put $config (@{schemaVersion='1.0';include=@($badPath);exclude=@()} | ConvertTo-Json -Depth 5)
         Fails { Get-AiSopInputSnapshot $workspace } 'INPUT_POLICY_INVALID'
     }
+    Put 'module/build.gradle' ''; Put 'module/src/main.txt' 'source'
+    Put 'module/build/output.txt' 'output'; Put 'module/target/output.txt' 'output'
+    Put 'module/build/fixture/data.txt' 'real input'; Put 'module/build/fixture/noise.txt' 'output'
+    Put 'module/app.log.2026-10-15.gz' 'log'; Put 'module/app.log.config' 'input'
+    Put $config (@{schemaVersion='1.0';include=@('module');exclude=@()} | ConvertTo-Json -Depth 5)
+    $broad=Get-AiSopInputSnapshot $workspace
+    Assert ($broad.files.ContainsKey('module/src/main.txt') -and $broad.files.ContainsKey('shared/base.txt')) 'Broad include narrowed the conservative scan'
+    Assert (-not $broad.files.ContainsKey('module/build/output.txt') -and -not $broad.files.ContainsKey('module/target/output.txt') -and -not $broad.files.ContainsKey('module/app.log.2026-10-15.gz')) 'Parent include disabled deeper default exclusions'
+    Assert ($broad.files.ContainsKey('module/app.log.config')) 'Log-like source name was excluded'
+    $nested=@{schemaVersion='1.0';include=@('module','module/build/fixture','module/app.log.2026-10-15.gz');exclude=@(@{path='module/build';reason='Outputs'},@{path='module/build/fixture/noise.txt';reason='Generated fixture noise'})}
+    Put $config ($nested | ConvertTo-Json -Depth 5)
+    $specific=Get-AiSopInputSnapshot $workspace
+    Assert (-not $specific.files.ContainsKey('module/build/output.txt') -and -not $specific.files.ContainsKey('module/build/fixture/noise.txt')) 'Specific exclude lost to an ancestor include'
+    Assert ($specific.files.ContainsKey('module/build/fixture/data.txt') -and $specific.files.ContainsKey('module/app.log.2026-10-15.gz')) 'Deeper explicit input did not override excluded ancestor/default'
+    $nested.include=@($nested.include | Sort-Object -Descending); $nested.exclude=@($nested.exclude | Sort-Object path -Descending)
+    Put $config ($nested | ConvertTo-Json -Depth 5)
+    Assert ((ConvertTo-AiSopWorkflowCanonicalJson (Get-AiSopInputSnapshot $workspace).files) -ceq (ConvertTo-AiSopWorkflowCanonicalJson $specific.files)) 'Rule array order changed selected files'
+    foreach ($conflict in @('module') + $(if ([OperatingSystem]::IsWindows()) { @('MODULE') } else { @() })) {
+        Put $config (@{schemaVersion='1.0';include=@('module');exclude=@(@{path=$conflict;reason='conflict'})} | ConvertTo-Json -Depth 5)
+        Fails { Get-AiSopInputSnapshot $workspace } 'conflicting include/exclude path'
+    }
+    Put $config (@{schemaVersion='1.0';include=@('not-created-yet');exclude=@()} | ConvertTo-Json -Depth 5)
+    Fails { Get-AiSopInputSnapshot $workspace } 'included path missing'
     Put $config '{broken'; Fails { Get-AiSopInputSnapshot $workspace } 'INPUT_POLICY_INVALID'
     Put $config ($policy | ConvertTo-Json -Depth 5)
     # A physical link cannot redirect configured input or manifest paths outside

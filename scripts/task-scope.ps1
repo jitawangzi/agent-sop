@@ -27,7 +27,7 @@ function Get-AiSopTaskChanges {
     $before=Read-AiSopVerificationInputs $Task.baseline $WorkspacePath $ValidationContext
     $after=Get-AiSopValidationSnapshot $WorkspacePath $ValidationContext
     if ($before.algorithm -cne $after.algorithm -or [string]$before.policyDigest -cne [string]$after.policyDigest) {
-        throw 'TASK_INPUT_POLICY_CHANGED: restore the task input policy before reviewing changes; do not replace the task baseline to hide changed inputs'
+        throw 'TASK_INPUT_POLICY_CHANGED: use the original input policy and matching engine algorithm; finish active tasks before upgrading input rules. Do not replace the task baseline to hide changed inputs'
     }
     $paths=[Collections.Generic.SortedSet[string]]::new([StringComparer]::Ordinal)
     foreach ($path in @($before.files.Keys) + @($after.files.Keys)) { [void]$paths.Add($path) }

@@ -2,7 +2,7 @@
 
 ## 任务模式：按本次修改验证
 
-输入范围可由项目的 `.ai-workspace/context/verification-inputs.json` 配置：默认保守扫描不变，include 补入真实输入，exclude 用明确路径和理由排除输出。配置摘要参与 inputs-v3；无配置保持 inputs-v2，Git/SVN ignore 不是输入真源。配置的语义正确性仍依赖项目维护者，不允许通过随意排除源码消除失败。新 Run 的完整输入清单按哈希保存于 `.ai-workspace/specs/.artifacts/inputs/`，task.json 引用 inputsRef；验证检查清单存在、内容哈希和输入摘要，缺失/损坏必须补同步或重跑。旧内嵌清单兼容，历史 DONE 不迁移。本地日志不参与完成判定。
+输入范围可由项目的 `.ai-workspace/context/verification-inputs.json` 配置：默认保守扫描不变，include 补入真实输入，exclude 用明确路径和理由排除输出。更具体路径优先，父目录 include 不解除子目录输出/日志排除；显式 include 可覆盖同路径默认排除，同路径 include/exclude 冲突则拒绝配置。配置摘要参与 inputs-v4，旧 v3 清单可读取但证据过期；无配置保持 inputs-v2，Git/SVN ignore 不是输入真源。活动 T3 的基线口径不可变，应在原引擎完成后升级输入规则，不能用升级理由重写起点。配置的语义正确性仍依赖项目维护者，不允许通过随意排除源码消除失败。新 Run 的完整输入清单按哈希保存于 `.ai-workspace/specs/.artifacts/inputs/`，task.json 引用 inputsRef；验证检查清单存在、内容哈希和输入摘要，缺失/损坏必须补同步或重跑。旧内嵌清单兼容，历史 DONE 不迁移。本地日志不参与完成判定。
 
 一次 Status/Verify 使用同一调用内的内容快照；后续调用及 Run 的前后快照重新读取。Status 是诊断视图，`-Json` 提供固定结构；部署投影漂移只提醒，损坏规格 JSON 则在实际依赖它的 T3 校验中明确失败。Start 不得复用旧 TaskId 恢复暂停任务，Resume 不得静默丢弃新传入的不同目标。
 
@@ -36,6 +36,8 @@ T1/T2 的执行入口不计算规格摘要，轻量 Verify 的风险扫描失败
 验证命令在启动前写入 RUNNING，避免进程突然退出后更早的成功记录成为“最新结果”。终态记录同批次替换该次尝试，超时/中断均不能满足必需验证。Task Status 和根 Status 采用相同摘要，但执行证据有效不等于完整 T3 验收。Recover/ForceRelease 同步恢复任务、归属和会话，未结束的本机验证进程不能绕过。
 
 新记录使用执行协议 2：Checkpoint 只接受任务目录内的 runId 待保存文件，新尝试必须为 RUNNING，终态必须匹配既有尝试的任务、会话 epoch、命令、输入、用例范围和运行器身份。改变同一批次的验证定义需提供 Reason，保留替换关系。运行期间 Checkpoint 仅续期原绑定会话；终态结果先原子落盘，事务失败保留，RetryEvidence 可幂等重试，Recover 可接收已停止本地运行的匹配终态结果。路径、进程和摘要校验用于正常接口的完整性检查；拥有引擎与注册表写权限的同一主体仍可修改文件，不宣称实现了对恶意本地写入的防伪。
+
+运行中的会话读取/续期锁超时仅在最后确认的租约有效期内退避重试，连续失败最多 30 秒，每次重试的锁与事务阶段共享最多 3 秒预算，且受原租约/重试截止时间约束。会话结束、归属或 epoch 改变不重试；租约到期或耗尽重试窗口停止子进程并记录 INTERRUPTED/RUN_CONTROL_INTERRUPTED，与真实子进程非零退出的 FAILED 区分。最终保存失败仍保留原始结果，不通过延长重试窗口复活旧会话。
 
 损坏待入账结果默认阻断恢复；InspectRecovery 只读诊断。原进程停止后可显式 QuarantineInvalidEvidence，先保存原字节和哈希再以两阶段事务记为中断，必须重跑；损坏 task/owner/session 不自动猜测修复。日志路径先准备再登记 RUNNING，避免尚未启动就留下虚假运行状态。
 

@@ -98,12 +98,30 @@ try {
     Fails { Task SetBaseline one @{BaselineInputsRef=$task.baseline.inputsRef;Reason='Cannot erase delta'} } 'TASK_BASELINE_IMMUTABLE'
     $ownerPath=Join-Path $env:AI_SOP_OWNER_REGISTRY 'example.json'; $featureBaseline=([IO.File]::ReadAllText($ownerPath) | ConvertFrom-Json).baseline
     Task Cancel | Out-Null
+    # A prior task's high-risk change must not leak through nested risk helpers.
+    Put 'src/ExampleRouter.java' 'public class ExampleRouter {}'
+    [IO.File]::AppendAllText((Join-Path $spec '06_design_contract.md'),"`nImplementation: src/ExampleRouter.java")
     Task Start two @{Tier='T3';Objective='Next independent task'} | Out-Null
     $second=Read-AiSopTask $spec two
     Assert ($second.baseline.revision -cne $task.baseline.revision -and $second.baseline.inputsRef -cne $task.baseline.inputsRef) 'Independent task inherited old baseline'
     Assert ((Task Changes two | ConvertFrom-Json).manifest.changes.Count -eq 0) 'New task includes preceding task changes'
     $emptyRisk=& $stateEntry -Operation AssessRisk -Path $spec -TaskId two | ConvertFrom-Json
     Assert ('TASK_DIFF_INCOMPLETE' -notin $emptyRisk.triggersHit -and 'TASK_SCOPE_UNAVAILABLE' -notin $emptyRisk.triggersHit) 'Empty delta was treated as an unreadable null path'
+    & {
+        # Load reusable functions without running workflow-state's CLI dispatch.
+        # A foreign ambient TaskId must not select a task implicitly.
+        $tokens=$null; $parseErrors=$null
+        $ast=[Management.Automation.Language.Parser]::ParseFile($stateEntry,[ref]$tokens,[ref]$parseErrors)
+        foreach ($definition in $ast.FindAll({param($node) $node -is [Management.Automation.Language.FunctionDefinitionAst]},$true)) { Invoke-Expression $definition.Extent.Text }
+        $TaskId='missing-ambient-task'
+        $featureRisk=Get-SemanticRiskAssessment -WorkspaceRoot $workspace -Baseline $second.baseline.revision -SpecDir $spec
+        Assert ('TYPE_EXTENSION' -in $featureRisk.TriggersHit) 'Standalone risk unexpectedly inherited ambient task scope or lost the feature diff'
+        $taskRisk=Get-SemanticRiskAssessment -WorkspaceRoot $workspace -SpecDir $spec -TaskId two
+        Assert ('TYPE_EXTENSION' -notin $taskRisk.TriggersHit) 'Explicit task scope included inherited routing changes'
+        Assert-ExtensionImpactCompleteness -Impact @{} -WorkspaceRoot $workspace -Baseline $second.baseline.revision -SpecDir $spec -TaskId two
+        Assert-ExtensionCoverageCompleteness -Impact @{} -Coverage @{} -WorkspaceRoot $workspace -Baseline $second.baseline.revision -SpecDir $spec -TaskId two
+        Assert (@(Get-WorkspaceChangedRelativePaths -WorkspaceRoot $workspace -SpecDir $spec -TaskId two).Count -eq 0) 'Changed-path helper lost explicit scope'
+    }
     $verifyOutput=[Collections.Generic.List[string]]::new()
     try { Task Verify two 2>&1 | ForEach-Object { $verifyOutput.Add([string]$_) } } catch { $verifyOutput.Add($_.Exception.Message) }
     Assert (($verifyOutput -join "`n") -match 'Historical impact analysis belongs to another task' -and ($verifyOutput -join "`n") -notmatch 'TASK_IMPACT_STALE|04_change_impact.json is mandatory') 'Independent task inherited prior impact obligation'

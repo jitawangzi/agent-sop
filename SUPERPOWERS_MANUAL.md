@@ -38,7 +38,7 @@ Status/Discover 默认输出简明文本，列出未完成任务及仍有待同�
 
 Run 在启动前持久保存 RUNNING，再持续输出并写入任务日志，结束时更新为 PASSED、FAILED 或 TIMED_OUT。异常退出可能留下 RUNNING；Status 根据本机进程身份（PID 与启动时间）区分仍运行和已中断，Recover 将已停止的尝试记为 INTERRUPTED。远端进程无法本地确认，需要先确认原执行已停止。超时会终止本次启动的进程树并记录退出码 124。查看实时日志可使用 PowerShell 的 Get-Content -Wait；停止运行器后，后续 Agent 应检查是否还有遗留子进程。
 
-Run 自动续期当前绑定会话，不重新激活已结束或已转移的会话。执行结果先原子保存到任务目录的 `<runId>.pending.json`，再通过事务入账；只有成功入账才删除待保存文件。事务失败时可用 `Task -Operation RetryEvidence -Feature Example -TaskId fix-1 -Agent CODEX -RunId <id>` 重试保存，不重新执行命令。会话已结束/到期时，待原进程停止后 Recover：匹配的本地终态结果会随恢复事务保存，再 Resume；没有有效终态结果才记 INTERRUPTED。旧任务的终态 owner 不阻塞另一任务的恢复。
+Run 自动续期当前绑定会话，不重新激活已结束或已转移的会话。运行中的会话检查/续期遇到锁竞争，会在最后确认的原租约有效期内退避重试，连续重试最多 30 秒；租约到期、身份变化或其他协调错误会停止子进程，记为 INTERRUPTED 并保留 RUN_CONTROL_INTERRUPTED 诊断，不冒充测试断言失败。执行结果先原子保存到任务目录的 `<runId>.pending.json`，再通过事务入账；只有成功入账才删除待保存文件。事务失败时可用 `Task -Operation RetryEvidence -Feature Example -TaskId fix-1 -Agent CODEX -RunId <id>` 重试保存，不重新执行命令。会话已结束/到期时，待原进程停止后 Recover：匹配的本地终态结果会随恢复事务保存，再 Resume；没有有效终态结果才记 INTERRUPTED。旧任务的终态 owner 不阻塞另一任务的恢复。
 
 同一 kind/batch 的重跑保持命令、Profile 和 CaseIds 范围一致。确需更换时在 Run 提供 `-Reason "调整验证命令/范围的具体原因"`，保留旧尝试及替换关联；不得改用无关成功命令掩盖失败。修复代码后用原命令重跑不需要额外参数。
 
@@ -131,7 +131,11 @@ T1 只需真实编译/基础检查；T2 还需相关测试和 RecordSync 记录�
 }
 ```
 
-`include` 是补充纳入被默认规则排除的真实输入，不是限制扫描范围的白名单；未列出的公共代码仍检查。`exclude` 排除明确的生成文件或目录，必须说明原因。均为宿主根目录下的字面路径，匹配自身及子目录，不支持 glob、绝对路径或 `..`；显式 include 优先，重新纳入子路径不会纳入其被排除的兄弟路径。include 目标必须存在，不能纳入 VCS、引擎、规格和运行时目录。修改配置前应核对共享依赖，不应为了通过门禁而排除源码。机器检查配置格式及路径边界，不证明排除理由的语义；不自动采用 Git/SVN ignore 作为验证依据。有配置使用绑定配置摘要的 `inputs-v3`，新增/更改/移除配置会使旧执行证据过期；无配置继续 v2。
+`include` 是补充纳入被默认规则排除的真实输入，不是限制扫描范围的白名单；未列出的公共代码仍检查。`exclude` 排除明确的生成文件或目录，必须说明原因。均为宿主根目录下的字面路径，匹配自身及子目录，不支持 glob、绝对路径或 `..`。更具体的路径规则优先；显式 include 可以覆盖同路径的默认排除，不能覆盖更深层的输出或日志排除；同路径同时写 include/exclude 则报配置冲突。Windows 下冲突判断不区分大小写。include 目标必须预先存在，适用于真实源码或测试夹具，不用于构建后才生成的目标文件；不能纳入 VCS、引擎、规格和运行时目录。修改配置前应核对共享依赖，不应为了通过门禁而排除源码。机器检查配置格式及路径边界，不证明排除理由的语义；不自动采用 Git/SVN ignore 作为验证依据。
+
+例如 include `module` 仍排除可识别模块下的 `module/build`、`module/target`；显式 exclude `module/build` 也优先于父目录 include。需要其中的手写夹具时，include `module/build/fixtures` 可重新纳入该子目录，兄弟输出仍排除。`app.log.2026-10-15.gz` 等日期滚动日志默认排除；确为测试输入时可 include 其精确路径。`app.log.config` 之类的普通文件不按滚动日志排除。
+
+配置结构仍为 schemaVersion 1.0，新匹配语义使用绑定配置摘要的 `inputs-v4`，旧 v3 清单可读取但不能复用为当前成功证据；新增/更改/移除配置也会使执行证据过期。无配置继续 v2，仅实际受日志排除修正影响的输入摘要变化。使用 v3 基线的活动 T3 应在原引擎完成后升级，避免中途改变差异口径；升级后不重填旧基线或成功哈希。历史 DONE 不迁移，接收 v4 清单的 Agent 引擎需同步升级。
 
 新 Run 将完整清单按内容哈希去重保存到 `.ai-workspace/specs/.artifacts/inputs/<sha256>.json`，task.json 仅保存 `inputsRef` 和输入摘要。这部分须随规格 Git 一起提交、同步；只复制功能目录不足以交接新记录。缺失、损坏或摘要不匹配会明确诊断，不能冒充成功。旧内嵌清单仍可读取，无需迁移历史任务；接收新记录的引擎需要升级到支持 inputsRef 的版本。日志默认写入 `.ai-workspace/.runtime/verification/<Feature>/<taskId>/<runId>.log`，该本地目录自动放置忽略规则，不随规格同步；日志缺失不等于执行失败，结果依据持久证据判断。旧日志路径仍可读取。
 

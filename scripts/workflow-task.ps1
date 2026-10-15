@@ -265,19 +265,57 @@ if ($previousBatch.Count -and (Get-AiSopRunDefinitionDigest $previousBatch[-1]) 
     $context.batchChangeReason = $Reason; $context.previousRunId = [string]$previousBatch[-1].runId
 }
 function Save-RunEvidence {
+    param([Nullable[DateTimeOffset]]$DeadlineUtc)
     $recordPath = Get-AiSopRunEvidencePath $SpecDirectory $TaskId $runId
     # Durable before checkpoint. Keep the result on any commit/transport failure;
     # RetryEvidence or Recover can finish the same run without executing it again.
     Write-AiSopWorkflowTextAtomic -Path $recordPath -Text (ConvertTo-AiSopWorkflowCanonicalJson $record)
-    & $ownerScript -Operation Checkpoint @ownerArgs -EvidencePath $recordPath | Out-Null
+    & $ownerScript -Operation Checkpoint @ownerArgs -EvidencePath $recordPath -DeadlineUtc $DeadlineUtc | Out-Null
     if ($LASTEXITCODE -ne 0) { throw "EVIDENCE_CHECKPOINT_FAILED: pending result at $recordPath" }
     Remove-Item -LiteralPath $recordPath
 }
+$lease = @{ expiresAt=[DateTimeOffset]::MinValue; nextCheckAt=[DateTimeOffset]::MinValue; retryUntil=$null; attempt=0; checkpointPending=$false }
 function Update-RunLease {
-    $bound = Get-AiSopWorkflowSession -SessionKey $context.sessionKey -WorkspacePath $WorkspacePath -DeadlineUtc ([DateTimeOffset]::UtcNow.AddSeconds(15))
-    if ($bound.EffectiveStatus -ne 'ACTIVE' -or $bound.Record.sessionEpochId -cne $context.sessionEpochId -or
-        $bound.Record.boundOwnerId -cne $task.ownerId -or $bound.Record.boundFeature -cne $Feature) { throw 'RUN_SESSION_LOST: the original session is no longer active and bound' }
-    if ([DateTimeOffset]::Parse($bound.Record.expiresAt) -le [DateTimeOffset]::UtcNow.AddMinutes(5)) { Save-RunEvidence }
+    try {
+        $now=[DateTimeOffset]::UtcNow
+        if ($lease.retryUntil -and $now -ge $lease.retryUntil) { throw 'RUN_LEASE_RETRY_EXHAUSTED' }
+        $deadline=$now.AddSeconds(3)
+        if ($lease.expiresAt -ne [DateTimeOffset]::MinValue -and $lease.expiresAt -lt $deadline) { $deadline=$lease.expiresAt }
+        if ($lease.retryUntil -and $lease.retryUntil -lt $deadline) { $deadline=$lease.retryUntil }
+        $bound = Get-AiSopWorkflowSession -SessionKey $context.sessionKey -WorkspacePath $WorkspacePath -DeadlineUtc $deadline
+        if ($bound.EffectiveStatus -ne 'ACTIVE' -or $bound.Record.sessionEpochId -cne $context.sessionEpochId -or
+            $bound.Record.boundOwnerId -cne $task.ownerId -or $bound.Record.boundFeature -cne $Feature) { throw 'RUN_SESSION_LOST: the original session is no longer active and bound' }
+        $lease.expiresAt=[DateTimeOffset]::Parse($bound.Record.expiresAt)
+        if ([DateTimeOffset]::UtcNow -ge $lease.expiresAt) { throw 'RUN_SESSION_LOST: original lease expired' }
+        if ($lease.expiresAt -lt $deadline) { $deadline=$lease.expiresAt }
+        if ($lease.checkpointPending -or $lease.expiresAt -le [DateTimeOffset]::UtcNow.AddMinutes(5)) {
+            Save-RunEvidence -DeadlineUtc $deadline
+            $lease.checkpointPending=$false
+            # Read the committed expiry; never infer that a failed save renewed it.
+            $bound=Get-AiSopWorkflowSession -SessionKey $context.sessionKey -WorkspacePath $WorkspacePath -DeadlineUtc $deadline
+            if ($bound.EffectiveStatus -ne 'ACTIVE' -or $bound.Record.sessionEpochId -cne $context.sessionEpochId -or
+                $bound.Record.boundOwnerId -cne $task.ownerId -or $bound.Record.boundFeature -cne $Feature) { throw 'RUN_SESSION_LOST: binding changed during renewal' }
+            $lease.expiresAt=[DateTimeOffset]::Parse($bound.Record.expiresAt)
+        }
+        $lease.attempt=0; $lease.retryUntil=$null
+        $lease.nextCheckAt=[DateTimeOffset]::UtcNow.AddSeconds(5)
+    } catch {
+        $failure=$_.Exception.Message; $now=[DateTimeOffset]::UtcNow
+        # Only transient lock/deadline contention is retryable. A lost identity,
+        # invalid evidence, IO error or expired lease must stop the child.
+        if ($failure -match '(^|[:\s])WORKFLOW_(LOCK_TIMEOUT|DEADLINE_EXCEEDED)(?=$|[:\s])' -and $now -lt $lease.expiresAt) {
+            if (-not $lease.retryUntil) { $lease.retryUntil=$now.AddSeconds(30) }
+            if ($lease.expiresAt -lt $lease.retryUntil) { $lease.retryUntil=$lease.expiresAt }
+            if ($now -lt $lease.retryUntil) {
+                $lease.attempt++
+                $lease.nextCheckAt=$now.AddSeconds([Math]::Min(5,[Math]::Pow(2,[Math]::Min($lease.attempt-1,3))))
+                $message="RUN_LEASE_RETRY: attempt=$($lease.attempt); retryUntil=$($lease.retryUntil.ToString('o')); $failure"
+                $writer.WriteLine($message); Write-Host $message
+                return
+            }
+        }
+        throw "RUN_CONTROL_INTERRUPTED: $failure"
+    }
 }
 # Prepare the log before registering RUNNING: an unwritable log must not leave
 # an attempt that never launched. Registration still precedes Process.Start.
@@ -293,14 +331,13 @@ $writer = [IO.StreamWriter]::new($logStream, [Text.UTF8Encoding]::new($false)); 
     if ($writer) { $writer.Dispose() } elseif ($logStream) { $logStream.Dispose() }
     throw "RUN_LOG_UNAVAILABLE: $($_.Exception.Message)"
 }
-try { Save-RunEvidence } catch { $writer.Dispose(); throw }
+try { Save-RunEvidence; Update-RunLease } catch { $writer.Dispose(); throw }
 $process = [Diagnostics.Process]::new()
 $info = $process.StartInfo
 $info.WorkingDirectory=$WorkspacePath; $info.UseShellExecute=$false; $info.CreateNoWindow=$true
 $info.RedirectStandardOutput=$true; $info.RedirectStandardError=$true
 foreach ($arg in $Arguments) { $info.ArgumentList.Add($arg) }
 $started=$false; $finished=$false; $stopwatch=[Diagnostics.Stopwatch]::StartNew()
-$lastLeaseCheck = [DateTimeOffset]::MinValue
 try {
     if ($launchError) { throw $launchError }
     $info.FileName = $context.executable
@@ -308,15 +345,15 @@ try {
     if (-not $started) { throw 'VERIFICATION_START_FAILED' }
     $context.childPid=[string]$process.Id
     $context.childStartedAt=$process.StartTime.ToUniversalTime().ToString('o')
-    Save-RunEvidence
+    $lease.checkpointPending=$true; $lease.nextCheckAt=[DateTimeOffset]::MinValue
     $pipes = @(
         @{ reader=$process.StandardOutput; buffer=[char[]]::new(2048); pending=$null; ended=$false },
         @{ reader=$process.StandardError; buffer=[char[]]::new(2048); pending=$null; ended=$false }
     )
     while ($true) {
-        if (-not $process.HasExited -and [DateTimeOffset]::UtcNow -ge $lastLeaseCheck.AddSeconds(5)) {
+        $now=[DateTimeOffset]::UtcNow
+        if (-not $process.HasExited -and ($now -ge $lease.nextCheckAt -or $now -ge $lease.expiresAt -or ($lease.retryUntil -and $now -ge $lease.retryUntil))) {
             Update-RunLease
-            $lastLeaseCheck = [DateTimeOffset]::UtcNow
         }
         if ($TimeoutSeconds -gt 0 -and $stopwatch.Elapsed.TotalSeconds -ge $TimeoutSeconds) {
             $record.outcome='TIMED_OUT'; $record.exitCode=124
@@ -342,8 +379,11 @@ try {
     }
     $finished=$true
 } catch {
-    $record.exitCode=-1; $record.outcome='FAILED'
-    $message='VERIFICATION_FAILED: ' + $_.Exception.Message
+    $controlInterrupted=$_.Exception.Message.StartsWith('RUN_CONTROL_INTERRUPTED:')
+    $record.exitCode=if ($controlInterrupted) { -2 } else { -1 }
+    $record.outcome=if ($controlInterrupted) { 'INTERRUPTED' } else { 'FAILED' }
+    $record.diagnostic=$_.Exception.Message
+    $message=if ($controlInterrupted) { $record.diagnostic } else { 'VERIFICATION_FAILED: ' + $record.diagnostic }
     $writer.WriteLine($message); Write-Host $message
 } finally {
     if ($started -and -not $process.HasExited) { $process.Kill($true); $process.WaitForExit(5000) | Out-Null }
@@ -357,7 +397,7 @@ try {
     if ($junit) {
         try { $record.reportEvidence=Read-AiSopJUnitEvidence $junit $junitBefore $WorkspacePath }
         catch {
-            $record.diagnostic=$_.Exception.Message
+            $record.diagnostic=(@($record.diagnostic,$_.Exception.Message) | Where-Object { $_ }) -join '; '
             if ($record.outcome -eq 'PASSED') { $record.outcome='FAILED'; $record.exitCode=1 }
             Write-Host $record.diagnostic
         }

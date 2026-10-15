@@ -65,7 +65,9 @@ param(
     [switch]$ConfirmTakeover,
     [switch]$RetryEvidence,
     [switch]$CreateTaskOnly,
-    [string]$Baseline = $null
+    [string]$Baseline = $null,
+    # Internal callers can cap all lock phases at the original run lease.
+    [Nullable[DateTimeOffset]]$DeadlineUtc
 )
 
 $ErrorActionPreference = "Stop"
@@ -333,6 +335,7 @@ if (
     $ownerDeadlineMs = [int]$ownerDeadlineEnv
 }
 $WorkflowDeadlineUtc = $AcceptedAt.AddMilliseconds($ownerDeadlineMs)
+if ($null -ne $DeadlineUtc -and $DeadlineUtc -lt $WorkflowDeadlineUtc) { $WorkflowDeadlineUtc = [DateTimeOffset]$DeadlineUtc }
 
 # 5. Read existing owner (from registry or mirror fallback)
 $existingOwner = Read-Owner -AllowMissing
@@ -969,6 +972,7 @@ if ($Operation -in @('ForceRelease','Recover')) {
         $sessionKeys += $bound.sessionKey
     }
     $WorkflowDeadlineUtc = [DateTimeOffset]::UtcNow.AddMilliseconds($ownerDeadlineMs)
+    if ($null -ne $DeadlineUtc -and $DeadlineUtc -lt $WorkflowDeadlineUtc) { $WorkflowDeadlineUtc = [DateTimeOffset]$DeadlineUtc }
     $recoveryLocks = Enter-AiSopWorkflowTransactionLocks -SessionKeys $sessionKeys -OwnerPath $OwnerPath -Targets $targets -DeadlineUtc $WorkflowDeadlineUtc -WorkspacePath $ownerWs
     try {
         # Absence is checked while holding the owner lock as well as task CAS.
@@ -1638,6 +1642,7 @@ $transactionOperation = switch ($Operation) {
     "Checkpoint" { "CHECKPOINT" }
 }
 if ($TaskId) { $WorkflowDeadlineUtc = [DateTimeOffset]::UtcNow.AddMilliseconds($ownerDeadlineMs) }
+if ($null -ne $DeadlineUtc -and $DeadlineUtc -lt $WorkflowDeadlineUtc) { $WorkflowDeadlineUtc = [DateTimeOffset]$DeadlineUtc }
 Invoke-AiSopWorkflowTransaction `
     -Operation $transactionOperation `
     -Feature $Feature `

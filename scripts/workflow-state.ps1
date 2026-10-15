@@ -1952,7 +1952,8 @@ function Get-ChangeSetDigest {
 
 function Validate-ChangeImpactState {
     param(
-        [string]$ImpactPath
+        [string]$ImpactPath,
+        [string]$TaskId = $null
     )
     if (-not (Test-Path -LiteralPath $ImpactPath -PathType Leaf)) {
         throw "Change impact file does not exist: $ImpactPath"
@@ -1978,14 +1979,14 @@ function Validate-ChangeImpactState {
         $artifactHash = (Get-FileHash -LiteralPath $ImpactPath -Algorithm SHA256).Hash.ToLowerInvariant()
         if ($taskRecord.tier -eq 'T3') {
             Assert-AiSopTaskImpactBinding $taskRecord $impact $wsRoot $script:TaskValidationContext -CheckReview -ArtifactHash $artifactHash | Out-Null
-            Assert-ExtensionImpactCompleteness -Impact $impact -WorkspaceRoot $wsRoot -Baseline $impact.baseline -SpecDir $specDir
+            Assert-ExtensionImpactCompleteness -Impact $impact -WorkspaceRoot $wsRoot -Baseline $impact.baseline -SpecDir $specDir -TaskId $TaskId
             return $impact
         }
         $inputDigest = (Get-AiSopValidationSnapshot $wsRoot $script:TaskValidationContext).digest
         if (-not $taskRecord.impactReview -or $taskRecord.impactReview.artifactHash -cne $artifactHash -or $taskRecord.impactReview.inputDigest -cne $inputDigest) {
             throw 'IMPACT_REVIEW_REQUIRED: inspect current analysis and code, then workflow-task ReviewImpact; do not rewrite old successful evidence digests.'
         }
-        Assert-ExtensionImpactCompleteness -Impact $impact -WorkspaceRoot $wsRoot -Baseline $impact.baseline -SpecDir $specDir
+        Assert-ExtensionImpactCompleteness -Impact $impact -WorkspaceRoot $wsRoot -Baseline $impact.baseline -SpecDir $specDir -TaskId $TaskId
         return $impact
     }
     $currentDigest = Get-ChangeSetDigest -WorkspaceRoot $wsRoot -Baseline $impact.baseline -ChangedSymbols $impact.changedSymbols
@@ -1993,7 +1994,7 @@ function Validate-ChangeImpactState {
         throw "Change impact analysis is stale: recorded changeSetDigest does not match actual workspace diff against baseline '$($impact.baseline)'. Re-run Behavior Impact Analysis."
     }
 
-    Assert-ExtensionImpactCompleteness -Impact $impact -WorkspaceRoot $wsRoot -Baseline $impact.baseline -SpecDir $specDir
+    Assert-ExtensionImpactCompleteness -Impact $impact -WorkspaceRoot $wsRoot -Baseline $impact.baseline -SpecDir $specDir -TaskId $TaskId
     return $impact
 }
 
@@ -2100,7 +2101,8 @@ function Get-WorkspaceChangedRelativePaths {
     param(
         [string]$WorkspaceRoot,
         [string]$Baseline,
-        [string]$SpecDir = $null
+        [string]$SpecDir = $null,
+        [string]$TaskId = $null
     )
     if ($TaskId -and $SpecDir) {
         $scopeTask=Read-AiSopTask $SpecDir $TaskId
@@ -2315,7 +2317,8 @@ function Assert-ExtensionImpactEvidence {
         $Impact,
         [string]$WorkspaceRoot,
         [string]$Baseline,
-        [string]$SpecDir
+        [string]$SpecDir,
+        [string]$TaskId = $null
     )
     if ([string]::IsNullOrWhiteSpace($WorkspaceRoot)) { return }
 
@@ -2373,7 +2376,7 @@ function Assert-ExtensionImpactEvidence {
     }
 
     $siblingKeys = [System.Collections.Generic.HashSet[string]]::new([System.StringComparer]::Ordinal)
-    $changedRels = Get-WorkspaceChangedRelativePaths -WorkspaceRoot $WorkspaceRoot -Baseline $Baseline -SpecDir $SpecDir
+    $changedRels = Get-WorkspaceChangedRelativePaths -WorkspaceRoot $WorkspaceRoot -Baseline $Baseline -SpecDir $SpecDir -TaskId $TaskId
     foreach ($rel in $changedRels) {
         if ($rel -notmatch '\.(?:java|kt|kts|groovy)$') { continue }
         $full = Join-Path $WorkspaceRoot ($rel -replace '/', [IO.Path]::DirectorySeparatorChar)
@@ -2400,12 +2403,13 @@ function Assert-ExtensionCoverageCompleteness {
         $Coverage,
         [string]$WorkspaceRoot,
         [string]$Baseline,
-        [string]$SpecDir
+        [string]$SpecDir,
+        [string]$TaskId = $null
     )
 
     if ([string]::IsNullOrWhiteSpace($WorkspaceRoot)) { return }
 
-    $risk = Get-SemanticRiskAssessment -WorkspaceRoot $WorkspaceRoot -Baseline $Baseline -SpecDir $SpecDir
+    $risk = Get-SemanticRiskAssessment -WorkspaceRoot $WorkspaceRoot -Baseline $Baseline -SpecDir $SpecDir -TaskId $TaskId
     if (-not (Test-IsTypeExtensionRisk -TriggersHit $risk.TriggersHit)) { return }
 
     $triggerList = (@($risk.TriggersHit) | Where-Object { $_ -in @("TYPE_EXTENSION", "PUBLIC_ROUTING") }) -join ", "
@@ -2562,12 +2566,13 @@ function Assert-ExtensionImpactCompleteness {
         $Impact,
         [string]$WorkspaceRoot,
         [string]$Baseline,
-        [string]$SpecDir
+        [string]$SpecDir,
+        [string]$TaskId = $null
     )
 
     if ([string]::IsNullOrWhiteSpace($WorkspaceRoot)) { return }
 
-    $risk = Get-SemanticRiskAssessment -WorkspaceRoot $WorkspaceRoot -Baseline $Baseline -SpecDir $SpecDir
+    $risk = Get-SemanticRiskAssessment -WorkspaceRoot $WorkspaceRoot -Baseline $Baseline -SpecDir $SpecDir -TaskId $TaskId
     if (-not (Test-IsTypeExtensionRisk -TriggersHit $risk.TriggersHit)) { return }
 
     $triggerList = (@($risk.TriggersHit) | Where-Object { $_ -in @("TYPE_EXTENSION", "PUBLIC_ROUTING") }) -join ", "
@@ -2625,7 +2630,7 @@ function Assert-ExtensionImpactCompleteness {
         }
     }
 
-    Assert-ExtensionImpactEvidence -Impact $Impact -WorkspaceRoot $WorkspaceRoot -Baseline $Baseline -SpecDir $SpecDir
+    Assert-ExtensionImpactEvidence -Impact $Impact -WorkspaceRoot $WorkspaceRoot -Baseline $Baseline -SpecDir $SpecDir -TaskId $TaskId
 }
 
 function Get-SemanticRiskAssessment {
@@ -2633,7 +2638,8 @@ function Get-SemanticRiskAssessment {
         [string]$WorkspaceRoot,
         [string]$Baseline = $null,
         [string]$DeclaredTier = $null,
-        [string]$SpecDir = $null
+        [string]$SpecDir = $null,
+        [string]$TaskId = $null
     )
     $triggersHit = [System.Collections.Generic.List[string]]::new()
     $details = [System.Collections.Generic.List[string]]::new()
@@ -5192,7 +5198,7 @@ switch ($Operation) {
     }
     "ValidateChangeImpact" {
         Assert-Argument -Name "Path" -Value $Path
-        $impact = Validate-ChangeImpactState -ImpactPath $Path
+        $impact = Validate-ChangeImpactState -ImpactPath $Path -TaskId $TaskId
         Write-Output "VALID"
         return $impact
     }
@@ -5225,7 +5231,7 @@ switch ($Operation) {
             $riskTask=Read-AiSopTask $specDir $TaskId
             if ($riskTask.tier -eq 'T3') {
                 $delta=Get-AiSopTaskChanges $riskTask $wsRoot $script:TaskValidationContext
-                $risk=Get-SemanticRiskAssessment -WorkspaceRoot $wsRoot -Baseline $riskTask.baseline.revision -DeclaredTier $riskTask.tier -SpecDir $specDir
+                $risk=Get-SemanticRiskAssessment -WorkspaceRoot $wsRoot -Baseline $riskTask.baseline.revision -DeclaredTier $riskTask.tier -SpecDir $specDir -TaskId $TaskId
                 [pscustomobject]@{ workspaceRoot=$wsRoot; taskId=$TaskId; baseline=$riskTask.baseline.revision; changeSetDigest=$delta.changeSetDigest; declaredTier=$riskTask.tier; minRequiredTier=$risk.MinRequiredTier; hasHighRisk=$risk.HasHighRisk; triggersHit=@($risk.TriggersHit); details=@($risk.Details); evaluatedAt=[DateTimeOffset]::UtcNow.ToString('o') } | ConvertTo-Json -Depth 5 | Write-Output
                 break
             }
@@ -5246,7 +5252,7 @@ switch ($Operation) {
                 $declaredTier = [string]$fs.tier
             } catch {}
         }
-        $risk = Get-SemanticRiskAssessment -WorkspaceRoot $wsRoot -Baseline $effectiveBaseline -DeclaredTier $declaredTier -SpecDir $specDir
+        $risk = Get-SemanticRiskAssessment -WorkspaceRoot $wsRoot -Baseline $effectiveBaseline -DeclaredTier $declaredTier -SpecDir $specDir -TaskId $TaskId
         if (-not [string]::IsNullOrWhiteSpace($risk.Baseline)) {
             $effectiveBaseline = $risk.Baseline
         }
@@ -5659,7 +5665,7 @@ switch ($Operation) {
                     }
                 }
                 try {
-                    $risk = Get-SemanticRiskAssessment -WorkspaceRoot $lightRoot -DeclaredTier $lightTask.tier -SpecDir $specDir
+                    $risk = Get-SemanticRiskAssessment -WorkspaceRoot $lightRoot -DeclaredTier $lightTask.tier -SpecDir $specDir -TaskId $TaskId
                     if ($risk.HasHighRisk) { Write-Output "RISK_ADVISORY: $($risk.TriggersHit -join ', '); explicit task tier preserved." }
                 } catch { Write-Output 'RISK_ADVISORY: risk scan unavailable; inspect actual change scope.' }
                 foreach ($problem in $problems) { Write-Output "[X] $problem" }
@@ -5756,7 +5762,7 @@ switch ($Operation) {
                     }
                 } catch { } # Malformed current artifacts retain the normal diagnostic.
             }
-            $extRisk = Get-SemanticRiskAssessment -WorkspaceRoot $wsRoot -SpecDir $specDir
+            $extRisk = Get-SemanticRiskAssessment -WorkspaceRoot $wsRoot -SpecDir $specDir -TaskId $TaskId
             $impactRequired = Test-ChangeImpactRequired -TriggersHit $extRisk.TriggersHit
             if (-not $impactOk) {
                 if ($impactRequired) {
@@ -5773,9 +5779,9 @@ switch ($Operation) {
             } else {
                 $checks.Add("[v] 行为影响分析产物(04_change_impact.json)存在")
                 try {
-                    $impact = Validate-ChangeImpactState -ImpactPath $impactPath
+                    $impact = Validate-ChangeImpactState -ImpactPath $impactPath -TaskId $TaskId
                     $checks.Add("[v] 行为影响分析有效且未过期")
-                    $extRisk = Get-SemanticRiskAssessment -WorkspaceRoot $wsRoot -Baseline $impact.baseline -SpecDir $specDir
+                    $extRisk = Get-SemanticRiskAssessment -WorkspaceRoot $wsRoot -Baseline $impact.baseline -SpecDir $specDir -TaskId $TaskId
                     if (Test-IsTypeExtensionRisk -TriggersHit $extRisk.TriggersHit) {
                         $checks.Add("[v] 类型/路由扩展完成度(behaviorVariants/legacyPaths/invariants/8-lifecycleFacets/证据与兄弟键)")
                     }
@@ -5811,7 +5817,7 @@ switch ($Operation) {
                         }
                         if (Test-IsTypeExtensionRisk -TriggersHit $extRisk.TriggersHit) {
                             try {
-                                Assert-ExtensionCoverageCompleteness -Impact $impact -Coverage $covObj -WorkspaceRoot $wsRoot -Baseline $impact.baseline -SpecDir $specDir
+                                Assert-ExtensionCoverageCompleteness -Impact $impact -Coverage $covObj -WorkspaceRoot $wsRoot -Baseline $impact.baseline -SpecDir $specDir -TaskId $TaskId
                                 $checks.Add("[v] 类型/路由扩展覆盖完成度(CHARACTERIZATION载体方法体/entryPointIds/variantKeys/facetIds/bypassesPriorQuery/persistenceColdReload)")
                             } catch {
                                 $failures.Add($_.Exception.Message)
@@ -5841,7 +5847,7 @@ switch ($Operation) {
             }
         } elseif ($effectiveTier -in @("T1", "T2", "FAST_TRACK")) {
             # Machine-enforced semantic risk tiering check
-            $risk = Get-SemanticRiskAssessment -WorkspaceRoot $wsRoot -DeclaredTier $effectiveTier -SpecDir $specDir
+            $risk = Get-SemanticRiskAssessment -WorkspaceRoot $wsRoot -DeclaredTier $effectiveTier -SpecDir $specDir -TaskId $TaskId
             if ($risk.HasHighRisk -and $currentTask) {
                 $checks.Add("[!] RISK_ADVISORY: $($risk.TriggersHit -join ', '); explicit task tier $effectiveTier preserved. Review scope before further changes.")
             } elseif ($risk.HasHighRisk) {

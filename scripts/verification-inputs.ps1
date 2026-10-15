@@ -39,6 +39,12 @@ function Get-AiSopInputPolicy {
             if (-not (Test-Path -LiteralPath (Join-Path $WorkspacePath $relative))) { throw "included path missing: $relative" }
         }
         foreach ($rule in $policy.exclude) { if ([string]::IsNullOrWhiteSpace($rule.reason)) { throw 'exclusion reason required' } }
+        $comparison = if ([OperatingSystem]::IsWindows()) { [StringComparison]::OrdinalIgnoreCase } else { [StringComparison]::Ordinal }
+        foreach ($entry in $policy.include) {
+            foreach ($rule in $policy.exclude) {
+                if ($entry.Equals($rule.path, $comparison)) { throw "conflicting include/exclude path: $entry" }
+            }
+        }
         return @{ include=@($policy.include); exclude=@($policy.exclude); digest=(Get-AiSopWorkflowSha256 (ConvertTo-AiSopWorkflowCanonicalJson $policy)) }
     } catch { throw "INPUT_POLICY_INVALID: $path; $($_.Exception.Message)" }
 }
@@ -49,7 +55,7 @@ function Get-AiSopInputDigest {
     foreach ($key in $Snapshot.files.Keys) { $files[$key] = $Snapshot.files[$key] }
     $lines = @($files.GetEnumerator() | ForEach-Object { "$($_.Key.Length):$($_.Key):$($_.Value)" })
     $header = $Snapshot.algorithm + "`n"
-    if ($Snapshot.algorithm -eq 'inputs-v3') { $header += $Snapshot.policyDigest + "`n" }
+    if ($Snapshot.algorithm -in @('inputs-v3','inputs-v4')) { $header += $Snapshot.policyDigest + "`n" }
     return Get-AiSopWorkflowSha256 ($header + ($lines -join "`n"))
 }
 
@@ -61,7 +67,7 @@ function Get-AiSopInputSnapshot {
     $outputDirectories = @('build', 'target', 'bin', 'obj', 'out', 'classes')
     $excludedFiles = @('.git', 'AGENTS.md', 'CLAUDE.md', 'ANTIGRAVITY.md', 'GEMINI.md', 'compile-evidence.json', 'test-evidence.json', '.guard-token.json')
     $files = [Collections.Generic.SortedDictionary[string,string]]::new([StringComparer]::Ordinal)
-    $pending = [Collections.Generic.Stack[object]]::new(); $pending.Push(@{path=$root; excluded=$false})
+    $pending = [Collections.Generic.Stack[object]]::new(); $pending.Push(@{path=$root; defaultExcludeLength=-1})
     while ($pending.Count) {
         $frame = $pending.Pop(); $dir = $frame.path
         $projectRoot = $dir -ceq $root
@@ -72,26 +78,32 @@ function Get-AiSopInputSnapshot {
             # Never descend into VCS stores or evidence even if an ancestor was
             # explicitly included (e.g. a vendored dependency containing .git).
             if ($item.Name -in @('.git','.svn') -or $rel -match '^\.ai-sop(/|$)|^\.ai-workspace/(specs|\.runtime)(/|$)') { continue }
-            $include = $false; $descend = $false
+            $includeLength = -1; $excludeLength = -1; $descend = $false
             foreach ($entry in $policy.include) {
-                if (Test-AiSopInputPathWithin $rel $entry) { $include=$true }
+                if (Test-AiSopInputPathWithin $rel $entry) { $includeLength=[Math]::Max($includeLength,$entry.Length) }
                 if ($item.PSIsContainer -and (Test-AiSopInputPathWithin $entry $rel)) { $descend=$true }
             }
-            $exclude = $false
-            foreach ($rule in $policy.exclude) { if (Test-AiSopInputPathWithin $rel $rule.path) { $exclude=$true; break } }
-            $defaultExcluded = $frame.excluded -or ($item.PSIsContainer -and ($item.Name -in $excludedDirectories -or ($projectRoot -and $item.Name -in $outputDirectories) -or ($webOutputRoot -and $item.Name -ceq 'classes'))) -or
+            foreach ($rule in $policy.exclude) {
+                if (Test-AiSopInputPathWithin $rel $rule.path) { $excludeLength=[Math]::Max($excludeLength,$rule.path.Length) }
+            }
+            $defaultExcluded = ($item.PSIsContainer -and ($item.Name -in $excludedDirectories -or ($projectRoot -and $item.Name -in $outputDirectories) -or ($webOutputRoot -and $item.Name -ceq 'classes'))) -or
                 ($dir -ceq $root -and $item.Name -eq '.ai-sop-staging') -or
-                (-not $item.PSIsContainer -and ($item.Name -in $excludedFiles -or $item.Extension -eq '.tmp' -or $item.Name -match '\.log(?:\.\d+)*(?:\.(?:zip|gz|bz2|xz))?$'))
-            if (($exclude -or $defaultExcluded) -and -not $include -and -not $descend) { continue }
+                (-not $item.PSIsContainer -and ($item.Name -in $excludedFiles -or $item.Extension -eq '.tmp' -or $item.Name -match '\.log(?:\.\d+(?:[.-]\d+)*)*(?:\.(?:zip|gz|bz2|xz))?$'))
+            # The most specific path wins. An explicit include can override a
+            # default at the same path, but not a deeper output/log exclusion.
+            # Retain the ancestor default when traversing to a reincluded leaf.
+            $defaultExcludeLength = if ($defaultExcluded) { $rel.Length } else { $frame.defaultExcludeLength }
+            $excluded = ($excludeLength -ge 0 -and $excludeLength -gt $includeLength) -or $defaultExcludeLength -gt $includeLength
+            if ($excluded -and -not $descend) { continue }
             if ($item.Attributes -band [IO.FileAttributes]::ReparsePoint) { throw "INPUT_LINK_UNSUPPORTED: $($item.FullName)" }
-            if ($item.PSIsContainer) { $pending.Push(@{path=$item.FullName; excluded=($defaultExcluded -and -not $include)}); continue }
+            if ($item.PSIsContainer) { $pending.Push(@{path=$item.FullName; defaultExcludeLength=$defaultExcludeLength}); continue }
             $physical = Resolve-AiSopWorkspaceChild $root $rel
             $files[$rel] = (Get-FileHash -LiteralPath $physical -Algorithm SHA256).Hash.ToLowerInvariant()
         }
     }
     # Preserve existing v2 evidence when no policy has been configured.
     $snapshot = @{ algorithm='inputs-v2'; files=$files }
-    if ($policy.digest) { $snapshot.algorithm='inputs-v3'; $snapshot.policyDigest=$policy.digest }
+    if ($policy.digest) { $snapshot.algorithm='inputs-v4'; $snapshot.policyDigest=$policy.digest }
     $snapshot.digest = Get-AiSopInputDigest $snapshot
     return $snapshot
 }

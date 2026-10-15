@@ -28,6 +28,11 @@ function Put([string]$relative, [string]$text) {
     [IO.File]::WriteAllText($path,$text)
 }
 function Owner { return ConvertFrom-AiSopWorkflowJson ([IO.File]::ReadAllText((Join-Path $env:AI_SOP_OWNER_REGISTRY 'example.json'))) -AsHashtable }
+function Read-LiveLog([string]$path) {
+    $stream=[IO.File]::Open($path,[IO.FileMode]::Open,[IO.FileAccess]::Read,[IO.FileShare]::ReadWrite)
+    $reader=[IO.StreamReader]::new($stream)
+    try { return $reader.ReadToEnd() } finally { $reader.Dispose() }
+}
 function Wait-Until([scriptblock]$condition, [string]$message) {
     $deadline=[DateTimeOffset]::UtcNow.AddSeconds(40)
     while ([DateTimeOffset]::UtcNow -lt $deadline) {
@@ -68,7 +73,7 @@ try {
     Put '.ai-sop-staging/payload.txt' 'staging'
     Put 'build/output.bin' 'output'; Put 'module/target/output.bin' 'output'
     Put 'webapp/WEB-INF/classes/Compiled.class' 'generated'
-    foreach ($name in @('app.log','app.log.1','app.log.zip','app.log.2.gz')) { Put "runtime/$name" 'generated' }
+    foreach ($name in @('app.log','app.log.1','app.log.zip','app.log.2.gz','app.log.2026-10-15.gz','app.log.2026-10-15.2.zip','app.log.2026.10.15','app.log.2026-10-15')) { Put "runtime/$name" 'generated' }
     Assert ((Get-AiSopInputSnapshot $workspace).digest -ceq $before.digest) 'Metadata, module outputs or rotated logs changed input identity'
     Put 'src/package/build/source.txt' 'changed source'
     Assert ((Get-AiSopInputSnapshot $workspace).digest -cne $before.digest) 'Source change failed to invalidate inputs'
@@ -138,7 +143,7 @@ try {
     Task Complete paths | Out-Null
 
     # Exercise real subprocesses, short leases and failed final transactions.
-    foreach ($scenario in @('lease','retry','ended')) {
+    foreach ($scenario in @('lease','contention','expired','revoked','retry','ended')) {
         Task Start $scenario @{Tier='T1';Objective="Runtime $scenario"} | Out-Null
         $ready=Join-Path $workspace ".ai-workspace/$scenario.ready"
         $finish=Join-Path $workspace ".ai-workspace/$scenario.finish"
@@ -150,7 +155,7 @@ try {
         $boundOwner=Owner
         $sessionPath=Get-AiSopWorkflowSessionPath -SessionKey $boundOwner.sessionBinding.sessionKey -WorkspacePath $workspace
         $sessionBefore=Read-AiSopWorkflowSessionRecord -SessionPath $sessionPath
-        if ($scenario -eq 'lease') {
+        if ($scenario -in @('lease','contention','expired')) {
             # A visible child receipt may precede the runner's transaction commit.
             # Inject the short lease under the same locks/2PC as a real writer;
             # an unlocked edit here would corrupt an in-flight transaction.
@@ -161,18 +166,33 @@ try {
                 $sessionBefore=Read-AiSopWorkflowSessionRecord -SessionPath $sessionPath
                 $beforeJson=ConvertTo-AiSopWorkflowCanonicalJson $sessionBefore
                 $short=ConvertFrom-AiSopWorkflowJson $beforeJson -AsHashtable
-                $short.expiresAt=[DateTimeOffset]::UtcNow.AddSeconds(12).ToString('o')
+                $leaseSeconds=if ($scenario -eq 'expired') { 18 } elseif ($scenario -eq 'contention') { 60 } else { 12 }
+                $short.expiresAt=[DateTimeOffset]::UtcNow.AddSeconds($leaseSeconds).ToString('o')
                 $target=@{path=$sessionPath;kind='SESSION';schemaId='SESSION';afterJson=(ConvertTo-AiSopWorkflowCanonicalJson $short);expectedBeforeExists=$true;expectedBeforeJson=$beforeJson}
                 Invoke-AiSopWorkflowTransaction -Operation CHECKPOINT -Feature Example -OwnerPath $leaseOwnerPath -SessionKeys $leaseKeys -Targets @($target) -TransactionId 'test-short-lease' -DeadlineUtc ([DateTimeOffset]::UtcNow.AddSeconds(15)) -WorkspacePath $workspace -LocksAlreadyHeld | Out-Null
             } finally { Exit-AiSopWorkflowLocks $leaseLocks.Locks }
-            Wait-Until { [DateTimeOffset]::Parse((Read-AiSopWorkflowSessionRecord -SessionPath $sessionPath).expiresAt) -gt [DateTimeOffset]::UtcNow.AddMinutes(20) } 'Runner failed to renew its short lease'
-            Assert ((Read-AiSopWorkflowSessionRecord -SessionPath $sessionPath).sessionEpochId -ceq $sessionBefore.sessionEpochId) 'Heartbeat replaced session epoch'
+            if ($scenario -ne 'lease') {
+                $heldLock=Enter-AiSopWorkflowFileLock -LockPath ($leaseOwnerPath + '.lock') -DeadlineUtc ([DateTimeOffset]::UtcNow.AddSeconds(5))
+                $runLog=Get-AiSopRunLogPath (Read-AiSopTask $spec $scenario).verifications[-1] $workspace $spec $scenario
+                Wait-Until {
+                    if ($runner.HasExited) { throw "Runner exited before retry ($scenario): $($runnerOut.GetAwaiter().GetResult()) $($runnerErr.GetAwaiter().GetResult())" }
+                    (Read-LiveLog $runLog) -match 'RUN_LEASE_RETRY:'
+                } "Lock contention was not retried: $scenario; log=$runLog"
+                Assert (-not $runner.HasExited) 'Transient contention killed the running verification'
+                if ($scenario -eq 'contention') { $heldLock.Dispose(); $heldLock=$null }
+            }
+            if ($scenario -ne 'expired') {
+                Wait-Until { [DateTimeOffset]::Parse((Read-AiSopWorkflowSessionRecord -SessionPath $sessionPath).expiresAt) -gt [DateTimeOffset]::UtcNow.AddMinutes(20) } 'Runner failed to renew its short lease'
+                Assert ((Read-AiSopWorkflowSessionRecord -SessionPath $sessionPath).sessionEpochId -ceq $sessionBefore.sessionEpochId) 'Heartbeat replaced session epoch'
+            }
+        } elseif ($scenario -eq 'revoked') {
+            Invoke-AiSopWorkflowSession -Operation End -Agent CODEX -NativeSessionId $env:CODEX_SESSION_ID -WorkspacePath $workspace -AcceptedAt ([DateTimeOffset]::UtcNow) | Out-Null
         } else {
             # Hold only the fixture's owner lock while the already-running child
             # exits. Final checkpoint times out; the result must survive locally.
             $heldLock=Enter-AiSopWorkflowFileLock -LockPath ((Join-Path $env:AI_SOP_OWNER_REGISTRY 'example.json') + '.lock') -DeadlineUtc ([DateTimeOffset]::UtcNow.AddSeconds(5))
         }
-        [IO.File]::WriteAllText($finish,'finish')
+        if ($scenario -notin @('expired','revoked')) { [IO.File]::WriteAllText($finish,'finish') }
         Wait-Until { $runner.HasExited } "Runner did not finish: $scenario"
         if ($heldLock) { $heldLock.Dispose(); $heldLock=$null }
         $output=$runnerOut.GetAwaiter().GetResult() + $runnerErr.GetAwaiter().GetResult()
@@ -181,8 +201,20 @@ try {
             Invoke-AiSopWorkflowSession -Operation End -Agent CODEX -NativeSessionId $env:CODEX_SESSION_ID -WorkspacePath $workspace -AcceptedAt ([DateTimeOffset]::UtcNow) | Out-Null
         }
         $last=(Read-AiSopTask $spec $scenario).verifications[-1]
-        if ($scenario -eq 'lease') {
+        if ($scenario -in @('lease','contention')) {
             Assert ($exit -eq 0 -and $last.outcome -eq 'PASSED') "Renewed run did not finalize: $output"
+        } elseif ($scenario -in @('expired','revoked')) {
+            $pending=Get-AiSopRunEvidencePath $spec $scenario $last.runId
+            Assert ($exit -ne 0 -and [IO.File]::Exists($pending)) "Interrupted result did not survive: $output"
+            $durable=ConvertFrom-AiSopWorkflowJson ([IO.File]::ReadAllText($pending)) -AsHashtable
+            Assert ($durable.outcome -eq 'INTERRUPTED' -and $durable.exitCode -eq -2 -and $durable.diagnostic -match '^RUN_CONTROL_INTERRUPTED:') 'Lease loss was mislabeled as a test failure'
+            Assert (-not (Get-Process -Id ([int]$durable.context.childPid) -ErrorAction SilentlyContinue)) 'Child survived the lost session/lease'
+            Task Recover $scenario | Out-Null
+            Assert ((Read-AiSopTask $spec $scenario).verifications[-1].outcome -eq 'INTERRUPTED') 'Recovery lost the interruption result'
+            $env:CODEX_SESSION_ID="after-$scenario-session"
+            Task Resume $scenario | Out-Null
+            Task Cancel $scenario | Out-Null
+            continue
         } else {
             $pending=Get-AiSopRunEvidencePath $spec $scenario $last.runId
             Assert ($exit -ne 0 -and $last.outcome -eq 'RUNNING' -and [IO.File]::Exists($pending)) "Failed save lost its pending result: $output"

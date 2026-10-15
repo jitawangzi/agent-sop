@@ -3,11 +3,11 @@
   "type": "object", "additionalProperties": false,
   "required": ["algorithm", "digest", "files"],
   "properties": {
-    "algorithm": { "enum": ["inputs-v2", "inputs-v3"] },
+    "algorithm": { "enum": ["inputs-v2", "inputs-v3", "inputs-v4"] },
     "digest": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
     "policyDigest": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
     "files": { "type": "object", "additionalProperties": { "type": "string", "pattern": "^[0-9a-f]{64}$" } }
   },
-  "if": { "properties": { "algorithm": { "const": "inputs-v3" } } },
+  "if": { "properties": { "algorithm": { "enum": ["inputs-v3", "inputs-v4"] } } },
   "then": { "required": ["policyDigest"] }
 }

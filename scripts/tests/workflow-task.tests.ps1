@@ -28,6 +28,24 @@ try {
     git -C $workspace init -b main --quiet
     git -C $workspace -c user.name=Test -c user.email=test@example.invalid add src/input.txt
     git -C $workspace -c user.name=Test -c user.email=test@example.invalid commit --quiet -m initial
+    # Project context and feature specifications can be separate nested Git repos.
+    $contextRoot = Join-Path $workspace '.ai-workspace'
+    $specsRoot = Join-Path $contextRoot 'specs'
+    git -C $contextRoot init -b main --quiet
+    [IO.File]::WriteAllText((Join-Path $contextRoot '.gitignore'), "specs/`n")
+    git -C $contextRoot add .gitignore
+    git -C $contextRoot -c user.name=Test -c user.email=test@example.invalid commit --quiet -m 'context repository'
+    Assert ((Get-AiSopSpecSyncWarning $workspace) -match 'SPECS_IGNORED') 'Ignored specs without a child repository must warn'
+    git -C $specsRoot init -b main --quiet
+    [IO.File]::WriteAllText((Join-Path $specsRoot '.gitignore'), "*.log`n")
+    git -C $specsRoot add .gitignore
+    git -C $specsRoot -c user.name=Test -c user.email=test@example.invalid commit --quiet -m 'specifications repository'
+    Assert (-not (Get-AiSopSpecSyncWarning $workspace)) 'Parent ignore rule caused a false warning for independent specs repo'
+    $discovery = & $entry -Operation Discover -WorkspacePath $workspace 3>&1 | Out-String
+    Assert ($discovery -notmatch 'SPECS_IGNORED') 'Discover ignored the specification repository boundary'
+    [IO.File]::AppendAllText((Join-Path $specsRoot '.gitignore'), "features/`n")
+    Assert ((Get-AiSopSpecSyncWarning $workspace) -match 'SPECS_IGNORED') 'Specs repository own ignore rule was missed'
+    [IO.File]::WriteAllText((Join-Path $specsRoot '.gitignore'), "*.log`n")
     # Historical T3 artifacts must not force an independent T2 task into T3.
     [IO.File]::WriteAllText((Join-Path $spec '06_design_contract.md'), 'legacy design')
     [IO.File]::WriteAllText((Join-Path $spec 'compile-evidence.json'), '{"exitCode":1}')
@@ -44,6 +62,13 @@ try {
     [IO.File]::WriteAllText((Join-Path $workspace 'src/input.txt'), 'before-build')
     Task Run fix-a @{ Kind='compile'; Executable='pwsh'; Arguments=@('-NoProfile','-Command','exit 0') } | Out-Null
     Task Run fix-a @{ Kind='test'; Executable='pwsh'; Arguments=@('-NoProfile','-Command','exit 0') } | Out-Null
+    $runContext = (Read-AiSopTask $spec 'fix-a').verifications[-1].context
+    $expectedSpecRevision = [string](& git -C $specsRoot rev-parse HEAD)
+    $expectedContextRevision = [string](& git -C $contextRoot rev-parse HEAD)
+    Assert ($runContext.specGitRevision -ceq $expectedSpecRevision) 'Evidence attributed specs to parent repository commit'
+    Assert ($runContext.contextGitRevision -ceq $expectedContextRevision) 'Project context revision missing'
+    Assert ($runContext.specGitRoot -ceq (Resolve-PhysicalPathIdentity $specsRoot)) 'Wrong specification repository root'
+    Assert ($runContext.contextGitRoot -ceq (Resolve-PhysicalPathIdentity $contextRoot)) 'Wrong context repository root'
     Task Verify fix-a | Out-Null
     # Content snapshot ignores staging/commit metadata and generated output.
     $before = Get-AiSopInputSnapshot $workspace

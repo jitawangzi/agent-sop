@@ -2,8 +2,11 @@
 
 ## 修改任务与执行会话（当前入口）
 
-功能规格继续保存在 `specs/features/<Feature>/`；一次独立修改保存为
-`tasks/<taskId>/task.json`，符合 `schemas/workflow-task.schema.json`。
+本文宿主路径均相对于 Agent 运行的项目根目录；AI SOP 引擎安装在 `.ai-sop/`。
+功能规格保存在 `.ai-workspace/specs/features/<Feature>/`；一次独立修改保存为
+`.ai-workspace/specs/features/<Feature>/tasks/<taskId>/task.json`，符合引擎的 `schemas/workflow-task.schema.json`。
+
+`.ai-workspace/` 保存项目级上下文，`.ai-workspace/specs/` 保存业务功能规格；两者可以是各自独立的 Git 仓库。此布局下，前者忽略 `specs/` 是正常的仓库边界：规格及任务记录应在后者提交、同步，不能仅提交前者。验证记录分别保存代码、项目上下文、功能规格实际所属的 Git 根目录及提交号。
 这里的修改任务与 SDD 计划里的 Task/Step 不同，不要求为 T1/T2 编写需求、设计或计划。
 
 - 功能长期存在；任务有固定目标、T1/T2/T3、不可变 ownerId；Agent/session 可以更换。
@@ -13,7 +16,7 @@
 - Checkpoint 记录下一步与说明；Suspend 保存 PAUSED 并释放本地归属；Cancel 保存 CANCELLED；Complete 只有本任务检查通过才保存 DONE。
 - 任务、owner、session、grant 在同一两阶段事务中变化；TASK 记录受功能 Owner Lock 保护，锁顺序仍是 Session → Owner → Grant。
 - 一个功能在一个工作区只有一个执行 owner。同功能多独立会话并行不支持；不同功能用独立工作区。没有跨机器分布式锁，远端未同步活动不能自动探测。
-- `task.json` 和必要规格应纳入宿主选定的持久化策略；日志按需保留。Session/Grant/Owner 权限记录留本机。Discover/Doctor 对忽略 specs 的嵌套 Git 发出警告，不自动修改宿主忽略规则或提交历史文件。
+- `task.json` 和必要规格应纳入宿主选定的持久化策略；日志按需保留。Session/Grant/Owner 权限记录留本机。Discover/Doctor 根据 specs 实际所属仓库检查忽略规则，独立 specs 仓库不受父仓库忽略规则的误报影响，不自动修改宿主忽略规则或提交历史文件。
 - 跨工作区迁移：先在原工作区 Suspend，持久保存任务和相同代码，再在新工作区 Resume；新工作区重新取得本地会话，证据必须在当地重新校验。缺本地 owner 的 ACTIVE 记录仅供诊断，禁止静默继承权限。
 - 功能整体验收与轻量任务 DONE 不同。T1/T2 不替旧 T3 收尾；共享代码修改和合并后仍需重新验证集成结果。
 

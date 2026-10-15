@@ -33,11 +33,8 @@ if ($Operation -eq 'Discover') {
             [pscustomobject]@{ feature=$dir.Name; taskId=$null; status='LEGACY'; action='Inspect existing owner and feature-state; Resume to adopt, never infer completion.' } | ConvertTo-Json -Compress
         }
     }
-    $domainRoot = Join-Path $WorkspacePath '.ai-workspace'
-    if (Test-Path -LiteralPath (Join-Path $domainRoot '.git')) {
-        $ignored = & git -C $domainRoot check-ignore 'specs/features/__sop_sync_probe__/06_design_contract.md' 2>$null
-        if ($LASTEXITCODE -eq 0 -and $ignored) { Write-Warning 'SPECS_IGNORED: specs are ignored by .ai-workspace Git; untracked task/spec files will not travel through normal commit/push. Review tracking policy before cross-workspace handoff.' }
-    }
+    $syncWarning = Get-AiSopSpecSyncWarning $WorkspacePath
+    if ($syncWarning) { Write-Warning $syncWarning }
     exit 0
 }
 if (-not $Feature -and $SpecDirectory) { $Feature = Split-Path -Leaf $SpecDirectory }
@@ -134,10 +131,18 @@ try {
 } finally { $process.Dispose() }
 $after = Get-AiSopInputSnapshot $WorkspacePath
 $context = @{ workspace=$WorkspacePath; engineScriptHash=(Get-FileHash -LiteralPath (Join-Path $PSScriptRoot 'workflow-state.ps1')).Hash.ToLowerInvariant(); executable=$info.FileName }
-foreach ($repo in @(@{name='codeGitRevision';path=$WorkspacePath}, @{name='specGitRevision';path=(Join-Path $WorkspacePath '.ai-workspace')})) {
-    if (Test-Path -LiteralPath (Join-Path $repo.path '.git')) {
-        $revision = & git -C $repo.path rev-parse HEAD 2>$null
-        if ($LASTEXITCODE -eq 0) { $context[$repo.name] = [string]$revision }
+foreach ($repo in @(
+    @{name='code';path=$WorkspacePath},
+    @{name='context';path=(Join-Path $WorkspacePath '.ai-workspace')},
+    @{name='spec';path=$SpecDirectory}
+)) {
+    if ((Get-Command git -CommandType Application -ErrorAction SilentlyContinue) -and (Test-Path -LiteralPath $repo.path -PathType Container)) {
+        $gitRoot = & git -C $repo.path rev-parse --show-toplevel 2>$null
+        if ($LASTEXITCODE -eq 0) {
+            $context[$repo.name + 'GitRoot'] = Resolve-PhysicalPathIdentity -Path ([string]$gitRoot)
+            $revision = & git -C $repo.path rev-parse HEAD 2>$null
+            if ($LASTEXITCODE -eq 0) { $context[$repo.name + 'GitRevision'] = [string]$revision }
+        }
     }
 }
 if (Test-Path -LiteralPath (Join-Path $WorkspacePath '.svn')) {

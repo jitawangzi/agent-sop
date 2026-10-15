@@ -106,3 +106,25 @@ function Get-AiSopTaskProblems {
     }
     return $problems.ToArray()
 }
+
+# Inspect ignore rules in the repository that owns specs, which may itself be a
+# nested repository or worktree. A parent's ignore rule is normal in that layout.
+function Get-AiSopSpecSyncWarning {
+    param([string]$WorkspacePath)
+    if (-not (Get-Command git -CommandType Application -ErrorAction SilentlyContinue)) { return }
+    $specRoot = Resolve-PhysicalPathIdentity -Path (Join-Path $WorkspacePath '.ai-workspace/specs')
+    $existing = $specRoot
+    while (-not (Test-Path -LiteralPath $existing -PathType Container)) {
+        $parent = Split-Path -Parent $existing
+        if (-not $parent -or $parent -eq $existing) { return }
+        $existing = $parent
+    }
+    $repo = & git -C $existing rev-parse --show-toplevel 2>$null
+    if ($LASTEXITCODE -ne 0) { return }
+    $repo = Resolve-PhysicalPathIdentity -Path ([string]$repo)
+    $probe = [IO.Path]::GetRelativePath($repo, (Join-Path $specRoot 'features/__sop_sync_probe__/06_design_contract.md')).Replace('\', '/')
+    $ignored = & git -C $repo check-ignore -- $probe 2>$null
+    if ($LASTEXITCODE -eq 0 -and $ignored) {
+        return "SPECS_IGNORED: specification paths are ignored by their owning Git repository '$repo'; review tracking there before handoff. No ignore rules or tracked files were changed."
+    }
+}

@@ -5592,6 +5592,23 @@ switch ($Operation) {
     "VerifyCompletion" {
         Assert-Argument -Name "Path" -Value $Path
         $specDir = Split-Path -Parent $Path
+        if ($TaskId) {
+            $lightTask = Read-AiSopTask $specDir $TaskId
+            if ($lightTask.tier -in @('T1','T2')) {
+                $lightRoot = Resolve-AiSopWorkspaceRoot -StartPath $specDir
+                $problems = @(Get-AiSopTaskProblems $lightTask $lightRoot)
+                Write-Output "tier=$($lightTask.tier) phase=$($lightTask.status) task=$TaskId"
+                try {
+                    $risk = Get-SemanticRiskAssessment -WorkspaceRoot $lightRoot -DeclaredTier $lightTask.tier -SpecDir $specDir
+                    if ($risk.HasHighRisk) { Write-Output "RISK_ADVISORY: $($risk.TriggersHit -join ', '); explicit task tier preserved." }
+                } catch { Write-Output 'RISK_ADVISORY: risk scan unavailable; inspect actual change scope.' }
+                foreach ($problem in $problems) { Write-Output "[X] $problem" }
+                Write-Output '[i] Task verification only; track and deliver changed files separately.'
+                if ($problems.Count) { Write-Output 'VERIFY_COMPLETION_FAIL'; exit 1 }
+                Write-Output 'VERIFY_COMPLETION_PASS'
+                exit 0
+            }
+        }
         $featStatePath = Join-Path $specDir "feature-state.json"
         $tier = "unknown"
         $phase = "unknown"

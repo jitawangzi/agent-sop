@@ -2,6 +2,40 @@
 
 > **任务模式更新**：新修改优先使用 `ai-sop.ps1 Task`。T1/T2/T3 属于本次修改，不由历史功能产物自动决定。未带 taskId 的旧命令仍保留兼容语义，下面的旧功能级证据说明不覆盖任务模式。
 
+## 任务状态、异常恢复和验证命令配置
+
+`ai-sop.ps1 Status` 与 `Task -Operation Status` 使用同一任务摘要；支持 `-Feature`、`-TaskId` 筛选。Discover 显示相同的任务/归属/会话信息而不扫描全部验证输入。摘要中的 `recordedApprovals` 是批准记录展示，`EXECUTION_EVIDENCE_CURRENT` 只说明执行证据适用，完整 T3 收尾仍使用 Verify。
+
+正常切换 Agent 用 Resume。异常中断、本地 owner 丢失、或接收到没有本地 owner 的 ACTIVE 任务时，先 Status，再 `Task -Operation Recover`，恢复为 PAUSED 后 Resume。Recover 不把任务标成完成，不导入其他工作区的权限。若原会话仍标记 ACTIVE/IDLE，先确认旧 Agent 已停止，再显式使用 `-ForceRecovery -Notes "恢复原因"`；本机验证进程还在运行时，即使带该参数也会拒绝恢复。旧 ForceRelease 也会同步暂停任务、清除原会话绑定，使用同一事务。
+
+宿主可在 `.ai-workspace/context/verification-commands.json` 配置常用命令（由项目上下文仓库管理）：
+
+```json
+{
+  "schemaVersion": "1.0",
+  "commands": {
+    "build": {
+      "kind": "compile",
+      "executable": "pwsh",
+      "arguments": ["-NoProfile", "-File", "./scripts/build.ps1"]
+    },
+    "regression": {
+      "kind": "test",
+      "batch": "regression",
+      "executable": "pwsh",
+      "arguments": ["-NoProfile", "-File", "./scripts/test.ps1"],
+      "timeoutSeconds": 600
+    }
+  }
+}
+```
+
+脚本由宿主提供。执行 `Task -Operation Run -Feature Example -TaskId fix-1 -Agent CODEX -Profile build` 即可调用；配置采用参数数组，工作目录固定为宿主根目录。T3 测试配置可加 `caseIds`。Profile 不与显式 Kind/Executable/Arguments/Batch/CaseIds 混用，避免实际命令与配置不一致；超时可用 `-TimeoutSeconds` 覆盖，0 表示不限制。
+
+Run 在启动前持久保存 RUNNING，再持续输出并写入任务日志，结束时更新为 PASSED、FAILED 或 TIMED_OUT。异常退出可能留下 RUNNING；Status 根据本机进程身份（PID 与启动时间）区分仍运行和已中断，Recover 将已停止的尝试记为 INTERRUPTED。远端进程无法本地确认，需要先确认原执行已停止。超时会终止本次启动的进程树并记录退出码 124。查看实时日志可使用 PowerShell 的 Get-Content -Wait；停止运行器后，后续 Agent 应检查是否还有遗留子进程。
+
+T1/T2 的 Run 不读取历史需求设计和覆盖矩阵，历史损坏的覆盖 JSON 不会阻断轻量编译/测试。完整 T3 测试仍绑定规格摘要。未结束的运行会阻止 Complete、Suspend 和接管；失败/中断的必需测试批次需要同批次成功复跑，不能用旧成功记录覆盖。
+
 ## 独立修改、续做与暂停
 
 1. `pwsh -NoProfile -File ./ai-sop.ps1 Task -Operation Discover` 查看候选；讨论不认领。

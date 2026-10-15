@@ -142,6 +142,19 @@
           "specDigest": {
             "type": "string",
             "pattern": "^[0-9a-f]{64}$"
+          },
+          "runId": {
+            "type": "string",
+            "pattern": "^[0-9a-f]{32}$"
+          },
+          "outcome": {
+            "enum": [
+              "RUNNING",
+              "PASSED",
+              "FAILED",
+              "TIMED_OUT",
+              "INTERRUPTED"
+            ]
           }
         }
       }
@@ -166,6 +179,27 @@
         "reviewedAt": {
           "type": "string",
           "format": "date-time"
+        }
+      }
+    },
+    "lastRecovery": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "at",
+        "reason",
+        "forced"
+      ],
+      "properties": {
+        "at": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "reason": {
+          "type": "string"
+        },
+        "forced": {
+          "type": "boolean"
         }
       }
     }

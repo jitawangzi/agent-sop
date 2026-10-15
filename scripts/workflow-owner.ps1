@@ -14,6 +14,7 @@ param(
         "Cancel",
         "Checkpoint",
         "ForceRelease",
+        "Recover",
         "Check",
         "Status"
     )]
@@ -57,6 +58,7 @@ param(
     [string]$Notes = "",
     [string]$EvidencePath,
     [switch]$ImpactReviewed,
+    [switch]$ForceRecovery,
     [string]$Baseline = $null
 )
 
@@ -406,7 +408,7 @@ if ([string]::IsNullOrWhiteSpace($ResolvedSpecDirectory)) {
 if ($Operation -eq "Claim" -and [string]::IsNullOrWhiteSpace($OwnerId)) {
     throw "WORKFLOW_PARAMETER_MISSING: -OwnerId is required for Claim."
 }
-if ($Operation -in @("Validate", "Complete", "BindSession", "RebindSession", "Transfer", "ForceRelease", "Suspend", "Cancel", "Checkpoint") -and [string]::IsNullOrWhiteSpace($OwnerId)) {
+if ($Operation -in @("Validate", "Complete", "BindSession", "RebindSession", "Transfer", "ForceRelease", "Recover", "Suspend", "Cancel", "Checkpoint") -and [string]::IsNullOrWhiteSpace($OwnerId)) {
     throw "WORKFLOW_PARAMETER_MISSING: -OwnerId could not be resolved for feature '$Feature'."
 }
 
@@ -885,36 +887,65 @@ if ($Operation -in @("Validate", "Complete", "Suspend", "Cancel", "Checkpoint") 
 
 $transactionId = "$($Operation.ToLowerInvariant())-$([guid]::NewGuid().ToString('N'))"
 
-# ForceRelease: emergency recovery for an orphaned ACTIVE owner (previous session
-# crashed/exited without Complete). Does NOT require a live session/grant (the
-# session is gone). Requires exact Feature+OwnerId to prevent theft. Marks the
-# owner RELEASED so a new Claim can proceed.
-if ($Operation -eq "ForceRelease") {
-    if (
-        $null -eq $existingOwner -or
-        [string]$existingOwner.status -ne "ACTIVE"
-    ) {
-        throw "WORKFLOW_OWNER_NOT_ACTIVE"
+# Recovery is an explicit repair, not a successful completion or an inherited
+# permission. ForceRelease remains the compatibility spelling for forced repair.
+if ($Operation -in @('ForceRelease','Recover')) {
+    $forced = $ForceRecovery -or $Operation -eq 'ForceRelease'
+    if ($Operation -eq 'ForceRelease' -and ($null -eq $existingOwner -or $existingOwner.status -ne 'ACTIVE')) { throw 'WORKFLOW_OWNER_NOT_ACTIVE' }
+    if (-not $TaskId -and $existingOwner.taskId) { $TaskId = $existingOwner.taskId }
+    if ($Operation -eq 'Recover' -and -not $TaskId) { throw 'TASK_REQUIRED' }
+    $targets = @(); $sessionKeys = @(); $releasedOwner = $null
+    if ($existingOwner) {
+        if ($existingOwner.feature -cne $Feature -or $existingOwner.workflow -cne $Workflow -or
+            $existingOwner.ownerId -cne $OwnerId -or $existingOwner.specDirectory -cne $ResolvedSpecDirectory -or
+            ($TaskId -and $existingOwner.taskId -cne $TaskId)) { throw 'WORKFLOW_OWNER_IDENTITY_MISMATCH' }
+        $releasedOwner = Copy-WorkflowRecord $existingOwner
+        $releasedOwner.status = 'RELEASED'
+        $releasedOwner.completedAt = $AcceptedAt.ToString('o')
+        if ($releasedOwner.schemaVersion -eq '1.1') { $releasedOwner.lastTransactionId = $transactionId }
+        $targets += New-OwnerTarget -Path $OwnerPath -Kind OWNER -SchemaId OWNER -After $releasedOwner -BeforeExists $true -Before $existingOwner
     }
-    if (
-        [string]$existingOwner.feature -cne $Feature -or
-        [string]$existingOwner.workflow -cne $Workflow -or
-        [string]$existingOwner.ownerId -cne $OwnerId -or
-        -not ([string]$existingOwner.specDirectory).Equals(
-            $ResolvedSpecDirectory,
-            [System.StringComparison]::OrdinalIgnoreCase
-        )
-    ) {
-        throw "WORKFLOW_OWNER_IDENTITY_MISMATCH"
+    if ($TaskId) {
+        $recoveryTaskPath = Get-AiSopTaskPath $ResolvedSpecDirectory $TaskId
+        $recoveryTask = Read-AiSopTask $ResolvedSpecDirectory $TaskId
+        if ($recoveryTask.ownerId -cne $OwnerId -or $recoveryTask.status -notin @('ACTIVE','PAUSED')) { throw 'TASK_NOT_RECOVERABLE' }
+        $recoveredTask = Copy-WorkflowRecord $recoveryTask
+        foreach ($run in @($recoveredTask.verifications | Where-Object { $_.outcome -eq 'RUNNING' })) {
+            $activity = Get-AiSopRunActivity $run $ownerWs
+            if ($activity -eq 'RUNNING') { throw 'RUN_STILL_ACTIVE: stop or wait for the verification process before recovery' }
+            if ($activity -in @('REMOTE_UNKNOWN','UNCONFIRMED') -and -not $forced) { throw 'REMOTE_RUN_UNCONFIRMED: confirm original execution stopped, then use ForceRecovery' }
+            $run.outcome = 'INTERRUPTED'; $run.exitCode = -2; $run.inputsStable = $false
+        }
+        $recoveredTask.status = 'PAUSED'; $recoveredTask.updatedAt = $AcceptedAt.ToString('o')
+        $recoveredTask['lastRecovery'] = @{ at=$AcceptedAt.ToString('o'); reason=$(if ($Notes) { $Notes } else { 'Explicit ownership recovery' }); forced=[bool]$forced }
+        $targets += New-OwnerTarget -Path $recoveryTaskPath -Kind TASK -SchemaId TASK -After $recoveredTask -BeforeExists $true -Before $recoveryTask
     }
-    $releasedOwner = Copy-WorkflowRecord $existingOwner
-    $releasedOwner.status = "RELEASED"
-    $releasedOwner.completedAt =
-        $AcceptedAt.ToUniversalTime().ToString("o")
-    $releasedOwner.lastTransactionId = "force-release-" + $transactionId
-    Write-OwnerAtomic -Path $OwnerPath -Owner $releasedOwner
-    Write-OwnerMirror $releasedOwner
-    Write-Output $OwnerPath
+    # Include orphaned local session bindings even when the owner file was lost.
+    foreach ($file in @(Get-ChildItem -LiteralPath (Get-AiSopWorkflowSessionRegistryRoot -WorkspacePath $ownerWs) -Filter '*.json' -File -ErrorAction SilentlyContinue)) {
+        # An unrelated corrupt session must not block recovery of this task.
+        # The owner's exact session, and any matching orphan, remain strict.
+        if (-not $existingOwner.sessionBinding -or $file.BaseName -cne $existingOwner.sessionBinding.sessionKey) {
+            try { $candidate = ConvertFrom-AiSopWorkflowJson ([IO.File]::ReadAllText($file.FullName)) -AsHashtable } catch { continue }
+            if ($candidate.workspacePath -cne $ownerWs -or $candidate.boundFeature -cne $Feature -or $candidate.boundOwnerId -cne $OwnerId) { continue }
+        }
+        $bound = Read-AiSopWorkflowSessionRecord -SessionPath $file.FullName
+        if ($bound.workspacePath -cne $ownerWs -or $bound.boundFeature -cne $Feature -or $bound.boundOwnerId -cne $OwnerId) { continue }
+        $effective = Get-AiSopWorkflowSessionEffectiveStatus -Record $bound -AcceptedAt $AcceptedAt
+        if ($effective -in @('ACTIVE','IDLE') -and -not $forced) { throw 'SESSION_MAY_BE_ACTIVE: confirm handoff or use ForceRecovery after stopping the old agent' }
+        $after = Copy-WorkflowRecord $bound
+        Clear-SessionBoundTuple -Session $after -TransactionId $transactionId
+        $targets += New-OwnerTarget -Path $file.FullName -Kind SESSION -SchemaId SESSION -After $after -BeforeExists $true -Before $bound
+        $sessionKeys += $bound.sessionKey
+    }
+    $WorkflowDeadlineUtc = [DateTimeOffset]::UtcNow.AddMilliseconds($ownerDeadlineMs)
+    $recoveryLocks = Enter-AiSopWorkflowTransactionLocks -SessionKeys $sessionKeys -OwnerPath $OwnerPath -Targets $targets -DeadlineUtc $WorkflowDeadlineUtc -WorkspacePath $ownerWs
+    try {
+        # Absence is checked while holding the owner lock as well as task CAS.
+        if (-not $existingOwner -and (Test-Path -LiteralPath $OwnerPath)) { throw 'WORKFLOW_TRANSACTION_PRECONDITION_FAILED' }
+        Invoke-AiSopWorkflowTransaction -Operation RECOVER -Feature $Feature -OwnerPath $OwnerPath -SessionKeys $sessionKeys -Targets $targets -TransactionId $transactionId -DeadlineUtc $WorkflowDeadlineUtc -WorkspacePath $ownerWs -LocksAlreadyHeld | Out-Null
+    } finally { Exit-AiSopWorkflowLocks $recoveryLocks.Locks }
+    if ($releasedOwner) { Write-OwnerMirror $releasedOwner }
+    Write-Output 'TASK_RECOVERED: paused; Resume establishes local execution ownership'
     exit 0
 }
 
@@ -957,6 +988,9 @@ if ($TaskId) {
             requiredCaseIds=@(); verifications=@()
         }
     } elseif ($Operation -ne 'Claim') { throw 'TASK_NOT_FOUND' }
+}
+if ($taskBefore -and $Operation -notin @('Checkpoint')) {
+    if (@($taskBefore.verifications | Where-Object { $_.outcome -eq 'RUNNING' }).Count) { throw 'RUN_UNFINISHED: inspect Status; wait for the run or Recover after it stops' }
 }
 if ($Operation -in @('Suspend','Cancel','Checkpoint') -and -not $taskPath) { throw 'TASK_REQUIRED: adopt legacy ownership using Resume first' }
 $transactionId = "$($Operation.ToLowerInvariant())-$([guid]::NewGuid().ToString('N'))"
@@ -1479,7 +1513,16 @@ if ($null -ne $taskAfter) {
     if ($EvidencePath) {
         if ($Operation -ne 'Checkpoint') { throw 'EVIDENCE_REQUIRES_CHECKPOINT' }
         $evidence = Get-Content -LiteralPath $EvidencePath -Raw | ConvertFrom-Json -AsHashtable
-        $taskAfter.verifications = @($taskAfter.verifications) + @($evidence)
+        $pending = @($taskAfter.verifications | Where-Object { $_.outcome -eq 'RUNNING' })
+        $matches = @($taskAfter.verifications | Where-Object { $evidence.runId -and $_.runId -ceq $evidence.runId })
+        if ($matches.Count) {
+            if ($matches.Count -ne 1 -or $matches[0].outcome -ne 'RUNNING') { throw 'RUN_ALREADY_FINALIZED' }
+            if ($matches[0].context.runnerPid -cne $evidence.context.runnerPid -or $matches[0].command -cne $evidence.command -or $matches[0].inputDigest -cne $evidence.inputDigest) { throw 'RUN_IDENTITY_MISMATCH' }
+            $taskAfter.verifications = @($taskAfter.verifications | ForEach-Object { if ($_.runId -ceq $evidence.runId) { $evidence } else { $_ } })
+        } else {
+            if ($pending.Count) { throw 'RUN_UNFINISHED: only one verification may run per task' }
+            $taskAfter.verifications = @($taskAfter.verifications) + @($evidence)
+        }
     }
     $targets += New-OwnerTarget -Path $taskPath -Kind TASK -SchemaId TASK -After $taskAfter -BeforeExists ($null -ne $taskBefore) -Before $taskBefore
 }

@@ -30,7 +30,10 @@ param(
     [string]$Batch = 'main',
     [string]$Executable,
     [string[]]$Arguments = @(),
-    [string[]]$CaseIds = @()
+    [string[]]$CaseIds = @(),
+    [string]$Profile,
+    [ValidateRange(0,86400)][int]$TimeoutSeconds = 0,
+    [switch]$ForceRecovery
 )
 
 $ErrorActionPreference = "Stop"
@@ -98,136 +101,14 @@ function Invoke-Doctor {
 # --- Status (feature gate + phase) ---
 function Invoke-Status {
     param([string]$FeatureName, [string]$SpecDir)
-    if (-not $FeatureName -and -not $SpecDir) {
-        $featuresBase = Join-Path $WorkspaceRoot ".ai-workspace/specs/features"
-        if (Test-Path -LiteralPath $featuresBase -PathType Container) {
-            $featureDirs = Get-ChildItem -LiteralPath $featuresBase -Directory
-            if ($featureDirs.Count -gt 0) {
-                Write-Host "=== Active Features Overview ===" -ForegroundColor Cyan
-                $table = [System.Collections.Generic.List[PSCustomObject]]::new()
-                foreach ($f in $featureDirs) {
-                    $featName = $f.Name
-                    $featStateFile = Join-Path $f.FullName "feature-state.json"
-                    $approvalFile = Join-Path $f.FullName "00_workflow_state.json"
-                    $tier = "-"
-                    $phase = "NO_STATE"
-                    $owner = "-"
-                    $updated = "-"
-                    if (Test-Path -LiteralPath $featStateFile -PathType Leaf) {
-                        try {
-                            $fs = Get-Content -LiteralPath $featStateFile -Raw | ConvertFrom-Json
-                            $tier = if ($fs.tier) { [string]$fs.tier } else { "-" }
-                            $phase = if ($fs.phase) { [string]$fs.phase } else { "-" }
-                            $owner = if ($fs.ownerSession -and $fs.ownerSession.ownerId) { "$([string]$fs.ownerSession.agent)/$([string]$fs.ownerSession.ownerId)" } else { "-" }
-                            $updated = if ($fs.updatedAt) { [string]$fs.updatedAt } else { "-" }
-                        } catch {}
-                    } elseif (Test-Path -LiteralPath $approvalFile -PathType Leaf) {
-                        $phase = "APPROVED_GATES"
-                        $tier = "T3"
-                    }
-                    $table.Add([PSCustomObject]@{
-                        Feature = $featName
-                        Tier = $tier
-                        Phase = $phase
-                        Owner = $owner
-                        LastUpdated = $updated
-                    })
-                }
-                $sortedTable = $table | Sort-Object -Property @{
-                    Expression = {
-                        if ($_.Phase -in @("CLAIMED", "IMPLEMENTING", "IMPLEMENTATION", "QA_PLAN", "TEST_PLAN_AUDIT", "REVIEW", "PLANNING")) { 0 }
-                        elseif ($_.Phase -eq "APPROVED_GATES") { 1 }
-                        elseif ($_.Phase -in @("DONE", "DELIVERED")) { 3 }
-                        else { 2 }
-                    }
-                    Ascending = $true
-                }, @{
-                    Expression = { $_.LastUpdated }
-                    Descending = $true
-                }
-                $sortedTable | Format-Table -AutoSize
-                Write-Host "[INFO] 提示: 运行 'ai-sop.ps1 Status -Feature <Name>' 查看单个功能的详细门禁与进度。" -ForegroundColor Yellow
-                return
-            }
-        }
-        Write-Host "Usage: ai-sop.ps1 Status -Feature <Name> [-SpecDirectory <dir>]"
-        Write-Host "  Shows gate approval state + feature-state.json progress."
-        return
-    }
-    if (-not $SpecDir) { $SpecDir = Join-Path $WorkspaceRoot ".ai-workspace/specs/features/$FeatureName" }
-    $approvalPath = Join-Path $SpecDir "00_workflow_state.json"
-    $stateScript = Join-Path $WorkspaceRoot ".ai-sop/scripts/workflow-state.ps1"
-    $featStateScript = Join-Path $WorkspaceRoot ".ai-sop/scripts/feature-state.ps1"
-
-    Write-Host "=== Gate Approval State ===" -ForegroundColor Cyan
-    if (Test-Path -LiteralPath $stateScript -PathType Leaf) {
-        if (Test-Path -LiteralPath $approvalPath -PathType Leaf) {
-            & $stateScript -Operation Status -Path $approvalPath
-        } else {
-            Write-Host "  NO_STATE: 00_workflow_state.json not found at $approvalPath"
-        }
-    } else {
-        Write-Host "  .ai-sop submodule not initialized — run 'ai-sop.ps1 Install' first." -ForegroundColor Yellow
-    }
-
-    Write-Host ""
-    Write-Host "=== Feature Progress (feature-state.json) ===" -ForegroundColor Cyan
-    if (Test-Path -LiteralPath $featStateScript -PathType Leaf) {
-        & $featStateScript -Operation Get -Feature $FeatureName -SpecDirectory $SpecDir
-    } else {
-        Write-Host "  feature-state.ps1 not found — run 'ai-sop.ps1 Install' first." -ForegroundColor Yellow
-    }
-
-    # Conventions one-line status (matches AGENTS.md required reply format).
-    $featStatePath = Join-Path $SpecDir "feature-state.json"
-    $hasApproval = Test-Path -LiteralPath $approvalPath -PathType Leaf
-    $hasFeatState = Test-Path -LiteralPath $featStatePath -PathType Leaf
-    if ($hasFeatState) {
-        try {
-            $fs = Get-Content -LiteralPath $featStatePath -Raw | ConvertFrom-Json
-            $tier = [string]$fs.tier
-            $phase = [string]$fs.phase
-            $next = if ($fs.nextAction) { [string]$fs.nextAction } else { "?" }
-            $owner = if ($fs.ownerSession -and $fs.ownerSession.ownerId) { [string]$fs.ownerSession.ownerId } else { "none" }
-            Write-Host ""
-            Write-Host "档位=$tier | 阶段=$phase | 下一步=$next | owner=$owner" -ForegroundColor Green
-        } catch { }
-    } elseif ($hasApproval) {
-        try {
-            $st = Get-Content -LiteralPath $approvalPath -Raw | ConvertFrom-Json
-            $reqStat = $st.requirement.status
-            $desStat = $st.design.status
-            $mode = if ($st.gateMode) { [string]$st.gateMode } else { "DUAL" }
-            Write-Host ""
-            Write-Host "档位=T3 | 阶段=GATES($($mode): 需求=$reqStat, 设计=$desStat) | 下一步=推进计划与实现 | owner=none" -ForegroundColor Green
-        } catch { }
-    } else {
-        Write-Host ""
-        Write-Host "[HINT] Feature '$FeatureName' 尚未初始化。可通过在 AI 聊天框输入 `"开发新功能 $FeatureName`" 开始任务。" -ForegroundColor Yellow
-    }
-
-    # VCS summary
-    try {
-        if (Test-Path -LiteralPath (Join-Path $WorkspaceRoot ".svn") -PathType Container) {
-            $svnStatus = & svn status --ignore-externals $WorkspaceRoot 2>&1
-            if ($LASTEXITCODE -eq 0) {
-                $modCount = @($svnStatus | Where-Object { $_ -match '^[MADRC]' }).Count
-                $untrackedCount = @($svnStatus | Where-Object { $_ -match '^\?' }).Count
-                $missingCount = @($svnStatus | Where-Object { $_ -match '^\!' }).Count
-                Write-Host "VCS=SVN | $modCount 个已修改, $untrackedCount 个未跟踪, $missingCount 个丢失未标记删除" -ForegroundColor Gray
-            }
-        } elseif (Test-Path -LiteralPath (Join-Path $WorkspaceRoot ".git") -PathType Container) {
-            $gitStatus = & git -C $WorkspaceRoot status --porcelain 2>&1
-            if ($LASTEXITCODE -eq 0) {
-                $modCount = @($gitStatus | Where-Object { $_ -notmatch '^\?\?' }).Count
-                $untrackedCount = @($gitStatus | Where-Object { $_ -match '^\?\?' }).Count
-                Write-Host "VCS=Git | $modCount 个已修改, $untrackedCount 个未跟踪" -ForegroundColor Gray
-            }
-        }
-    } catch { }
+    $statusArgs = @{ Operation='Status'; WorkspacePath=$WorkspaceRoot }
+    if ($FeatureName) { $statusArgs.Feature=$FeatureName }
+    if ($SpecDir) { $statusArgs.SpecDirectory=$SpecDir }
+    if ($TaskId) { $statusArgs.TaskId=$TaskId }
+    & (Join-Path $WorkspaceRoot '.ai-sop/scripts/workflow-task.ps1') @statusArgs
+    exit $LASTEXITCODE
 }
 
-# --- Install/Update/Verify (delegate to installer) ---
 function Invoke-Installer {
     param([string]$Mode)  # Install / Update / Verify
     $installerAction = if ($Mode -eq "Verify") { "Verify" } else { "Install" }
@@ -301,13 +182,15 @@ Actions:
   Doctor     Environment self-check (runs even if .ai-sop not initialized).
   Update     Re-generate projections (same as Install).
   Verify     Read-only verification of projections vs lock.
-  Status     Show gate approval state + feature progress for a feature.
+  Status     Show task, ownership, execution evidence and suggested next action.
   Task       Task discovery, independent changes, handoff and verification.
              Task -Operation Discover
              Task -Operation Start -Feature X -TaskId fix-1 -Tier T2 -Objective "Fix existing behaviour" -Agent CODEX
              Task -Operation Resume -Feature X -TaskId fix-1 -Agent CODEX
              Task -Operation Run -Feature X -TaskId fix-1 -Agent CODEX -Kind compile -Executable pwsh -Arguments ...
-             Operations: Discover, Start, Resume, Checkpoint, Suspend, Cancel, Run, ReviewImpact, Verify, Complete.
+             Operations: Discover, Status, Start, Resume, Recover, Checkpoint, Suspend, Cancel, Run, ReviewImpact, Verify, Complete.
+             Run accepts -Profile <name> and -TimeoutSeconds <seconds>.
+             Recover pauses orphaned tasks; -ForceRecovery confirms the old agent has stopped.
   Help       Show this help.
 
 Options:
@@ -322,7 +205,7 @@ New users: run 'Doctor' first, then 'Install'.
 switch ($Action) {
     "Task" {
         $taskArgs = @{ Operation=$Operation; WorkspacePath=$WorkspaceRoot }
-        foreach ($name in @('Feature','SpecDirectory','TaskId','Tier','Objective','Agent','NextAction','Notes','Kind','Batch','Executable','Arguments','CaseIds')) {
+        foreach ($name in @('Feature','SpecDirectory','TaskId','Tier','Objective','Agent','NextAction','Notes','Kind','Batch','Executable','Arguments','CaseIds','Profile','TimeoutSeconds','ForceRecovery')) {
             if ($PSBoundParameters.ContainsKey($name)) { $taskArgs[$name] = $PSBoundParameters[$name] }
         }
         & (Join-Path $WorkspaceRoot '.ai-sop/scripts/workflow-task.ps1') @taskArgs

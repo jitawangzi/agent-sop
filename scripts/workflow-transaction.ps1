@@ -843,7 +843,8 @@ function Invoke-AiSopWorkflowTransaction {
             "TRANSFER",
             "SUSPEND",
             "CANCEL",
-            "CHECKPOINT"
+            "CHECKPOINT",
+            "RECOVER"
         )]
         [string]$Operation,
 

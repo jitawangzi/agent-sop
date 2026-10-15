@@ -33,7 +33,8 @@
         "TRANSFER",
         "SUSPEND",
         "CANCEL",
-        "CHECKPOINT"
+        "CHECKPOINT",
+        "RECOVER"
       ]
     },
     "phase": {

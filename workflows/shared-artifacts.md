@@ -20,6 +20,12 @@
 - 跨工作区迁移：先在原工作区 Suspend，持久保存任务和相同代码，再在新工作区 Resume；新工作区重新取得本地会话，证据必须在当地重新校验。缺本地 owner 的 ACTIVE 记录仅供诊断，禁止静默继承权限。
 - 功能整体验收与轻量任务 DONE 不同。T1/T2 不替旧 T3 收尾；共享代码修改和合并后仍需重新验证集成结果。
 
+Recover 是显式恢复动作：任务转为 PAUSED，匹配的本地 owner 释放、session 解绑，通过 RECOVER 两阶段事务一起完成。没有本地 owner 时只恢复任务记录，Resume 再建立本地权限；ACTIVE/IDLE 会话需要确认停止后显式 ForceRecovery，本机仍存活的验证进程不能强制绕过。ForceRelease 使用相同恢复逻辑。任务保存 lastRecovery 审计说明。
+
+验证记录可带 runId 和 outcome：RUNNING 在进程启动前写入，后续检查点更新同一尝试；终态为 PASSED/FAILED/TIMED_OUT/INTERRUPTED，旧无 outcome 记录保持兼容。一次任务只允许运行一个验证命令。PID、启动时间、机器和工作区仅用于诊断进程，不是跨机器权限凭证；RUNNING 不被当成成功，恢复后保留中断结果。日志是逐步写入的辅助材料，任务状态与证据依然通过事务更新。
+
+Status 与 Discover 共用摘要；Status 额外检查执行证据的当前输入，Discover 不做全工作区哈希扫描。历史批准按 recordedApprovals 展示，完整验收仍是 Verify。项目命令配置位于 `.ai-workspace/context/verification-commands.json`，遵守引擎 schemas/verification-commands.schema.json；配置选项包含命令参数数组、批次、超时和 CaseIds。
+
 任务执行记录中的 `inputs-v1` 是源码等验证输入的内容快照，不使用 Git status、暂存状态或基线 diff。其清单保存在每次执行记录中，可定位过期文件。审查 baseline 仍用于分析修改范围，不与验证输入指纹混用。
 
 `Run` 执行真实命令并记录退出码、输入前后指纹和批次；失败同样保留。T1 至少成功编译；T2/T3 还需成功测试。不同批次可累计，但每个批次最后一次必须成功且适用于当前输入；T3 用 `CaseIds` 映射覆盖矩阵的用例，不用测试条数替代覆盖。CaseIds 是控制器根据实际输出提供的映射，当前不解析所有测试框架的报告，也不宣称防止伪造测试命令。

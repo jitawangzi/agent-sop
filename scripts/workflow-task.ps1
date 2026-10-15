@@ -1,7 +1,7 @@
 #requires -Version 7.0
 [CmdletBinding()]
 param(
-    [Parameter(Mandatory)][ValidateSet('Discover','Start','Resume','Checkpoint','Suspend','Cancel','Run','ReviewImpact','Verify','Complete')][string]$Operation,
+    [Parameter(Mandatory)][ValidateSet('Discover','Status','Recover','Start','Resume','Checkpoint','Suspend','Cancel','Run','ReviewImpact','Verify','Complete')][string]$Operation,
     [string]$WorkspacePath = (Get-Location).Path,
     [string]$SpecDirectory,
     [string]$Feature,
@@ -15,24 +15,34 @@ param(
     [string]$Batch = 'main',
     [string]$Executable,
     [string[]]$Arguments = @(),
-    [string[]]$CaseIds = @()
+    [string[]]$CaseIds = @(),
+    [string]$Profile,
+    [ValidateRange(0,86400)][int]$TimeoutSeconds = 0,
+    [switch]$ForceRecovery
 )
 $ErrorActionPreference = 'Stop'
 . (Join-Path $PSScriptRoot 'task-context.ps1')
 . (Join-Path $PSScriptRoot 'workflow-session.ps1')
 $WorkspacePath = Resolve-PhysicalPathIdentity -Path $WorkspacePath
 $featuresRoot = Join-Path $WorkspacePath '.ai-workspace/specs/features'
-if ($Operation -eq 'Discover') {
-    foreach ($dir in @(Get-ChildItem -LiteralPath $featuresRoot -Directory -ErrorAction SilentlyContinue)) {
-        $records = @(Get-ChildItem -LiteralPath (Join-Path $dir.FullName 'tasks') -Directory -ErrorAction SilentlyContinue)
+if ($Operation -in @('Discover','Status')) {
+    if (-not $Feature -and $SpecDirectory) { $Feature = Split-Path -Leaf $SpecDirectory }
+    if ($Feature -and $Feature -notmatch '^[A-Za-z0-9](?:[A-Za-z0-9._-]*[A-Za-z0-9_-])?$') { throw 'FEATURE_INVALID' }
+    $dirs = @(Get-ChildItem -LiteralPath $featuresRoot -Directory -ErrorAction SilentlyContinue | Where-Object { -not $Feature -or $_.Name -ceq $Feature })
+    if ($SpecDirectory -and (Resolve-PhysicalPathIdentity $SpecDirectory) -cne (Resolve-PhysicalPathIdentity (Join-Path $featuresRoot $Feature))) { throw 'TASK_WORKSPACE_MISMATCH' }
+    foreach ($dir in $dirs) {
+        $records = @(Get-ChildItem -LiteralPath (Join-Path $dir.FullName 'tasks') -Directory -ErrorAction SilentlyContinue | Where-Object { -not $TaskId -or $_.Name -ceq $TaskId })
         foreach ($entry in $records) {
-            $task = Read-AiSopTask $dir.FullName $entry.Name
-            [pscustomobject]@{ feature=$task.feature; taskId=$task.taskId; tier=$task.tier; status=$task.status; objective=$task.objective; nextAction=$task.nextAction; updatedAt=$task.updatedAt } | ConvertTo-Json -Compress
+            try {
+                $task = Read-AiSopTask $dir.FullName $entry.Name
+                Get-AiSopTaskSummary $task $WorkspacePath $dir.FullName -CheckInputs:($Operation -eq 'Status') | ConvertTo-Json -Depth 12 -Compress
+            } catch { @{ feature=$dir.Name; taskId=$entry.Name; status='CORRUPT'; diagnostic=$_.Exception.Message } | ConvertTo-Json -Compress }
         }
         if (-not $records.Count) {
-            [pscustomobject]@{ feature=$dir.Name; taskId=$null; status='LEGACY'; action='Inspect existing owner and feature-state; Resume to adopt, never infer completion.' } | ConvertTo-Json -Compress
+            @{ feature=$dir.Name; taskId=$TaskId; status=$(if ($TaskId) { 'NOT_FOUND' } else { 'LEGACY' }); recordedApprovals=(Get-AiSopRecordedApprovals $dir.FullName); suggestedAction='Inspect existing ownership and approvals; Start independent work or Resume the legacy task.' } | ConvertTo-Json -Depth 5 -Compress
         }
     }
+    if (-not $dirs.Count) { @{ feature=$Feature; taskId=$TaskId; status='NOT_FOUND'; suggestedAction='Start a task with an explicit feature and objective.' } | ConvertTo-Json -Compress }
     $syncWarning = Get-AiSopSpecSyncWarning $WorkspacePath
     if ($syncWarning) { Write-Warning $syncWarning }
     exit 0
@@ -75,10 +85,15 @@ if (-not $TaskId) { throw 'TASK_SELECTION_REQUIRED: use Discover and select an e
 $task = Read-AiSopTask $SpecDirectory $TaskId
 $ownerArgs.OwnerId = $task.ownerId
 $ownerArgs.TaskId = $TaskId
+if ($Operation -eq 'Recover') {
+    & $ownerScript -Operation Recover @ownerArgs -ForceRecovery:$ForceRecovery
+    exit $LASTEXITCODE
+}
 if ($Operation -eq 'Resume') {
+    if (@($task.verifications | Where-Object { $_.outcome -eq 'RUNNING' }).Count) { throw 'RUN_UNFINISHED: inspect Status and Recover after execution stops' }
     if ($task.status -eq 'PAUSED') {
         & $ownerScript -Operation Claim @ownerArgs -Tier $task.tier -Objective $task.objective
-    } elseif ($task.status -eq 'ACTIVE' -and $owner -and $owner.taskId -ceq $TaskId) {
+    } elseif ($task.status -eq 'ACTIVE' -and $owner -and $owner.status -eq 'ACTIVE' -and $owner.taskId -ceq $TaskId) {
         $native = if ($Agent -eq 'CODEX') { $env:CODEX_SESSION_ID } else { $env:AI_SESSION_ID }
         $sameSession = $native -and ((Get-AiSopWorkflowSessionKey -Agent $Agent -NativeSessionId $native -WorkspacePath $WorkspacePath) -ceq $owner.sessionBinding.sessionKey)
         if ($sameSession) {
@@ -102,40 +117,35 @@ if ($Operation -eq 'Verify') {
     & (Join-Path $PSScriptRoot 'workflow-state.ps1') -Operation VerifyCompletion -Path (Join-Path $SpecDirectory '00_workflow_state.json') -TaskId $TaskId
     exit $LASTEXITCODE
 }
-# Run is the common evidence producer. No shell interpolation or success fabrication.
+# Profiles are project-owned command definitions, never engine-specific builds.
+$profileInfo = $null
+if ($Profile) {
+    foreach ($name in @('Executable','Arguments','Kind','Batch','CaseIds')) {
+        if ($PSBoundParameters.ContainsKey($name)) { throw "PROFILE_OVERRIDE_FORBIDDEN: $name; use an explicit command instead" }
+    }
+    $profileInfo = Get-AiSopVerificationProfile $WorkspacePath $Profile
+    $definition = $profileInfo.command
+    $Executable = $definition.executable; $Arguments = @($definition.arguments); $Kind = $definition.kind
+    $Batch = if ($definition.batch) { $definition.batch } else { $Profile }
+    $CaseIds = @($definition.caseIds)
+    if (-not $PSBoundParameters.ContainsKey('TimeoutSeconds') -and $definition.timeoutSeconds) { $TimeoutSeconds = $definition.timeoutSeconds }
+}
 if (-not $Executable -or -not $Kind) { throw 'RUN_REQUIRES_EXECUTABLE_AND_KIND' }
 if ($Batch -notmatch '^[A-Za-z0-9][A-Za-z0-9_-]{0,79}$') { throw 'BATCH_ID_INVALID' }
 & $ownerScript -Operation Validate @ownerArgs | Out-Null
 if ($LASTEXITCODE -ne 0) { throw 'TASK_OWNER_INVALID' }
 $before = Get-AiSopInputSnapshot $WorkspacePath
-$specBefore = Get-AiSopTaskSpecDigest $SpecDirectory
-$info = [Diagnostics.ProcessStartInfo]::new()
-$info.WorkingDirectory = $WorkspacePath
-$info.UseShellExecute = $false
-$info.CreateNoWindow = $true
-$info.RedirectStandardOutput = $true
-$info.RedirectStandardError = $true
-foreach ($arg in $Arguments) { $info.ArgumentList.Add($arg) }
-$process = [Diagnostics.Process]::new(); $process.StartInfo = $info
-try {
-    $info.FileName = (@(Get-Command $Executable -CommandType Application -ErrorAction Stop)[0]).Source
-    if (-not $process.Start()) { throw 'VERIFICATION_START_FAILED' }
-    $stdout = $process.StandardOutput.ReadToEndAsync()
-    $stderr = $process.StandardError.ReadToEndAsync()
-    $process.WaitForExit()
-    $code = $process.ExitCode
-    $output = $stdout.GetAwaiter().GetResult() + $stderr.GetAwaiter().GetResult()
-} catch {
-    $code = -1
-    $output = 'VERIFICATION_START_FAILED: ' + $_.Exception.Message
-} finally { $process.Dispose() }
-$after = Get-AiSopInputSnapshot $WorkspacePath
-$context = @{ workspace=$WorkspacePath; engineScriptHash=(Get-FileHash -LiteralPath (Join-Path $PSScriptRoot 'workflow-state.ps1')).Hash.ToLowerInvariant(); executable=$info.FileName }
-foreach ($repo in @(
-    @{name='code';path=$WorkspacePath},
-    @{name='context';path=(Join-Path $WorkspacePath '.ai-workspace')},
-    @{name='spec';path=$SpecDirectory}
-)) {
+$bindSpecs = $task.tier -eq 'T3' -and $Kind -eq 'test'
+$specBefore = if ($bindSpecs) { Get-AiSopTaskSpecDigest $SpecDirectory } else { $null }
+$runId = [guid]::NewGuid().ToString('N')
+$taskDir = Split-Path -Parent (Get-AiSopTaskPath $SpecDirectory $TaskId)
+$context = @{
+    workspace=$WorkspacePath; runnerMachine=[Environment]::MachineName; runnerPid=[string]$PID
+    runnerStartedAt=[Diagnostics.Process]::GetCurrentProcess().StartTime.ToUniversalTime().ToString('o')
+    engineScriptHash=(Get-FileHash -LiteralPath $PSCommandPath).Hash.ToLowerInvariant(); logFile="$runId.log"
+}
+if ($profileInfo) { $context.profile=$Profile; $context.profileDigest=$profileInfo.digest }
+foreach ($repo in @(@{name='code';path=$WorkspacePath}, @{name='context';path=(Join-Path $WorkspacePath '.ai-workspace')}, @{name='spec';path=$SpecDirectory})) {
     if ((Get-Command git -CommandType Application -ErrorAction SilentlyContinue) -and (Test-Path -LiteralPath $repo.path -PathType Container)) {
         $gitRoot = & git -C $repo.path rev-parse --show-toplevel 2>$null
         if ($LASTEXITCODE -eq 0) {
@@ -147,23 +157,85 @@ foreach ($repo in @(
 }
 if (Test-Path -LiteralPath (Join-Path $WorkspacePath '.svn')) {
     $revision = & svn info --non-interactive --show-item revision $WorkspacePath 2>$null
-    if ($LASTEXITCODE -eq 0) { $context['codeSvnRevision'] = [string]$revision }
+    if ($LASTEXITCODE -eq 0) { $context.codeSvnRevision = [string]$revision }
 }
 $record = @{
-    kind=$Kind; batch=$Batch; command=(@($Executable) + $Arguments | ConvertTo-Json -Compress)
-    exitCode=$code; executedAt=[DateTimeOffset]::UtcNow.ToString('o'); inputDigest=$before.digest
-    specDigest=$specBefore; context=$context; inputs=$before.files; inputsStable=(($before.digest -ceq $after.digest) -and ($task.tier -ne 'T3' -or $Kind -ne 'test' -or $specBefore -ceq (Get-AiSopTaskSpecDigest $SpecDirectory))); caseIds=@($CaseIds | Sort-Object -Unique)
+    runId=$runId; outcome='RUNNING'; kind=$Kind; batch=$Batch; command=(@($Executable) + $Arguments | ConvertTo-Json -Compress)
+    exitCode=-2; executedAt=[DateTimeOffset]::UtcNow.ToString('o'); inputDigest=$before.digest
+    context=$context; inputs=$before.files; inputsStable=$false; caseIds=@($CaseIds | Where-Object { $_ } | Sort-Object -Unique)
 }
-$taskDir = Split-Path -Parent (Get-AiSopTaskPath $SpecDirectory $TaskId)
-$runId = [guid]::NewGuid().ToString('N')
-$record.context['logFile'] = "$runId.log"
-$recordPath = Join-Path $taskDir "$runId.evidence.tmp"
+if ($bindSpecs) { $record.specDigest=$specBefore }
+function Save-RunEvidence {
+    $recordPath = Join-Path $taskDir "$runId.evidence.tmp"
+    try {
+        [IO.File]::WriteAllText($recordPath, ($record | ConvertTo-Json -Depth 20), [Text.UTF8Encoding]::new($false))
+        & $ownerScript -Operation Checkpoint @ownerArgs -EvidencePath $recordPath | Out-Null
+        if ($LASTEXITCODE -ne 0) { throw 'EVIDENCE_CHECKPOINT_FAILED' }
+    } finally { if (Test-Path -LiteralPath $recordPath) { Remove-Item -LiteralPath $recordPath } }
+}
+# Persist the attempt before launch so an abrupt runner termination cannot leave
+# an older successful batch appearing to be the latest execution.
+Save-RunEvidence
+$logPath = Join-Path $taskDir "$runId.log"
+$logStream = [IO.FileStream]::new($logPath, [IO.FileMode]::Create, [IO.FileAccess]::Write, [IO.FileShare]::ReadWrite)
+$writer = [IO.StreamWriter]::new($logStream, [Text.UTF8Encoding]::new($false)); $writer.AutoFlush = $true
+$process = [Diagnostics.Process]::new()
+$info = $process.StartInfo
+$info.WorkingDirectory=$WorkspacePath; $info.UseShellExecute=$false; $info.CreateNoWindow=$true
+$info.RedirectStandardOutput=$true; $info.RedirectStandardError=$true
+foreach ($arg in $Arguments) { $info.ArgumentList.Add($arg) }
+$started=$false; $finished=$false; $stopwatch=[Diagnostics.Stopwatch]::StartNew()
 try {
-    [IO.File]::WriteAllText((Join-Path $taskDir "$runId.log"), $output, [Text.UTF8Encoding]::new($false))
-    [IO.File]::WriteAllText($recordPath, ($record | ConvertTo-Json -Depth 20), [Text.UTF8Encoding]::new($false))
-    & $ownerScript -Operation Checkpoint @ownerArgs -EvidencePath $recordPath
-    if ($LASTEXITCODE -ne 0) { throw 'EVIDENCE_CHECKPOINT_FAILED' }
-} finally { if (Test-Path -LiteralPath $recordPath) { Remove-Item -LiteralPath $recordPath } }
-Write-Output $output
-if (-not $record.inputsStable) { throw "INPUTS_CHANGED_DURING_RUN: $((Get-AiSopChangedInputs $before $after) -join ',')" }
-exit $code
+    $info.FileName = (@(Get-Command $Executable -CommandType Application -ErrorAction Stop)[0]).Source
+    $context.executable=$info.FileName
+    $started = $process.Start()
+    if (-not $started) { throw 'VERIFICATION_START_FAILED' }
+    $context.childPid=[string]$process.Id
+    $context.childStartedAt=$process.StartTime.ToUniversalTime().ToString('o')
+    Save-RunEvidence
+    $pipes = @(
+        @{ reader=$process.StandardOutput; buffer=[char[]]::new(2048); pending=$null; ended=$false },
+        @{ reader=$process.StandardError; buffer=[char[]]::new(2048); pending=$null; ended=$false }
+    )
+    while ($true) {
+        if ($TimeoutSeconds -gt 0 -and $stopwatch.Elapsed.TotalSeconds -ge $TimeoutSeconds) {
+            $record.outcome='TIMED_OUT'; $record.exitCode=124
+            if (-not $process.HasExited) { $process.Kill($true) }
+            break
+        }
+        foreach ($pipe in $pipes) {
+            if ($pipe.ended) { continue }
+            if (-not $pipe.pending) { $pipe.pending=$pipe.reader.ReadAsync($pipe.buffer, 0, $pipe.buffer.Length) }
+            if ($pipe.pending.IsCompleted) {
+                $count=$pipe.pending.GetAwaiter().GetResult(); $pipe.pending=$null
+                if ($count -eq 0) { $pipe.ended=$true; continue }
+                $chunk=[string]::new($pipe.buffer, 0, $count)
+                $writer.Write($chunk); Write-Host -NoNewline $chunk
+            }
+        }
+        if ($process.HasExited -and @($pipes | Where-Object { -not $_.ended }).Count -eq 0) {
+            $record.exitCode=$process.ExitCode
+            $record.outcome=if ($process.ExitCode -eq 0) { 'PASSED' } else { 'FAILED' }
+            break
+        }
+        [Threading.Thread]::Sleep(50)
+    }
+    $finished=$true
+} catch {
+    $record.exitCode=-1; $record.outcome='FAILED'
+    $message='VERIFICATION_FAILED: ' + $_.Exception.Message
+    $writer.WriteLine($message); Write-Host $message
+} finally {
+    if ($started -and -not $process.HasExited) { $process.Kill($true); $process.WaitForExit(5000) | Out-Null }
+    $process.Dispose(); $writer.Dispose()
+    if (-not $finished -and $record.outcome -eq 'RUNNING') { $record.outcome='INTERRUPTED'; $record.exitCode=-2 }
+    try {
+        $after=Get-AiSopInputSnapshot $WorkspacePath
+        $record.inputsStable=($before.digest -ceq $after.digest) -and (-not $bindSpecs -or $specBefore -ceq (Get-AiSopTaskSpecDigest $SpecDirectory))
+        if (-not $record.inputsStable) { $record.outcome='FAILED'; if ($record.exitCode -eq 0) { $record.exitCode=1 } }
+    } catch { $record.inputsStable=$false; $record.outcome='FAILED'; $record.exitCode=1 }
+    Save-RunEvidence
+}
+Write-Output "RUN_RESULT:$($record.outcome) exit=$($record.exitCode) log=$logPath"
+if (-not $record.inputsStable) { throw 'INPUTS_CHANGED_DURING_RUN: inspect task verification diagnostics' }
+exit $record.exitCode

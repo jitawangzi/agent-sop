@@ -80,6 +80,7 @@ function Get-AiSopTaskProblems {
     param($Task, [string]$WorkspacePath, [string]$SpecDirectory = '')
     $problems = [Collections.Generic.List[string]]::new()
     $snapshot = Get-AiSopInputSnapshot $WorkspacePath
+    foreach ($pending in @($Task.verifications | Where-Object { $_.outcome -eq 'RUNNING' })) { $problems.Add("RUN_UNFINISHED:$($pending.runId):$(Get-AiSopRunActivity $pending $WorkspacePath)") }
     foreach ($kind in @('compile', 'test')) {
         if ($kind -eq 'test' -and $Task.tier -eq 'T1') { continue }
         $records = @($Task.verifications | Where-Object { $_.kind -eq $kind })
@@ -127,4 +128,89 @@ function Get-AiSopSpecSyncWarning {
     if ($LASTEXITCODE -eq 0 -and $ignored) {
         return "SPECS_IGNORED: specification paths are ignored by their owning Git repository '$repo'; review tracking there before handoff. No ignore rules or tracked files were changed."
     }
+}
+
+
+function Get-AiSopRunActivity {
+    param($Record, [string]$WorkspacePath)
+    if ($Record.outcome -ne 'RUNNING') { return 'NONE' }
+    if ($Record.context.runnerMachine -cne [Environment]::MachineName -or
+        $Record.context.workspace -cne (Resolve-PhysicalPathIdentity $WorkspacePath)) { return 'REMOTE_UNKNOWN' }
+    foreach ($prefix in @('runner','child')) {
+        if (-not $Record.context["${prefix}Pid"] -or -not $Record.context["${prefix}StartedAt"]) { continue }
+        $process = $null
+        try {
+            $process = [Diagnostics.Process]::GetProcessById([int]$Record.context["${prefix}Pid"])
+            if ($process.StartTime.ToUniversalTime().ToString('o') -ceq $Record.context["${prefix}StartedAt"] -and -not $process.HasExited) { return 'RUNNING' }
+        } catch [ArgumentException] { } catch { return 'UNCONFIRMED' } finally { if ($process) { $process.Dispose() } }
+    }
+    return 'INTERRUPTED'
+}
+
+function Get-AiSopTaskSummary {
+    param($Task, [string]$WorkspacePath, [string]$SpecDirectory, [switch]$CheckInputs)
+    $ownerPath = Join-Path (Get-AiSopWorkflowOwnerRegistryRoot -WorkspacePath $WorkspacePath) ($Task.feature.ToLowerInvariant() + '.json')
+    $owner = $null; $sessionStatus = 'MISSING'; $ownerStatus = 'MISSING'; $diagnostics = @()
+    if (Test-Path -LiteralPath $ownerPath) {
+        try {
+            $ownerRaw = [IO.File]::ReadAllText($ownerPath)
+            Assert-AiSopWorkflowJsonSchema -Json $ownerRaw -SchemaId OWNER
+            $owner = ConvertFrom-AiSopWorkflowJson $ownerRaw -AsHashtable
+            $ownerStatus = if ($owner.taskId -ceq $Task.taskId -and $owner.ownerId -ceq $Task.ownerId) { $owner.status } else { 'OTHER_TASK' }
+            if ($ownerStatus -eq 'ACTIVE' -and $owner.sessionBinding) {
+                $sessionStatus = (Get-AiSopWorkflowSession -SessionKey $owner.sessionBinding.sessionKey -WorkspacePath $WorkspacePath).EffectiveStatus
+            }
+        } catch { $diagnostics += $_.Exception.Message; $sessionStatus = 'UNAVAILABLE' }
+    }
+    $runs = @($Task.verifications | Where-Object { $_.outcome -eq 'RUNNING' } | ForEach-Object {
+        @{ runId=$_.runId; kind=$_.kind; batch=$_.batch; activity=(Get-AiSopRunActivity $_ $WorkspacePath); logFile=$_.context.logFile }
+    })
+    $action = if ($Task.status -in @('DONE','CANCELLED')) { 'Start a new task for new work' }
+        elseif ($runs.Count -and @($runs | Where-Object activity -eq 'RUNNING').Count) { 'Wait for the running command; inspect its log' }
+        elseif ($runs.Count) { 'Recover interrupted/foreign run, then Resume' }
+        elseif ($Task.status -eq 'PAUSED') { 'Resume' }
+        elseif ($ownerStatus -ne 'ACTIVE' -or $sessionStatus -eq 'UNAVAILABLE') { 'Recover local ownership, then Resume' }
+        elseif ($sessionStatus -in @('ACTIVE','IDLE')) { 'Existing session may still be active; Resume only for intentional handoff' }
+        else { 'Resume' }
+    $verification = 'NOT_CHECKED'
+    if ($CheckInputs) {
+        try {
+            $problems = @(Get-AiSopTaskProblems $Task $WorkspacePath $SpecDirectory)
+            $verification = if ($problems.Count) { 'NEEDS_ATTENTION' } else { 'EXECUTION_EVIDENCE_CURRENT' }
+            $diagnostics += $problems
+        } catch { $verification='UNAVAILABLE'; $diagnostics += $_.Exception.Message }
+    }
+    return [ordered]@{
+        feature=$Task.feature; taskId=$Task.taskId; tier=$Task.tier; status=$Task.status; objective=$Task.objective
+        ownerStatus=$ownerStatus; sessionStatus=$sessionStatus; verification=$verification
+        recordedApprovals=(Get-AiSopRecordedApprovals $SpecDirectory)
+        nextAction=$Task.nextAction; suggestedAction=$action; notes=$Task.notes; runs=$runs
+        diagnostics=$diagnostics; updatedAt=$Task.updatedAt
+    }
+}
+
+function Get-AiSopRecordedApprovals {
+    param([string]$SpecDirectory)
+    $path=Join-Path $SpecDirectory '00_workflow_state.json'
+    if (-not [IO.File]::Exists($path)) { $path=Join-Path $SpecDirectory 'workflow-state.json' }
+    if (-not [IO.File]::Exists($path)) { return @{ requirement='NOT_RECORDED'; design='NOT_RECORDED' } }
+    try {
+        $state=ConvertFrom-AiSopWorkflowJson ([IO.File]::ReadAllText($path)) -AsHashtable
+        return @{ requirement=[string]$state.requirement.status; design=[string]$state.design.status }
+    } catch { return @{ requirement='UNAVAILABLE'; design='UNAVAILABLE' } }
+}
+
+function Get-AiSopVerificationProfile {
+    param([string]$WorkspacePath, [string]$Name)
+    if ($Name -notmatch '^[A-Za-z0-9][A-Za-z0-9_-]{0,79}$') { throw 'PROFILE_NAME_INVALID' }
+    $path = Resolve-PhysicalPathIdentity (Join-Path $WorkspacePath '.ai-workspace/context/verification-commands.json')
+    $root = (Resolve-PhysicalPathIdentity $WorkspacePath).TrimEnd('\','/') + [IO.Path]::DirectorySeparatorChar
+    $comparison = if ([OperatingSystem]::IsWindows()) { [StringComparison]::OrdinalIgnoreCase } else { [StringComparison]::Ordinal }
+    if (-not $path.StartsWith($root, $comparison)) { throw 'PROFILE_PATH_ESCAPE' }
+    if (-not [IO.File]::Exists($path)) { throw "PROFILE_CONFIG_MISSING: $path" }
+    $raw = [IO.File]::ReadAllText($path)
+    if (-not ($raw | Test-Json -SchemaFile (Join-Path (Split-Path -Parent $PSScriptRoot) 'schemas/verification-commands.schema.json'))) { throw 'PROFILE_CONFIG_INVALID' }
+    $config = ConvertFrom-AiSopWorkflowJson $raw -AsHashtable
+    if (-not $config.commands.Contains($Name)) { throw "PROFILE_NOT_FOUND: $Name" }
+    return @{ command=$config.commands[$Name]; path=$path; digest=(Get-AiSopWorkflowSha256 $raw) }
 }

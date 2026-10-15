@@ -23,9 +23,9 @@
     {
       "source": "distribution/templates/root/AGENTS.md",
       "target": "AGENTS.md",
-      "sourceBlobSha256": "4c3cbc535fee83141539bd0f9702ce300e6b9233e02efd7645b381e35472229c",
-      "targetSha256": "4c3cbc535fee83141539bd0f9702ce300e6b9233e02efd7645b381e35472229c",
-      "legacySha256": "8d5233dc34843364795e02e535cecf4d06476f3d109969a3231ee8a98ae1882e",
+      "sourceBlobSha256": "25903e4b86512c55ac3f7e7aee50f1c7ab4557e276cd9322619c731a180574dc",
+      "targetSha256": "25903e4b86512c55ac3f7e7aee50f1c7ab4557e276cd9322619c731a180574dc",
+      "legacySha256": "4c3cbc535fee83141539bd0f9702ce300e6b9233e02efd7645b381e35472229c",
       "encoding": "utf8-no-bom",
       "lineEnding": "lf"
     },
@@ -50,9 +50,9 @@
     {
       "source": "distribution/templates/root/ai-sop.ps1",
       "target": "ai-sop.ps1",
-      "sourceBlobSha256": "394cd0587305d2f382cd4bea79d87daf61190435a35c1a132bb74fc9135b377c",
-      "targetSha256": "394cd0587305d2f382cd4bea79d87daf61190435a35c1a132bb74fc9135b377c",
-      "legacySha256": "232c8f7c1527895ebc750f541622cc92cc8b25f9c63403302636d6bf9da64413",
+      "sourceBlobSha256": "559596303d23f80e2a6b8e10d8473e2825720f2decb389f58e1d5c658c4d9534",
+      "targetSha256": "559596303d23f80e2a6b8e10d8473e2825720f2decb389f58e1d5c658c4d9534",
+      "legacySha256": "394cd0587305d2f382cd4bea79d87daf61190435a35c1a132bb74fc9135b377c",
       "encoding": "utf8-no-bom",
       "lineEnding": "lf"
     },

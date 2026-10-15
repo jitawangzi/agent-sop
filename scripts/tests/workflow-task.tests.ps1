@@ -59,6 +59,7 @@ try {
     $env:CODEX_SESSION_ID='task-session-a'
     MustFail { Task Start fix-b @{ Objective='Conflicting concurrent task' } } 'Concurrent task on same feature should fail'
     MustFail { Task Complete fix-a } 'Missing evidence must block completion'
+    [IO.File]::WriteAllText((Join-Path $spec '05_test_coverage.json'), '{broken historical coverage')
     [IO.File]::WriteAllText((Join-Path $workspace 'src/input.txt'), 'before-build')
     Task Run fix-a @{ Kind='compile'; Executable='pwsh'; Arguments=@('-NoProfile','-Command','exit 0') } | Out-Null
     Task Run fix-a @{ Kind='test'; Executable='pwsh'; Arguments=@('-NoProfile','-Command','exit 0') } | Out-Null
@@ -105,6 +106,7 @@ try {
     $env:CODEX_SESSION_ID='task-session-d'
     Task Resume fix-b | Out-Null
     Task Verify fix-b | Out-Null
+    Remove-Item -LiteralPath (Join-Path $spec '05_test_coverage.json')
     # Impact review binds the analysis file and inputs, independently of VCS status.
     $impactPath = Join-Path $spec '04_change_impact.json'
     $activeOwner = Get-Content -LiteralPath (Join-Path $env:AI_SOP_OWNER_REGISTRY 'example.json') -Raw | ConvertFrom-Json

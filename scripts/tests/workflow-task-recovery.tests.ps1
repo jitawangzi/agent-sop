@@ -95,18 +95,18 @@ try {
     Task Verify | Out-Null
     Fails { Task Run @{ Profile='build'; Executable='pwsh' } } 'PROFILE_OVERRIDE_FORBIDDEN'
     Fails { Task Run @{ Profile='missing' } } 'PROFILE_NOT_FOUND'
-    Fails { Task Run @{ Profile='slow'; TimeoutSeconds=1 } } 'Task Run failed'
+    Fails { Task Run @{ Profile='slow'; TimeoutSeconds=1; Reason='Exercise timeout instead of the normal regression command' } } 'Task Run failed'
     $last=(Read-AiSopTask $spec 'recovery').verifications[-1]
     Assert ($last.outcome -eq 'TIMED_OUT' -and $last.exitCode -eq 124) 'Timeout was not recorded'
     Fails { Task Verify } 'Task Verify failed'
-    Task Run @{Profile='check'} | Out-Null
+    Task Run @{Profile='check'; Reason='Restore normal regression after timeout'} | Out-Null
 
     # Launch an actual external runner and inspect its durable log while running.
     $runner=[Diagnostics.Process]::new()
     $runner.StartInfo.FileName=(@(Get-Command pwsh -CommandType Application)[0]).Source
     $runner.StartInfo.UseShellExecute=$false; $runner.StartInfo.CreateNoWindow=$true
     $runner.StartInfo.RedirectStandardOutput=$true; $runner.StartInfo.RedirectStandardError=$true
-    foreach ($arg in @('-NoProfile','-File',$entry,'-Operation','Run','-WorkspacePath',$workspace,'-Feature','Example','-TaskId','recovery','-Agent','CODEX','-Profile','slow')) { $runner.StartInfo.ArgumentList.Add($arg) }
+    foreach ($arg in @('-NoProfile','-File',$entry,'-Operation','Run','-WorkspacePath',$workspace,'-Feature','Example','-TaskId','recovery','-Agent','CODEX','-Profile','slow','-Reason','Exercise interrupted execution')) { $runner.StartInfo.ArgumentList.Add($arg) }
     Assert ($runner.Start()) 'Runner launch failed'
     $stdout=$runner.StandardOutput.ReadToEndAsync(); $stderr=$runner.StandardError.ReadToEndAsync()
     $deadline=[DateTimeOffset]::UtcNow.AddSeconds(20); $streamed=$false
@@ -139,7 +139,7 @@ try {
     Assert ($recovered.verifications[-1].outcome -eq 'INTERRUPTED' -and $recovered.status -eq 'PAUSED') 'Interrupted result lost during recovery'
     Task Resume | Out-Null
     Fails { Task Verify } 'Task Verify failed'
-    Task Run @{Profile='check'} | Out-Null
+    Task Run @{Profile='check'; Reason='Restore normal regression after interruption'} | Out-Null
     Task Complete | Out-Null
     Write-Output 'PASS: recovery, status consistency, project profiles, timeout, streaming, abrupt termination'
 } finally {

@@ -8,6 +8,8 @@
 
 正常切换 Agent 用 Resume。异常中断、本地 owner 丢失、或接收到没有本地 owner 的 ACTIVE 任务时，先 Status，再 `Task -Operation Recover`，恢复为 PAUSED 后 Resume。Recover 不把任务标成完成，不导入其他工作区的权限。若原会话仍标记 ACTIVE/IDLE，先确认旧 Agent 已停止，再显式使用 `-ForceRecovery -Notes "恢复原因"`；本机验证进程还在运行时，即使带该参数也会拒绝恢复。旧 ForceRelease 也会同步暂停任务、清除原会话绑定，使用同一事务。
 
+跨会话 Resume 遇到仍为 ACTIVE/IDLE 的旧会话，需要 `-ConfirmTakeover`，记录有意交接。用户已明确要求切换且旧 Agent 已停止时直接使用，不重复询问；普通 Checkpoint 不会借用旧 owner 的会话身份。Task 写操作可从唯一的 CODEX_SESSION_ID / ANTIGRAVITY_SESSION_ID 推断 Agent，否则显式传 `-Agent`。没有原生会话环境变量的 CLI 应为同一次会话设置稳定的 `AI_SESSION_ID`，跨进程调用保持一致；不能用读取 owner 的方式冒充该会话。
+
 宿主可在 `.ai-workspace/context/verification-commands.json` 配置常用命令（由项目上下文仓库管理）：
 
 ```json
@@ -34,6 +36,10 @@
 
 Run 在启动前持久保存 RUNNING，再持续输出并写入任务日志，结束时更新为 PASSED、FAILED 或 TIMED_OUT。异常退出可能留下 RUNNING；Status 根据本机进程身份（PID 与启动时间）区分仍运行和已中断，Recover 将已停止的尝试记为 INTERRUPTED。远端进程无法本地确认，需要先确认原执行已停止。超时会终止本次启动的进程树并记录退出码 124。查看实时日志可使用 PowerShell 的 Get-Content -Wait；停止运行器后，后续 Agent 应检查是否还有遗留子进程。
 
+Run 自动续期当前绑定会话，不重新激活已结束或已转移的会话。执行结果先原子保存到任务目录的 `<runId>.pending.json`，再通过事务入账；只有成功入账才删除待保存文件。事务失败时可用 `Task -Operation RetryEvidence -Feature Example -TaskId fix-1 -Agent CODEX -RunId <id>` 重试保存，不重新执行命令。会话已结束/到期时，待原进程停止后 Recover：匹配的本地终态结果会随恢复事务保存，再 Resume；没有有效终态结果才记 INTERRUPTED。旧任务的终态 owner 不阻塞另一任务的恢复。
+
+同一 kind/batch 的重跑保持命令、Profile 和 CaseIds 范围一致。确需更换时在 Run 提供 `-Reason "调整验证命令/范围的具体原因"`，保留旧尝试及替换关联；不得改用无关成功命令掩盖失败。修复代码后用原命令重跑不需要额外参数。
+
 T1/T2 的 Run 不读取历史需求设计和覆盖矩阵，历史损坏的覆盖 JSON 不会阻断轻量编译/测试。完整 T3 测试仍绑定规格摘要。未结束的运行会阻止 Complete、Suspend 和接管；失败/中断的必需测试批次需要同批次成功复跑，不能用旧成功记录覆盖。
 
 ## 独立修改、续做与暂停
@@ -52,6 +58,8 @@ T1/T2 的 Run 不读取历史需求设计和覆盖矩阵，历史损坏的覆盖
 
 命令和脚本路径由宿主工程提供，以上仅展示参数形式。原生可执行程序直接调用；Windows 批处理可经显式 `pwsh -Command` 调用，参数作为数组传递，不拼接不可信 shell 文本。T3 测试带 `-CaseIds @('TC01','TC02')`，根据真实运行结果映射；框架报告的自动解析暂不包含在本版本。
 
+可执行文件的相对路径按宿主工作区解析，与调用端当前目录无关。`.ps1` 使用 `pwsh -File`；`.bat/.cmd` 使用显式宿主调用，直接传给 Executable 会得到明确诊断。SVN CLI 缺失仅跳过 Run 的版本号注记并提示；真正依赖 SVN 的基线/版本操作仍需要相应工具。
+
 5. 每阶段 `Task -Operation Checkpoint ... -NextAction "下一步" -Notes "已完成与未解决项"`；环境阻塞或离开时 `Suspend` 保存暂停并释放执行占用。取消用 Cancel，均不宣称完成。
 6. `Task -Operation Verify ...` 列齐缺失/失败批次、变化文件和 T3 规格问题；通过后 `Complete`。T3 要求的影响分析必须经检查，再用 ReviewImpact 显式记录当前分析与代码绑定，禁止盲目刷新哈希。
 
@@ -60,6 +68,8 @@ T1 只需真实编译/基础检查；T2 还需相关测试和 RecordSync 记录�
 不同功能并行继续采用独立工作区和测试数据隔离；最终组合重新验收。跨工作区恢复先 Suspend、同步任务/规格与代码，接收端 Resume 取得本地会话。Discover/Doctor 若提示 SPECS_IGNORED，应检查提示中实际管理规格的 Git 仓库。若 `.ai-workspace` 和 `.ai-workspace/specs` 是两个独立仓库，应分别同步项目上下文和功能规格/任务记录，父仓库忽略 `specs/` 属正常隔离；工具不会擅自提交存量文档。
 
 任务内容指纹排除暂存状态、日志及常见构建输出，但保守包含公共输入。它不是完整的环境快照；服务、工具链或外部依赖变化时仍应按实际风险重新验证。详细约束见 `workflows/shared-artifacts.md`。
+
+当前算法为 `inputs-v2`：修复源码中同名 build/bin 等目录被漏扫，排除 worktree 的 .git 文件、滚动日志和根目录 .ai-sop-staging。常规输出目录仅在工作区根或可识别的 Maven/Gradle 模块根排除；有 web.xml 的 WEB-INF/classes 作为标准 Java Web 编译输出排除，web.xml 本身仍是输入。升级会使旧 inputs-v1 执行证据过期，下一次相关验证重新采集；不重写旧成功记录的哈希，不撤销历史 DONE 任务。
 
 
 本指南说明多个 harness（Claude Code / GitHub Copilot / Antigravity / Cursor / Codex / Pi）如何使用本项目的 AI SOP 完成游戏服务端开发。**T3 由 Superpowers 过程引擎编排；T2/T1用 AGENTS.md + 专家 Skills，不调用 Superpowers**。领域专家 Skill 被强制绑定调用；详见 `.ai-sop/workflows/superpowers-adapter.md`。各 harness 共享 `.ai-workspace/context/` 与规范化功能产物。各工具的能力差异（能跑 T3 还是支持 T1/T2）见 `.ai-sop/scripts/harness-capability.ps1` 的 STRICT/BLOCKED 判定。

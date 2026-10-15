@@ -19,6 +19,27 @@ if (-not (Get-Command Resolve-PhysicalPathIdentity -ErrorAction SilentlyContinue
     . $script:WorkflowPathIdentityScriptPath
 }
 
+function Resolve-AiSopInvocationAgent {
+    param([string]$Agent)
+    if (-not [string]::IsNullOrWhiteSpace($Agent)) { return $Agent }
+    $candidates = @(
+        if ($env:CODEX_SESSION_ID) { 'CODEX' }
+        if ($env:ANTIGRAVITY_SESSION_ID) { 'ANTIGRAVITY' }
+    )
+    if ($candidates.Count -ne 1) { throw 'AGENT_REQUIRED: supply -Agent; no unambiguous current harness identity is available' }
+    return $candidates[0]
+}
+
+function Get-AiSopInvocationSessionId {
+    param([string]$Agent)
+    if ($Agent -eq 'CODEX' -and $env:CODEX_SESSION_ID) { return $env:CODEX_SESSION_ID }
+    if ($Agent -eq 'ANTIGRAVITY' -and $env:ANTIGRAVITY_SESSION_ID) { return $env:ANTIGRAVITY_SESSION_ID }
+    if ($env:AI_SESSION_ID) { return $env:AI_SESSION_ID }
+    if ($env:SESSION_ID) { return $env:SESSION_ID }
+    # CLI-only callers must set AI_SESSION_ID to share a session across processes.
+    return "cli-session-$PID"
+}
+
 function Get-AiSopWorkflowSessionKey {
     [CmdletBinding()]
     param(

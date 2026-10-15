@@ -146,7 +146,8 @@ function Invoke-Owner {
         [string]$Workflow,
         [string]$Agent,
         [string]$OwnerId,
-        [string]$Tier = "T2"
+        [string]$Tier = "T2",
+        [switch]$ConfirmTakeover
     )
 
     return & $OwnerScript `
@@ -156,7 +157,7 @@ function Invoke-Owner {
         -Workflow $Workflow `
         -Agent $Agent `
         -OwnerId $OwnerId `
-        -Tier $Tier
+        -Tier $Tier -ConfirmTakeover:$ConfirmTakeover
 }
 
 function Read-OwnerRecord {
@@ -911,7 +912,7 @@ try {
         -Operation Transfer `
         -Workflow SUPERPOWERS `
         -Agent CURSOR `
-        -OwnerId $transferOwnerId | Out-Null
+        -OwnerId $transferOwnerId -ConfirmTakeover | Out-Null
 
     $transferredOwner = Read-OwnerRecord "OwnerTransfer"
     Assert-Equal $transferredOwner.agent "CURSOR" (

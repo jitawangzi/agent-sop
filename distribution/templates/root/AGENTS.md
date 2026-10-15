@@ -71,6 +71,8 @@
 
 **档位表示本次任务的交付流程强度，风险分析不决定档位。** 默认 T2，人工显式选择优先；接管继承原档位，独立新任务重新使用默认值或用户选择。
 
+**执行与交接完整性**：Run 同批次保持命令、Profile 和 CaseIds 范围；确需替换时写 Reason，不能用无关成功命令覆盖失败。Run 自动续期原会话，保存失败留下 `<runId>.pending.json`，用 RetryEvidence 重试入账；会话结束后待进程停止再 Recover/Resume，不盲目重跑或修改旧成功哈希。跨仍标记 ACTIVE/IDLE 的会话接管需 ConfirmTakeover；用户已明确要求切换且旧 Agent 已停止时直接使用，不重复请求确认。Task 可从唯一的原生会话环境推断 Agent，否则显式传 Agent；通用 CLI 以稳定 AI_SESSION_ID 标识同一次会话，禁止借用 owner 的会话身份。
+
 | 档位 | 必做工作 | 可省略的流程 |
 |---|---|---|
 | T1 极速 | 明确修改目标，完成实现，真实编译通过；确有延期事项才记录 FollowUp | 需求设计同步、补充测试、头脑风暴、正式计划、独立审核 |
@@ -300,7 +302,7 @@ pwsh -NoProfile -File .\.ai-sop\scripts\workflow-owner.ps1 -Operation Complete `
 ```powershell
 pwsh -NoProfile -File ./.ai-sop/scripts/workflow-owner.ps1 -Operation Transfer `
   -SpecDirectory ".ai-workspace/specs/features/<FeatureName>" -Feature "<FeatureName>" `
-  -Workflow SUPERPOWERS -Agent "<新工具>" -OwnerId "<原ownerId>"
+  -Workflow SUPERPOWERS -Agent "<新工具>" -OwnerId "<原ownerId>" -ConfirmTakeover
 ```
 
 **凭证丢失路径（ForceRelease）**：若 ledger/session/镜像都拿不到原 ownerId（前工具异常退出未同步、或镜像丢失），不要卡死——询问用户“是否强制接管该功能归属？”用户**显式确认**后执行 `workflow-owner.ps1 -Operation ForceRelease -Feature <Name> -Workflow SUPERPOWERS -Agent <原工具> -OwnerId <任何能拿到的原id或占位>` 将归属释放（状态 RELEASED），之后重新 `Claim`。禁止静默接管。功能已 Complete 则无需 Transfer/ForceRelease，开新功能即可。

@@ -34,6 +34,8 @@ param(
     [string]$Profile,
     [ValidateRange(0,86400)][int]$TimeoutSeconds = 0,
     [switch]$ForceRecovery,
+    [switch]$ConfirmTakeover,
+    [string]$RunId,
     [string]$Reason,
     [string]$UserRequest,
     [string]$Documentation,
@@ -200,8 +202,11 @@ Actions:
              Task -Operation Start -Feature X -TaskId fix-1 -Tier T2 -Objective "Fix existing behaviour" -Agent CODEX
              Task -Operation Resume -Feature X -TaskId fix-1 -Agent CODEX
              Task -Operation Run -Feature X -TaskId fix-1 -Agent CODEX -Kind compile -Executable pwsh -Arguments ...
-             Operations: Discover, Status, Start, Resume, Recover, Checkpoint, Suspend, Cancel, Run, ReviewImpact, Verify, Complete.
+             Operations: Discover, Status, Start, Resume, Recover, Checkpoint, Suspend, Cancel, Run, RetryEvidence, ReviewImpact, Verify, Complete.
              Run accepts -Profile <name> and -TimeoutSeconds <seconds>.
+             A changed batch command/case scope requires -Reason; previous attempts remain visible.
+             RetryEvidence -RunId <id> saves a pending terminal result without rerunning the command.
+             Resume -ConfirmTakeover records an intentional handoff from a potentially live session.
              Default tier: T2. ChangeTier requires -Tier, -Reason and -UserRequest.
              RecordSync -Documentation UPDATED|UNCHANGED -Tests UPDATED|UNCHANGED|NOT_APPLICABLE -Summary ...
              FollowUps lists non-blocking pending documentation/tests/verification work.
@@ -222,7 +227,7 @@ New users: run 'Doctor' first, then 'Install'.
 switch ($Action) {
     "Task" {
         $taskArgs = @{ Operation=$Operation; WorkspacePath=$WorkspaceRoot }
-        foreach ($name in @('Feature','SpecDirectory','TaskId','Tier','Objective','Agent','NextAction','Notes','Kind','Batch','Executable','Arguments','CaseIds','Profile','TimeoutSeconds','ForceRecovery','Reason','UserRequest','Documentation','Tests','Summary','Applicability','FollowUpId','FollowUpKind','Scope','SourceTaskId','Disposition','Resolution')) {
+        foreach ($name in @('Feature','SpecDirectory','TaskId','Tier','Objective','Agent','NextAction','Notes','Kind','Batch','Executable','Arguments','CaseIds','Profile','TimeoutSeconds','ForceRecovery','ConfirmTakeover','RunId','Reason','UserRequest','Documentation','Tests','Summary','Applicability','FollowUpId','FollowUpKind','Scope','SourceTaskId','Disposition','Resolution')) {
             if ($PSBoundParameters.ContainsKey($name)) { $taskArgs[$name] = $PSBoundParameters[$name] }
         }
         & (Join-Path $WorkspaceRoot '.ai-sop/scripts/workflow-task.ps1') @taskArgs

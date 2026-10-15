@@ -99,13 +99,14 @@ try {
     Task Resume fix-b | Out-Null
     Assert ((Read-AiSopTask $spec 'fix-b').ownerId -eq 'task-fix-b') 'Resume changed task identity'
     $env:CODEX_SESSION_ID='task-session-c'
-    Task Resume fix-b | Out-Null
+    MustFail { Task Resume fix-b } 'Live session takeover must be explicit'
+    Task Resume fix-b @{ ConfirmTakeover=$true } | Out-Null
     $env:AI_SESSION_ID='cursor-task-session'
-    & $entry -Operation Resume -WorkspacePath $workspace -Feature Example -TaskId fix-b -Agent CURSOR | Out-Null
+    & $entry -Operation Resume -WorkspacePath $workspace -Feature Example -TaskId fix-b -Agent CURSOR -ConfirmTakeover | Out-Null
     $cursorOwner = Get-Content -LiteralPath (Join-Path $env:AI_SOP_OWNER_REGISTRY 'example.json') -Raw | ConvertFrom-Json
     Assert ($cursorOwner.agent -eq 'CURSOR' -and $cursorOwner.ownerId -eq 'task-fix-b') 'Cross-agent task transfer lost identity'
     $env:CODEX_SESSION_ID='task-session-d'
-    Task Resume fix-b | Out-Null
+    Task Resume fix-b @{ ConfirmTakeover=$true } | Out-Null
     Task Verify fix-b | Out-Null
     Remove-Item -LiteralPath (Join-Path $spec '05_test_coverage.json')
     # Impact review binds the analysis file and inputs, independently of VCS status.
@@ -138,10 +139,11 @@ try {
     MustFail { Task Run fix-d @{ Kind='test'; Batch='regression'; Executable='pwsh'; Arguments=@('-NoProfile','-Command','exit 2') } } 'Failed command incorrectly returned success'
     Task Run fix-d @{ Kind='test'; Batch='unit'; Executable='pwsh'; Arguments=@('-NoProfile','-Command','exit 0') } | Out-Null
     MustFail { Task Verify fix-d } 'Green batch hid failed regression'
-    Task Run fix-d @{ Kind='test'; Batch='regression'; Executable='pwsh'; Arguments=@('-NoProfile','-Command','exit 0') } | Out-Null
-    MustFail { Task Run fix-d @{ Kind='test'; Batch='regression'; Executable='sop-test-nonexistent-executable-7f18' } } 'Missing executable incorrectly returned success'
+    MustFail { Task Run fix-d @{ Kind='test'; Batch='regression'; Executable='pwsh'; Arguments=@('-NoProfile','-Command','exit 0') } } 'A changed command hid the failed batch without an explanation'
+    Task Run fix-d @{ Kind='test'; Batch='regression'; Executable='pwsh'; Arguments=@('-NoProfile','-Command','exit 0'); Reason='Fixture deliberately replaces the failing command' } | Out-Null
+    MustFail { Task Run fix-d @{ Kind='test'; Batch='regression'; Executable='sop-test-nonexistent-executable-7f18'; Reason='Exercise launch failure for this batch' } } 'Missing executable incorrectly returned success'
     MustFail { Task Verify fix-d } 'Launch failure retained older green batch'
-    Task Run fix-d @{ Kind='test'; Batch='regression'; Executable='pwsh'; Arguments=@('-NoProfile','-Command','exit 0') } | Out-Null
+    Task Run fix-d @{ Kind='test'; Batch='regression'; Executable='pwsh'; Arguments=@('-NoProfile','-Command','exit 0'); Reason='Restore the fixture command after launch failure' } | Out-Null
     Task Complete fix-d | Out-Null
     Task Start fix-e @{ Tier='T1'; Objective='Changing inputs during build' } | Out-Null
     MustFail { Task Run fix-e @{ Kind='compile'; Executable='pwsh'; Arguments=@('-NoProfile','-Command',"[IO.File]::WriteAllText('src/input.txt','changed-during-build'); exit 0") } } 'Input mutation during execution was accepted'

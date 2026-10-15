@@ -270,6 +270,9 @@ try {
             -Workflow SUPERPOWERS `
             -Agent $agent `
             -OwnerId "owner-$($agent.ToLowerInvariant())"
+        $takeoverCommand = (New-OwnerCommand -Operation Transfer -Feature $feature -Workflow SUPERPOWERS -Agent $agent -OwnerId "owner-$($agent.ToLowerInvariant())") + ' -ConfirmTakeover'
+        $takeoverIntent = ConvertFrom-AiSopOwnerCommandIntent -CommandText $takeoverCommand -WorkspacePath $workspace
+        Assert-Equal $takeoverIntent.operation 'Transfer' 'Explicit takeover must remain recognizable by the hook command parser.'
         $dedupKey = Get-AiSopWorkflowSha256 "dedup-$agent"
         $transactionId = "grant-$($agent.ToLowerInvariant())"
         $grant = Issue-Grant `
@@ -1544,6 +1547,7 @@ Invoke-AiSopWorkflowSession `
         $command.Replace("'fixture-owner-0001'", '$env:OWNER_ID'),
         $command.Replace("'fixture-owner-0001'", '"$ownerId"'),
         $command + " -Unknown 'value'",
+        $command + " -ConfirmTakeover",
         $command.Replace("-Feature '$feature'", "-Feature '$feature' -Feature '$feature'"),
         $command.Replace(
             "-SpecDirectory '.ai-workspace\specs\features\$feature'",

@@ -48,7 +48,7 @@ try {
     Assert ($started -match 'field-doc' -and $started -match 'FOLLOW_UP_NON_BLOCKING') 'Same-feature startup did not show pending details'
     Assert (-not (Read-AiSopTask $spec next).followUps) 'New task inherited old follow-ups as its own work'
     $env:CODEX_SESSION_ID='policy-handoff'
-    $resumed=Task Resume next | Out-String
+    $resumed=Task Resume next @{ConfirmTakeover=$true} | Out-String
     Assert ($resumed -match 'field-doc' -and (Read-AiSopTask $spec next).tier -eq 'T2') 'Handoff omitted earlier deferred work or changed tier'
     Task Run next (@{Kind='compile'} + $check) | Out-Null
     Task Run next (@{Kind='test'} + $check) | Out-Null
@@ -83,9 +83,9 @@ try {
     Task Suspend change | Out-Null
     Fails { Task Resume change @{Tier='T2'} } 'TASK_TIER_CHANGE_REQUIRES_EXPLICIT_OPERATION'
     $env:AI_SESSION_ID='policy-cursor'
-    & $entry -Operation Resume -WorkspacePath $workspace -Feature Example -TaskId change -Agent CURSOR | Out-Null
+    & $entry -Operation Resume -WorkspacePath $workspace -Feature Example -TaskId change -Agent CURSOR -ConfirmTakeover | Out-Null
     $env:CODEX_SESSION_ID='policy-new'
-    Task Resume change | Out-Null
+    Task Resume change @{ConfirmTakeover=$true} | Out-Null
     $status=& $entry -Operation Status -WorkspacePath $workspace -Feature Example -TaskId change | ConvertFrom-Json
     Assert ($status.tier -eq 'T1' -and $status.failedVerifications.Count -eq 1) 'Cross-agent handoff lost tier or concealed optional failed tests'
     $verification=Task Verify change | Out-String
@@ -94,7 +94,7 @@ try {
     Fails { Task Verify change } 'Task Verify failed'
     Task ChangeTier change @{Tier='T2'; Reason='User resumes normal validation'; UserRequest='Return to T2 and finish the related test.'} | Out-Null
     Fails { Task Complete change } 'EXECUTION_FAILED'
-    Task Run change (@{Kind='test'} + $check) | Out-Null
+    Task Run change (@{Kind='test';Reason='Restore successful fixture command after exercising tier policy with a failure'} + $check) | Out-Null
     Task RecordSync change @{ Documentation='UNCHANGED'; Tests='UNCHANGED'; Summary='Behavior unchanged; regression now passes.' } | Out-Null
     Task Complete change | Out-Null
 

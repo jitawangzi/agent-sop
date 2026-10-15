@@ -244,12 +244,13 @@ function ConvertFrom-AiSopOwnerCommandIntent {
         "(?i:-Feature)\s+'(?<feature>[^']+)'\s+" +
         "(?i:-Workflow)\s+'(?<workflow>[^']+)'\s+" +
         "(?i:-Agent)\s+'(?<agent>[^']+)'\s+" +
-        "(?i:-OwnerId)\s+'(?<owner>[^']+)'\s*$"
+        "(?i:-OwnerId)\s+'(?<owner>[^']+)'(?:\s+(?<takeover>(?i:-ConfirmTakeover)))?\s*$"
     )
     $match = [regex]::Match($normalized, $pattern)
     if (-not $match.Success) {
         throw "COMMAND_AST_INVALID"
     }
+    if ($match.Groups['takeover'].Success -and $match.Groups['operation'].Value -ine 'Transfer') { throw 'COMMAND_AST_INVALID' }
 
     try {
         $workspace = Resolve-PhysicalPathIdentity -Path $WorkspacePath
@@ -891,8 +892,11 @@ function Find-AiSopWorkflowCommandGrant {
     param(
         [object]$Intent,
         [DateTimeOffset]$AcceptedAt,
-        [Nullable[DateTimeOffset]]$DeadlineUtc
+        [Nullable[DateTimeOffset]]$DeadlineUtc,
+        [string]$SessionKey = ''
     )
+
+    if ($SessionKey -and $SessionKey -notmatch '^[0-9a-f]{64}$') { throw 'SESSION_IDENTITY_MISMATCH' }
 
     $intentSha256 = Get-AiSopOwnerIntentSha256 $Intent
     $indexPath = Get-AiSopWorkflowCommandGrantActiveIndexPath $intentSha256
@@ -941,6 +945,7 @@ function Find-AiSopWorkflowCommandGrant {
     $validSessionEntries = @()
     $sessionValidity = @{}
     foreach ($entry in @($activeEntries)) {
+        if ($SessionKey -and $entry.sessionKey -cne $SessionKey) { continue }
         $sessionIdentity = (
             [string]$entry.sessionKey + [char]0 +
             [string]$entry.sessionEpochId + [char]0 +
@@ -1692,7 +1697,8 @@ function Invoke-AiSopWorkflowCommandGrant {
             return Find-AiSopWorkflowCommandGrant `
                 -Intent $intent `
                 -AcceptedAt $AcceptedAt `
-                -DeadlineUtc $DeadlineUtc
+                -DeadlineUtc $DeadlineUtc `
+                -SessionKey $SessionKey
         }
         "Consume" {
             if (

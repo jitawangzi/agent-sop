@@ -2,6 +2,7 @@
 # Shared task identity and validation inputs. No project-domain assumptions.
 . (Join-Path $PSScriptRoot 'workflow-transaction.ps1')
 . (Join-Path $PSScriptRoot 'task-policy.ps1')
+. (Join-Path $PSScriptRoot 'verification-evidence.ps1')
 
 function Get-AiSopTaskPath {
     param([string]$SpecDirectory, [string]$TaskId)
@@ -30,16 +31,27 @@ function Get-AiSopInputSnapshot {
     $root = Resolve-PhysicalPathIdentity -Path $WorkspacePath
     # Conservative workspace-wide content snapshot. VCS status/staging and build
     # output are deliberately absent. Input changes in shared code still invalidate.
-    $excludedDirectories = @('.git', '.svn', '.ai-sop', '.ai-workspace', '.claude', '.agents', '.agent', '.gemini', '.cursor', '.idea', '.vscode', '.superpowers', 'node_modules', '.gradle', 'build', 'target', 'bin', 'obj', 'out', 'classes', '__pycache__')
-    $excludedFiles = @('AGENTS.md', 'CLAUDE.md', 'ANTIGRAVITY.md', 'GEMINI.md', 'compile-evidence.json', 'test-evidence.json', '.guard-token.json')
+    $excludedDirectories = @('.git', '.svn', '.ai-sop', '.ai-workspace', '.claude', '.agents', '.agent', '.gemini', '.cursor', '.idea', '.vscode', '.superpowers', 'node_modules', '.gradle', '__pycache__')
+    $outputDirectories = @('build', 'target', 'bin', 'obj', 'out', 'classes')
+    $excludedFiles = @('.git', 'AGENTS.md', 'CLAUDE.md', 'ANTIGRAVITY.md', 'GEMINI.md', 'compile-evidence.json', 'test-evidence.json', '.guard-token.json')
     $files = [Collections.Generic.SortedDictionary[string,string]]::new([StringComparer]::Ordinal)
     $pending = [Collections.Generic.Stack[string]]::new()
     $pending.Push($root)
     while ($pending.Count) {
         $dir = $pending.Pop()
+        # Conventional outputs belong to a project root, not arbitrary source
+        # packages such as src/com/example/build or scripts/bin.
+        $projectRoot = $dir -ceq $root
+        if (-not $projectRoot) {
+            $projectRoot = @('pom.xml','build.gradle','build.gradle.kts') | Where-Object { [IO.File]::Exists((Join-Path $dir $_)) } | Select-Object -First 1
+        }
+        $webOutputRoot = (Split-Path -Leaf $dir) -ceq 'WEB-INF' -and [IO.File]::Exists((Join-Path $dir 'web.xml'))
         foreach ($item in Get-ChildItem -LiteralPath $dir -Force -ErrorAction Stop) {
             if ($item.PSIsContainer -and $item.Name -in $excludedDirectories) { continue }
-            if (-not $item.PSIsContainer -and ($item.Name -in $excludedFiles -or $item.Extension -in @('.log', '.tmp'))) { continue }
+            if ($item.PSIsContainer -and $projectRoot -and $item.Name -in $outputDirectories) { continue }
+            if ($item.PSIsContainer -and $webOutputRoot -and $item.Name -ceq 'classes') { continue }
+            if ($dir -ceq $root -and $item.Name -eq '.ai-sop-staging') { continue }
+            if (-not $item.PSIsContainer -and ($item.Name -in $excludedFiles -or $item.Extension -eq '.tmp' -or $item.Name -match '\.log(?:\.\d+)*(?:\.(?:zip|gz|bz2|xz))?$')) { continue }
             # Fail closed for links: silently omitting linked inputs would make a
             # successful snapshot misleading (and could traverse outside the root).
             if ($item.Attributes -band [IO.FileAttributes]::ReparsePoint) { throw "INPUT_LINK_UNSUPPORTED: $($item.FullName)" }
@@ -50,7 +62,7 @@ function Get-AiSopInputSnapshot {
         }
     }
     $lines = @($files.GetEnumerator() | ForEach-Object { "$($_.Key.Length):$($_.Key):$($_.Value)" })
-    return @{ algorithm = 'inputs-v1'; digest = Get-AiSopWorkflowSha256 ($lines -join "`n"); files = $files }
+    return @{ algorithm = 'inputs-v2'; digest = Get-AiSopWorkflowSha256 ("inputs-v2`n" + ($lines -join "`n")); files = $files }
 }
 
 function Get-AiSopChangedInputs {
@@ -174,9 +186,11 @@ function Get-AiSopTaskSummary {
         } catch { $diagnostics += $_.Exception.Message; $sessionStatus = 'UNAVAILABLE' }
     }
     $runs = @($Task.verifications | Where-Object { $_.outcome -eq 'RUNNING' } | ForEach-Object {
-        @{ runId=$_.runId; kind=$_.kind; batch=$_.batch; activity=(Get-AiSopRunActivity $_ $WorkspacePath); logFile=$_.context.logFile }
+        $pendingResult = if ($_.runId) { Get-AiSopRunEvidencePath $SpecDirectory $Task.taskId $_.runId } else { '' }
+        @{ runId=$_.runId; kind=$_.kind; batch=$_.batch; activity=(Get-AiSopRunActivity $_ $WorkspacePath); logFile=$_.context.logFile; pendingResult=$(if ($pendingResult -and [IO.File]::Exists($pendingResult)) { $pendingResult } else { $null }) }
     })
     $action = if ($Task.status -in @('DONE','CANCELLED')) { 'Start a new task for new work' }
+        elseif (@($runs | Where-Object { $_.pendingResult }).Count) { 'Inspect pending result; RetryEvidence saves a terminal result without rerunning. If the session ended, Recover after execution stops, then Resume.' }
         elseif ($runs.Count -and @($runs | Where-Object activity -eq 'RUNNING').Count) { 'Wait for the running command; inspect its log' }
         elseif ($runs.Count) { 'Recover interrupted/foreign run, then Resume' }
         elseif ($Task.status -eq 'PAUSED') { 'Resume' }

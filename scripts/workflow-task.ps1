@@ -1,7 +1,7 @@
 #requires -Version 7.0
 [CmdletBinding()]
 param(
-    [Parameter(Mandatory)][ValidateSet('Discover','Status','FollowUps','Recover','Start','Resume','Checkpoint','Suspend','Cancel','Run','ReviewImpact','Verify','Complete','ChangeTier','RecordSync','SetApplicability','AddFollowUp','CloseFollowUp')][string]$Operation,
+    [Parameter(Mandatory)][ValidateSet('Discover','Status','FollowUps','Recover','Start','Resume','Checkpoint','Suspend','Cancel','Run','RetryEvidence','ReviewImpact','Verify','Complete','ChangeTier','RecordSync','SetApplicability','AddFollowUp','CloseFollowUp')][string]$Operation,
     [string]$WorkspacePath = (Get-Location).Path,
     [string]$SpecDirectory,
     [string]$Feature,
@@ -19,6 +19,8 @@ param(
     [string]$Profile,
     [ValidateRange(0,86400)][int]$TimeoutSeconds = 0,
     [switch]$ForceRecovery,
+    [switch]$ConfirmTakeover,
+    [string]$RunId,
     [string]$Reason,
     [string]$UserRequest,
     [ValidateSet('UPDATED','UNCHANGED')][string]$Documentation,
@@ -73,6 +75,7 @@ if ($SpecDirectory -cne $canonicalSpec) { throw 'TASK_WORKSPACE_MISMATCH' }
 $ownerScript = Join-Path $PSScriptRoot 'workflow-owner.ps1'
 $ownerPath = Join-Path (Get-AiSopWorkflowOwnerRegistryRoot -WorkspacePath $WorkspacePath) ($Feature.ToLowerInvariant() + '.json')
 $owner = if (Test-Path -LiteralPath $ownerPath) { Get-Content -LiteralPath $ownerPath -Raw | ConvertFrom-Json -AsHashtable } else { $null }
+if ($Operation -ne 'Verify') { $Agent = Resolve-AiSopInvocationAgent $Agent }
 $ownerArgs = @{ Feature=$Feature; SpecDirectory=$SpecDirectory; Workflow='SUPERPOWERS'; Agent=$Agent }
 if ($PSBoundParameters.ContainsKey('NextAction')) { $ownerArgs.NextAction = $NextAction }
 if ($PSBoundParameters.ContainsKey('Notes')) { $ownerArgs.Notes = $Notes }
@@ -95,7 +98,7 @@ if ($Operation -eq 'Resume' -and -not $TaskId -and $owner -and $owner.status -eq
     }
     if (-not $PSBoundParameters.ContainsKey('Tier') -and -not (Test-Path -LiteralPath $legacyState)) { throw 'LEGACY_TIER_REQUIRED: inspect original scope and explicitly select its tier before adoption.' }
     if (-not $Objective) { $Objective = "Continue existing feature $Feature" }
-    & $ownerScript -Operation Transfer @ownerArgs -OwnerId $owner.ownerId -TaskId $TaskId -Tier $Tier -Objective $Objective
+    & $ownerScript -Operation Transfer @ownerArgs -OwnerId $owner.ownerId -TaskId $TaskId -Tier $Tier -Objective $Objective -ConfirmTakeover:$ConfirmTakeover
     if ($LASTEXITCODE -ne 0) { throw 'TASK_ADOPTION_FAILED' }
     Write-AiSopFollowUpReminder $WorkspacePath $Feature
     exit 0
@@ -114,13 +117,13 @@ if ($Operation -eq 'Resume') {
     if ($task.status -eq 'PAUSED') {
         & $ownerScript -Operation Claim @ownerArgs -Tier $task.tier -Objective $task.objective
     } elseif ($task.status -eq 'ACTIVE' -and $owner -and $owner.status -eq 'ACTIVE' -and $owner.taskId -ceq $TaskId) {
-        $native = if ($Agent -eq 'CODEX') { $env:CODEX_SESSION_ID } else { $env:AI_SESSION_ID }
+        $native = Get-AiSopInvocationSessionId $Agent
         $sameSession = $native -and ((Get-AiSopWorkflowSessionKey -Agent $Agent -NativeSessionId $native -WorkspacePath $WorkspacePath) -ceq $owner.sessionBinding.sessionKey)
         if ($sameSession) {
             $boundSession = Get-AiSopWorkflowSession -SessionKey $owner.sessionBinding.sessionKey -WorkspacePath $WorkspacePath
             if ($boundSession.EffectiveStatus -in @('ENDED','EXPIRED')) { & $ownerScript -Operation RebindSession @ownerArgs }
             else { & $ownerScript -Operation Validate @ownerArgs }
-        } else { & $ownerScript -Operation Transfer @ownerArgs }
+        } else { & $ownerScript -Operation Transfer @ownerArgs -ConfirmTakeover:$ConfirmTakeover }
     } else { throw 'TASK_NOT_RESUMABLE: terminal task or missing local ownership; inspect/recover ownership before resuming.' }
     if ($LASTEXITCODE -ne 0) { throw 'TASK_RESUME_FAILED' }
     Write-AiSopFollowUpReminder $WorkspacePath $Feature
@@ -154,6 +157,15 @@ if ($Operation -eq 'Verify') {
     & (Join-Path $PSScriptRoot 'workflow-state.ps1') -Operation VerifyCompletion -Path (Join-Path $SpecDirectory '00_workflow_state.json') -TaskId $TaskId
     exit $LASTEXITCODE
 }
+if ($Operation -eq 'RetryEvidence') {
+    $pendingPath = Get-AiSopRunEvidencePath $SpecDirectory $TaskId $RunId
+    if (-not [IO.File]::Exists($pendingPath)) { throw 'RUN_PENDING_RESULT_NOT_FOUND' }
+    & $ownerScript -Operation Checkpoint @ownerArgs -EvidencePath $pendingPath -RetryEvidence | Out-Null
+    if ($LASTEXITCODE -ne 0) { throw 'EVIDENCE_CHECKPOINT_FAILED' }
+    Remove-Item -LiteralPath $pendingPath
+    Write-Output "RUN_EVIDENCE_SAVED:$RunId (command was not rerun)"
+    exit 0
+}
 # Profiles are project-owned command definitions, never engine-specific builds.
 $profileInfo = $null
 if ($Profile) {
@@ -171,12 +183,15 @@ if (-not $Executable -or -not $Kind) { throw 'RUN_REQUIRES_EXECUTABLE_AND_KIND' 
 if ($Batch -notmatch '^[A-Za-z0-9][A-Za-z0-9_-]{0,79}$') { throw 'BATCH_ID_INVALID' }
 & $ownerScript -Operation Validate @ownerArgs | Out-Null
 if ($LASTEXITCODE -ne 0) { throw 'TASK_OWNER_INVALID' }
+$runOwner = Get-Content -LiteralPath $ownerPath -Raw | ConvertFrom-Json -AsHashtable
 $before = Get-AiSopInputSnapshot $WorkspacePath
 $bindSpecs = $task.tier -eq 'T3' -and $Kind -eq 'test'
 $specBefore = if ($bindSpecs) { Get-AiSopTaskSpecDigest $SpecDirectory } else { $null }
 $runId = [guid]::NewGuid().ToString('N')
 $taskDir = Split-Path -Parent (Get-AiSopTaskPath $SpecDirectory $TaskId)
 $context = @{
+    protocol='2'; taskId=$TaskId; ownerId=$task.ownerId
+    sessionKey=$runOwner.sessionBinding.sessionKey; sessionEpochId=$runOwner.sessionBinding.sessionEpochId
     workspace=$WorkspacePath; runnerMachine=[Environment]::MachineName; runnerPid=[string]$PID
     runnerStartedAt=[Diagnostics.Process]::GetCurrentProcess().StartTime.ToUniversalTime().ToString('o')
     engineScriptHash=(Get-FileHash -LiteralPath $PSCommandPath).Hash.ToLowerInvariant(); logFile="$runId.log"
@@ -193,22 +208,42 @@ foreach ($repo in @(@{name='code';path=$WorkspacePath}, @{name='context';path=(J
     }
 }
 if (Test-Path -LiteralPath (Join-Path $WorkspacePath '.svn')) {
-    $revision = & svn info --non-interactive --show-item revision $WorkspacePath 2>$null
-    if ($LASTEXITCODE -eq 0) { $context.codeSvnRevision = [string]$revision }
+    $svn = Get-Command svn -CommandType Application -ErrorAction SilentlyContinue
+    if ($svn) {
+        $revision = & $svn.Source info --non-interactive --show-item revision $WorkspacePath 2>$null
+        if ($LASTEXITCODE -eq 0) { $context.codeSvnRevision = [string]$revision }
+        else { $context.codeSvnMetadata='UNAVAILABLE'; Write-Warning 'SVN_METADATA_UNAVAILABLE: verification will continue without a revision annotation' }
+    } else { $context.codeSvnMetadata='CLI_MISSING'; Write-Warning 'SVN_CLI_MISSING: verification will continue without a revision annotation' }
 }
+$launchError = $null
+try { $context.executable = Resolve-AiSopRunExecutable $Executable $WorkspacePath }
+catch { $launchError = $_.Exception.Message; $context.executable = $Executable }
 $record = @{
     runId=$runId; outcome='RUNNING'; kind=$Kind; batch=$Batch; command=(@($Executable) + $Arguments | ConvertTo-Json -Compress)
     exitCode=-2; executedAt=[DateTimeOffset]::UtcNow.ToString('o'); inputDigest=$before.digest
     context=$context; inputs=$before.files; inputsStable=$false; caseIds=@($CaseIds | Where-Object { $_ } | Sort-Object -Unique)
 }
 if ($bindSpecs) { $record.specDigest=$specBefore }
+$context.definitionDigest = Get-AiSopRunDefinitionDigest $record
+$previousBatch = @($task.verifications | Where-Object { $_.kind -ceq $Kind -and $_.batch -ceq $Batch })
+if ($previousBatch.Count -and (Get-AiSopRunDefinitionDigest $previousBatch[-1]) -cne $context.definitionDigest) {
+    if ([string]::IsNullOrWhiteSpace($Reason)) { throw 'BATCH_DEFINITION_CHANGED: keep the command and case scope, or supply -Reason for an intentional replacement' }
+    $context.batchChangeReason = $Reason; $context.previousRunId = [string]$previousBatch[-1].runId
+}
 function Save-RunEvidence {
-    $recordPath = Join-Path $taskDir "$runId.evidence.tmp"
-    try {
-        [IO.File]::WriteAllText($recordPath, ($record | ConvertTo-Json -Depth 20), [Text.UTF8Encoding]::new($false))
-        & $ownerScript -Operation Checkpoint @ownerArgs -EvidencePath $recordPath | Out-Null
-        if ($LASTEXITCODE -ne 0) { throw 'EVIDENCE_CHECKPOINT_FAILED' }
-    } finally { if (Test-Path -LiteralPath $recordPath) { Remove-Item -LiteralPath $recordPath } }
+    $recordPath = Get-AiSopRunEvidencePath $SpecDirectory $TaskId $runId
+    # Durable before checkpoint. Keep the result on any commit/transport failure;
+    # RetryEvidence or Recover can finish the same run without executing it again.
+    Write-AiSopWorkflowTextAtomic -Path $recordPath -Text (ConvertTo-AiSopWorkflowCanonicalJson $record)
+    & $ownerScript -Operation Checkpoint @ownerArgs -EvidencePath $recordPath | Out-Null
+    if ($LASTEXITCODE -ne 0) { throw "EVIDENCE_CHECKPOINT_FAILED: pending result at $recordPath" }
+    Remove-Item -LiteralPath $recordPath
+}
+function Update-RunLease {
+    $bound = Get-AiSopWorkflowSession -SessionKey $context.sessionKey -WorkspacePath $WorkspacePath -DeadlineUtc ([DateTimeOffset]::UtcNow.AddSeconds(15))
+    if ($bound.EffectiveStatus -ne 'ACTIVE' -or $bound.Record.sessionEpochId -cne $context.sessionEpochId -or
+        $bound.Record.boundOwnerId -cne $task.ownerId -or $bound.Record.boundFeature -cne $Feature) { throw 'RUN_SESSION_LOST: the original session is no longer active and bound' }
+    if ([DateTimeOffset]::Parse($bound.Record.expiresAt) -le [DateTimeOffset]::UtcNow.AddMinutes(5)) { Save-RunEvidence }
 }
 # Persist the attempt before launch so an abrupt runner termination cannot leave
 # an older successful batch appearing to be the latest execution.
@@ -222,9 +257,10 @@ $info.WorkingDirectory=$WorkspacePath; $info.UseShellExecute=$false; $info.Creat
 $info.RedirectStandardOutput=$true; $info.RedirectStandardError=$true
 foreach ($arg in $Arguments) { $info.ArgumentList.Add($arg) }
 $started=$false; $finished=$false; $stopwatch=[Diagnostics.Stopwatch]::StartNew()
+$lastLeaseCheck = [DateTimeOffset]::MinValue
 try {
-    $info.FileName = (@(Get-Command $Executable -CommandType Application -ErrorAction Stop)[0]).Source
-    $context.executable=$info.FileName
+    if ($launchError) { throw $launchError }
+    $info.FileName = $context.executable
     $started = $process.Start()
     if (-not $started) { throw 'VERIFICATION_START_FAILED' }
     $context.childPid=[string]$process.Id
@@ -235,6 +271,10 @@ try {
         @{ reader=$process.StandardError; buffer=[char[]]::new(2048); pending=$null; ended=$false }
     )
     while ($true) {
+        if (-not $process.HasExited -and [DateTimeOffset]::UtcNow -ge $lastLeaseCheck.AddSeconds(5)) {
+            Update-RunLease
+            $lastLeaseCheck = [DateTimeOffset]::UtcNow
+        }
         if ($TimeoutSeconds -gt 0 -and $stopwatch.Elapsed.TotalSeconds -ge $TimeoutSeconds) {
             $record.outcome='TIMED_OUT'; $record.exitCode=124
             if (-not $process.HasExited) { $process.Kill($true) }

@@ -26,7 +26,9 @@ Recover 是显式恢复动作：任务转为 PAUSED，匹配的本地 owner 释�
 
 Status 与 Discover 共用摘要；Status 额外检查执行证据的当前输入，Discover 不做全工作区哈希扫描。历史批准按 recordedApprovals 展示，完整验收仍是 Verify。项目命令配置位于 `.ai-workspace/context/verification-commands.json`，遵守引擎 schemas/verification-commands.schema.json；配置选项包含命令参数数组、批次、超时和 CaseIds。
 
-任务执行记录中的 `inputs-v1` 是源码等验证输入的内容快照，不使用 Git status、暂存状态或基线 diff。其清单保存在每次执行记录中，可定位过期文件。审查 baseline 仍用于分析修改范围，不与验证输入指纹混用。
+任务执行记录中的 `inputs-v2` 是源码等验证输入的内容快照，不使用 Git status、暂存状态或基线 diff。其清单保存在每次执行记录中，可定位过期文件。算法版本参与摘要，旧 v1 证据不能换哈希继续充当新证据。审查 baseline 仍用于分析修改范围，不与验证输入指纹混用。
+
+新执行记录绑定任务、原会话 epoch、命令及用例范围。RUNNING 必须先入账，终态通过同一 runId 更新；同批次更换验证定义需 Reason，保留历史。`<runId>.pending.json` 为原子保存的待入账结果，失败时不得删除；RetryEvidence 只重试同一终态，Recover 在原进程已停止且本机绑定一致时可保存该结果。运行器续期不复活已结束/已转移会话。跨仍活跃会话的 Resume/Transfer 需 ConfirmTakeover；当前调用身份不能从原 owner 推断。
 
 `Run` 执行真实命令并记录退出码、输入前后指纹和批次；失败同样保留。T1 至少成功编译；T2/T3 还需成功测试；T2 还需 RecordSync 说明相关规格/用例已同步或无需更新。T1/T2 对确无适用验证的纯文档任务可用 SetApplicability 记录具体原因，不能用于环境故障、缺少测试或测试失败。不同批次可累计，但每个批次最后一次必须成功且适用于当前输入；T3 用 `CaseIds` 映射覆盖矩阵的用例，不用测试条数替代覆盖。CaseIds 是控制器根据实际输出提供的映射，当前不解析所有测试框架的报告，也不宣称防止伪造测试命令。
 

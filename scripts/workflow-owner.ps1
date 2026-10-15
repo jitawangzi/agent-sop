@@ -60,6 +60,8 @@ param(
     [string]$TaskUpdateJson,
     [switch]$ImpactReviewed,
     [switch]$ForceRecovery,
+    [switch]$ConfirmTakeover,
+    [switch]$RetryEvidence,
     [string]$Baseline = $null
 )
 
@@ -459,6 +461,12 @@ function New-OwnerTarget {
 
 function Get-ExactGrant {
     $ws = Get-OwnerWorkspacePath
+    $sessionFilter = @{}
+    if ($TaskId -or $existingOwner.taskId) {
+        # Task calls must not borrow a matching intent grant left by another
+        # session. Legacy hook-only callers retain their explicit grant protocol.
+        $sessionFilter.SessionKey = Get-AiSopWorkflowSessionKey -Agent $Agent -NativeSessionId (Get-AiSopInvocationSessionId $Agent) -WorkspacePath $ws
+    }
     try {
         return Invoke-AiSopWorkflowCommandGrant `
             -Operation Find `
@@ -470,7 +478,7 @@ function Get-ExactGrant {
             -OwnerId $OwnerId `
             -AcceptedAt $AcceptedAt `
             -DeadlineUtc $WorkflowDeadlineUtc `
-            -WorkspacePath $ws
+            -WorkspacePath $ws @sessionFilter
     } catch {
         if ($_.Exception.Message -ne "COMMAND_GRANT_NOT_FOUND") {
             throw
@@ -484,20 +492,8 @@ function Get-ExactGrant {
         ) {
             throw "COMMAND_GRANT_NOT_FOUND"
         }
-        $nativeSessionId = if (
-            $Agent -eq "CODEX" -and
-            -not [string]::IsNullOrWhiteSpace($env:CODEX_SESSION_ID)
-        ) {
-            $env:CODEX_SESSION_ID
-        } elseif (-not [string]::IsNullOrWhiteSpace($env:ANTIGRAVITY_SESSION_ID)) {
-            $env:ANTIGRAVITY_SESSION_ID
-        } elseif (-not [string]::IsNullOrWhiteSpace($env:AI_SESSION_ID)) {
-            $env:AI_SESSION_ID
-        } elseif (-not [string]::IsNullOrWhiteSpace($env:SESSION_ID)) {
-            $env:SESSION_ID
-        } else {
-            "cli-session-$PID"
-        }
+        $nativeSessionId = Get-AiSopInvocationSessionId $Agent
+        $invokingSessionKey = Get-AiSopWorkflowSessionKey -Agent $Agent -NativeSessionId $nativeSessionId -WorkspacePath $ws
 
         $currentOwner = Read-Owner -AllowMissing
         $sessionToUse = $null
@@ -507,8 +503,9 @@ function Get-ExactGrant {
             [string]$currentOwner.schemaVersion -eq "1.1" -and
             $null -ne $currentOwner.sessionBinding
         ) {
+            $boundKey = [string]$currentOwner.sessionBinding.sessionKey
+            if ($boundKey -cne $invokingSessionKey) { throw 'WORKFLOW_OWNER_SESSION_MISMATCH: Resume explicitly before writing from a different session' }
             try {
-                $boundKey = [string]$currentOwner.sessionBinding.sessionKey
                 $existingSession = Get-AiSopWorkflowSession `
                     -SessionKey $boundKey `
                     -AcceptedAt $AcceptedAt `
@@ -896,7 +893,14 @@ if ($Operation -in @('ForceRelease','Recover')) {
     if (-not $TaskId -and $existingOwner.taskId) { $TaskId = $existingOwner.taskId }
     if ($Operation -eq 'Recover' -and -not $TaskId) { throw 'TASK_REQUIRED' }
     $targets = @(); $sessionKeys = @(); $releasedOwner = $null
-    if ($existingOwner) {
+    $recoveryOwner = $existingOwner
+    if ($existingOwner -and $existingOwner.status -ne 'ACTIVE' -and ($existingOwner.taskId -cne $TaskId -or $existingOwner.ownerId -cne $OwnerId)) {
+        # Preserve unrelated historical ownership, but include a no-op CAS so a
+        # concurrent new Claim cannot slip into recovery while locks are acquired.
+        $targets += New-OwnerTarget -Path $OwnerPath -Kind OWNER -SchemaId OWNER -After $existingOwner -BeforeExists $true -Before $existingOwner
+        $recoveryOwner = $null
+    }
+    if ($recoveryOwner) {
         if ($existingOwner.feature -cne $Feature -or $existingOwner.workflow -cne $Workflow -or
             $existingOwner.ownerId -cne $OwnerId -or $existingOwner.specDirectory -cne $ResolvedSpecDirectory -or
             ($TaskId -and $existingOwner.taskId -cne $TaskId)) { throw 'WORKFLOW_OWNER_IDENTITY_MISMATCH' }
@@ -915,6 +919,15 @@ if ($Operation -in @('ForceRelease','Recover')) {
             $activity = Get-AiSopRunActivity $run $ownerWs
             if ($activity -eq 'RUNNING') { throw 'RUN_STILL_ACTIVE: stop or wait for the verification process before recovery' }
             if ($activity -in @('REMOTE_UNKNOWN','UNCONFIRMED') -and -not $forced) { throw 'REMOTE_RUN_UNCONFIRMED: confirm original execution stopped, then use ForceRecovery' }
+            $pendingPath = Get-AiSopRunEvidencePath $ResolvedSpecDirectory $TaskId $run.runId
+            if ($activity -eq 'INTERRUPTED' -and [IO.File]::Exists($pendingPath)) {
+                $pendingResult = ConvertFrom-AiSopWorkflowJson ([IO.File]::ReadAllText($pendingPath)) -AsHashtable
+                if ($pendingResult.outcome -ne 'RUNNING') {
+                    Assert-AiSopRunEvidence -Evidence $pendingResult -Previous $run -Task $recoveryTask -WorkspacePath $ownerWs -Retry
+                    $recoveredTask.verifications = @($recoveredTask.verifications | ForEach-Object { if ($_.runId -ceq $run.runId) { $pendingResult } else { $_ } })
+                    continue
+                }
+            }
             $run.outcome = 'INTERRUPTED'; $run.exitCode = -2; $run.inputsStable = $false
         }
         $recoveredTask.status = 'PAUSED'; $recoveredTask.updatedAt = $AcceptedAt.ToString('o')
@@ -925,7 +938,7 @@ if ($Operation -in @('ForceRelease','Recover')) {
     foreach ($file in @(Get-ChildItem -LiteralPath (Get-AiSopWorkflowSessionRegistryRoot -WorkspacePath $ownerWs) -Filter '*.json' -File -ErrorAction SilentlyContinue)) {
         # An unrelated corrupt session must not block recovery of this task.
         # The owner's exact session, and any matching orphan, remain strict.
-        if (-not $existingOwner.sessionBinding -or $file.BaseName -cne $existingOwner.sessionBinding.sessionKey) {
+        if (-not $recoveryOwner.sessionBinding -or $file.BaseName -cne $recoveryOwner.sessionBinding.sessionKey) {
             try { $candidate = ConvertFrom-AiSopWorkflowJson ([IO.File]::ReadAllText($file.FullName)) -AsHashtable } catch { continue }
             if ($candidate.workspacePath -cne $ownerWs -or $candidate.boundFeature -cne $Feature -or $candidate.boundOwnerId -cne $OwnerId) { continue }
         }
@@ -1414,6 +1427,10 @@ switch ($Operation) {
         $sessionAfter = Copy-WorkflowRecord $session.Record
         if ($Operation -ne 'Checkpoint') {
             Clear-SessionBoundTuple -Session $sessionAfter -TransactionId $transactionId
+        } else {
+            # A checkpoint renews only the already validated session/epoch. The
+            # session CAS in the transaction fences End, Transfer and recovery.
+            [void](Set-AiSopWorkflowSessionHeartbeat -Record $sessionAfter -AcceptedAt $AcceptedAt)
         }
         $ownerAfter = Copy-WorkflowRecord $existingOwner
         $ownerAfter.status = if ($Operation -eq 'Complete') { 'COMPLETE' } elseif ($Operation -eq 'Checkpoint') { 'ACTIVE' } else { 'RELEASED' }
@@ -1456,6 +1473,9 @@ switch ($Operation) {
             $oldSessionPath = Get-AiSopWorkflowSessionPath -SessionKey $existingOwner.sessionBinding.sessionKey -WorkspacePath (Get-OwnerWorkspacePath)
             if (Test-Path -LiteralPath $oldSessionPath) {
                 $oldRecord = Read-AiSopWorkflowSessionRecord -SessionPath $oldSessionPath -ExpectedSessionKey $existingOwner.sessionBinding.sessionKey
+                if ((Get-AiSopWorkflowSessionEffectiveStatus -Record $oldRecord -AcceptedAt $AcceptedAt) -in @('ACTIVE','IDLE') -and -not $ConfirmTakeover) {
+                    throw 'SESSION_MAY_BE_ACTIVE: intentional handoff requires -ConfirmTakeover after confirming the old agent stopped'
+                }
                 if ($oldRecord.boundOwnerId -ceq $OwnerId -and $oldRecord.boundFeature -ceq $Feature) {
                     $oldAfter = Copy-WorkflowRecord $oldRecord
                     Clear-SessionBoundTuple -Session $oldAfter -TransactionId $transactionId
@@ -1500,6 +1520,9 @@ if ($null -ne $taskAfter) {
     $taskAfter.updatedAt = $AcceptedAt.ToString('o')
     if ($PSBoundParameters.ContainsKey('NextAction')) { $taskAfter.nextAction = $NextAction }
     if ($PSBoundParameters.ContainsKey('Notes')) { $taskAfter.notes = $Notes }
+    if ($Operation -eq 'Transfer' -and $ConfirmTakeover) {
+        $taskAfter.notes = ($taskAfter.notes + "`nConfirmed takeover at $($AcceptedAt.ToString('o')); session=$($session.Record.sessionKey)").Trim()
+    }
     if ($TaskUpdateJson) {
         if ($Operation -ne 'Checkpoint' -or $EvidencePath -or $ImpactReviewed) { throw 'TASK_UPDATE_REQUIRES_SEPARATE_CHECKPOINT' }
         $policyUpdate = ConvertFrom-AiSopWorkflowJson $TaskUpdateJson -AsHashtable
@@ -1519,12 +1542,15 @@ if ($null -ne $taskAfter) {
     }
     if ($EvidencePath) {
         if ($Operation -ne 'Checkpoint') { throw 'EVIDENCE_REQUIRES_CHECKPOINT' }
-        $evidence = Get-Content -LiteralPath $EvidencePath -Raw | ConvertFrom-Json -AsHashtable
+        $evidence = ConvertFrom-AiSopWorkflowJson ([IO.File]::ReadAllText($EvidencePath)) -AsHashtable
+        $expectedEvidencePath = Get-AiSopRunEvidencePath $ResolvedSpecDirectory $TaskId $evidence.runId
+        if ((Resolve-PhysicalPathIdentity $EvidencePath) -cne $expectedEvidencePath) { throw 'EVIDENCE_PATH_INVALID: use the run pending result in its task directory' }
         $pending = @($taskAfter.verifications | Where-Object { $_.outcome -eq 'RUNNING' })
         $matches = @($taskAfter.verifications | Where-Object { $evidence.runId -and $_.runId -ceq $evidence.runId })
+        if ($matches.Count -gt 1) { throw 'RUN_IDENTITY_MISMATCH' }
+        $previous = if ($matches.Count) { $matches[0] } else { $null }
+        Assert-AiSopRunEvidence -Evidence $evidence -Previous $previous -Task $taskAfter -WorkspacePath $ownerWs -SessionBinding $existingOwner.sessionBinding -Retry:$RetryEvidence
         if ($matches.Count) {
-            if ($matches.Count -ne 1 -or $matches[0].outcome -ne 'RUNNING') { throw 'RUN_ALREADY_FINALIZED' }
-            if ($matches[0].context.runnerPid -cne $evidence.context.runnerPid -or $matches[0].command -cne $evidence.command -or $matches[0].inputDigest -cne $evidence.inputDigest) { throw 'RUN_IDENTITY_MISMATCH' }
             $taskAfter.verifications = @($taskAfter.verifications | ForEach-Object { if ($_.runId -ceq $evidence.runId) { $evidence } else { $_ } })
         } else {
             if ($pending.Count) { throw 'RUN_UNFINISHED: only one verification may run per task' }

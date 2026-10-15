@@ -8,6 +8,7 @@ $script:WorkflowTransactionSchemaPath = Join-Path (
     $script:WorkflowClaudeRoot
 ) "schemas\workflow-transaction.schema.json"
 $script:WorkflowStateSchemaPaths = @{
+    TASK = Join-Path $script:WorkflowClaudeRoot "schemas/workflow-task.schema.json"
     SESSION = Join-Path $script:WorkflowClaudeRoot "schemas\workflow-session.schema.json"
     OWNER = Join-Path $script:WorkflowClaudeRoot "schemas\workflow-owner.schema.json"
     COMMAND_GRANT = Join-Path (
@@ -291,7 +292,7 @@ function Get-AiSopWorkflowOwnerRegistryRoot {
 
 function Get-AiSopWorkflowSchemaPath {
     param(
-        [ValidateSet("SESSION", "OWNER", "COMMAND_GRANT")]
+        [ValidateSet("SESSION", "OWNER", "COMMAND_GRANT", "TASK")]
         [string]$SchemaId
     )
 
@@ -305,7 +306,7 @@ function Get-AiSopWorkflowSchemaPath {
 function Assert-AiSopWorkflowJsonSchema {
     param(
         [string]$Json,
-        [ValidateSet("SESSION", "OWNER", "COMMAND_GRANT", "TRANSACTION")]
+        [ValidateSet("SESSION", "OWNER", "COMMAND_GRANT", "TASK", "TRANSACTION")]
         [string]$SchemaId
     )
 
@@ -391,7 +392,7 @@ function Write-AiSopWorkflowTextAtomic {
 function Read-AiSopWorkflowCanonicalState {
     param(
         [string]$Path,
-        [ValidateSet("SESSION", "OWNER", "COMMAND_GRANT")]
+        [ValidateSet("SESSION", "OWNER", "COMMAND_GRANT", "TASK")]
         [string]$SchemaId
     )
 
@@ -453,7 +454,7 @@ function Get-AiSopWorkflowSnapshotJson {
 function Get-AiSopWorkflowTargetSnapshot {
     param(
         [string]$Path,
-        [ValidateSet("SESSION", "OWNER", "COMMAND_GRANT")]
+        [ValidateSet("SESSION", "OWNER", "COMMAND_GRANT", "TASK")]
         [string]$SchemaId
     )
 
@@ -839,7 +840,10 @@ function Invoke-AiSopWorkflowTransaction {
             "REBIND_SESSION",
             "VALIDATE",
             "COMPLETE",
-            "TRANSFER"
+            "TRANSFER",
+            "SUSPEND",
+            "CANCEL",
+            "CHECKPOINT"
         )]
         [string]$Operation,
 
@@ -891,8 +895,8 @@ function Invoke-AiSopWorkflowTransaction {
         $kind = [string]$target.kind
         $schemaId = [string]$target.schemaId
         if (
-            $kind -notin @("SESSION", "OWNER", "COMMAND_GRANT") -or
-            $schemaId -notin @("SESSION", "OWNER", "COMMAND_GRANT") -or
+            $kind -notin @("SESSION", "OWNER", "COMMAND_GRANT", "TASK") -or
+            $schemaId -notin @("SESSION", "OWNER", "COMMAND_GRANT", "TASK") -or
             $kind -cne $schemaId
         ) {
             throw "WORKFLOW_TRANSACTION_TARGET_INVALID"

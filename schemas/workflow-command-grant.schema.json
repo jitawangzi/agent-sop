@@ -272,7 +272,10 @@
         "RebindSession",
         "Validate",
         "Complete",
-        "Transfer"
+        "Transfer",
+        "Suspend",
+        "Cancel",
+        "Checkpoint"
       ]
     },
     "feature": {

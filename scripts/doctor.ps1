@@ -279,6 +279,15 @@ if ((Test-Path -LiteralPath $rootAiSop -PathType Leaf) -and (Test-Path -LiteralP
     }
 }
 
+# Shared specifications are not automatically portable when the nested repo ignores them.
+$domainRoot = Join-Path $WorkspaceRoot '.ai-workspace'
+if (Test-Path -LiteralPath (Join-Path $domainRoot '.git')) {
+    $ignoredSpecs = & git -C $domainRoot check-ignore 'specs/features/__sop_sync_probe__/06_design_contract.md' 2>$null
+    if ($LASTEXITCODE -eq 0 -and $ignoredSpecs) {
+        Add-Check 'Specification sync' $true 'WARN SPECS_IGNORED: review .ai-workspace/.gitignore and tracked spec/task files before cross-workspace handoff; no automatic git add or ignore rewrite.'
+    }
+}
+
 # 14. Optional current-feature SpecLint
 if (-not [string]::IsNullOrWhiteSpace($Feature) -or -not [string]::IsNullOrWhiteSpace($SpecDirectory)) {
     $stateScript = Join-Path $SopRoot "scripts/workflow-state.ps1"

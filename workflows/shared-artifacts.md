@@ -1,5 +1,30 @@
 # 共享功能产物契约
 
+## 修改任务与执行会话（当前入口）
+
+功能规格继续保存在 `specs/features/<Feature>/`；一次独立修改保存为
+`tasks/<taskId>/task.json`，符合 `schemas/workflow-task.schema.json`。
+这里的修改任务与 SDD 计划里的 Task/Step 不同，不要求为 T1/T2 编写需求、设计或计划。
+
+- 功能长期存在；任务有固定目标、T1/T2/T3、不可变 ownerId；Agent/session 可以更换。
+- 使用 `workflow-task.ps1` 或根入口 `ai-sop.ps1 Task`。先 Discover，确定是 Start、Resume 还是原任务收尾；仅讨论不认领，有歧义只询问候选任务。
+- Start 为独立修改创建新记录，不继承历史成功证据，不修改功能级进度和批准。
+- Resume 保持 taskId/ownerId/tier。ACTIVE 任务用 Transfer；PAUSED 任务重新 Claim。旧 ACTIVE owner 可显式 Resume 收编为任务，保留批准但重新采集执行证据。
+- Checkpoint 记录下一步与说明；Suspend 保存 PAUSED 并释放本地归属；Cancel 保存 CANCELLED；Complete 只有本任务检查通过才保存 DONE。
+- 任务、owner、session、grant 在同一两阶段事务中变化；TASK 记录受功能 Owner Lock 保护，锁顺序仍是 Session → Owner → Grant。
+- 一个功能在一个工作区只有一个执行 owner。同功能多独立会话并行不支持；不同功能用独立工作区。没有跨机器分布式锁，远端未同步活动不能自动探测。
+- `task.json` 和必要规格应纳入宿主选定的持久化策略；日志按需保留。Session/Grant/Owner 权限记录留本机。Discover/Doctor 对忽略 specs 的嵌套 Git 发出警告，不自动修改宿主忽略规则或提交历史文件。
+- 跨工作区迁移：先在原工作区 Suspend，持久保存任务和相同代码，再在新工作区 Resume；新工作区重新取得本地会话，证据必须在当地重新校验。缺本地 owner 的 ACTIVE 记录仅供诊断，禁止静默继承权限。
+- 功能整体验收与轻量任务 DONE 不同。T1/T2 不替旧 T3 收尾；共享代码修改和合并后仍需重新验证集成结果。
+
+任务执行记录中的 `inputs-v1` 是源码等验证输入的内容快照，不使用 Git status、暂存状态或基线 diff。其清单保存在每次执行记录中，可定位过期文件。审查 baseline 仍用于分析修改范围，不与验证输入指纹混用。
+
+`Run` 执行真实命令并记录退出码、输入前后指纹和批次；失败同样保留。T1 至少成功编译；T2/T3 还需成功测试。不同批次可累计，但每个批次最后一次必须成功且适用于当前输入；T3 用 `CaseIds` 映射覆盖矩阵的用例，不用测试条数替代覆盖。CaseIds 是控制器根据实际输出提供的映射，当前不解析所有测试框架的报告，也不宣称防止伪造测试命令。
+
+T3 的 04 仍须满足 schema、固定 baseline 和语义完整性。人工/Agent 确认分析仍覆盖当前改动后，运行 `ReviewImpact` 将分析文件哈希和当前输入指纹绑定到任务；不能盲目用该命令刷新过期分析。需求/设计批准及 07 哈希检查保持有效。
+
+下面的功能级执行证据规则保留给未接入 taskId 的旧流程；新任务优先使用上述入口，历史证据文件不参与 T1/T2 的任务完成判断。
+
 各 harness（Claude Code / Copilot / Antigravity / Cursor / Codex / Pi）统一走 Superpowers，共享：
 
 `.ai-workspace/specs/features/<FeatureName>/`

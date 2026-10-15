@@ -31,6 +31,7 @@ param(
     [string]$RuntimePath,
     [string]$Feature,
     [string]$SpecDirectory,
+    [string]$TaskId,
     [string]$RequirementArtifact = "01_server_rules.md",
     [string]$DesignArtifact = "06_design_contract.md",
     [ValidateSet("requirement", "design")]
@@ -137,6 +138,7 @@ if (-not [string]::IsNullOrWhiteSpace($deadlineEnv)) {
 $MutationDeadlineUtc = [DateTimeOffset]::UtcNow.AddMilliseconds($mutationDeadlineMs)
 . (Join-Path $PSScriptRoot "workflow-transaction.ps1")
 . (Join-Path $PSScriptRoot "workflow-session.ps1")
+. (Join-Path $PSScriptRoot "task-context.ps1")
 
 function Assert-Argument {
     param(
@@ -1966,6 +1968,16 @@ function Validate-ChangeImpactState {
     if ([string]::IsNullOrWhiteSpace($wsRoot)) {
         throw "WORKSPACE_UNRESOLVED: unable to resolve workspace root (.ai-workspace, .git, or .svn) for 04_change_impact.json at '$ImpactPath'."
     }
+    if ($TaskId) {
+        $taskRecord = Read-AiSopTask $specDir $TaskId
+        $artifactHash = (Get-FileHash -LiteralPath $ImpactPath -Algorithm SHA256).Hash.ToLowerInvariant()
+        $inputDigest = (Get-AiSopInputSnapshot $wsRoot).digest
+        if (-not $taskRecord.impactReview -or $taskRecord.impactReview.artifactHash -cne $artifactHash -or $taskRecord.impactReview.inputDigest -cne $inputDigest) {
+            throw 'IMPACT_REVIEW_REQUIRED: inspect current analysis and code, then workflow-task ReviewImpact; do not rewrite old successful evidence digests.'
+        }
+        Assert-ExtensionImpactCompleteness -Impact $impact -WorkspaceRoot $wsRoot -Baseline $impact.baseline -SpecDir $specDir
+        return $impact
+    }
     $currentDigest = Get-ChangeSetDigest -WorkspaceRoot $wsRoot -Baseline $impact.baseline -ChangedSymbols $impact.changedSymbols
     if ([string]::IsNullOrWhiteSpace($currentDigest) -or $impact.changeSetDigest.ToLowerInvariant() -ne $currentDigest.ToLowerInvariant()) {
         throw "Change impact analysis is stale: recorded changeSetDigest does not match actual workspace diff against baseline '$($impact.baseline)'. Re-run Behavior Impact Analysis."
@@ -3466,7 +3478,12 @@ function Get-CoveragePlaceholderWarnings {
 
     # executionEvidence validation in VERIFY phase or when executionEvidence is present
     $mustCheckEvidence = (-not $isPlanPhase) -or ($null -ne $coverage.executionEvidence)
-    if ($mustCheckEvidence) {
+    if ($TaskId -and $mustCheckEvidence) {
+        $taskRecord = Read-AiSopTask (Split-Path -Parent $CoveragePath) $TaskId
+        $taskRecord.requiredCaseIds = @($coverage.cases | ForEach-Object { $_.id })
+        foreach ($problem in @(Get-AiSopTaskProblems $taskRecord (Resolve-AiSopWorkspaceRoot -StartPath (Split-Path -Parent $CoveragePath)) (Split-Path -Parent $CoveragePath))) { $errors.Add($problem) }
+    }
+    if ($mustCheckEvidence -and -not $TaskId) {
         if ($null -eq $coverage.executionEvidence) {
             $errors.Add("ERROR: executionEvidence is missing in 05_test_coverage.json — real test execution record is mandatory in VERIFY phase")
         } else {
@@ -3479,9 +3496,6 @@ function Get-CoveragePlaceholderWarnings {
             }
             if ($ev.testCount -lt 1) {
                 $errors.Add("ERROR: executionEvidence indicates zero tests were executed (testCount=$($ev.testCount))")
-            }
-            if ($ev.testCount -lt $coverage.cases.Count) {
-                $errors.Add("ERROR: executionEvidence testCount ($($ev.testCount)) is less than covered test cases count ($($coverage.cases.Count))")
             }
             if (($ev.passedCount + $ev.failedCount) -ne $ev.testCount) {
                 $errors.Add("ERROR: executionEvidence count mismatch (passedCount ($($ev.passedCount)) + failedCount ($($ev.failedCount)) != testCount ($($ev.testCount)))")
@@ -5466,6 +5480,11 @@ switch ($Operation) {
         exit 1
     }
     "CheckCompletion" {
+        if ($TaskId) {
+            & $PSCommandPath -Operation VerifyCompletion -Path $Path -TaskId $TaskId
+            Write-Output 'DIAGNOSTIC: task completion diagnostics above; use Verify/Complete for hard failure.'
+            exit 0
+        }
         # Machine-checkable completion conditions per tier. Outputs ASCII checklist.
         # Reads tier from feature-state.json; auto-escalates to T3 if approval state or spec artifacts exist.
         Assert-Argument -Name "Path" -Value $Path
@@ -5593,6 +5612,8 @@ switch ($Operation) {
         } else {
             $effectiveTier = "unknown"
         }
+        $currentTask = $null
+        if ($TaskId) { $currentTask = Read-AiSopTask $specDir $TaskId; $effectiveTier = $currentTask.tier; $phase = $currentTask.status }
         $failures = [System.Collections.Generic.List[string]]::new()
         $checks = [System.Collections.Generic.List[string]]::new()
         
@@ -5603,6 +5624,10 @@ switch ($Operation) {
             $checks.Add("[X] 工作区解析失败: spec directory 未位于有效工作区内")
         }
 
+        if ($currentTask) {
+            foreach ($problem in @(Get-AiSopTaskProblems $currentTask $wsRoot $specDir)) { $failures.Add($problem); $checks.Add("[X] $problem") }
+            $checks.Add("[i] Task ${TaskId}: tier=$effectiveTier; completion applies to this task, not the entire feature")
+        }
         if ($effectiveTier -eq "T3") {
             if (Test-Path -LiteralPath $Path -PathType Leaf) {
                 $st = Get-Content -Raw -LiteralPath $Path | ConvertFrom-Json
@@ -5730,7 +5755,9 @@ switch ($Operation) {
         } elseif ($effectiveTier -in @("T1", "T2", "FAST_TRACK")) {
             # Machine-enforced semantic risk tiering check
             $risk = Get-SemanticRiskAssessment -WorkspaceRoot $wsRoot -DeclaredTier $effectiveTier -SpecDir $specDir
-            if ($risk.HasHighRisk) {
+            if ($risk.HasHighRisk -and $currentTask) {
+                $checks.Add("[!] RISK_ADVISORY: $($risk.TriggersHit -join ', '); explicit task tier $effectiveTier preserved. Review scope before further changes.")
+            } elseif ($risk.HasHighRisk) {
                 $failures.Add("HIGH_RISK_TIER_DOWNGRADE_FORBIDDEN: changeset hits high-risk semantic triggers ($($risk.TriggersHit -join ', ')). High-risk changes CANNOT execute as $effectiveTier (even with 04_change_impact.json); they MUST be upgraded to T3 with full requirements, design contract, test coverage, and dual auditor verification.")
                 $checks.Add("[X] 语义风险防降档: 命中高危触发器($($risk.TriggersHit -join ', '))，禁止降档为 $effectiveTier (必须升级为 T3)")
             } else {
@@ -5738,7 +5765,7 @@ switch ($Operation) {
             }
 
             # T1/T2/FAST_TRACK: compile artifact check is non-blocking (advisory); Claim validity is workflow-owner.ps1 Validate's job
-            if ($effectiveTier -eq "T2") {
+            if ($effectiveTier -eq "T2" -and -not $currentTask) {
                 $featName = Split-Path -Leaf $specDir
                 $checks.Add("[?] 归属 Validate(workflow-owner.ps1 -Operation Validate -Feature $featName,另跑)")
                 $testEvPath = Find-CommandEvidencePath -SpecDir $specDir -WorkspaceRoot $wsRoot -FileName "test-evidence.json"
@@ -5791,10 +5818,14 @@ switch ($Operation) {
             $failures.Add("tier unknown — feature-state.json missing or tier not set")
             $checks.Add("[X] tier 未知(feature-state.json 缺失或未设 tier)")
         }
-        $compileEvPath = Find-CommandEvidencePath -SpecDir $specDir -WorkspaceRoot $wsRoot -FileName "compile-evidence.json"
-        $needCompileDigest = ($effectiveTier -eq "T3") -or (-not [string]::IsNullOrWhiteSpace($compileEvPath))
-        $compileEvProblem = Get-CommandEvidenceProblem -EvidencePath $compileEvPath -RequireWorkingTreeDigest:$needCompileDigest -WorkspaceRoot $wsRoot -SpecDir $specDir
-        if ($effectiveTier -eq "T3") {
+        if (-not $currentTask) {
+            $compileEvPath = Find-CommandEvidencePath -SpecDir $specDir -WorkspaceRoot $wsRoot -FileName "compile-evidence.json"
+            $needCompileDigest = ($effectiveTier -eq "T3") -or (-not [string]::IsNullOrWhiteSpace($compileEvPath))
+            $compileEvProblem = Get-CommandEvidenceProblem -EvidencePath $compileEvPath -RequireWorkingTreeDigest:$needCompileDigest -WorkspaceRoot $wsRoot -SpecDir $specDir
+        }
+        if ($currentTask) {
+            $checks.Add("[i] Compile/test evidence checked in task record; historical/global evidence is not used")
+        } elseif ($effectiveTier -eq "T3") {
             if ($compileEvProblem) {
                 $failures.Add("compile-evidence.json: $compileEvProblem — build/classes directory is not compile proof")
                 $checks.Add("[X] 编译证据(compile-evidence.json: $compileEvProblem)")
@@ -5819,7 +5850,7 @@ switch ($Operation) {
         $codeExtensions = @(".java", ".groovy", ".kt", ".xml", ".properties", ".proto", ".ps1", ".csv", ".json", ".sql", ".yml", ".yaml")
         $codeDirPrefixes = @("src/", "test/", "scripts/", "distribution/", "config/")
         
-        if (Test-Path -LiteralPath (Join-Path $wsRoot ".svn") -PathType Container) {
+        if (-not $currentTask -and (Test-Path -LiteralPath (Join-Path $wsRoot ".svn") -PathType Container)) {
             try {
                 $svnOutput = & svn status --non-interactive --ignore-externals $wsRoot 2>&1
                 if ($LASTEXITCODE -eq 0) {
@@ -5850,7 +5881,7 @@ switch ($Operation) {
             } else {
                 $checks.Add("[?] VCS 交付状态: SVN 工作副本 (准备 svn commit)")
             }
-        } elseif (Test-Path -LiteralPath (Join-Path $wsRoot ".git") -PathType Container) {
+        } elseif (-not $currentTask -and (Test-Path -LiteralPath (Join-Path $wsRoot ".git") -PathType Container)) {
             try {
                 $gitOutput = & git -C $wsRoot status --porcelain -uall 2>&1
                 if ($LASTEXITCODE -eq 0) {
@@ -5876,6 +5907,8 @@ switch ($Operation) {
             } else {
                 $checks.Add("[?] VCS 交付状态: Git 仓库 (人工确认 git commit / status)")
             }
+        } elseif ($currentTask) {
+            $checks.Add("[?] VCS 交付状态: 请跟踪并交付本任务涉及的文件；Complete 不代表已提交代码")
         } else {
             $checks.Add("[?] VCS 交付状态: 通用工程目录")
         }

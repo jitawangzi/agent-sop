@@ -1,0 +1,169 @@
+#requires -Version 7.0
+$ErrorActionPreference = 'Stop'
+$scripts = Split-Path -Parent $PSScriptRoot
+$entry = Join-Path $scripts 'workflow-task.ps1'
+. (Join-Path $scripts 'task-context.ps1')
+$root = Join-Path ([IO.Path]::GetTempPath()) ('sop-task-tests-' + [guid]::NewGuid().ToString('N'))
+$workspace = Join-Path $root 'workspace'
+$spec = Join-Path $workspace '.ai-workspace/specs/features/Example'
+$saved = @{}
+foreach ($key in @('AI_SOP_OWNER_REGISTRY','AI_SOP_SESSION_REGISTRY','AI_SOP_COMMAND_GRANT_REGISTRY','AI_SOP_TRANSACTION_REGISTRY','SERVER_NEW_WORKFLOW_OWNER_DEADLINE_MS','CODEX_SESSION_ID','AI_SESSION_ID')) { $saved[$key] = [Environment]::GetEnvironmentVariable($key) }
+function Assert($condition, $message) { if (-not $condition) { throw $message } }
+function MustFail([scriptblock]$action, [string]$message) {
+    $failed = $false
+    try { & $action | Out-Null; if ($LASTEXITCODE -ne 0) { $failed=$true } } catch { $failed=$true }
+    Assert $failed $message
+}
+function Task([string]$op, [string]$id, [hashtable]$extra=@{}) {
+    & $entry -Operation $op -WorkspacePath $workspace -Feature Example -TaskId $id -Agent CODEX @extra
+    if ($LASTEXITCODE -ne 0) { throw "Task $op failed: $LASTEXITCODE" }
+}
+try {
+    foreach ($kind in @('OWNER','SESSION','COMMAND_GRANT','TRANSACTION')) { [Environment]::SetEnvironmentVariable("AI_SOP_${kind}_REGISTRY", (Join-Path $root $kind)) }
+    $env:SERVER_NEW_WORKFLOW_OWNER_DEADLINE_MS='15000'
+    $env:CODEX_SESSION_ID='task-session-a'
+    [IO.Directory]::CreateDirectory($spec) | Out-Null
+    [IO.Directory]::CreateDirectory((Join-Path $workspace 'src')) | Out-Null
+    [IO.File]::WriteAllText((Join-Path $workspace 'src/input.txt'), 'initial')
+    git -C $workspace init -b main --quiet
+    git -C $workspace -c user.name=Test -c user.email=test@example.invalid add src/input.txt
+    git -C $workspace -c user.name=Test -c user.email=test@example.invalid commit --quiet -m initial
+    # Historical T3 artifacts must not force an independent T2 task into T3.
+    [IO.File]::WriteAllText((Join-Path $spec '06_design_contract.md'), 'legacy design')
+    [IO.File]::WriteAllText((Join-Path $spec 'compile-evidence.json'), '{"exitCode":1}')
+    Task Start fix-a @{ Tier='T2'; Objective='Independent fix' } | Out-Null
+    $first = Read-AiSopTask $spec 'fix-a'
+    Assert ($first.tier -eq 'T2') 'Task tier changed because historical design exists'
+    $env:CODEX_SESSION_ID='other-feature-session'
+    & $entry -Operation Start -WorkspacePath $workspace -Feature Other -TaskId parallel -Tier T1 -Objective 'Independent feature' -Agent CODEX | Out-Null
+    Assert ($LASTEXITCODE -eq 0) 'Different feature was blocked by Example owner'
+    & $entry -Operation Cancel -WorkspacePath $workspace -Feature Other -TaskId parallel -Agent CODEX | Out-Null
+    $env:CODEX_SESSION_ID='task-session-a'
+    MustFail { Task Start fix-b @{ Objective='Conflicting concurrent task' } } 'Concurrent task on same feature should fail'
+    MustFail { Task Complete fix-a } 'Missing evidence must block completion'
+    [IO.File]::WriteAllText((Join-Path $workspace 'src/input.txt'), 'before-build')
+    Task Run fix-a @{ Kind='compile'; Executable='pwsh'; Arguments=@('-NoProfile','-Command','exit 0') } | Out-Null
+    Task Run fix-a @{ Kind='test'; Executable='pwsh'; Arguments=@('-NoProfile','-Command','exit 0') } | Out-Null
+    Task Verify fix-a | Out-Null
+    # Content snapshot ignores staging/commit metadata and generated output.
+    $before = Get-AiSopInputSnapshot $workspace
+    git -C $workspace add src/input.txt
+    git -C $workspace -c user.name=Test -c user.email=test@example.invalid commit --quiet -m 'content checkpoint'
+    [IO.Directory]::CreateDirectory((Join-Path $workspace 'build')) | Out-Null
+    [IO.File]::WriteAllText((Join-Path $workspace 'build/result.bin'), 'generated')
+    $after = Get-AiSopInputSnapshot $workspace
+    Assert ($before.digest -eq $after.digest) 'Output or staging changed content snapshot'
+    # Dependency lock files are inputs, unlike VCS locks in excluded directories.
+    [IO.File]::WriteAllText((Join-Path $workspace 'yarn.lock'), 'dependency-version')
+    Assert ((Get-AiSopInputSnapshot $workspace).digest -ne $after.digest) 'Dependency lock file was excluded'
+    Remove-Item -LiteralPath (Join-Path $workspace 'yarn.lock')
+    Task Complete fix-a | Out-Null
+    Assert ((Read-AiSopTask $spec 'fix-a').status -eq 'DONE') 'Task not completed'
+    Assert ([IO.File]::ReadAllText((Join-Path $spec '06_design_contract.md')) -eq 'legacy design') 'Historical design was modified'
+    Task Start fix-b @{ Tier='T1'; Objective='Quick independent change' } | Out-Null
+    Assert ((Read-AiSopTask $spec 'fix-b').verifications.Count -eq 0) 'New task inherited old evidence'
+    Task Run fix-b @{ Kind='compile'; Executable='pwsh'; Arguments=@('-NoProfile','-Command','exit 0') } | Out-Null
+    Task Suspend fix-b @{ NextAction='Resume implementation'; Notes='Waiting for input' } | Out-Null
+    Assert ((Read-AiSopTask $spec 'fix-b').status -eq 'PAUSED') 'Suspend must not mark task DONE'
+    # An unrelated sequential task may finish while the previous one is paused.
+    Task Start fix-c @{ Tier='T1'; Objective='Another independent fix' } | Out-Null
+    Task Cancel fix-c | Out-Null
+    $env:CODEX_SESSION_ID='task-session-b'
+    Task Resume fix-b | Out-Null
+    Assert ((Read-AiSopTask $spec 'fix-b').ownerId -eq 'task-fix-b') 'Resume changed task identity'
+    $env:CODEX_SESSION_ID='task-session-c'
+    Task Resume fix-b | Out-Null
+    $env:AI_SESSION_ID='cursor-task-session'
+    & $entry -Operation Resume -WorkspacePath $workspace -Feature Example -TaskId fix-b -Agent CURSOR | Out-Null
+    $cursorOwner = Get-Content -LiteralPath (Join-Path $env:AI_SOP_OWNER_REGISTRY 'example.json') -Raw | ConvertFrom-Json
+    Assert ($cursorOwner.agent -eq 'CURSOR' -and $cursorOwner.ownerId -eq 'task-fix-b') 'Cross-agent task transfer lost identity'
+    $env:CODEX_SESSION_ID='task-session-d'
+    Task Resume fix-b | Out-Null
+    Task Verify fix-b | Out-Null
+    # Impact review binds the analysis file and inputs, independently of VCS status.
+    $impactPath = Join-Path $spec '04_change_impact.json'
+    $activeOwner = Get-Content -LiteralPath (Join-Path $env:AI_SOP_OWNER_REGISTRY 'example.json') -Raw | ConvertFrom-Json
+    $impact = @{
+        schemaVersion='1.0'; feature='Example'; baseline=$activeOwner.baseline; changeSetDigest=('0' * 64)
+        changedSymbols=@('src/input.txt'); entryPoints=@('input loader'); upstreamCallers=@()
+        downstreamEffects=@(); stateReadsWrites=@(); invariants=@(); requiredRegressionCases=@('TC-01')
+    }
+    [IO.File]::WriteAllText($impactPath, ($impact | ConvertTo-Json -Depth 10))
+    Task ReviewImpact fix-b | Out-Null
+    $review = (Read-AiSopTask $spec 'fix-b').impactReview
+    Assert ($review.inputDigest -ceq (Get-AiSopInputSnapshot $workspace).digest) 'Impact review did not bind current input'
+    & (Join-Path $scripts 'workflow-state.ps1') -Operation ValidateChangeImpact -Path $impactPath -TaskId fix-b | Out-Null
+    Assert ($LASTEXITCODE -eq 0) 'Task impact incorrectly used legacy changeset digest'
+    [IO.File]::AppendAllText($impactPath, "`n")
+    MustFail { & (Join-Path $scripts 'workflow-state.ps1') -Operation ValidateChangeImpact -Path $impactPath -TaskId fix-b } 'Changed analysis retained old review'
+    Task ReviewImpact fix-b | Out-Null
+    # A successful old compile must not survive a real input change.
+    [IO.File]::WriteAllText((Join-Path $workspace 'src/input.txt'), 'changed')
+    MustFail { & (Join-Path $scripts 'workflow-state.ps1') -Operation ValidateChangeImpact -Path $impactPath -TaskId fix-b } 'Changed source retained old impact review'
+    MustFail { Task Verify fix-b } 'Changed input did not invalidate evidence'
+    Task Run fix-b @{ Kind='compile'; Executable='pwsh'; Arguments=@('-NoProfile','-Command','exit 0') } | Out-Null
+    Task Complete fix-b | Out-Null
+    # Failure in one test batch must not be hidden by a green different batch.
+    Task Start fix-d @{ Tier='T2'; Objective='Batch verification' } | Out-Null
+    Task Run fix-d @{ Kind='compile'; Executable='pwsh'; Arguments=@('-NoProfile','-Command','exit 0') } | Out-Null
+    MustFail { Task Run fix-d @{ Kind='test'; Batch='regression'; Executable='pwsh'; Arguments=@('-NoProfile','-Command','exit 2') } } 'Failed command incorrectly returned success'
+    Task Run fix-d @{ Kind='test'; Batch='unit'; Executable='pwsh'; Arguments=@('-NoProfile','-Command','exit 0') } | Out-Null
+    MustFail { Task Verify fix-d } 'Green batch hid failed regression'
+    Task Run fix-d @{ Kind='test'; Batch='regression'; Executable='pwsh'; Arguments=@('-NoProfile','-Command','exit 0') } | Out-Null
+    MustFail { Task Run fix-d @{ Kind='test'; Batch='regression'; Executable='sop-test-nonexistent-executable-7f18' } } 'Missing executable incorrectly returned success'
+    MustFail { Task Verify fix-d } 'Launch failure retained older green batch'
+    Task Run fix-d @{ Kind='test'; Batch='regression'; Executable='pwsh'; Arguments=@('-NoProfile','-Command','exit 0') } | Out-Null
+    Task Complete fix-d | Out-Null
+    Task Start fix-e @{ Tier='T1'; Objective='Changing inputs during build' } | Out-Null
+    MustFail { Task Run fix-e @{ Kind='compile'; Executable='pwsh'; Arguments=@('-NoProfile','-Command',"[IO.File]::WriteAllText('src/input.txt','changed-during-build'); exit 0") } } 'Input mutation during execution was accepted'
+    MustFail { Task Complete fix-e } 'Unstable compile record allowed completion'
+    Task Cancel fix-e | Out-Null
+
+    # Adopt a legacy owner in the same native session without resetting its tier.
+    $legacySpec = Join-Path $workspace '.ai-workspace/specs/features/Legacy'
+    [IO.Directory]::CreateDirectory($legacySpec) | Out-Null
+    & (Join-Path $scripts 'workflow-owner.ps1') -Operation Claim -SpecDirectory $legacySpec -Feature Legacy -Agent CODEX -Workflow SUPERPOWERS -OwnerId legacy-owner -Tier T2 | Out-Null
+    & $entry -Operation Resume -WorkspacePath $workspace -Feature Legacy -Agent CODEX | Out-Null
+    $legacyOwner = Get-Content -LiteralPath (Join-Path $env:AI_SOP_OWNER_REGISTRY 'legacy.json') -Raw | ConvertFrom-Json
+    $adopted = Read-AiSopTask $legacySpec $legacyOwner.taskId
+    Assert ($adopted.ownerId -eq 'legacy-owner' -and $adopted.tier -eq 'T2') 'Legacy adoption reset identity or tier'
+    & $entry -Operation Suspend -WorkspacePath $workspace -Feature Legacy -Agent CODEX | Out-Null
+
+    # A partial PREPARED transaction restores both ownership and task state;
+    # a durable COMMITTED journal finishes applying both, with the usual locks.
+    $registryOwner = Join-Path $env:AI_SOP_OWNER_REGISTRY 'example.json'
+    $recoveryTaskPath = Get-AiSopTaskPath $spec 'fix-e'
+    foreach ($journalPhase in @('PREPARED','COMMITTED')) {
+        $taskBeforeJson = Read-AiSopWorkflowCanonicalState -Path $recoveryTaskPath -SchemaId TASK
+        $ownerBeforeJson = Read-AiSopWorkflowCanonicalState -Path $registryOwner -SchemaId OWNER
+        $taskAfterValue = ConvertFrom-AiSopWorkflowJson $taskBeforeJson -AsHashtable
+        $taskAfterValue.notes = "Recovered $journalPhase"
+        $taskAfterJson = ConvertTo-AiSopWorkflowCanonicalJson $taskAfterValue
+        $ownerAfterValue = ConvertFrom-AiSopWorkflowJson $ownerBeforeJson -AsHashtable
+        $ownerAfterValue.lastTransactionId = 'recovery-' + $journalPhase
+        $ownerAfterJson = ConvertTo-AiSopWorkflowCanonicalJson $ownerAfterValue
+        $journal = @{
+            schemaVersion='1.0'; transactionId=('recovery-' + $journalPhase); operation='CHECKPOINT'; phase=$journalPhase
+            feature='Example'; ownerPath=$registryOwner; sessionKeys=@(); createdAt=[DateTimeOffset]::UtcNow.ToString('o')
+            committedAt=$(if ($journalPhase -eq 'COMMITTED') { [DateTimeOffset]::UtcNow.ToString('o') } else { '' })
+            targets=@(
+                @{path=$recoveryTaskPath;kind='TASK';schemaId='TASK';before=(New-AiSopWorkflowSnapshot $true $taskBeforeJson);after=(New-AiSopWorkflowSnapshot $true $taskAfterJson)},
+                @{path=$registryOwner;kind='OWNER';schemaId='OWNER';before=(New-AiSopWorkflowSnapshot $true $ownerBeforeJson);after=(New-AiSopWorkflowSnapshot $true $ownerAfterJson)}
+            )
+        }
+        $journalPath = Join-Path $env:AI_SOP_TRANSACTION_REGISTRY ("recovery-$journalPhase.json")
+        Write-AiSopWorkflowTransactionJournal -JournalPath $journalPath -Journal $journal
+        [IO.File]::WriteAllText($recoveryTaskPath, $taskAfterJson)
+        Invoke-AiSopWorkflowTransactionRecovery -WorkspacePath $workspace | Out-Null
+        $expectedTask = if ($journalPhase -eq 'COMMITTED') { $taskAfterJson } else { $taskBeforeJson }
+        $expectedOwner = if ($journalPhase -eq 'COMMITTED') { $ownerAfterJson } else { $ownerBeforeJson }
+        Assert ((Read-AiSopWorkflowCanonicalState $recoveryTaskPath TASK) -ceq $expectedTask) 'Task recovery mismatch'
+        Assert ((Read-AiSopWorkflowCanonicalState $registryOwner OWNER) -ceq $expectedOwner) 'Owner recovery mismatch'
+    }
+    MustFail { Read-AiSopTask $spec '../escape' } 'Task path traversal accepted'
+    Write-Output 'PASS: task lifecycle, isolation, resume, input identity, and evidence batches'
+} finally {
+    foreach ($key in $saved.Keys) { [Environment]::SetEnvironmentVariable($key, $saved[$key]) }
+    $resolvedRoot = [IO.Path]::GetFullPath($root)
+    if ($resolvedRoot.StartsWith([IO.Path]::GetFullPath([IO.Path]::GetTempPath()), [StringComparison]::OrdinalIgnoreCase)) { Remove-Item -LiteralPath $resolvedRoot -Recurse -Force -ErrorAction SilentlyContinue }
+}

@@ -10,6 +10,9 @@ param(
         "Validate",
         "Complete",
         "Transfer",
+        "Suspend",
+        "Cancel",
+        "Checkpoint",
         "ForceRelease",
         "Check",
         "Status"
@@ -48,6 +51,12 @@ param(
     [string]$Tier = "T2",
 
     [Parameter(Mandatory = $false)]
+    [string]$TaskId,
+    [string]$Objective,
+    [string]$NextAction = "",
+    [string]$Notes = "",
+    [string]$EvidencePath,
+    [switch]$ImpactReviewed,
     [string]$Baseline = $null
 )
 
@@ -62,6 +71,7 @@ $ClaudeRoot = Split-Path -Parent $PSScriptRoot
 . (Join-Path $PSScriptRoot "workflow-transaction.ps1")
 . (Join-Path $PSScriptRoot "workflow-session.ps1")
 . (Join-Path $PSScriptRoot "workflow-command-grant.ps1")
+. (Join-Path $PSScriptRoot "task-context.ps1")
 $SchemaPath = Join-Path $ClaudeRoot "schemas\workflow-owner.schema.json"
 
 function Assert-OwnerSchema {
@@ -396,7 +406,7 @@ if ([string]::IsNullOrWhiteSpace($ResolvedSpecDirectory)) {
 if ($Operation -eq "Claim" -and [string]::IsNullOrWhiteSpace($OwnerId)) {
     throw "WORKFLOW_PARAMETER_MISSING: -OwnerId is required for Claim."
 }
-if ($Operation -in @("Validate", "Complete", "BindSession", "RebindSession", "Transfer", "ForceRelease") -and [string]::IsNullOrWhiteSpace($OwnerId)) {
+if ($Operation -in @("Validate", "Complete", "BindSession", "RebindSession", "Transfer", "ForceRelease", "Suspend", "Cancel", "Checkpoint") -and [string]::IsNullOrWhiteSpace($OwnerId)) {
     throw "WORKFLOW_PARAMETER_MISSING: -OwnerId could not be resolved for feature '$Feature'."
 }
 
@@ -420,9 +430,9 @@ function Copy-WorkflowRecord {
 function New-OwnerTarget {
     param(
         [string]$Path,
-        [ValidateSet("SESSION", "OWNER", "COMMAND_GRANT")]
+        [ValidateSet("SESSION", "OWNER", "COMMAND_GRANT", "TASK")]
         [string]$Kind,
-        [ValidateSet("SESSION", "OWNER", "COMMAND_GRANT")]
+        [ValidateSet("SESSION", "OWNER", "COMMAND_GRANT", "TASK")]
         [string]$SchemaId,
         [object]$After,
         [bool]$BeforeExists,
@@ -489,7 +499,7 @@ function Get-ExactGrant {
         $currentOwner = Read-Owner -AllowMissing
         $sessionToUse = $null
         if (
-            $Operation -in @("Validate", "Complete") -and
+            $Operation -in @("Validate", "Complete", "Suspend", "Cancel", "Checkpoint") -and
             $null -ne $currentOwner -and
             [string]$currentOwner.schemaVersion -eq "1.1" -and
             $null -ne $currentOwner.sessionBinding
@@ -540,7 +550,7 @@ function Get-ExactGrant {
             -DeadlineUtc $WorkflowDeadlineUtc `
             -WorkspacePath $ws
 
-        Write-Output "[INFO] Direct execution detected; auto-bootstrapped CommandGrant for session $($sessionToUse.Record.sessionKey)"
+        Write-Verbose "[INFO] Direct execution detected; auto-bootstrapped CommandGrant for session $($sessionToUse.Record.sessionKey)"
         return $newGrant
     }
 }
@@ -869,7 +879,7 @@ if (
 if ($Operation -in @("Claim", "BindSession", "RebindSession", "Transfer")) {
     Assert-NewOwnerPair
 }
-if ($Operation -in @("Validate", "Complete") -and $null -eq $existingOwner) {
+if ($Operation -in @("Validate", "Complete", "Suspend", "Cancel", "Checkpoint") -and $null -eq $existingOwner) {
     throw "WORKFLOW_OWNER_NOT_FOUND"
 }
 
@@ -912,6 +922,7 @@ $grant = Get-ExactGrant
 $session = Get-GrantSession $grant
 
 if ($Operation -eq "Validate") {
+    if ($TaskId -and $existingOwner.taskId -cne $TaskId) { throw "TASK_IDENTITY_MISMATCH" }
     if ([string]$existingOwner.schemaVersion -ne "1.1") {
         throw "WORKFLOW_OWNER_LEGACY_OPERATION_DENIED"
     }
@@ -922,6 +933,32 @@ if ($Operation -eq "Validate") {
     exit 0
 }
 
+if ($Operation -ne 'Claim' -and $existingOwner.taskId) {
+    if ($TaskId -and $TaskId -cne $existingOwner.taskId) { throw 'TASK_IDENTITY_MISMATCH' }
+    $TaskId = [string]$existingOwner.taskId
+}
+$taskBefore = $null
+$taskAfter = $null
+$taskPath = $null
+if ($TaskId) {
+    $taskPath = Get-AiSopTaskPath $ResolvedSpecDirectory $TaskId
+    if (Test-Path -LiteralPath $taskPath) {
+        $taskBefore = Read-AiSopTask $ResolvedSpecDirectory $TaskId
+        if ($taskBefore.ownerId -cne $OwnerId) { throw 'TASK_OWNER_MISMATCH' }
+        if ($Operation -eq 'Claim' -and $taskBefore.status -ne 'PAUSED') { throw 'TASK_NOT_RESUMABLE' }
+        if ($Operation -ne 'Claim' -and $taskBefore.status -ne 'ACTIVE') { throw 'TASK_NOT_ACTIVE' }
+        $taskAfter = Copy-WorkflowRecord $taskBefore
+        if ($PSBoundParameters.ContainsKey('Tier') -and $Tier -cne $taskBefore.tier) { throw 'TASK_TIER_IMMUTABLE' }
+        $Tier = [string]$taskBefore.tier
+    } elseif ($Operation -eq 'Transfer' -and -not $existingOwner.taskId -and $Objective) {
+        $taskAfter = [ordered]@{
+            schemaVersion='1.0'; taskId=$TaskId; feature=$Feature; ownerId=$OwnerId; tier=$Tier; objective=$Objective
+            status='ACTIVE'; nextAction=$NextAction; notes=$Notes; createdAt=$AcceptedAt.ToString('o'); updatedAt=$AcceptedAt.ToString('o')
+            requiredCaseIds=@(); verifications=@()
+        }
+    } elseif ($Operation -ne 'Claim') { throw 'TASK_NOT_FOUND' }
+}
+if ($Operation -in @('Suspend','Cancel','Checkpoint') -and -not $taskPath) { throw 'TASK_REQUIRED: adopt legacy ownership using Resume first' }
 $transactionId = "$($Operation.ToLowerInvariant())-$([guid]::NewGuid().ToString('N'))"
 $grantAfter = New-AiSopWorkflowCommandGrantAfterConsume `
     -Grant $grant.Record `
@@ -1084,6 +1121,15 @@ switch ($Operation) {
             $passedBaseline = if ($PSBoundParameters.ContainsKey("Baseline") -and -not [string]::IsNullOrWhiteSpace($Baseline)) { $Baseline } else { $null }
             Resolve-AuthoritativeVcsBaseline -WorkspacePath (Get-OwnerWorkspacePath) -ProposedBaseline $passedBaseline -SpecDirectory $ResolvedSpecDirectory
         }
+        if ($TaskId -and $null -eq $taskAfter) {
+            if ([string]::IsNullOrWhiteSpace($Objective)) { throw "TASK_OBJECTIVE_REQUIRED" }
+            $taskAfter = [ordered]@{
+                schemaVersion = '1.0'; taskId = $TaskId; feature = $Feature; ownerId = $OwnerId
+                tier = $Tier; objective = $Objective; status = 'ACTIVE'; nextAction = $NextAction; notes = $Notes
+                createdAt = $AcceptedAt.ToString('o'); updatedAt = $AcceptedAt.ToString('o')
+                requiredCaseIds = @(); verifications = @()
+            }
+        }
         $sessionAfter = Copy-WorkflowRecord $session.Record
         Set-SessionBoundTuple `
             -Session $sessionAfter `
@@ -1107,6 +1153,7 @@ switch ($Operation) {
             }
             lastTransactionId = $transactionId
         }
+        if ($TaskId) { $ownerAfter["taskId"] = $TaskId }
         if (-not [string]::IsNullOrWhiteSpace($detectedBaseline)) {
             $ownerAfter["baseline"] = $detectedBaseline
         } else {
@@ -1287,7 +1334,7 @@ switch ($Operation) {
             $AcceptedAt.ToUniversalTime().ToString("o")
         $ownerAfter.lastTransactionId = $transactionId
     }
-    "Complete" {
+    { $_ -in @("Complete", "Suspend", "Cancel", "Checkpoint") } {
         if (
             [string]$existingOwner.schemaVersion -ne "1.1" -or
             [string]$existingOwner.status -ne "ACTIVE"
@@ -1312,14 +1359,16 @@ switch ($Operation) {
         $skipRequested = ($env:AI_SOP_SKIP_COMPLETION_VERIFY -eq "1" -or $env:AI_SOP_SKIP_COMPLETION_VERIFY -eq "true")
         $testHooks = ($env:AI_SOP_TEST_HOOKS -eq "1" -or $env:AI_SOP_TEST_HOOKS -eq "true")
         $skipVerify = $skipRequested -and $testHooks
-        if (-not $skipVerify) {
+        if (-not $skipVerify -and $Operation -eq "Complete") {
             $stateScript = Join-Path $PSScriptRoot "workflow-state.ps1"
             if (Test-Path -LiteralPath $stateScript -PathType Leaf) {
                 $workflowStatePath = Join-Path $ResolvedSpecDirectory "00_workflow_state.json"
                 if (-not (Test-Path -LiteralPath $workflowStatePath -PathType Leaf)) {
                     $workflowStatePath = Join-Path $ResolvedSpecDirectory "workflow-state.json"
                 }
-                $verifyOutput = & $stateScript -Operation VerifyCompletion -Path $workflowStatePath 2>&1
+                $verifyArgs = @{}
+                if ($TaskId) { $verifyArgs.TaskId = $TaskId }
+                $verifyOutput = & $stateScript -Operation VerifyCompletion -Path $workflowStatePath @verifyArgs 2>&1
                 if ($LASTEXITCODE -ne 0) {
                     $verifyMsg = ($verifyOutput | Out-String).Trim()
                     throw "WORKFLOW_COMPLETION_VERIFICATION_FAILED: Cannot Complete owner lock because VerifyCompletion failed.`n$verifyMsg"
@@ -1328,13 +1377,12 @@ switch ($Operation) {
         }
 
         $sessionAfter = Copy-WorkflowRecord $session.Record
-        Clear-SessionBoundTuple `
-            -Session $sessionAfter `
-            -TransactionId $transactionId
+        if ($Operation -ne 'Checkpoint') {
+            Clear-SessionBoundTuple -Session $sessionAfter -TransactionId $transactionId
+        }
         $ownerAfter = Copy-WorkflowRecord $existingOwner
-        $ownerAfter.status = "COMPLETE"
-        $ownerAfter.completedAt =
-            $AcceptedAt.ToUniversalTime().ToString("o")
+        $ownerAfter.status = if ($Operation -eq 'Complete') { 'COMPLETE' } elseif ($Operation -eq 'Checkpoint') { 'ACTIVE' } else { 'RELEASED' }
+        $ownerAfter.completedAt = if ($Operation -eq "Checkpoint") { "" } else { $AcceptedAt.ToUniversalTime().ToString("o") }
         $ownerAfter.lastTransactionId = $transactionId
         $targets += New-OwnerTarget `
             -Path $session.SessionPath `
@@ -1369,8 +1417,23 @@ switch ($Operation) {
         ) {
             throw "WORKFLOW_OWNER_IDENTITY_MISMATCH"
         }
-        # Reuse the immutable ownerId; only the agent changes.
-        Assert-ActiveGrantSession -Grant $grant -Session $session -RequireUnbound
+        if ($existingOwner.sessionBinding.sessionKey -cne $session.Record.sessionKey) {
+            $oldSessionPath = Get-AiSopWorkflowSessionPath -SessionKey $existingOwner.sessionBinding.sessionKey -WorkspacePath (Get-OwnerWorkspacePath)
+            if (Test-Path -LiteralPath $oldSessionPath) {
+                $oldRecord = Read-AiSopWorkflowSessionRecord -SessionPath $oldSessionPath -ExpectedSessionKey $existingOwner.sessionBinding.sessionKey
+                if ($oldRecord.boundOwnerId -ceq $OwnerId -and $oldRecord.boundFeature -ceq $Feature) {
+                    $oldAfter = Copy-WorkflowRecord $oldRecord
+                    Clear-SessionBoundTuple -Session $oldAfter -TransactionId $transactionId
+                    $targets += New-OwnerTarget -Path $oldSessionPath -Kind SESSION -SchemaId SESSION -After $oldAfter -BeforeExists $true -Before $oldRecord
+                    $sessionKeys += $oldRecord.sessionKey
+                }
+            }
+        }
+        # Reuse the immutable ownerId. Same-session legacy adoption is allowed
+        # only when the existing session is already bound to this exact owner.
+        $sameTransferSession = $existingOwner.sessionBinding.sessionKey -ceq $session.Record.sessionKey
+        if ($sameTransferSession -and ($session.Record.boundFeature -cne $Feature -or $session.Record.boundOwnerId -cne $OwnerId -or $session.Record.boundSessionEpochId -cne $session.Record.sessionEpochId)) { throw 'WORKFLOW_OWNER_SESSION_MISMATCH' }
+        Assert-ActiveGrantSession -Grant $grant -Session $session -RequireUnbound:(-not $sameTransferSession)
         $sessionAfter = Copy-WorkflowRecord $session.Record
         Set-SessionBoundTuple `
             -Session $sessionAfter `
@@ -1378,6 +1441,7 @@ switch ($Operation) {
             -TransactionId $transactionId
         $ownerAfter = Copy-WorkflowRecord $existingOwner
         $ownerAfter.agent = $Agent
+        if ($TaskId) { $ownerAfter["taskId"] = $TaskId }
         $ownerAfter.sessionBinding.sessionKey =
             [string]$grant.Record.sessionKey
         $ownerAfter.sessionBinding.sessionEpochId =
@@ -1394,6 +1458,30 @@ switch ($Operation) {
             -Before $session.Record
         $sessionKeys += [string]$session.Record.sessionKey
     }
+}
+
+if ($null -ne $taskAfter) {
+    $taskAfter.status = switch ($Operation) { 'Complete' { 'DONE' } 'Suspend' { 'PAUSED' } 'Cancel' { 'CANCELLED' } default { 'ACTIVE' } }
+    $taskAfter.updatedAt = $AcceptedAt.ToString('o')
+    if ($PSBoundParameters.ContainsKey('NextAction')) { $taskAfter.nextAction = $NextAction }
+    if ($PSBoundParameters.ContainsKey('Notes')) { $taskAfter.notes = $Notes }
+    if ($ImpactReviewed) {
+        if ($Operation -ne 'Checkpoint') { throw 'IMPACT_REQUIRES_CHECKPOINT' }
+        $impactPath = Join-Path $ResolvedSpecDirectory '04_change_impact.json'
+        $impactRaw = Get-Content -LiteralPath $impactPath -Raw
+        if (-not ($impactRaw | Test-Json -SchemaFile (Join-Path $ClaudeRoot 'schemas/change-impact.schema.json'))) { throw 'IMPACT_SCHEMA_INVALID' }
+        $taskAfter['impactReview'] = @{
+            artifactHash=(Get-FileHash -LiteralPath $impactPath -Algorithm SHA256).Hash.ToLowerInvariant()
+            inputDigest=(Get-AiSopInputSnapshot (Get-OwnerWorkspacePath)).digest
+            reviewedAt=$AcceptedAt.ToString('o')
+        }
+    }
+    if ($EvidencePath) {
+        if ($Operation -ne 'Checkpoint') { throw 'EVIDENCE_REQUIRES_CHECKPOINT' }
+        $evidence = Get-Content -LiteralPath $EvidencePath -Raw | ConvertFrom-Json -AsHashtable
+        $taskAfter.verifications = @($taskAfter.verifications) + @($evidence)
+    }
+    $targets += New-OwnerTarget -Path $taskPath -Kind TASK -SchemaId TASK -After $taskAfter -BeforeExists ($null -ne $taskBefore) -Before $taskBefore
 }
 
 $targets += New-OwnerTarget `
@@ -1431,7 +1519,11 @@ $transactionOperation = switch ($Operation) {
     "RebindSession" { "REBIND_SESSION" }
     "Complete" { "COMPLETE" }
     "Transfer" { "TRANSFER" }
+    "Suspend" { "SUSPEND" }
+    "Cancel" { "CANCEL" }
+    "Checkpoint" { "CHECKPOINT" }
 }
+if ($TaskId) { $WorkflowDeadlineUtc = [DateTimeOffset]::UtcNow.AddMilliseconds($ownerDeadlineMs) }
 Invoke-AiSopWorkflowTransaction `
     -Operation $transactionOperation `
     -Feature $Feature `
@@ -1467,7 +1559,7 @@ if (-not [string]::IsNullOrWhiteSpace($ResolvedSpecDirectory)) {
         Write-OwnerMirror $ownerAfter
 
         # Auto-initialize or sync feature-state.json projection on successful Claim
-        if ($Operation -eq "Claim") {
+        if ($Operation -eq "Claim" -and -not $TaskId) {
             try {
                 $featStateFile = Join-Path $ResolvedSpecDirectory "feature-state.json"
                 $effectiveTier = if (-not [string]::IsNullOrWhiteSpace($Tier)) { $Tier } else { "T2" }
@@ -1546,3 +1638,4 @@ if (-not [string]::IsNullOrWhiteSpace($ResolvedSpecDirectory)) {
 }
 
 Write-Output $OwnerPath
+exit 0

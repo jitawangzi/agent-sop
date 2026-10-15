@@ -4,6 +4,25 @@
 
 > **能力分流提示**：若当前工具能力准入为 BLOCKED（见末节“能力准入”），只跑 T2——你无需读 T3/brainstorming/design-reviewer/subagent 等节，直接看“执行强度分层（T 档）”的 T2 + 末节能力准入即可。STRICT 工具（Claude Code / Antigravity / Cursor / Copilot / Codex）可跑 T3 完整流程。
 
+## 修改任务入口（优先于下文旧功能级命令）
+
+每次代码修改先运行 `pwsh -NoProfile -File ./ai-sop.ps1 Task -Operation Discover`，区分独立修改、继续原任务和补收尾。仅讨论不认领；有多个候选才询问一次。用户不需要说固定接管口令。
+
+- 新修改：`ai-sop.ps1 Task -Operation Start -Feature <功能> -TaskId <唯一任务名> -Tier <T1|T2|T3> -Objective "本次目标" -Agent <工具>`。
+- 续做：`ai-sop.ps1 Task -Operation Resume -Feature <功能> -TaskId <原任务> -Agent <工具>`。旧 ACTIVE owner 尚无任务记录时省略 TaskId，显式 Resume 收编，保留原 ownerId 和批准；若历史档位不明确，先确认，禁止凭空按 T2 收编。
+- 每阶段用 `Checkpoint -NextAction ... -Notes ...` 写下一步；失败/环境阻塞用 `Suspend`，不假装 DONE；独立后续任务可 Start。暂停前应说明未提交修改和依赖。
+- 编译/测试通过 `Run -Kind compile|test -Batch <批次> -Executable <程序> -Arguments <参数数组>` 采集真实结果；T3 测试带 `-CaseIds` 映射本次运行覆盖的用例。运行命令必须是实际构建/测试，不能用空命令或固定 exit 0 伪造成功。
+- 收尾调用 `Verify` 一次列齐缺项，再 `Complete`；T3 继续执行需求设计、审查、覆盖定义等完整步骤。需要 04 时，先核查其语义覆盖当前改动，再 `ReviewImpact` 记录分析哈希与输入指纹。
+- `TaskId` 是一次独立修改，SDD 计划中的 Task/Step 是该修改内部的执行单元。T1/T2 不额外写整套计划文档。
+
+**执行强度属于本次任务。** 用户明确指定 T1/T2 时保留该档位，不因功能有旧 01/06/04 或旧失败记录自动升 T3。风险扫描提供具体建议；发现范围超出原任务时及时说明，不能到收尾才强加完整流程。未指定强度时仍按变更类选择：新功能/契约变更建议 T3，已有行为局部修复建议 T2；T1 仅由用户显式指定。下文高危“强制升档”描述仅适用于未接入 taskId 的旧兼容路径。
+
+**任务完成条件**：T1 真实编译/基础检查成功，报告未测试范围；T2 编译与相关测试/回归成功、自审及文档提醒；T3 完整规格和审查门禁加当前任务证据。测试环境失败可以暂停交接，不能写成通过。本次任务 DONE 不代表旧 T3 或整个功能已全面验收。
+
+**并行边界**：不同功能使用独立工作区和测试数据；同功能多独立主会话并行暂不支持，可由一个主 Agent 协调辅助工作。无跨机器分布式锁，不保证发现未同步的远端会话。Session/Grant/本地 owner 不随 Git 变成新工作区权限。跨工作区先 Suspend、保存规格/任务及相同代码，再在新工作区 Resume；合并结果重新验证。
+
+完整命令及边界见 `.ai-sop/workflows/shared-artifacts.md` 和 `.ai-sop/docs/QUALITY_GATES.md`。以下 `workflow-owner.ps1 -Operation Claim/Complete` 等为旧兼容入口，新修改优先使用 Task，避免重用功能级执行状态。
+
 ## 工作流归属
 
 **Superpowers 是本项目的唯一顶层开发调度器（T3）；T2/T1/快通道用本文件 + 专家 Skills，不调用 Superpowers。**
@@ -93,7 +112,7 @@
 - **T2（用户显式"快速修改"）**：跳过 brainstorming/需求确认/design-reviewer/设计确认/writing-plans；保留归属 Claim、编译、验证、回归、文档待更新提醒。仅限**未命中上述高危触发器**的已有行为纯局部单点修复。
 
   **T2 执行路径（豁免 + 单命令直达）**：T2 跳过 writing-plans，故不调用 `subagent-driven-development`。T2 下**单命令直达**：用户下达 T2 指令后，AI 在单次响应内自动串联【Claim 归属 → 代码修改 → 编译 → 相关测试 → 交付完成】。**编译/测试可能超单轮超时**，允许一次进度回复（“编译中，下一轮继续”），不要求全部单 turn 完成；硬节点保留。最终 `requesting-code-review` 降为 AI 自审 + 附编译/验证证据。T2 保留归属 Claim、编译、验证、回归四个硬节点。
-- **T1（用户显式"急速修改"，极少用）**：仅限极端场景。跳过全部流程节点，仅保留编译通过 + guard 逃生口。AI 须先提醒 T1 风险，用户确认后执行。
+- **T1（用户显式"急速修改"，极少用）**：跳过完整流程节点，保留本次任务归属与真实编译/基础检查。用户已明确选择 T1 时不重复要求确认，最终说明未验证范围。旧 guard 逃生口仅作兼容恢复，不作为任务模式常规入口。
 - **快通道（AI 自动识别）**：纯配置数值变更（`CONFIG_VALUE_CHANGE`）或纯文档变更（`DOC_ONLY`）自动走**快通道**（跳门禁，完成条件 2 项：编译通过 + 纯数值/文档检查；**非 T2**，T2 是 5 项）。其余按上方实际执行档位公式确定。
 
 **快通道边界（硬约束）**：快通道**仅限 `config/**` 等目录下的纯数据文件**（CSV/配置表数值）。**涉及生产代码（如 `src/**`、`pkg/**`、`internal/**`、`app/**` 等）任何修改**（哪怕 1 行）不得走快通道，至少 T2（认领归属+编译+测试）。改关键枚举值/协议字段名/存储结构不是纯配置，须走 T3。
@@ -363,7 +382,7 @@ pwsh -NoProfile -File .\.ai-sop\scripts\workflow-state.ps1 -Operation LintSpecs 
 | 4 | 相关回归（定向 JUnit，或写明无自动化及原因） | 定向 JUnit 或说明 | 有测试或说明 |
 | 5 | **文档待更新提醒** | AI 输出提醒 | 提醒已输出 |
 
-**快通道（2 项）**：编译通过 + 纯数值/文档检查。**T1（1 项）**：仅编译通过 + guard 令牌。
+**快通道（2 项）**：编译通过 + 纯数值/文档检查。**T1（1 项）**：本任务真实编译/基础检查通过，报告未验证范围。
 
 最终结论表述为“已覆盖场景通过”，不得宣称绝对无缺陷。
 

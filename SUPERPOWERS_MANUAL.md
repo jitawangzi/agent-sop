@@ -1,5 +1,33 @@
 # Superpowers 自动化开发指南
 
+> **任务模式更新**：新修改优先使用 `ai-sop.ps1 Task`。T1/T2/T3 属于本次修改，不由历史功能产物自动决定。未带 taskId 的旧命令仍保留兼容语义，下面的旧功能级证据说明不覆盖任务模式。
+
+## 独立修改、续做与暂停
+
+1. `pwsh -NoProfile -File ./ai-sop.ps1 Task -Operation Discover` 查看候选；讨论不认领。
+2. 独立修改使用 `Task -Operation Start -Feature Example -TaskId fix-1 -Tier T2 -Objective "修复既有行为" -Agent CODEX`。
+3. 中断后使用 `Task -Operation Resume -Feature Example -TaskId fix-1 -Agent CODEX`；任务身份和档位不变。旧 ACTIVE owner 可省略 TaskId 显式收编，不重置批准。
+4. 使用 Run 执行真实构建与测试，自动保存成功/失败和输入指纹。参数数组推荐在 PowerShell 中调用：
+
+```powershell
+& ./ai-sop.ps1 Task -Operation Run -Feature Example -TaskId fix-1 -Agent CODEX `
+  -Kind compile -Executable pwsh -Arguments @('-NoProfile', '-File', './scripts/build.ps1')
+& ./ai-sop.ps1 Task -Operation Run -Feature Example -TaskId fix-1 -Agent CODEX `
+  -Kind test -Batch regression -Executable pwsh -Arguments @('-NoProfile', '-File', './scripts/test.ps1')
+```
+
+命令和脚本路径由宿主工程提供，以上仅展示参数形式。原生可执行程序直接调用；Windows 批处理可经显式 `pwsh -Command` 调用，参数作为数组传递，不拼接不可信 shell 文本。T3 测试带 `-CaseIds @('TC01','TC02')`，根据真实运行结果映射；框架报告的自动解析暂不包含在本版本。
+
+5. 每阶段 `Task -Operation Checkpoint ... -NextAction "下一步" -Notes "已完成与未解决项"`；环境阻塞或离开时 `Suspend` 保存暂停并释放执行占用。取消用 Cancel，均不宣称完成。
+6. `Task -Operation Verify ...` 列齐缺失/失败批次、变化文件和 T3 规格问题；通过后 `Complete`。T3 要求的影响分析必须经检查，再用 ReviewImpact 显式记录当前分析与代码绑定，禁止盲目刷新哈希。
+
+T1 只需真实编译/基础检查，T2 还需相关测试，均不背负原功能历史 T3 收尾。涉及原契约语义变化要明确告知用户，不能把原批准当成新语义已批准。暂停任务与独立新任务可以顺序存在；同功能不同时推进两个独立主会话。
+
+不同功能并行继续采用独立工作区和测试数据隔离；最终组合重新验收。跨工作区恢复先 Suspend、同步任务/规格与代码，接收端 Resume 取得本地会话。Discover/Doctor 若提示 SPECS_IGNORED，应检查宿主 `.ai-workspace` 的版本管理策略；工具不会擅自提交存量文档。
+
+任务内容指纹排除暂存状态、日志及常见构建输出，但保守包含公共输入。它不是完整的环境快照；服务、工具链或外部依赖变化时仍应按实际风险重新验证。详细约束见 `workflows/shared-artifacts.md`。
+
+
 本指南说明多个 harness（Claude Code / GitHub Copilot / Antigravity / Cursor / Codex / Pi）如何使用本项目的 AI SOP 完成游戏服务端开发。**T3 由 Superpowers 过程引擎编排；T2/T1/快通道用 AGENTS.md + 专家 Skills，不调用 Superpowers**。领域专家 Skill 被强制绑定调用；详见 `.ai-sop/workflows/superpowers-adapter.md`。各 harness 共享 `.ai-workspace/context/` 与规范化功能产物。各工具的能力差异（能跑 T3 还是只 T2）见 `.ai-sop/scripts/harness-capability.ps1` 的 STRICT/BLOCKED 判定。
 
 ## 🧭 用户任务极简判定树

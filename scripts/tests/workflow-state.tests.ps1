@@ -4442,6 +4442,43 @@ Then:
         throw "VerifyCompletion T3 must pass with PASS_WITH_WARNINGS + compile-evidence.json. Output: $verifyWarn"
     }
 
+    # Task-mode T3 uses explicit case mapping and task input/spec identity rather
+    # than the old feature/global compile and execution records.
+    . (Join-Path (Split-Path -Parent $PSScriptRoot) 'task-context.ps1')
+    $taskSnapshot = Get-AiSopInputSnapshot $TestRoot
+    $taskSpecDigest = Get-AiSopTaskSpecDigest $p0Spec
+    $taskFixture = @{
+        schemaVersion='1.0'; taskId='t3-fixture'; feature='QualityGateP0'; ownerId='fixture-owner'; tier='T3'
+        objective='Verify T3 contract and case evidence'; status='ACTIVE'; nextAction=''; notes=''
+        createdAt=[DateTimeOffset]::UtcNow.ToString('o'); updatedAt=[DateTimeOffset]::UtcNow.ToString('o')
+        requiredCaseIds=@(); verifications=@(
+            @{ kind='compile'; batch='main'; command='fixture compilation'; exitCode=0; executedAt=[DateTimeOffset]::UtcNow.ToString('o'); inputDigest=$taskSnapshot.digest; inputs=$taskSnapshot.files; inputsStable=$true; caseIds=@() },
+            @{ kind='test'; batch='unit'; command='fixture tests'; exitCode=0; executedAt=[DateTimeOffset]::UtcNow.ToString('o'); inputDigest=$taskSnapshot.digest; inputs=$taskSnapshot.files; inputsStable=$true; specDigest=$taskSpecDigest; caseIds=@('TC-01') }
+        )
+    }
+    $taskFixturePath = Get-AiSopTaskPath $p0Spec 't3-fixture'
+    [IO.Directory]::CreateDirectory((Split-Path -Parent $taskFixturePath)) | Out-Null
+    [IO.File]::WriteAllText($taskFixturePath, ($taskFixture | ConvertTo-Json -Depth 30), $Utf8NoBom)
+    $taskVerify = & $ScriptPath -Operation VerifyCompletion -Path (Join-Path $p0Spec '00_workflow_state.json') -TaskId t3-fixture 2>&1 | Out-String
+    if ($LASTEXITCODE -ne 0) { throw "T3 task fixture should pass: $taskVerify" }
+    # Replacing a batch with a narrower run must not retain its old case mapping.
+    $narrowBatch = @{} + $taskFixture.verifications[1]
+    $narrowBatch.caseIds = @()
+    $taskFixture.verifications += $narrowBatch
+    [IO.File]::WriteAllText($taskFixturePath, ($taskFixture | ConvertTo-Json -Depth 30), $Utf8NoBom)
+    $taskVerify = & $ScriptPath -Operation VerifyCompletion -Path (Join-Path $p0Spec '00_workflow_state.json') -TaskId t3-fixture 2>&1 | Out-String
+    if ($LASTEXITCODE -eq 0 -or $taskVerify -notmatch 'UNCOVERED_CASES') { throw "Latest batch must replace earlier case mappings: $taskVerify" }
+    $taskFixture.verifications = @($taskFixture.verifications[0], $taskFixture.verifications[1])
+    $taskFixture.verifications[1].caseIds = @()
+    [IO.File]::WriteAllText($taskFixturePath, ($taskFixture | ConvertTo-Json -Depth 30), $Utf8NoBom)
+    $taskVerify = & $ScriptPath -Operation VerifyCompletion -Path (Join-Path $p0Spec '00_workflow_state.json') -TaskId t3-fixture 2>&1 | Out-String
+    if ($LASTEXITCODE -eq 0 -or $taskVerify -notmatch 'UNCOVERED_CASES') { throw "T3 task must reject missing case mappings: $taskVerify" }
+    $taskFixture.verifications[1].caseIds = @('TC-01')
+    $taskFixture.verifications[1].specDigest = ('0' * 64)
+    [IO.File]::WriteAllText($taskFixturePath, ($taskFixture | ConvertTo-Json -Depth 30), $Utf8NoBom)
+    $taskVerify = & $ScriptPath -Operation VerifyCompletion -Path (Join-Path $p0Spec '00_workflow_state.json') -TaskId t3-fixture 2>&1 | Out-String
+    if ($LASTEXITCODE -eq 0 -or $taskVerify -notmatch 'STALE_SPEC_EVIDENCE') { throw "T3 task must reject changed definitions: $taskVerify" }
+
     Write-TestDesignReview -SpecDir $p0Spec -Status "PASS_WITH_WARNINGS" -OmitDesignSha
     $verifyNoSha = & $ScriptPath -Operation VerifyCompletion -Path (Join-Path $p0Spec "00_workflow_state.json") 2>&1 | Out-String
     if ($LASTEXITCODE -eq 0 -or $verifyNoSha -notmatch "审查对象 sha256") {

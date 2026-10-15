@@ -54,7 +54,10 @@ function Resolve-AiSopWorkflowOwnerTuple {
             "RebindSession",
             "Validate",
             "Complete",
-            "Transfer"
+            "Transfer",
+            "Suspend",
+            "Cancel",
+            "Checkpoint"
         )]
         [string]$GrantOperation,
         [string]$SpecDirectory,
@@ -236,7 +239,7 @@ function ConvertFrom-AiSopOwnerCommandIntent {
     $pattern = (
         "^\s*(?i:pwsh(?:\.exe)?)\s+(?i:-NoProfile)\s+" +
         "(?i:-File)\s+'(?<script>[^']+)'\s+" +
-        "(?i:-Operation)\s+'(?<operation>Claim|BindSession|RebindSession|Validate|Complete|Transfer)'\s+" +
+        "(?i:-Operation)\s+'(?<operation>Claim|BindSession|RebindSession|Validate|Complete|Transfer|Suspend|Cancel|Checkpoint)'\s+" +
         "(?i:-SpecDirectory)\s+'(?<spec>[^']+)'\s+" +
         "(?i:-Feature)\s+'(?<feature>[^']+)'\s+" +
         "(?i:-Workflow)\s+'(?<workflow>[^']+)'\s+" +
@@ -444,7 +447,10 @@ function Assert-AiSopWorkflowCommandGrantIndex {
                 "RebindSession",
                 "Validate",
                 "Complete",
-                "Transfer"
+                "Transfer",
+                "Suspend",
+                "Cancel",
+                "Checkpoint"
             ) -or
             $entry.active -isnot [bool] -or
             -not $seen.Add([string]$entry.grantId)
@@ -1314,7 +1320,7 @@ function Assert-AiSopWorkflowCommandGrantIssueGate {
                 throw "COMMAND_GRANT_OWNER_STATE_INVALID"
             }
         }
-        { $_ -in @("Validate", "Complete") } {
+        { $_ -in @("Validate", "Complete", "Suspend", "Cancel", "Checkpoint") } {
             if (
                 -not $ownerExact -or
                 [string]$Owner.schemaVersion -cne "1.1" -or
@@ -1422,7 +1428,10 @@ function Invoke-AiSopWorkflowCommandGrant {
             "RebindSession",
             "Validate",
             "Complete",
-            "Transfer"
+            "Transfer",
+            "Suspend",
+            "Cancel",
+            "Checkpoint"
         )]
         [string]$GrantOperation = "",
 

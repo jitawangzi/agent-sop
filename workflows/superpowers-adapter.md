@@ -1,5 +1,18 @@
 # Superpowers Adapter（唯一过程引擎）
 
+## 修改任务入口（优先于下方兼容示例）
+
+每次修改先 `ai-sop.ps1 Task -Operation Discover`，根据用户目标与已有记录选择 Start 或 Resume；不要求用户记住接管口令。任务身份、档位和下一动作记录在功能目录的 `tasks/<taskId>/task.json`，与 SDD 计划内的 Task/Step 区分。
+
+- T1/T2 使用任务自己的档位和验证，不因历史 T3 规格自动升档；无需创建完整计划。
+- T3 沿用本适配器的需求设计、独立审查和覆盖要求。调用 `workflow-state.ps1` 的 ValidateChangeImpact、ValidateTestCoverage、VerifyCompletion 时带 `-TaskId`，避免误走旧执行证据规则。
+- 用 `Task Run` 执行编译和测试并留存真实结果；T3 测试批次提供实际覆盖的 CaseIds。原有文字编译摘录用于审查上下文，不能替代执行记录。
+- 检查 04 分析后使用 `Task ReviewImpact` 记录当前绑定；最终 `Task Verify`、`Task Complete` 只完成本次修改。
+- 中断或环境阻塞用 Checkpoint/Suspend，释放执行占用并保留未完成项；独立后续任务另建身份。接管 Resume 保留原身份和档位。
+- 不同功能在独立工作区并行；同功能多个独立主会话并行不支持。合并后的输入需要重新验证。
+
+下方旧 Claim/Complete 与功能级 evidence 命令用于未迁移任务的兼容路径；新任务以本节及 `shared-artifacts.md` 为准。
+
 ## 归属
 
 **Superpowers 是本项目唯一的过程引擎，六个 harness（Claude Code / GitHub Copilot / Antigravity / Cursor / Codex / Pi）统一使用它**（STRICT 工具跑 T3，BLOCKED 工具 Pi 只 T2，见 `harness-capability.ps1`）。`workflow-orchestrator` 不再作为顶层调度器，而是**Superpowers 主流程之外的人工手动片段编排器**（当前=全功能审计，可扩展）；不使用状态机/runtime/Handoff，编排靠人工驱动。

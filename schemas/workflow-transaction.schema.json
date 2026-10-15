@@ -30,7 +30,10 @@
         "REBIND_SESSION",
         "VALIDATE",
         "COMPLETE",
-        "TRANSFER"
+        "TRANSFER",
+        "SUSPEND",
+        "CANCEL",
+        "CHECKPOINT"
       ]
     },
     "phase": {
@@ -199,14 +202,16 @@
           "enum": [
             "SESSION",
             "OWNER",
-            "COMMAND_GRANT"
+            "COMMAND_GRANT",
+            "TASK"
           ]
         },
         "schemaId": {
           "enum": [
             "SESSION",
             "OWNER",
-            "COMMAND_GRANT"
+            "COMMAND_GRANT",
+            "TASK"
           ]
         },
         "before": {

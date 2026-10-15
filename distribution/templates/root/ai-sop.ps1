@@ -14,11 +14,23 @@
 [CmdletBinding()]
 param(
     [Parameter(Position=0)]
-    [ValidateSet("Install", "Doctor", "Update", "Verify", "Status", "Help", "")]
+    [ValidateSet("Install", "Doctor", "Update", "Verify", "Status", "Task", "Help", "")]
     [string]$Action = "Help",
 
     [string]$Feature = "",
-    [string]$SpecDirectory = ""
+    [string]$SpecDirectory = "",
+    [string]$Operation = 'Discover',
+    [string]$TaskId,
+    [ValidateSet('T1','T2','T3')][string]$Tier = 'T2',
+    [string]$Objective,
+    [string]$Agent,
+    [string]$NextAction,
+    [string]$Notes,
+    [string]$Kind,
+    [string]$Batch = 'main',
+    [string]$Executable,
+    [string[]]$Arguments = @(),
+    [string[]]$CaseIds = @()
 )
 
 $ErrorActionPreference = "Stop"
@@ -290,6 +302,12 @@ Actions:
   Update     Re-generate projections (same as Install).
   Verify     Read-only verification of projections vs lock.
   Status     Show gate approval state + feature progress for a feature.
+  Task       Task discovery, independent changes, handoff and verification.
+             Task -Operation Discover
+             Task -Operation Start -Feature X -TaskId fix-1 -Tier T2 -Objective "Fix existing behaviour" -Agent CODEX
+             Task -Operation Resume -Feature X -TaskId fix-1 -Agent CODEX
+             Task -Operation Run -Feature X -TaskId fix-1 -Agent CODEX -Kind compile -Executable pwsh -Arguments ...
+             Operations: Discover, Start, Resume, Checkpoint, Suspend, Cancel, Run, ReviewImpact, Verify, Complete.
   Help       Show this help.
 
 Options:
@@ -302,6 +320,14 @@ New users: run 'Doctor' first, then 'Install'.
 
 # --- Dispatch ---
 switch ($Action) {
+    "Task" {
+        $taskArgs = @{ Operation=$Operation; WorkspacePath=$WorkspaceRoot }
+        foreach ($name in @('Feature','SpecDirectory','TaskId','Tier','Objective','Agent','NextAction','Notes','Kind','Batch','Executable','Arguments','CaseIds')) {
+            if ($PSBoundParameters.ContainsKey($name)) { $taskArgs[$name] = $PSBoundParameters[$name] }
+        }
+        & (Join-Path $WorkspaceRoot '.ai-sop/scripts/workflow-task.ps1') @taskArgs
+        exit $LASTEXITCODE
+    }
     "Doctor" { Invoke-Doctor }
     "Install" { Invoke-Installer -Mode "Install" }
     "Update" { Invoke-Installer -Mode "Update" }

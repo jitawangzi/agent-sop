@@ -249,6 +249,10 @@
         "baseline": {
           "type": "string",
           "pattern": "^(?:[0-9a-fA-F]{7,64}|(?:rev|r)?[0-9]+)$"
+        },
+        "taskId": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9_-]{0,79}$"
         }
       },
       "allOf": [

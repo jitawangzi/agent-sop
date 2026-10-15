@@ -1,0 +1,173 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "workflow-task.schema.json",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schemaVersion",
+    "taskId",
+    "feature",
+    "ownerId",
+    "tier",
+    "objective",
+    "status",
+    "nextAction",
+    "notes",
+    "createdAt",
+    "updatedAt",
+    "requiredCaseIds",
+    "verifications"
+  ],
+  "properties": {
+    "schemaVersion": {
+      "const": "1.0"
+    },
+    "taskId": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9_-]{0,79}$"
+    },
+    "feature": {
+      "type": "string",
+      "minLength": 1
+    },
+    "ownerId": {
+      "type": "string",
+      "minLength": 1
+    },
+    "tier": {
+      "enum": [
+        "T1",
+        "T2",
+        "T3"
+      ]
+    },
+    "objective": {
+      "type": "string",
+      "minLength": 1
+    },
+    "status": {
+      "enum": [
+        "ACTIVE",
+        "PAUSED",
+        "CANCELLED",
+        "DONE"
+      ]
+    },
+    "nextAction": {
+      "type": "string"
+    },
+    "notes": {
+      "type": "string"
+    },
+    "createdAt": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "updatedAt": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "requiredCaseIds": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      },
+      "uniqueItems": true
+    },
+    "verifications": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "kind",
+          "batch",
+          "command",
+          "exitCode",
+          "executedAt",
+          "inputDigest",
+          "inputs",
+          "inputsStable",
+          "caseIds"
+        ],
+        "properties": {
+          "kind": {
+            "enum": [
+              "compile",
+              "test"
+            ]
+          },
+          "batch": {
+            "type": "string",
+            "minLength": 1
+          },
+          "command": {
+            "type": "string",
+            "minLength": 1
+          },
+          "exitCode": {
+            "type": "integer"
+          },
+          "executedAt": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "inputDigest": {
+            "type": "string",
+            "pattern": "^[0-9a-f]{64}$"
+          },
+          "inputs": {
+            "type": "object",
+            "additionalProperties": {
+              "type": "string",
+              "pattern": "^[0-9a-f]{64}$"
+            }
+          },
+          "inputsStable": {
+            "type": "boolean"
+          },
+          "caseIds": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "uniqueItems": true
+          },
+          "context": {
+            "type": "object",
+            "additionalProperties": {
+              "type": "string"
+            }
+          },
+          "specDigest": {
+            "type": "string",
+            "pattern": "^[0-9a-f]{64}$"
+          }
+        }
+      }
+    },
+    "impactReview": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "artifactHash",
+        "inputDigest",
+        "reviewedAt"
+      ],
+      "properties": {
+        "artifactHash": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        },
+        "inputDigest": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        },
+        "reviewedAt": {
+          "type": "string",
+          "format": "date-time"
+        }
+      }
+    }
+  }
+}

@@ -21,12 +21,12 @@ function Test-AiSopInputPathWithin {
 function Get-AiSopInputPolicy {
     param([string]$WorkspacePath)
     $path = Resolve-AiSopWorkspaceChild $WorkspacePath '.ai-workspace/context/verification-inputs.json'
-    if (-not [IO.File]::Exists($path)) { return @{ include=@(); exclude=@(); digest='' } }
+    if (-not [IO.File]::Exists($path)) { return @{ include=@(); exclude=@(); nonExecutable=@(); digest='' } }
     try {
         $raw = [IO.File]::ReadAllText($path)
         if (-not (Test-Json -Json $raw -SchemaFile (Join-Path (Split-Path -Parent $PSScriptRoot) 'schemas/verification-inputs.schema.json') -ErrorAction Stop)) { throw 'schema mismatch' }
         $policy = ConvertFrom-AiSopWorkflowJson $raw -AsHashtable
-        foreach ($relative in @($policy.include) + @($policy.exclude | ForEach-Object { $_.path })) {
+        foreach ($relative in @($policy.include) + @($policy.exclude | ForEach-Object { $_.path }) + @($policy.nonExecutable | Where-Object { $_ } | ForEach-Object { $_.path })) {
             # Literal workspace-relative files or subtrees, not globs. Avoid
             # accidental broad exclusions or platform-dependent path syntax.
             if ($relative -match '(^|/)\.{1,2}(/|$)|[\\:*?\[\]]|^/|/$|//') { throw "invalid relative path: $relative" }
@@ -39,13 +39,14 @@ function Get-AiSopInputPolicy {
             if (-not (Test-Path -LiteralPath (Join-Path $WorkspacePath $relative))) { throw "included path missing: $relative" }
         }
         foreach ($rule in $policy.exclude) { if ([string]::IsNullOrWhiteSpace($rule.reason)) { throw 'exclusion reason required' } }
+        foreach ($rule in @($policy.nonExecutable | Where-Object { $_ })) { if ([string]::IsNullOrWhiteSpace($rule.reason)) { throw 'non-executable input reason required' } }
         $comparison = if ([OperatingSystem]::IsWindows()) { [StringComparison]::OrdinalIgnoreCase } else { [StringComparison]::Ordinal }
         foreach ($entry in $policy.include) {
             foreach ($rule in $policy.exclude) {
                 if ($entry.Equals($rule.path, $comparison)) { throw "conflicting include/exclude path: $entry" }
             }
         }
-        return @{ include=@($policy.include); exclude=@($policy.exclude); digest=(Get-AiSopWorkflowSha256 (ConvertTo-AiSopWorkflowCanonicalJson $policy)) }
+        return @{ include=@($policy.include); exclude=@($policy.exclude); nonExecutable=@($policy.nonExecutable | Where-Object { $_ }); digest=(Get-AiSopWorkflowSha256 (ConvertTo-AiSopWorkflowCanonicalJson $policy)) }
     } catch { throw "INPUT_POLICY_INVALID: $path; $($_.Exception.Message)" }
 }
 
@@ -59,8 +60,34 @@ function Get-AiSopInputDigest {
     return Get-AiSopWorkflowSha256 ($header + ($lines -join "`n"))
 }
 
+function Assert-AiSopInputCaptureBudget {
+    param($Budget)
+    if ($Budget -and $Budget.timer.ElapsedMilliseconds -ge $Budget.milliseconds) { throw 'INPUT_CAPTURE_BUDGET_EXCEEDED: time' }
+}
+
+function Get-AiSopBudgetedFileHash {
+    param([string]$Path, $Budget)
+    Assert-AiSopInputCaptureBudget $Budget
+    $stream=[IO.File]::Open($Path,[IO.FileMode]::Open,[IO.FileAccess]::Read,[IO.FileShare]::Read)
+    $hash=[Security.Cryptography.IncrementalHash]::CreateHash([Security.Cryptography.HashAlgorithmName]::SHA256)
+    try {
+        if ($stream.Length -gt $Budget.remainingBytes) { throw 'INPUT_CAPTURE_BUDGET_EXCEEDED: bytes' }
+        $buffer=[byte[]]::new(65536)
+        while ($true) {
+            Assert-AiSopInputCaptureBudget $Budget
+            $count=$stream.Read($buffer,0,$buffer.Length)
+            if (-not $count) { break }
+            $Budget.remainingBytes-=$count
+            if ($Budget.remainingBytes -lt 0) { throw 'INPUT_CAPTURE_BUDGET_EXCEEDED: bytes' }
+            $hash.AppendData($buffer,0,$count)
+        }
+        return [Convert]::ToHexString($hash.GetHashAndReset()).ToLowerInvariant()
+    } finally { $stream.Dispose(); $hash.Dispose() }
+}
+
 function Get-AiSopInputSnapshot {
-    param([string]$WorkspacePath)
+    param([string]$WorkspacePath, [ValidateRange(0,60000)][int]$BudgetMilliseconds=0, [ValidateRange(1,[long]::MaxValue)][long]$MaxBytes=8MB)
+    $budget=if ($BudgetMilliseconds) { @{timer=[Diagnostics.Stopwatch]::StartNew();milliseconds=$BudgetMilliseconds;remainingBytes=$MaxBytes} } else { $null }
     $root = Resolve-PhysicalPathIdentity $WorkspacePath
     $policy = Get-AiSopInputPolicy $root
     $excludedDirectories = @('.git', '.svn', '.ai-sop', '.ai-workspace', '.claude', '.agents', '.agent', '.gemini', '.cursor', '.idea', '.vscode', '.superpowers', 'node_modules', '.gradle', '__pycache__')
@@ -69,11 +96,18 @@ function Get-AiSopInputSnapshot {
     $files = [Collections.Generic.SortedDictionary[string,string]]::new([StringComparer]::Ordinal)
     $pending = [Collections.Generic.Stack[object]]::new(); $pending.Push(@{path=$root; defaultExcludeLength=-1})
     while ($pending.Count) {
+        Assert-AiSopInputCaptureBudget $budget
         $frame = $pending.Pop(); $dir = $frame.path
         $projectRoot = $dir -ceq $root
         if (-not $projectRoot) { $projectRoot = @('pom.xml','build.gradle','build.gradle.kts') | Where-Object { [IO.File]::Exists((Join-Path $dir $_)) } | Select-Object -First 1 }
         $webOutputRoot = (Split-Path -Leaf $dir) -ceq 'WEB-INF' -and [IO.File]::Exists((Join-Path $dir 'web.xml'))
-        foreach ($item in Get-ChildItem -LiteralPath $dir -Force -ErrorAction Stop) {
+        # Enumerate lazily so a large directory does not defeat light Start's
+        # budget before the first file. Native IO itself has no hard time limit.
+        $iterator=[IO.DirectoryInfo]::new($dir).EnumerateFileSystemInfos().GetEnumerator()
+        try { while ($iterator.MoveNext()) {
+            Assert-AiSopInputCaptureBudget $budget
+            $item=$iterator.Current
+            $isDirectory=($item.Attributes -band [IO.FileAttributes]::Directory) -ne 0
             $rel = [IO.Path]::GetRelativePath($root, $item.FullName).Replace('\', '/')
             # Never descend into VCS stores or evidence even if an ancestor was
             # explicitly included (e.g. a vendored dependency containing .git).
@@ -81,14 +115,14 @@ function Get-AiSopInputSnapshot {
             $includeLength = -1; $excludeLength = -1; $descend = $false
             foreach ($entry in $policy.include) {
                 if (Test-AiSopInputPathWithin $rel $entry) { $includeLength=[Math]::Max($includeLength,$entry.Length) }
-                if ($item.PSIsContainer -and (Test-AiSopInputPathWithin $entry $rel)) { $descend=$true }
+                if ($isDirectory -and (Test-AiSopInputPathWithin $entry $rel)) { $descend=$true }
             }
             foreach ($rule in $policy.exclude) {
                 if (Test-AiSopInputPathWithin $rel $rule.path) { $excludeLength=[Math]::Max($excludeLength,$rule.path.Length) }
             }
-            $defaultExcluded = ($item.PSIsContainer -and ($item.Name -in $excludedDirectories -or ($projectRoot -and $item.Name -in $outputDirectories) -or ($webOutputRoot -and $item.Name -ceq 'classes'))) -or
+            $defaultExcluded = ($isDirectory -and ($item.Name -in $excludedDirectories -or ($projectRoot -and $item.Name -in $outputDirectories) -or ($webOutputRoot -and $item.Name -ceq 'classes'))) -or
                 ($dir -ceq $root -and $item.Name -eq '.ai-sop-staging') -or
-                (-not $item.PSIsContainer -and ($item.Name -in $excludedFiles -or $item.Extension -eq '.tmp' -or $item.Name -match '\.log(?:\.\d+(?:[.-]\d+)*)*(?:\.(?:zip|gz|bz2|xz))?$'))
+                (-not $isDirectory -and ($item.Name -in $excludedFiles -or $item.Extension -eq '.tmp' -or $item.Name -match '\.log(?:\.\d+(?:[.-]\d+)*)*(?:\.(?:zip|gz|bz2|xz))?$'))
             # The most specific path wins. An explicit include can override a
             # default at the same path, but not a deeper output/log exclusion.
             # Retain the ancestor default when traversing to a reincluded leaf.
@@ -96,15 +130,16 @@ function Get-AiSopInputSnapshot {
             $excluded = ($excludeLength -ge 0 -and $excludeLength -gt $includeLength) -or $defaultExcludeLength -gt $includeLength
             if ($excluded -and -not $descend) { continue }
             if ($item.Attributes -band [IO.FileAttributes]::ReparsePoint) { throw "INPUT_LINK_UNSUPPORTED: $($item.FullName)" }
-            if ($item.PSIsContainer) { $pending.Push(@{path=$item.FullName; defaultExcludeLength=$defaultExcludeLength}); continue }
+            if ($isDirectory) { $pending.Push(@{path=$item.FullName; defaultExcludeLength=$defaultExcludeLength}); continue }
             $physical = Resolve-AiSopWorkspaceChild $root $rel
-            $files[$rel] = (Get-FileHash -LiteralPath $physical -Algorithm SHA256).Hash.ToLowerInvariant()
-        }
+            $files[$rel] = if ($budget) { Get-AiSopBudgetedFileHash $physical $budget } else { (Get-FileHash -LiteralPath $physical -Algorithm SHA256).Hash.ToLowerInvariant() }
+        } } finally { $iterator.Dispose() }
     }
     # Preserve existing v2 evidence when no policy has been configured.
     $snapshot = @{ algorithm='inputs-v2'; files=$files }
     if ($policy.digest) { $snapshot.algorithm='inputs-v4'; $snapshot.policyDigest=$policy.digest }
     $snapshot.digest = Get-AiSopInputDigest $snapshot
+    Assert-AiSopInputCaptureBudget $budget
     return $snapshot
 }
 

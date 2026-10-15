@@ -4458,7 +4458,7 @@ Then:
     }
     # This fixture represents a newly started T3 task. The feature-level checks
     # above keep exercising the unchanged legacy contract without TaskId.
-    $taskFixture.baseline=New-AiSopTaskBaseline -WorkspacePath $TestRoot -Tier T3 -CaptureInputs
+    Initialize-AiSopTaskStart -Task $taskFixture -WorkspacePath $TestRoot -TransactionId ('claim-' + [guid]::NewGuid().ToString('N')) -NewStart
     Set-AiSopTaskCaseScope $taskFixture @('TC-01') 'Current fixture regression scope' $p0Spec ([DateTimeOffset]::UtcNow.ToString('o'))
     $taskFixturePath = Get-AiSopTaskPath $p0Spec 't3-fixture'
     [IO.Directory]::CreateDirectory((Split-Path -Parent $taskFixturePath)) | Out-Null

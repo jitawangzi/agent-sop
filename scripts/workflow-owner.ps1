@@ -65,12 +65,14 @@ param(
     [switch]$ConfirmTakeover,
     [switch]$RetryEvidence,
     [switch]$CreateTaskOnly,
+    [switch]$CaptureBaseline,
     [string]$Baseline = $null,
     # Internal callers can cap all lock phases at the original run lease.
     [Nullable[DateTimeOffset]]$DeadlineUtc
 )
 
 $ErrorActionPreference = "Stop"
+if ($CaptureBaseline -and ($Operation -ne 'Claim' -or -not $CreateTaskOnly)) { throw 'CAPTURE_BASELINE_REQUIRES_START' }
 
 if ([string]::IsNullOrWhiteSpace($Operation)) {
     throw "WORKFLOW_OPERATION_REQUIRED: -Operation parameter is required. Allowed values: Claim, BindSession, RebindSession, Validate, Complete, Transfer, ForceRelease, Check, Status."
@@ -1553,8 +1555,7 @@ if ($null -ne $taskAfter) {
         $taskAfter.notes = ($taskAfter.notes + "`nConfirmed takeover at $($AcceptedAt.ToString('o')); session=$($session.Record.sessionKey)").Trim()
     }
     if (-not $taskBefore -and -not $taskAfter.baseline) {
-        $taskAfter['baseline']=New-AiSopTaskBaseline -WorkspacePath $ownerWs -Tier $taskAfter.tier -CaptureInputs:($Operation -eq 'Claim')
-        if ($Operation -ne 'Claim') { $taskAfter.baseline.source='ADOPTED' }
+        Initialize-AiSopTaskStart -Task $taskAfter -WorkspacePath $ownerWs -TransactionId $transactionId -NewStart:($Operation -eq 'Claim') -CaptureBaseline:$CaptureBaseline
     }
     if ($TaskUpdateJson) {
         if ($Operation -ne 'Checkpoint' -or $EvidencePath -or $ImpactReviewed) { throw 'TASK_UPDATE_REQUIRES_SEPARATE_CHECKPOINT' }

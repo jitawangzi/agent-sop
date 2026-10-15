@@ -25,7 +25,9 @@
 
 **任务完成条件**：T1 真实编译/基础检查成功，报告未测试范围；T2 编译与相关测试成功，并用 RecordSync 记录受影响需求、设计与测试的同步结果；T3 完整规格和审查门禁加当前任务证据。T1/T2 无独立代码审核环节。测试环境失败可以暂停交接，不能写成通过。本次任务 DONE 不代表旧 T3 或整个功能已全面验收。
 
-**T3 任务范围**：Start 固定修改前内容基线，功能长期批准基线独立保留。用 `Task Changes` 读取本次新增/修改/删除范围；需要 04 时，taskId、baseline、baselineInputDigest、changedFiles、changeSetDigest 必须匹配该范围，ReviewImpact 保存的 `.ai-workspace/specs/.artifacts/changes/` 清单随 specs 同步。用 `SetCaseScope -CaseIds ... -Reason ...` 登记本次必测用例，包含 04 的 requiredRegressionCases；规格变化后重新核对。其他未开发用例不强制本次执行，整体规格覆盖定义仍检查。旧活动 T3 缺基线时只可 SetBaseline 指向可信修改前清单，不能以修改后现场补造；历史 DONE 不迁移。T1/T2 不新增上述步骤。可选 JUnitReports + CaseMap 从本次 JUnit XML 映射结果，不能用旧/跳过/失败报告充当通过。
+**启动起点**：先 Start 再修改。startInputs 与任务创建事务一起记录，Resume/Run 不重新采集。T1/T2 默认尝试 500ms/8MiB 预算的内容采集，超限/失败记 UNAVAILABLE，不阻塞普通编译/相关测试；预期申请“不适用”或之后升 T3 时，可在修改前 Start -CaptureBaseline 完整采集，档位不变。起点和引用清单随规格同步。不要用修改后的快照补造起点。
+
+**T3 任务范围**：Start 固定修改前内容基线，功能长期批准基线独立保留。用 `Task Changes` 读取本次新增/修改/删除范围；需要 04 时，taskId、baseline、baselineInputDigest、changedFiles、changeSetDigest 必须匹配该范围，ReviewImpact 保存的 `.ai-workspace/specs/.artifacts/changes/` 清单随 specs 同步。用 `SetCaseScope -CaseIds ... -Reason ...` 登记本次必测用例，包含 04 的 requiredRegressionCases；规格变化后重新核对。其他未开发用例不强制本次执行，整体规格覆盖定义仍检查。ChangeTier/SetBaseline 只接受本任务 Start 已记录的起点；缺起点拒绝升级并保留原档位，不能用后续 Run 清单或理由替代。旧 T3 source=START 基线兼容，旧手工 ADOPTED 无起点证明则诊断；历史 DONE 不迁移。T1/T2 不新增上述范围登记。可选 JUnitReports + CaseMap 从本次 JUnit XML 映射结果，不能用旧/跳过/失败报告充当通过。
 
 **损坏结果恢复**：InspectRecovery 只读定位 task/owner/session/待入账结果问题。待入账结果损坏且原执行已停止时，可显式 Recover -QuarantineInvalidEvidence -Reason，先保存原字节再以事务记中断，Resume 后重跑；本地备份在 `.ai-workspace/.runtime/quarantine/`。损坏权限记录不能删除后猜测重建，须可信备份或事务恢复。
 
@@ -93,7 +95,7 @@
 
 **待同步提醒（非门禁）**：AddFollowUp 在来源任务中记录 documentation / test-cases / verification，含稳定 ID、具体 Summary 和 Scope。没有实际延期就不创建。Start/Resume 自动检查：同功能列详细事项，其他功能仅显示当前工作区待办数量；提醒后继续，不要求确认、不自动扩展范围、不因待办升档或阻止完成。每次启动/接管提示一次，执行中不重复催办。用户暂不处理时保留 PENDING；实际完成用 CloseFollowUp 记 RESOLVED、具体 Resolution 和处理任务；人工明确无需处理时记 NOT_NEEDED、原因和 UserRequest。旧任务 DONE 不会隐藏待办，新 T2 完成也不会自动清除旧待办。只在当前工作区可见，跨工作区须同步规格仓库。
 
-**适用性**：只保留三个新任务档位。纯文档等任务仍用 T1/T2；确无构建/可执行行为影响时，用 SetApplicability 对 compile/test 分别记录 NOT_APPLICABLE 和具体理由（绑定当前输入）。RecordSync 的 Tests=NOT_APPLICABLE 仅说明用例同步，不自动豁免测试执行。源码注释修改仍默认编译；配置修改需判断真实影响。环境故障、缺少测试或测试失败不能冒充“不适用”，不能用空命令伪造 PASS。T3 不使用轻量豁免。FAST_TRACK 只读兼容历史任务，不创建第四档新任务。
+**适用性**：只保留三个新任务档位。纯文档等任务仍用 T1/T2；SetApplicability 的 NOT_APPLICABLE 绑定本任务 startInputsRef 和当前输入，并在声明/Verify 时核对所有输入增删改仅限项目在 Start 前声明的 nonExecutable 路径，策略未变。该声明是 verification-inputs.json 的可选路径/理由列表，文件仍进入指纹；不能为跳过检查将源码或构建输入伪装成非执行输入。起点未知或旧豁免未绑定时改回 REQUIRED 并正常验证，不因此升档。RecordSync 的 Tests=NOT_APPLICABLE 仅说明用例同步，不自动豁免测试执行。源码注释修改仍默认编译；配置修改需判断真实影响。环境故障、缺少测试或测试失败不能冒充“不适用”，不能用空命令伪造 PASS。T3 不使用轻量豁免。FAST_TRACK 只读兼容历史任务，不创建第四档新任务。
 
 **工具能力**：T1/T2 不依赖 Superpowers 或独立 subagent。用户选 T3 但环境缺能力时说明缺口，由用户选择更换工具或改档，不自动降档、不因“协议/设计”等词拦截默认 T2。
 

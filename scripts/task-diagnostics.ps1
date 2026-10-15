@@ -74,6 +74,7 @@ function Write-AiSopTaskStatus {
         foreach ($item in $Items) {
             Write-Output "[$($item.status)] $($item.feature)/$($item.taskId) $($item.tier) — $($item.objective)"
             Write-Output "  owner=$($item.ownerStatus) session=$($item.sessionStatus) evidence=$($item.verification)"
+            if ($item.startInputs.status -eq 'UNAVAILABLE') { Write-Output '  start inputs: UNAVAILABLE; normal tier verification remains available; no post-change baseline adoption' }
             if ($item.nextAction) { Write-Output "  checkpoint: $($item.nextAction)" }
             Write-Output "  next: $($item.suggestedAction)"
             foreach ($run in $item.runs) { Write-Output "  run: $($run.kind)/$($run.batch) $($run.activity) log=$($run.logFile)" }

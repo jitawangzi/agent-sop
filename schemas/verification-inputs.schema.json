@@ -6,6 +6,14 @@
   "properties": {
     "schemaVersion": { "const": "1.0" },
     "include": { "type": "array", "uniqueItems": true, "items": { "type": "string", "minLength": 1 } },
+    "nonExecutable": {
+      "description": "Project-declared inputs that affect neither builds nor executable behavior. They remain fingerprinted. Configure before task Start.",
+      "type": "array",
+      "items": {
+        "type": "object", "additionalProperties": false, "required": ["path", "reason"],
+        "properties": { "path": { "type": "string", "minLength": 1 }, "reason": { "type": "string", "pattern": "\\S" } }
+      }
+    },
     "exclude": {
       "type": "array",
       "items": {

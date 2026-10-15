@@ -46,7 +46,9 @@ T1/T2 的 Run 不读取历史需求设计和覆盖矩阵，历史损坏的覆盖
 
 ## T3 的任务基线和必测范围
 
-新任务记录 `baseline`：VCS 类型和启动时版本用于追溯；T3 Start 还保存启动时的完整输入清单。功能 owner/feature-state 的长期基线不因此改变。T1/T2 Start 不增加全量内容扫描，也不要求下面的 T3 范围登记。
+新任务记录 `baseline`：VCS 类型和启动时版本用于追溯，功能 owner/feature-state 的长期基线不因此改变。`startInputs` 与任务创建一起通过事务保存，绑定 taskId、feature、创建时间和创建事务，引用原始内容清单。Resume、Run、Recover 均不重新采集这个起点。必须先 Start 再修改代码；启动前已有改动不自动归属于新任务。
+
+T3 Start 总是完整采集。T1/T2 默认只尝试预算为 500ms、读取量最多 8MiB 的内容采集，完整结束才保存清单；超出预算或读取失败则记 UNAVAILABLE，不保存部分清单，不阻塞普通编译/测试或强制升档。这是扫描预算，不是整个 Start 或底层文件系统 IO 的硬超时。若预期申请“不适用”或之后升级 T3，可在修改前显式使用 `Task -Operation Start ... -CaptureBaseline`，完整采集而不改变任务强度。T1/T2 仍无需下面的 T3 范围登记。
 
 在宿主根目录运行：
 
@@ -62,7 +64,9 @@ T3 确需 04 影响分析时，在 `.ai-workspace/specs/features/<Feature>/04_ch
 
 SetCaseScope 记录本任务必测用例和原因，保留变更历史。ID 必须存在于覆盖矩阵，且包含当前 04 声明的 requiredRegressionCases；需求、设计或测试定义修改后需重新核对登记。T3 验证这些用例的载体、断言及执行结果，不把功能内其他尚未开发用例强制加入本次执行；功能规格批准、哈希及整体覆盖定义仍检查。不能通过缩小范围掩盖已发生的失败批次。
 
-旧 ACTIVE T3、从旧 owner 收编的任务或 T1/T2 升为 T3，可能没有启动前内容清单。这时 Changes/Verify 明确提示 TASK_BASELINE_REQUIRED；仅在确有可信的修改前清单时使用 `Task -Operation SetBaseline ... -BaselineInputsRef <sha256> -Reason "修改前清单的来源依据"`，清单须已同步到 inputs 目录，设定后不可重置。缺乏修改前清单时应先从可信代码版本恢复该快照，不能把修改后的现场伪装成原始基线。历史 DONE 不需要迁移，接收新记录的各 Agent 引擎须同步升级。
+显式 ChangeTier 升到 T3 时自动复用本任务的 startInputs，保留 T1/T2 阶段已有改动；没有可信起点则拒绝升级并保留原档位。`SetBaseline -BaselineInputsRef <sha256> -Reason ...` 也只接受本任务创建时登记的同一引用，不能凭理由导入任意 manifest，更不能采用修改后 Run 的清单。已设定的基线不可重置。
+
+旧版直接在 T3 Start 创建的 baseline（source=START）继续可用；历史 DONE 不迁移。旧版手工 ADOPTED 基线、缺起点的旧任务不能被当成机器已验证的修改前状态。缺文件时从原工作区恢复原 task.json 和引用清单；从未采集过起点则不能事后补造，已有 T1/T2 可照常执行本档验证收尾。此类历史 T3 应核实完整改动范围后用原引擎收尾，再切换新引擎。接收含 startInputs 的新记录时，各 Agent 引擎需同步升级。
 
 ## 可选 JUnit XML 映射
 
@@ -127,6 +131,9 @@ T1 只需真实编译/基础检查；T2 还需相关测试和 RecordSync 记录�
   "include": ["build/handwritten", ".ai-workspace/context/runtime-contract.json"],
   "exclude": [
     { "path": "generated-output", "reason": "构建生成目录，不包含手写源码或构建配置" }
+  ],
+  "nonExecutable": [
+    { "path": "docs/operator-guide", "reason": "仅供人工阅读，不被构建、测试或运行时代码消费" }
   ]
 }
 ```
@@ -229,7 +236,7 @@ RecordSync 的 UPDATED/UNCHANGED 是 Agent 的语义核对记录，不用新的�
 
 ChangeTier 只改变活动任务的交付要求，保留原 taskId、ownerId、历史执行结果及 tierHistory。必须记录人工请求，不能由风险扫描或工具故障代替人工决定；失败测试不会被改成通过。恢复暂停任务先 Resume，再按人工要求改档。升级 T3 后须满足 T3 的规格、审核和测试要求，旧轻量证据不自动成为 T3 证据。
 
-纯解释性文档等确无构建或可执行行为影响时，可在 T1/T2 记录适用性：
+纯解释性文档等确无构建或可执行行为影响时，可在 T1/T2 记录适用性。项目应在 Start 前通过 verification-inputs.json 的可选 nonExecutable 列表声明这些字面路径及理由；这些文件仍进入指纹，不是 exclude。未声明的文件按可能影响构建/执行处理，不依据扩展名自动豁免。无需改变任何验证输入的治理文档修正，也可在起点完整时登记：
 
 ```powershell
 & ./ai-sop.ps1 Task -Operation SetApplicability -Feature Example -TaskId docs-1 -Agent CODEX `
@@ -238,7 +245,9 @@ ChangeTier 只改变活动任务的交付要求，保留原 taskId、ownerId、�
   -Kind test -Applicability NOT_APPLICABLE -Reason '仅修正措辞，无可执行行为变化'
 ```
 
-将 Applicability 设为 REQUIRED 可明确要求该验证（包括 T1 中人工要求的相关测试）。NOT_APPLICABLE 声明绑定当前输入，后续代码变化会使其过期；机器不能判断说明是否真实，Agent 必须核实。测试失败、测试缺失、环境不可用不得写成不适用；尚未解决的失败也不能用此命令豁免。T1/T2 的源码修改默认需要编译，T3 不接受轻量适用性豁免。RecordSync 的 Tests=NOT_APPLICABLE 仅描述用例同步，不替代测试执行适用性。
+将 Applicability 设为 REQUIRED 可明确要求该验证（包括 T1 中人工要求的相关测试）。NOT_APPLICABLE 同时绑定 startInputsRef 与当前输入：创建时和 Verify 时都比较起点，所有新增/修改/删除的验证输入必须属于预先声明的 nonExecutable 范围，输入算法和策略须与 Start 一致。先改源码再写“只改文档”、事后扩大豁免路径、缺起点或旧声明未绑定起点，均不能跳过验证；正常执行本档编译/相关测试即可，不要求因此升级 T3。原有 NOT_APPLICABLE 可改回 REQUIRED 后正常验证。项目声明是否符合真实语义仍由维护者和 Agent 核实，机器不宣称理解业务含义。
+
+测试失败、测试缺失、环境不可用不得写成不适用；尚未解决的失败也不能用此命令豁免。T1/T2 的源码修改默认需要编译，T1 仍默认不要求测试，T3 不接受轻量豁免。RecordSync 的 Tests=NOT_APPLICABLE 仅描述用例同步，不替代测试执行适用性。
 
 ### 待同步事项：可见但不阻塞
 

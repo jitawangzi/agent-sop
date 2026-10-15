@@ -52,6 +52,7 @@ param(
     [ValidateSet('Human','JsonLines')][string]$OutputFormat = 'Human',
     [switch]$IncludeHistory,
     [string]$BaselineInputsRef,
+    [switch]$CaptureBaseline,
     [string[]]$JUnitReports = @(),
     [string]$CaseMap,
     [switch]$QuarantineInvalidEvidence
@@ -210,7 +211,8 @@ Actions:
              Task -Operation Resume -Feature X -TaskId fix-1 -Agent CODEX
              Task -Operation Run -Feature X -TaskId fix-1 -Agent CODEX -Kind compile -Executable pwsh -Arguments ...
              Operations: Discover, Status, Start, Resume, Recover, InspectRecovery, Checkpoint, Suspend, Cancel, Run, RetryEvidence, ReviewImpact, Verify, Complete.
-             T3 scope: Changes, SetCaseScope -CaseIds ... -Reason ...; legacy adoption: SetBaseline -BaselineInputsRef ... -Reason ...
+             Start -CaptureBaseline explicitly captures full inputs before edits (T3 always does).
+             T3 scope: Changes, SetCaseScope -CaseIds ... -Reason ...; SetBaseline accepts only this task's recorded Start inputs.
              Optional test reports: Run -JUnitReports @(...) -CaseMap <mapping.json> (omit CaseIds).
              Invalid pending result: Recover -QuarantineInvalidEvidence -Reason ... after the original execution stops.
              Run accepts -Profile <name> and -TimeoutSeconds <seconds>.
@@ -221,7 +223,7 @@ Actions:
              RecordSync -Documentation UPDATED|UNCHANGED -Tests UPDATED|UNCHANGED|NOT_APPLICABLE -Summary ...
              FollowUps lists non-blocking pending documentation/tests/verification work.
              AddFollowUp / CloseFollowUp record or resolve an item using the active task owner.
-             SetApplicability records a concrete reason when compile/test is not applicable (T1/T2 only).
+             SetApplicability checks the Start snapshot and predeclared nonExecutable inputs (T1/T2 only).
              Recover pauses orphaned tasks; -ForceRecovery confirms the old agent has stopped.
   Help       Show this help.
 
@@ -243,7 +245,7 @@ if ($Action -in @('Task','Status') -and -not [IO.File]::Exists((Join-Path $Works
 switch ($Action) {
     "Task" {
         $taskArgs = @{ Operation=$Operation; WorkspacePath=$WorkspaceRoot }
-        foreach ($name in @('Feature','SpecDirectory','TaskId','Tier','Objective','Agent','NextAction','Notes','Kind','Batch','Executable','Arguments','CaseIds','Profile','TimeoutSeconds','ForceRecovery','ConfirmTakeover','RunId','Reason','UserRequest','Documentation','Tests','Summary','Applicability','FollowUpId','FollowUpKind','Scope','SourceTaskId','Disposition','Resolution','Json','OutputFormat','IncludeHistory','BaselineInputsRef','JUnitReports','CaseMap','QuarantineInvalidEvidence')) {
+        foreach ($name in @('Feature','SpecDirectory','TaskId','Tier','Objective','Agent','NextAction','Notes','Kind','Batch','Executable','Arguments','CaseIds','Profile','TimeoutSeconds','ForceRecovery','ConfirmTakeover','RunId','Reason','UserRequest','Documentation','Tests','Summary','Applicability','FollowUpId','FollowUpKind','Scope','SourceTaskId','Disposition','Resolution','Json','OutputFormat','IncludeHistory','BaselineInputsRef','CaptureBaseline','JUnitReports','CaseMap','QuarantineInvalidEvidence')) {
             if ($PSBoundParameters.ContainsKey($name)) { $taskArgs[$name] = $PSBoundParameters[$name] }
         }
         & (Join-Path $WorkspaceRoot '.ai-sop/scripts/workflow-task.ps1') @taskArgs

@@ -435,6 +435,10 @@
             "inputDigest": {
               "type": "string",
               "pattern": "^[0-9a-f]{64}$"
+            },
+            "startInputsRef": {
+              "type": "string",
+              "pattern": "^[0-9a-f]{64}$"
             }
           }
         },
@@ -463,6 +467,10 @@
               "format": "date-time"
             },
             "inputDigest": {
+              "type": "string",
+              "pattern": "^[0-9a-f]{64}$"
+            },
+            "startInputsRef": {
               "type": "string",
               "pattern": "^[0-9a-f]{64}$"
             }
@@ -571,6 +579,93 @@
             }
           }
         ]
+      }
+    },
+    "startInputs": {
+      "description": "Immutable origin recorded in the task creation transaction, never supplied by Run or SetBaseline.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "status",
+        "taskId",
+        "feature",
+        "createdAt",
+        "transactionId",
+        "mode"
+      ],
+      "properties": {
+        "status": {
+          "enum": [
+            "CAPTURED",
+            "UNAVAILABLE"
+          ]
+        },
+        "taskId": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9_-]{0,79}$"
+        },
+        "feature": {
+          "type": "string",
+          "minLength": 1
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "transactionId": {
+          "type": "string",
+          "pattern": "^claim-[0-9a-f]{32}$"
+        },
+        "mode": {
+          "enum": [
+            "FULL",
+            "BOUNDED"
+          ]
+        },
+        "inputsRef": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        },
+        "inputDigest": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        },
+        "reason": {
+          "type": "string",
+          "minLength": 1
+        }
+      },
+      "if": {
+        "properties": {
+          "status": {
+            "const": "CAPTURED"
+          }
+        }
+      },
+      "then": {
+        "required": [
+          "inputsRef",
+          "inputDigest"
+        ]
+      },
+      "else": {
+        "required": [
+          "reason"
+        ],
+        "not": {
+          "anyOf": [
+            {
+              "required": [
+                "inputsRef"
+              ]
+            },
+            {
+              "required": [
+                "inputDigest"
+              ]
+            }
+          ]
+        }
       }
     },
     "baseline": {

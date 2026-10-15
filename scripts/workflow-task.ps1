@@ -38,6 +38,7 @@ param(
     [ValidateSet('Human','JsonLines')][string]$OutputFormat = 'Human',
     [switch]$IncludeHistory,
     [string]$BaselineInputsRef,
+    [switch]$CaptureBaseline,
     [string[]]$JUnitReports = @(),
     [string]$CaseMap
 )
@@ -45,6 +46,7 @@ $ErrorActionPreference = 'Stop'
 . (Join-Path $PSScriptRoot 'task-context.ps1')
 . (Join-Path $PSScriptRoot 'workflow-session.ps1')
 $WorkspacePath = Resolve-PhysicalPathIdentity -Path $WorkspacePath
+if ($CaptureBaseline -and $Operation -ne 'Start') { throw 'CAPTURE_BASELINE_REQUIRES_START: capture before editing; Resume cannot redefine the original inputs' }
 $featuresRoot = Resolve-AiSopWorkspaceChild $WorkspacePath '.ai-workspace/specs/features'
 if (-not $Feature -and $SpecDirectory) { $Feature = Split-Path -Leaf $SpecDirectory }
 $Feature = Resolve-AiSopFeatureName $WorkspacePath $Feature
@@ -98,7 +100,7 @@ if ($Operation -eq 'Start') {
     if (-not $TaskId) { $TaskId = 'task-' + [guid]::NewGuid().ToString('N') }
     if ([IO.File]::Exists((Get-AiSopTaskPath $SpecDirectory $TaskId))) { throw 'TASK_ALREADY_EXISTS: Start creates a new TaskId; use Resume to continue the existing task' }
     [IO.Directory]::CreateDirectory($SpecDirectory) | Out-Null
-    & $ownerScript -Operation Claim -CreateTaskOnly @ownerArgs -TaskId $TaskId -OwnerId ('task-' + $TaskId) -Tier $Tier -Objective $Objective
+    & $ownerScript -Operation Claim -CreateTaskOnly @ownerArgs -TaskId $TaskId -OwnerId ('task-' + $TaskId) -Tier $Tier -Objective $Objective -CaptureBaseline:$CaptureBaseline
     if ($LASTEXITCODE -ne 0) { throw 'TASK_START_FAILED' }
     Write-Output "TASK_STARTED:$Feature/$TaskId tier=$Tier"
     Write-AiSopFollowUpReminder $WorkspacePath $Feature

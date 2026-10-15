@@ -25,9 +25,9 @@
 
 `Run` 在执行前后采集输入，输入变化则保留失败诊断、禁止完成。不能给旧成功结果换一个新哈希。不同测试批次可在相同输入下累计；失败批次必须以同批次的真实成功复跑解决。新记录不因单纯经过 7/30 天而失败，旧格式保留原校验以免静默改变证据含义。
 
-T3 Start 固定任务的修改前内容清单，长期功能批准基线独立保留。`Changes` 返回相对任务基线的内容差异；`ReviewImpact` 将 04 的 taskId、baseline、baselineInputDigest、changedFiles、changeSetDigest 与实际差异核对，并保存可交接的 `.ai-workspace/specs/.artifacts/changes/` 清单。Verify 同时检查 04、完整输入和差异清单，不能仅通过重填 inputDigest 复用旧分析。这是显式确认分析的动作，不是自动修复分析。更改已批准需求设计语义应 ResetApproval，T3 重新批准；T2 记录变更依据并同步，不要求当次补完整批准。
+T3 Start 固定任务的修改前内容清单，长期功能批准基线独立保留。所有新任务的 startInputs 与任务创建事务绑定，T1/T2 默认尝试 500ms/8MiB 预算采集，超限或失败记 UNAVAILABLE，部分清单不保存；Start -CaptureBaseline 可显式完整采集而不改变档位。预算不保证底层 IO 或整个 Start 的硬耗时。普通 T1/T2 编译/相关测试不要求起点可用。`Changes` 返回相对任务基线的内容差异；`ReviewImpact` 将 04 的 taskId、baseline、baselineInputDigest、changedFiles、changeSetDigest 与实际差异核对，并保存可交接的 `.ai-workspace/specs/.artifacts/changes/` 清单。Verify 同时检查 04、完整输入和差异清单，不能仅通过重填 inputDigest 复用旧分析。这是显式确认分析的动作，不是自动修复分析。更改已批准需求设计语义应 ResetApproval，T3 重新批准；T2 记录变更依据并同步，不要求当次补完整批准。
 
-T3 用 `SetCaseScope` 显式登记本任务 requiredCaseIds 和理由，包含影响分析声明的回归用例；规格变更后重新核对。必测用例的载体、断言和本任务执行证据必须有效，不强制执行整个功能的其他用例；整体规格批准及覆盖定义仍检查。独立新任务另取基线与范围；旧活动 T3 没有基线时仅接受明确来源的修改前清单，不能自动以已修改代码补造。
+T3 用 `SetCaseScope` 显式登记本任务 requiredCaseIds 和理由，包含影响分析声明的回归用例；规格变更后重新核对。必测用例的载体、断言和本任务执行证据必须有效，不强制执行整个功能的其他用例；整体规格批准及覆盖定义仍检查。独立新任务另取基线与范围；ChangeTier/SetBaseline 只复用当前任务 Start 已登记的引用，Run 清单或口述理由不能证明修改前来源。缺起点时拒绝升级并保留原档位。旧 T3 source=START 保持兼容，旧 ADOPTED 无来源证明则明确诊断，不能判为无差异；历史 DONE 不迁移。任务必须先 Start 再改动；该机制不防御同权限主体直接篡改引擎或任务记录。
 
 可选 JUnit XML 映射核对本次报告的 classname/name、成功状态及文件更新，CaseIds 从报告派生；缺失、陈旧、跳过或失败的映射不能通过。它不替代测试语义审查，也不对同权限恶意进程提供防伪保证。T1/T2 不新增此项必做流程。
 
@@ -47,7 +47,7 @@ ChangeTier 是人工调整交付要求的显式操作，需要原话和原因；
 
 T2 必须有 RecordSync；机器验证记录结构，不声称能够证明设计和代码语义一致。FollowUp 的判定、范围和关闭依据同样由 Agent 核实，标记本身永远不作为完成门禁。Start/Resume 每次只提醒一次，不自动加入后续任务。更新走现有 Owner Checkpoint 事务和锁，不引入第二套状态写入机制。
 
-T1/T2 的 NOT_APPLICABLE 必须提供具体理由并绑定当前输入，仅适用于无相应构建/可执行影响的任务。不能豁免尚未解决的失败或环境故障；T3 不接受此轻量豁免。源码/配置影响分析由 Agent 负责，不以扩展名猜测语义。缺字段的旧任务正常读取，T2 收尾需补一次当前同步说明，不强制迁移历史 DONE 任务。
+T1/T2 的 NOT_APPLICABLE 必须提供具体理由，同时绑定 startInputsRef 和当前输入。声明及 Verify 都检查起点到当前的全部输入增删改仅落在项目预先配置的 nonExecutable 字面路径中，并检查输入策略未变；未配置路径按可能执行输入处理。这些文件仍被哈希，不能用事后改配置或重声明消除源码变化。起点未知、旧豁免无起点绑定时改回 REQUIRED 并正常验证，不自动升级档位。不能豁免尚未解决的失败或环境故障；T3 不接受此轻量豁免。nonExecutable 的语义正确性仍由项目维护者/Agent 负责，不以扩展名猜测语义。旧任务仍能读取，正常 T1/T2 验证不要求补起点，不强制迁移历史 DONE。
 
 > 面向：维护 SOP 的人，以及需要分清「机器查什么 / AI 自报什么」的人。  
 > 操作清单（命令、完成表）仍以宿主投影 `AGENTS.md`「完成定义」为准。  

@@ -2,7 +2,7 @@
 # Task baselines describe one change. Feature baselines remain the authority for
 # long-lived approvals and legacy callers; neither is silently rewritten.
 function New-AiSopTaskBaseline {
-    param([string]$WorkspacePath, [string]$Tier, [switch]$CaptureInputs)
+    param([string]$WorkspacePath)
     $baseline=@{ vcs='none'; revision='0'; capturedAt=[DateTimeOffset]::UtcNow.ToString('o'); source='START' }
     if (Test-Path -LiteralPath (Join-Path $WorkspacePath '.svn')) {
         if (Get-Command svn -CommandType Application -ErrorAction SilentlyContinue) {
@@ -13,18 +13,90 @@ function New-AiSopTaskBaseline {
         $revision=& git -C $WorkspacePath rev-parse --verify HEAD 2>$null
         if ($LASTEXITCODE -eq 0) { $baseline.vcs='git'; $baseline.revision=[string]$revision }
     }
-    if ($CaptureInputs -and $Tier -eq 'T3') {
-        $snapshot=Get-AiSopInputSnapshot $WorkspacePath
-        $baseline.inputsRef=Save-AiSopInputManifest $snapshot $WorkspacePath
-        $baseline.inputDigest=$snapshot.digest
-    }
     return $baseline
+}
+
+function Initialize-AiSopTaskStart {
+    param($Task, [string]$WorkspacePath, [string]$TransactionId, [switch]$NewStart, [switch]$CaptureBaseline)
+    $Task['baseline']=New-AiSopTaskBaseline $WorkspacePath
+    if (-not $NewStart) { $Task.baseline.source='ADOPTED'; return }
+    $full=$Task.tier -eq 'T3' -or $CaptureBaseline
+    $origin=@{
+        status='UNAVAILABLE'; taskId=$Task.taskId; feature=$Task.feature; createdAt=$Task.createdAt
+        transactionId=$TransactionId; mode=$(if ($full) { 'FULL' } else { 'BOUNDED' })
+    }
+    try {
+        $snapshot=if ($full) { Get-AiSopInputSnapshot $WorkspacePath } else { Get-AiSopInputSnapshot $WorkspacePath -BudgetMilliseconds 500 -MaxBytes 8MB }
+        $origin.inputsRef=Save-AiSopInputManifest $snapshot $WorkspacePath
+        $origin.inputDigest=$snapshot.digest; $origin.status='CAPTURED'
+    } catch {
+        if ($full) { throw }
+        # No partial snapshot is authoritative. Normal T1/T2 verification stays
+        # available even when a quick start cannot prove the original inputs.
+        $origin.reason=$_.Exception.Message
+    }
+    $Task['startInputs']=$origin
+    if ($Task.tier -eq 'T3') {
+        $Task.baseline.inputsRef=$origin.inputsRef; $Task.baseline.inputDigest=$origin.inputDigest
+    }
+}
+
+function Read-AiSopTaskStartInputs {
+    param($Task, [string]$WorkspacePath, $ValidationContext)
+    $origin=$Task.startInputs
+    if (-not $origin -or $origin.status -ne 'CAPTURED') {
+        throw 'TASK_START_INPUTS_UNAVAILABLE: no complete input snapshot was recorded at this task Start. Keep normal tier verification; a new task may request Start -CaptureBaseline before edits. Never adopt a post-change Run snapshot'
+    }
+    if ($origin.taskId -cne $Task.taskId -or $origin.feature -cne $Task.feature -or $origin.createdAt -cne $Task.createdAt -or
+        $origin.transactionId -cnotmatch '^claim-[0-9a-f]{32}$') { throw 'TASK_START_IDENTITY_MISMATCH' }
+    return Read-AiSopVerificationInputs $origin $WorkspacePath $ValidationContext
+}
+
+function Set-AiSopTaskStartBaseline {
+    param($Task, [string]$WorkspacePath, [string]$InputsRef, [string]$Reason)
+    if ($Task.baseline.inputsRef) { throw 'TASK_BASELINE_IMMUTABLE' }
+    $snapshot=Read-AiSopTaskStartInputs $Task $WorkspacePath
+    if ($InputsRef -cne $Task.startInputs.inputsRef) { throw 'TASK_BASELINE_SOURCE_UNVERIFIED: only this task Start snapshot can supply its baseline' }
+    $Task.baseline.inputsRef=$Task.startInputs.inputsRef; $Task.baseline.inputDigest=$snapshot.digest
+    $Task.baseline.source='START'; $Task.baseline.reason=$Reason
+}
+
+function Assert-AiSopApplicabilityScope {
+    param($Task, [string]$WorkspacePath, $ValidationContext)
+    $before=Read-AiSopTaskStartInputs $Task $WorkspacePath $ValidationContext
+    $after=Get-AiSopValidationSnapshot $WorkspacePath $ValidationContext
+    if ($before.algorithm -cne $after.algorithm -or [string]$before.policyDigest -cne [string]$after.policyDigest) {
+        throw 'APPLICABILITY_POLICY_CHANGED: input rules must match task Start; do not classify changed source as non-executable after editing'
+    }
+    $policy=Get-AiSopInputPolicy $WorkspacePath
+    if ([string]$policy.digest -cne [string]$after.policyDigest) { throw 'APPLICABILITY_POLICY_CHANGED: policy changed during validation' }
+    $unsafe=@(foreach ($path in @(Get-AiSopChangedInputs $before $after)) {
+        $declared=$false
+        foreach ($rule in $policy.nonExecutable) { if (Test-AiSopInputPathWithin $path $rule.path) { $declared=$true; break } }
+        if (-not $declared) { $path }
+    })
+    if ($unsafe.Count) { throw "APPLICABILITY_INPUTS_CHANGED: verification required for $(@($unsafe | Select-Object -First 20) -join ', '); only predeclared nonExecutable inputs may change under this exemption" }
+    return $after
+}
+
+function Read-AiSopTaskBaselineInputs {
+    param($Task, [string]$WorkspacePath, $ValidationContext)
+    if (-not $Task.baseline.inputsRef) { throw 'TASK_BASELINE_REQUIRED: this task needs its recorded Start snapshot; SetBaseline cannot adopt arbitrary later manifests' }
+    if ($Task.startInputs) {
+        $before=Read-AiSopTaskStartInputs $Task $WorkspacePath $ValidationContext
+        if ($Task.baseline.inputsRef -cne $Task.startInputs.inputsRef -or $Task.baseline.inputDigest -cne $Task.startInputs.inputDigest) { throw 'TASK_BASELINE_SOURCE_UNVERIFIED' }
+    } elseif ($Task.baseline.source -ne 'START') {
+        # Prior T3 Start snapshots remain valid. Old manually adopted baselines
+        # have no machine-verifiable provenance and must not prove an empty delta.
+        throw 'TASK_BASELINE_SOURCE_UNVERIFIED: legacy adopted baseline has no task Start provenance; restore the original task Start record or finish with the original engine after reviewing its full change scope'
+    }
+    if (-not $Task.startInputs) { $before=Read-AiSopVerificationInputs $Task.baseline $WorkspacePath $ValidationContext }
+    return $before
 }
 
 function Get-AiSopTaskChanges {
     param($Task, [string]$WorkspacePath, $ValidationContext)
-    if (-not $Task.baseline.inputsRef) { throw 'TASK_BASELINE_REQUIRED: use a known pre-change input manifest with SetBaseline; never capture already modified code as the original baseline' }
-    $before=Read-AiSopVerificationInputs $Task.baseline $WorkspacePath $ValidationContext
+    $before=Read-AiSopTaskBaselineInputs $Task $WorkspacePath $ValidationContext
     $after=Get-AiSopValidationSnapshot $WorkspacePath $ValidationContext
     if ($before.algorithm -cne $after.algorithm -or [string]$before.policyDigest -cne [string]$after.policyDigest) {
         throw 'TASK_INPUT_POLICY_CHANGED: use the original input policy and matching engine algorithm; finish active tasks before upgrading input rules. Do not replace the task baseline to hide changed inputs'

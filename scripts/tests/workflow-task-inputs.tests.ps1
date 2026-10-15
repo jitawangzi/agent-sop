@@ -99,8 +99,10 @@ try {
     $counter=Join-Path $root 'scans.txt'
     $inputModule=Join-Path $engine 'scripts/verification-inputs.ps1'
     $inputText=[IO.File]::ReadAllText($inputModule)
-    $needle="function Get-AiSopInputSnapshot {`n    param([string]`$WorkspacePath)"
-    $inputText=$inputText.Replace($needle, ($needle + "`n    [IO.File]::AppendAllText('" + $counter.Replace("'","''") + "', 'scan;')"))
+    $tokens=$null; $parseErrors=$null
+    $inputAst=[Management.Automation.Language.Parser]::ParseInput($inputText,[ref]$tokens,[ref]$parseErrors)
+    $capture=$inputAst.Find({param($node) $node -is [Management.Automation.Language.FunctionDefinitionAst] -and $node.Name -eq 'Get-AiSopInputSnapshot'},$true)
+    $inputText=$inputText.Insert($capture.Body.ParamBlock.Extent.EndOffset,"`n    [IO.File]::AppendAllText('" + $counter.Replace("'","''") + "', 'scan;')")
     [IO.File]::WriteAllText($inputModule,$inputText)
     $template=Join-Path (Split-Path -Parent $scripts) 'distribution/templates/root/ai-sop.ps1'
     Copy-Item -LiteralPath $template -Destination (Join-Path $workspace 'ai-sop.ps1')
@@ -154,7 +156,8 @@ try {
         Assert ((Resolve-AiSopFeatureName $workspace example) -ceq 'example') 'POSIX feature lookup ignored case'
     }
     Task AddFollowUp two @{FollowUpId='sync';FollowUpKind='documentation';Summary='Deferred description';Scope=@('contract')} | Out-Null
-    Task SetApplicability two @{Kind='compile';Applicability='NOT_APPLICABLE';Reason='Only recording a deferred description'} | Out-Null
+    Fails { Task SetApplicability two @{Kind='compile';Applicability='NOT_APPLICABLE';Reason='Only recording a deferred description'} } 'APPLICABILITY_INPUTS_CHANGED'
+    Task Run two @{Kind='compile';Executable='pwsh';Arguments=@('-NoProfile','-Command','exit 0')} | Out-Null
     Task Complete two | Out-Null
     $discover=& $entry -Operation Discover -WorkspacePath $workspace -Feature Example -Json | ConvertFrom-Json
     Assert ($discover.tasks.Count -eq 2 -and ($discover.tasks | Where-Object taskId -eq two).pendingFollowUps.Count -eq 1) 'DONE task follow-up disappeared from discovery'

@@ -128,11 +128,15 @@ try {
     Assert (([IO.File]::ReadAllText($ownerPath) | ConvertFrom-Json).baseline -ceq $featureBaseline) 'Task start rewrote feature approval baseline'
     Task Cancel two | Out-Null
     Task Start three @{Tier='T1';Objective='Quick task later explicitly upgraded'} | Out-Null
-    Assert (-not (Read-AiSopTask $spec three).baseline.inputsRef) 'T1 start performed full snapshot'
+    $light=Read-AiSopTask $spec three
+    Assert (-not $light.baseline.inputsRef -and $light.startInputs.mode -eq 'BOUNDED') 'T1 start requested unbounded full capture'
+    Put 'src/current.txt' 'changed after light Start'
+    $late=Get-AiSopInputSnapshot $workspace; $lateRef=Save-AiSopInputManifest $late $workspace
+    Fails { Task SetBaseline three @{BaselineInputsRef=$lateRef;Reason='Post-change snapshot must not erase the delta'} } 'TASK_BASELINE_SOURCE_UNVERIFIED'
     Task ChangeTier three @{Tier='T3';Reason='User requests full scope';UserRequest='Use T3 now'} | Out-Null
-    Fails { Task Changes three } 'TASK_BASELINE_REQUIRED'
-    Task SetBaseline three @{BaselineInputsRef=$second.baseline.inputsRef;Reason='Known content immediately before this task, recorded by preceding task Start'} | Out-Null
-    Assert ((Task Changes three | ConvertFrom-Json).manifest.changes.Count -eq 0) 'Explicit known baseline could not be adopted'
+    Assert ((Read-AiSopTask $spec three).baseline.inputsRef -ceq $light.startInputs.inputsRef) 'Tier upgrade failed to reuse original Start snapshot'
+    Assert ((Task Changes three | ConvertFrom-Json).manifest.changes.Count -eq 1) 'Tier upgrade erased changes made under T1'
+    Fails { Task SetBaseline three @{BaselineInputsRef=$lateRef;Reason='Cannot replace original baseline'} } 'TASK_BASELINE_IMMUTABLE'
     Write-Output 'PASS: task/feature baselines, inherited dirt, content delta, impact binding, task case scope and migration'
 } finally {
     foreach ($key in $saved.Keys) { [Environment]::SetEnvironmentVariable($key,$saved[$key]) }

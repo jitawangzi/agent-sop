@@ -24,20 +24,22 @@ function Update-AiSopTaskPolicy {
         'SetCaseScope' { Set-AiSopTaskCaseScope $Task @($Update.caseIds) $Update.reason $SpecDirectory $At }
         'SetBaseline' {
             Require-Text $Update.reason 'reason'
-            if ($Task.baseline.inputsRef) { throw 'TASK_BASELINE_IMMUTABLE' }
-            $path=Get-AiSopInputManifestPath $WorkspacePath $Update.inputsRef
-            if (-not [IO.File]::Exists($path)) { throw 'TASK_BASELINE_MANIFEST_MISSING' }
-            $candidate=ConvertFrom-AiSopWorkflowJson ([IO.File]::ReadAllText($path)) -AsHashtable
-            $snapshot=Read-AiSopVerificationInputs @{inputsRef=$Update.inputsRef;inputDigest=$candidate.digest} $WorkspacePath
-            if (-not $Task.baseline) { $Task['baseline']=@{vcs='none';revision='0';capturedAt=$At;source='ADOPTED'} }
-            $Task.baseline.inputsRef=$Update.inputsRef; $Task.baseline.inputDigest=$snapshot.digest
-            $Task.baseline.source='ADOPTED'; $Task.baseline.reason=$Update.reason
+            Set-AiSopTaskStartBaseline $Task $WorkspacePath $Update.inputsRef $Update.reason
         }
         'ChangeTier'  {
             if ($Update.tier -notin @('T1','T2','T3')) { throw 'TASK_TIER_INVALID' }
             Require-Text $Update.reason 'reason'
             Require-Text $Update.userRequest 'userRequest'
             if ($Task.tier -ceq $Update.tier) { return }
+            if ($Update.tier -eq 'T3') {
+                if (-not $Task.baseline.inputsRef) {
+                    Set-AiSopTaskStartBaseline $Task $WorkspacePath $Task.startInputs.inputsRef 'Reuse the original task Start snapshot on explicit tier change'
+                } else {
+                    # Old manually adopted baselines must not move a light task
+                    # into T3 only to fail provenance checks at completion.
+                    Read-AiSopTaskBaselineInputs $Task $WorkspacePath | Out-Null
+                }
+            }
             $Task['tierHistory'] = @($Task.tierHistory | Where-Object { $null -ne $_ }) + @(@{
                 from=$Task.tier; to=$Update.tier; reason=$Update.reason; userRequest=$Update.userRequest; changedAt=$At
             })
@@ -56,11 +58,15 @@ function Update-AiSopTaskPolicy {
                 if ($Task.tier -eq 'T3') { throw 'T3_VERIFICATION_REQUIRED' }
                 $latest = @($Task.verifications | Where-Object { $_.kind -eq $Update.kind } | Group-Object batch | ForEach-Object { @($_.Group)[-1] })
                 if (@($latest | Where-Object { $_.exitCode -ne 0 -or -not $_.inputsStable }).Count) { throw 'FAILED_VERIFICATION_NOT_INAPPLICABLE' }
+                $snapshot=Assert-AiSopApplicabilityScope $Task $WorkspacePath
+            } else {
+                $snapshot=Get-AiSopInputSnapshot $WorkspacePath
             }
             if (-not $Task.applicability) { $Task['applicability'] = @{} }
             $Task.applicability[$Update.kind] = @{
-                status=$Update.status; reason=$Update.reason; recordedAt=$At; inputDigest=(Get-AiSopInputSnapshot $WorkspacePath).digest
+                status=$Update.status; reason=$Update.reason; recordedAt=$At; inputDigest=$snapshot.digest
             }
+            if ($Update.status -eq 'NOT_APPLICABLE') { $Task.applicability[$Update.kind].startInputsRef=$Task.startInputs.inputsRef }
         }
         'AddFollowUp' {
             Require-Text $Update.id 'id'

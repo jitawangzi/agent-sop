@@ -33,7 +33,7 @@ function Read-AiSopTask {
 
 function Get-AiSopChangedInputs {
     param($Before, $After)
-    return @(@($Before.files.Keys) + @($After.files.Keys) | Sort-Object -Unique | Where-Object {
+    return @(@($Before.files.Keys) + @($After.files.Keys) | Sort-Object -CaseSensitive -Unique | Where-Object {
         $Before.files[$_] -cne $After.files[$_]
     })
 }
@@ -89,6 +89,10 @@ function Get-AiSopTaskProblems {
         $records = @($Task.verifications | Where-Object { $_.kind -eq $kind })
         if ($applicability.status -eq 'NOT_APPLICABLE' -and $Task.tier -ne 'T3') {
             if ($applicability.inputDigest -cne $snapshot.digest) { $problems.Add("STALE_APPLICABILITY:$kind") }
+            try {
+                Assert-AiSopApplicabilityScope $Task $WorkspacePath $ValidationContext | Out-Null
+                if ($applicability.startInputsRef -cne $Task.startInputs.inputsRef) { $problems.Add("APPLICABILITY_START_UNBOUND:${kind}:renew applicability against the original task Start record") }
+            } catch { $problems.Add($_.Exception.Message) }
             $latest = @($records | Group-Object batch | ForEach-Object { @($_.Group)[-1] })
             foreach ($record in $latest) {
                 if ($record.exitCode -ne 0 -or -not $record.inputsStable) { $problems.Add("EXECUTION_FAILED:${kind}:$($record.batch):cannot hide failure with NOT_APPLICABLE") }
@@ -208,7 +212,7 @@ function Get-AiSopTaskSummary {
         ownerStatus=$ownerStatus; sessionStatus=$sessionStatus; verification=$verification
         recordedApprovals=(Get-AiSopRecordedApprovals $SpecDirectory)
         nextAction=$Task.nextAction; suggestedAction=$action; notes=$Task.notes; runs=$runs
-        baseline=$Task.baseline; caseScope=$Task.caseScope; requiredCaseIds=@($Task.requiredCaseIds)
+        baseline=$Task.baseline; startInputs=$Task.startInputs; caseScope=$Task.caseScope; requiredCaseIds=@($Task.requiredCaseIds)
         syncReview=$Task.syncReview; applicability=$Task.applicability
         tierHistory=@($Task.tierHistory | Where-Object { $null -ne $_ })
         pendingFollowUps=@($Task.followUps | Where-Object { $_.status -eq 'PENDING' })

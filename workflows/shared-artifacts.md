@@ -26,7 +26,7 @@ Recover 是显式恢复动作：任务转为 PAUSED，匹配的本地 owner 释�
 
 Status 与 Discover 共用摘要；Status 额外检查执行证据的当前输入，Discover 不做全工作区哈希扫描。历史批准按 recordedApprovals 展示，完整验收仍是 Verify。项目命令配置位于 `.ai-workspace/context/verification-commands.json`，遵守引擎 schemas/verification-commands.schema.json；配置选项包含命令参数数组、批次、超时和 CaseIds。
 
-任务执行记录中的 `inputs-v2` 是源码等验证输入的内容快照，不使用 Git status、暂存状态或基线 diff。配置 `.ai-workspace/context/verification-inputs.json` 后使用绑定配置摘要的 `inputs-v3`；include 补充输入、exclude 带理由排除生成文件/目录，仍覆盖未被排除的公共输入。新记录用 `inputsRef` 引用 `.ai-workspace/specs/.artifacts/inputs/<sha256>.json` 的去重清单，可定位过期文件；清单与任务都须在 specs 仓库持久化及同步，缺失/损坏不降级为通过。旧内嵌 inputs 继续兼容，旧引擎读取新记录前需要升级。算法版本参与摘要，旧 v1 证据不能换哈希继续充当新证据。任务 baseline 与功能长期 baseline 分离：T3 Start 的 inputsRef/inputDigest 固定修改前内容，Changes 生成任务差异清单；ReviewImpact 保存到 `.ai-workspace/specs/.artifacts/changes/<sha256>.json`。inputs/changes 清单均须同步。T1/T2 Start 只记版本注记，不扫描全量输入。
+任务执行记录中的 `inputs-v2` 是源码等验证输入的内容快照，不使用 Git status、暂存状态或基线 diff。配置 `.ai-workspace/context/verification-inputs.json` 后使用绑定配置摘要的 `inputs-v4`；include 补充输入、exclude 带理由排除生成文件/目录，更具体路径优先，仍覆盖未被排除的公共输入。可选 nonExecutable 只声明非执行输入，不排除其指纹。新记录用 `inputsRef` 引用 `.ai-workspace/specs/.artifacts/inputs/<sha256>.json` 的去重清单，可定位过期文件；清单与任务都须在 specs 仓库持久化及同步，缺失/损坏不降级为通过。旧内嵌 inputs 继续兼容，旧引擎读取新记录前需要升级。算法版本参与摘要，旧证据不能换哈希继续充当新证据。任务 baseline 与功能长期 baseline 分离：T3 Start 的 inputsRef/inputDigest 固定修改前内容，Changes 生成任务差异清单；ReviewImpact 保存到 `.ai-workspace/specs/.artifacts/changes/<sha256>.json`。inputs/changes 清单均须同步。T1/T2 Start 的默认内容采集受预算约束，只有完整结束才记录为起点。
 
 新日志使用本地 `.ai-workspace/.runtime/verification/<Feature>/<taskId>/<runId>.log`，目录带本地忽略规则；跨工作区不要求同步日志，旧任务日志仍支持读取。清单是不可变辅助产物，先原子写入再通过两阶段事务保存任务引用，失败可能留下无引用清单，但不出现假的已提交任务状态。暂不自动清理清单，避免删掉其他任务或未同步工作区仍使用的证据。
 
@@ -38,7 +38,9 @@ Status/Discover 默认文本显示未完成任务和有待同步项的历史任�
 
 T3 通过 SetCaseScope 登记必测用例和理由，保留 caseScopeHistory；范围须含当前 04 的 requiredRegressionCases，规格变化后重新核对。Verify 只对这些用例要求完成载体、断言和本次执行，功能整体覆盖定义和批准仍校验。
 
-T3 的 04 须满足 schema、任务 baseline 和语义完整性，taskId、baselineInputDigest、changedFiles、changeSetDigest 与 Changes 完整一致。旧活动 T3 缺修改前清单时必须显式 SetBaseline 并说明可信来源，不能用当前修改结果补造；历史 DONE 不迁移。人工/Agent 确认分析仍覆盖当前改动后，运行 `ReviewImpact` 将分析文件哈希和当前输入指纹绑定到任务；不能盲目用该命令刷新过期分析。需求/设计批准及 07 哈希检查保持有效。
+T3 的 04 须满足 schema、任务 baseline 和语义完整性，taskId、baselineInputDigest、changedFiles、changeSetDigest 与 Changes 完整一致。新任务 startInputs 与创建事务一起保存并随 task.json/inputs 清单交接，Resume 不重新采集。ChangeTier/SetBaseline 只复用本任务原始引用，不能用后续 Run 清单或来源理由代替起点证明；缺起点拒绝升级并保持原档位。旧 T3 Start 基线兼容，旧手工 ADOPTED 无来源证明则诊断；历史 DONE 不迁移。人工/Agent 确认分析仍覆盖当前改动后，运行 `ReviewImpact` 将分析文件哈希和当前输入指纹绑定到任务；不能盲目用该命令刷新过期分析。需求/设计批准及 07 哈希检查保持有效。
+
+T1/T2 默认仅尝试有 500ms/8MiB 预算的起点采集，失败不阻塞普通编译/相关测试；需要完整起点可在修改前 Start -CaptureBaseline。NOT_APPLICABLE 还须绑定此起点，增删改仅限项目在 Start 前配置的 nonExecutable 路径且策略未变。未记录起点的旧任务不能新开豁免，但正常验证仍可完成。
 
 
 任务记录可包含 `tierHistory`、`syncReview`、`applicability`、`followUps`，旧格式仍可读取。ChangeTier 记录人工请求和原因，不删除历史验证；Resume 不顺便改档。T2 的 RecordSync 记录 Agent 对受影响文档/测试的核对结论，机器不证明语义一致性，也不新增文档哈希门禁。

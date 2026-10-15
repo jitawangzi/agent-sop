@@ -43,6 +43,7 @@ function Assert-AiSopRunEvidence {
         $currentStartedAt = [Diagnostics.Process]::GetCurrentProcess().StartTime.ToUniversalTime().ToString('o')
         if ($ctx.runnerPid -cne [string]$PID -or $ctx.runnerStartedAt -cne $currentStartedAt) { throw "RUN_RUNNER_MISMATCH: expected $PID/$currentStartedAt; received $($ctx.runnerPid)/$($ctx.runnerStartedAt)" }
     }
+    if ($Evidence.inputsRef) { Read-AiSopVerificationInputs $Evidence $WorkspacePath | Out-Null }
     if (-not $Previous) {
         if ($Retry -or $Evidence.outcome -ne 'RUNNING') { throw 'RUN_BEGIN_REQUIRED' }
         if ($ctx.engineScriptHash -cne (Get-FileHash -LiteralPath (Join-Path $PSScriptRoot 'workflow-task.ps1') -Algorithm SHA256).Hash.ToLowerInvariant()) { throw 'RUN_ENGINE_MISMATCH' }
@@ -54,7 +55,7 @@ function Assert-AiSopRunEvidence {
     }
     # Every execution identity field is immutable after registration. A child
     # identity can be added once, after Process.Start, and cannot be replaced.
-    foreach ($field in @('runId','kind','batch','command','executedAt','inputDigest','inputs','caseIds','specDigest')) {
+    foreach ($field in @('runId','kind','batch','command','executedAt','inputDigest','inputs','inputsRef','caseIds','specDigest')) {
         if ((ConvertTo-AiSopWorkflowCanonicalJson $Previous[$field]) -cne (ConvertTo-AiSopWorkflowCanonicalJson $Evidence[$field])) { throw "RUN_IDENTITY_MISMATCH:$field" }
     }
     $oldContext = @{}; $newContext = @{}

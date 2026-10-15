@@ -1,0 +1,22 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object", "additionalProperties": false,
+  "required": ["schemaVersion", "operation", "workspace", "tasks", "warnings"],
+  "properties": {
+    "schemaVersion": { "const": "1.0" },
+    "operation": { "enum": ["Status", "Discover"] },
+    "workspace": { "type": "string", "minLength": 1 },
+    "warnings": { "type": "array", "items": { "type": "string" } },
+    "tasks": {
+      "type": "array",
+      "items": {
+        "type": "object", "required": ["feature", "taskId", "status"],
+        "properties": {
+          "feature": { "type": "string" },
+          "taskId": { "type": ["string", "null"] },
+          "status": { "enum": ["ACTIVE", "PAUSED", "DONE", "CANCELLED", "CORRUPT", "NOT_FOUND", "LEGACY"] }
+        }
+      }
+    }
+  }
+}

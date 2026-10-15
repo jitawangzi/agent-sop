@@ -26,7 +26,11 @@ Recover 是显式恢复动作：任务转为 PAUSED，匹配的本地 owner 释�
 
 Status 与 Discover 共用摘要；Status 额外检查执行证据的当前输入，Discover 不做全工作区哈希扫描。历史批准按 recordedApprovals 展示，完整验收仍是 Verify。项目命令配置位于 `.ai-workspace/context/verification-commands.json`，遵守引擎 schemas/verification-commands.schema.json；配置选项包含命令参数数组、批次、超时和 CaseIds。
 
-任务执行记录中的 `inputs-v2` 是源码等验证输入的内容快照，不使用 Git status、暂存状态或基线 diff。其清单保存在每次执行记录中，可定位过期文件。算法版本参与摘要，旧 v1 证据不能换哈希继续充当新证据。审查 baseline 仍用于分析修改范围，不与验证输入指纹混用。
+任务执行记录中的 `inputs-v2` 是源码等验证输入的内容快照，不使用 Git status、暂存状态或基线 diff。配置 `.ai-workspace/context/verification-inputs.json` 后使用绑定配置摘要的 `inputs-v3`；include 补充输入、exclude 带理由排除生成文件/目录，仍覆盖未被排除的公共输入。新记录用 `inputsRef` 引用 `.ai-workspace/specs/.artifacts/inputs/<sha256>.json` 的去重清单，可定位过期文件；清单与任务都须在 specs 仓库持久化及同步，缺失/损坏不降级为通过。旧内嵌 inputs 继续兼容，旧引擎读取新记录前需要升级。算法版本参与摘要，旧 v1 证据不能换哈希继续充当新证据。审查 baseline 仍用于分析修改范围，不与验证输入指纹混用。
+
+新日志使用本地 `.ai-workspace/.runtime/verification/<Feature>/<taskId>/<runId>.log`，目录带本地忽略规则；跨工作区不要求同步日志，旧任务日志仍支持读取。清单是不可变辅助产物，先原子写入再通过两阶段事务保存任务引用，失败可能留下无引用清单，但不出现假的已提交任务状态。暂不自动清理清单，避免删掉其他任务或未同步工作区仍使用的证据。
+
+Status/Discover 默认文本显示未完成任务和有待同步项的历史任务；`-TaskId` 精确查询，`-IncludeHistory` 包含全部历史。机器接口用 `-Json`（schemas/task-status.schema.json，schemaVersion=1.0，tasks/warnings 始终为数组），`-OutputFormat JsonLines` 保留旧逐行接口。单次 Status/Verify 共用输入快照，调用之间以及 Run 前后不缓存。Start 拒绝已存在 TaskId；Resume 不修改旧目标。LEGACY 仅表示旧流程资料，不代表一个已经建立权限的任务。
 
 新执行记录绑定任务、原会话 epoch、命令及用例范围。RUNNING 必须先入账，终态通过同一 runId 更新；同批次更换验证定义需 Reason，保留历史。`<runId>.pending.json` 为原子保存的待入账结果，失败时不得删除；RetryEvidence 只重试同一终态，Recover 在原进程已停止且本机绑定一致时可保存该结果。运行器续期不复活已结束/已转移会话。跨仍活跃会话的 Resume/Transfer 需 ConfirmTakeover；当前调用身份不能从原 owner 推断。
 

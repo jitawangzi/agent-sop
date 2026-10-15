@@ -253,35 +253,14 @@ if ($contextExists) {
     Add-Check "Context freshness" $true $(if ($stale.Count -eq 0) { "all fresh" } else { "WARN: " + ($stale -join "; ") })
 }
 
-# 12. Root AGENTS.md projection freshness
-$rootAgents = Join-Path $WorkspaceRoot "AGENTS.md"
-$templateAgents = Join-Path $SopRoot "distribution/templates/root/AGENTS.md"
-if ((Test-Path -LiteralPath $rootAgents -PathType Leaf) -and (Test-Path -LiteralPath $templateAgents -PathType Leaf)) {
-    $rootHash = (Get-FileHash -LiteralPath $rootAgents -Algorithm SHA256).Hash
-    $templateHash = (Get-FileHash -LiteralPath $templateAgents -Algorithm SHA256).Hash
-    if ($rootHash -ne $templateHash) {
-        Add-Check "AGENTS.md Projection" $true "WARN: 根目录 AGENTS.md 与真源模板不一致 (请运行 'ai-sop.ps1 Update' 刷新)"
-    } else {
-        Add-Check "AGENTS.md Projection" $true "up to date"
-    }
-}
-
-# 13. Root ai-sop.ps1 projection freshness
-$rootAiSop = Join-Path $WorkspaceRoot "ai-sop.ps1"
-$templateAiSop = Join-Path $SopRoot "distribution/templates/root/ai-sop.ps1"
-if ((Test-Path -LiteralPath $rootAiSop -PathType Leaf) -and (Test-Path -LiteralPath $templateAiSop -PathType Leaf)) {
-    $rootHash = (Get-FileHash -LiteralPath $rootAiSop -Algorithm SHA256).Hash
-    $templateHash = (Get-FileHash -LiteralPath $templateAiSop -Algorithm SHA256).Hash
-    if ($rootHash -ne $templateHash) {
-        Add-Check "ai-sop.ps1 Projection" $true "WARN: 根目录 ai-sop.ps1 与真源模板不一致 (请运行 'ai-sop.ps1 Update' 刷新)"
-    } else {
-        Add-Check "ai-sop.ps1 Projection" $true "up to date"
-    }
-}
-
-# Check the repository owning specs; an independent specs repo may be ignored
-# by its parent .ai-workspace repository without losing its own tracking.
+# Deployment drift is advisory, including the unified entry point and engine lock.
 . (Join-Path $PSScriptRoot 'task-context.ps1')
+$deploymentWarnings = @(Get-AiSopDeploymentWarnings $WorkspaceRoot)
+if ($deploymentWarnings.Count) {
+    foreach ($warning in $deploymentWarnings) { Add-Check 'Deployment consistency' $true "WARN $warning" }
+} else { Add-Check 'Deployment consistency' $true 'available projections and engine lock agree' }
+
+# Check the repository owning specs, independently of its parent context repo.
 $syncWarning = Get-AiSopSpecSyncWarning $WorkspaceRoot
 if ($syncWarning) { Add-Check 'Specification sync' $true "WARN $syncWarning" }
 

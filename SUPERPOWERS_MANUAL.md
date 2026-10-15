@@ -6,6 +6,8 @@
 
 `ai-sop.ps1 Status` 与 `Task -Operation Status` 使用同一任务摘要；支持 `-Feature`、`-TaskId` 筛选。Discover 显示相同的任务/归属/会话信息而不扫描全部验证输入。摘要中的 `recordedApprovals` 是批准记录展示，`EXECUTION_EVIDENCE_CURRENT` 只说明执行证据适用；`APPLICABILITY_RECORDED` 表示含不适用声明，不是未运行的命令通过，完整 T3 收尾仍使用 Verify。
 
+Status/Discover 默认输出简明文本，列出未完成任务及仍有待同步项的历史任务。指定 `-TaskId` 始终显示该任务；`-IncludeHistory` 查看完整历史。自动化请使用 `-Json`：输出单个 JSON 文档，固定包含 `schemaVersion: "1.0"`、`operation`、`workspace`、`tasks[]`、`warnings[]`（空结果仍为数组），契约见 `schemas/task-status.schema.json`。原逐行 JSON 调用需加 `-OutputFormat JsonLines`；不要解析默认文本。Start 遇到已存在的 TaskId 会提示使用 Resume，不会恢复旧任务或忽略新目标；Resume 保留原目标，新目标使用新 TaskId。
+
 正常切换 Agent 用 Resume。异常中断、本地 owner 丢失、或接收到没有本地 owner 的 ACTIVE 任务时，先 Status，再 `Task -Operation Recover`，恢复为 PAUSED 后 Resume。Recover 不把任务标成完成，不导入其他工作区的权限。若原会话仍标记 ACTIVE/IDLE，先确认旧 Agent 已停止，再显式使用 `-ForceRecovery -Notes "恢复原因"`；本机验证进程还在运行时，即使带该参数也会拒绝恢复。旧 ForceRelease 也会同步暂停任务、清除原会话绑定，使用同一事务。
 
 跨会话 Resume 遇到仍为 ACTIVE/IDLE 的旧会话，需要 `-ConfirmTakeover`，记录有意交接。用户已明确要求切换且旧 Agent 已停止时直接使用，不重复询问；普通 Checkpoint 不会借用旧 owner 的会话身份。Task 写操作可从唯一的 CODEX_SESSION_ID / ANTIGRAVITY_SESSION_ID 推断 Agent，否则显式传 `-Agent`。没有原生会话环境变量的 CLI 应为同一次会话设置稳定的 `AI_SESSION_ID`，跨进程调用保持一致；不能用读取 owner 的方式冒充该会话。
@@ -70,6 +72,24 @@ T1 只需真实编译/基础检查；T2 还需相关测试和 RecordSync 记录�
 任务内容指纹排除暂存状态、日志及常见构建输出，但保守包含公共输入。它不是完整的环境快照；服务、工具链或外部依赖变化时仍应按实际风险重新验证。详细约束见 `workflows/shared-artifacts.md`。
 
 当前算法为 `inputs-v2`：修复源码中同名 build/bin 等目录被漏扫，排除 worktree 的 .git 文件、滚动日志和根目录 .ai-sop-staging。常规输出目录仅在工作区根或可识别的 Maven/Gradle 模块根排除；有 web.xml 的 WEB-INF/classes 作为标准 Java Web 编译输出排除，web.xml 本身仍是输入。升级会使旧 inputs-v1 执行证据过期，下一次相关验证重新采集；不重写旧成功记录的哈希，不撤销历史 DONE 任务。
+
+宿主可以在 `.ai-workspace/context/verification-inputs.json` 调整输入范围：
+
+```json
+{
+  "schemaVersion": "1.0",
+  "include": ["build/handwritten", ".ai-workspace/context/runtime-contract.json"],
+  "exclude": [
+    { "path": "generated-output", "reason": "构建生成目录，不包含手写源码或构建配置" }
+  ]
+}
+```
+
+`include` 是补充纳入被默认规则排除的真实输入，不是限制扫描范围的白名单；未列出的公共代码仍检查。`exclude` 排除明确的生成文件或目录，必须说明原因。均为宿主根目录下的字面路径，匹配自身及子目录，不支持 glob、绝对路径或 `..`；显式 include 优先，重新纳入子路径不会纳入其被排除的兄弟路径。include 目标必须存在，不能纳入 VCS、引擎、规格和运行时目录。修改配置前应核对共享依赖，不应为了通过门禁而排除源码。机器检查配置格式及路径边界，不证明排除理由的语义；不自动采用 Git/SVN ignore 作为验证依据。有配置使用绑定配置摘要的 `inputs-v3`，新增/更改/移除配置会使旧执行证据过期；无配置继续 v2。
+
+新 Run 将完整清单按内容哈希去重保存到 `.ai-workspace/specs/.artifacts/inputs/<sha256>.json`，task.json 仅保存 `inputsRef` 和输入摘要。这部分须随规格 Git 一起提交、同步；只复制功能目录不足以交接新记录。缺失、损坏或摘要不匹配会明确诊断，不能冒充成功。旧内嵌清单仍可读取，无需迁移历史任务；接收新记录的引擎需要升级到支持 inputsRef 的版本。日志默认写入 `.ai-workspace/.runtime/verification/<Feature>/<taskId>/<runId>.log`，该本地目录自动放置忽略规则，不随规格同步；日志缺失不等于执行失败，结果依据持久证据判断。旧日志路径仍可读取。
+
+单次 Status 和 Verify 的任务校验共用一次输入快照和规格摘要；下一次调用重新扫描。Run 前后始终分别扫描，不能缓存掉运行期间的输入变化。Status/Discover/Doctor 会提示宿主入口、AGENTS 投影或引擎锁版本不一致；这是部署提醒，不增加 T1/T2 完成门禁。缺少引擎时 Task/Status 明确提示初始化。旧功能会显示 LEGACY、档位、阶段及本地归属；T3 的损坏规格 JSON 会标出文件和错误，T1/T2 不因历史损坏规格而被迫补跑完整流程。
 
 
 本指南说明多个 harness（Claude Code / GitHub Copilot / Antigravity / Cursor / Codex / Pi）如何使用本项目的 AI SOP 完成游戏服务端开发。**T3 由 Superpowers 过程引擎编排；T2/T1用 AGENTS.md + 专家 Skills，不调用 Superpowers**。领域专家 Skill 被强制绑定调用；详见 `.ai-sop/workflows/superpowers-adapter.md`。各 harness 共享 `.ai-workspace/context/` 与规范化功能产物。各工具的能力差异（能跑 T3 还是支持 T1/T2）见 `.ai-sop/scripts/harness-capability.ps1` 的 STRICT/BLOCKED 判定。

@@ -139,6 +139,7 @@ $MutationDeadlineUtc = [DateTimeOffset]::UtcNow.AddMilliseconds($mutationDeadlin
 . (Join-Path $PSScriptRoot "workflow-transaction.ps1")
 . (Join-Path $PSScriptRoot "workflow-session.ps1")
 . (Join-Path $PSScriptRoot "task-context.ps1")
+$script:TaskValidationContext = New-AiSopValidationContext
 
 function Assert-Argument {
     param(
@@ -396,10 +397,14 @@ function Read-JsonObject {
     }
 
     $json = Get-Content -LiteralPath $FilePath -Raw
+    try { $parsed = ConvertFrom-AiSopWorkflowJson $json -AsHashtable }
+    catch { throw "SPEC_JSON_INVALID: $FilePath; $($_.Exception.Message)" }
+    if ($parsed -isnot [Collections.IDictionary]) { throw "SPEC_JSON_INVALID: $FilePath; expected a JSON object" }
     if ([System.IO.Path]::GetFileName($SchemaPath).Equals("test-coverage.schema.json", [System.StringComparison]::OrdinalIgnoreCase)) {
         $json = Repair-LegacyTestCoverageJson -Json $json
     }
-    Assert-JsonSchema -Json $json -SchemaPath $SchemaPath
+    try { Assert-JsonSchema -Json $json -SchemaPath $SchemaPath }
+    catch { throw "SPEC_SCHEMA_INVALID: $FilePath; $($_.Exception.Message)" }
     return $json | ConvertFrom-Json
 }
 
@@ -1971,7 +1976,7 @@ function Validate-ChangeImpactState {
     if ($TaskId) {
         $taskRecord = Read-AiSopTask $specDir $TaskId
         $artifactHash = (Get-FileHash -LiteralPath $ImpactPath -Algorithm SHA256).Hash.ToLowerInvariant()
-        $inputDigest = (Get-AiSopInputSnapshot $wsRoot).digest
+        $inputDigest = (Get-AiSopValidationSnapshot $wsRoot $script:TaskValidationContext).digest
         if (-not $taskRecord.impactReview -or $taskRecord.impactReview.artifactHash -cne $artifactHash -or $taskRecord.impactReview.inputDigest -cne $inputDigest) {
             throw 'IMPACT_REVIEW_REQUIRED: inspect current analysis and code, then workflow-task ReviewImpact; do not rewrite old successful evidence digests.'
         }
@@ -3481,7 +3486,7 @@ function Get-CoveragePlaceholderWarnings {
     if ($TaskId -and $mustCheckEvidence) {
         $taskRecord = Read-AiSopTask (Split-Path -Parent $CoveragePath) $TaskId
         $taskRecord.requiredCaseIds = @($coverage.cases | ForEach-Object { $_.id })
-        foreach ($problem in @(Get-AiSopTaskProblems $taskRecord (Resolve-AiSopWorkspaceRoot -StartPath (Split-Path -Parent $CoveragePath)) (Split-Path -Parent $CoveragePath))) { $errors.Add($problem) }
+        foreach ($problem in @(Get-AiSopTaskProblems $taskRecord (Resolve-AiSopWorkspaceRoot -StartPath (Split-Path -Parent $CoveragePath)) (Split-Path -Parent $CoveragePath) $script:TaskValidationContext)) { $errors.Add($problem) }
     }
     if ($mustCheckEvidence -and -not $TaskId) {
         if ($null -eq $coverage.executionEvidence) {
@@ -5596,7 +5601,7 @@ switch ($Operation) {
             $lightTask = Read-AiSopTask $specDir $TaskId
             if ($lightTask.tier -in @('T1','T2')) {
                 $lightRoot = Resolve-AiSopWorkspaceRoot -StartPath $specDir
-                $problems = @(Get-AiSopTaskProblems $lightTask $lightRoot)
+                $problems = @(Get-AiSopTaskProblems $lightTask $lightRoot -ValidationContext $script:TaskValidationContext)
                 Write-Output "tier=$($lightTask.tier) phase=$($lightTask.status) task=$TaskId"
                 if ($lightTask.syncReview) { Write-Output "SYNC_REVIEW: documentation=$($lightTask.syncReview.documentation) tests=$($lightTask.syncReview.tests); $($lightTask.syncReview.summary)" }
                 if ($lightTask.applicability) {
@@ -5653,7 +5658,7 @@ switch ($Operation) {
         }
 
         if ($currentTask) {
-            foreach ($problem in @(Get-AiSopTaskProblems $currentTask $wsRoot $specDir)) { $failures.Add($problem); $checks.Add("[X] $problem") }
+            foreach ($problem in @(Get-AiSopTaskProblems $currentTask $wsRoot $specDir $script:TaskValidationContext)) { $failures.Add($problem); $checks.Add("[X] $problem") }
             $checks.Add("[i] Task ${TaskId}: tier=$effectiveTier; completion applies to this task, not the entire feature")
         }
         if ($effectiveTier -eq "T3") {

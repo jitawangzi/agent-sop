@@ -1,0 +1,13 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object", "additionalProperties": false,
+  "required": ["algorithm", "digest", "files"],
+  "properties": {
+    "algorithm": { "enum": ["inputs-v2", "inputs-v3"] },
+    "digest": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+    "policyDigest": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+    "files": { "type": "object", "additionalProperties": { "type": "string", "pattern": "^[0-9a-f]{64}$" } }
+  },
+  "if": { "properties": { "algorithm": { "const": "inputs-v3" } } },
+  "then": { "required": ["policyDigest"] }
+}

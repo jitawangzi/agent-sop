@@ -61,10 +61,10 @@ try {
     $released=Get-Content -LiteralPath $ownerPath -Raw | ConvertFrom-Json
     $session=Get-AiSopWorkflowSession -SessionKey $released.sessionBinding.sessionKey -WorkspacePath $workspace
     Assert (-not $session.Record.boundOwnerId) 'Recover left old session bound'
-    $status=Task Status | ConvertFrom-Json
-    $discover=Task Discover | ConvertFrom-Json
+    $status=Task Status @{OutputFormat="JsonLines"} | ConvertFrom-Json
+    $discover=Task Discover @{OutputFormat="JsonLines"} | ConvertFrom-Json
     Assert ($status.status -eq 'PAUSED' -and $discover.status -eq $status.status -and $status.ownerStatus -eq 'RELEASED') 'Discover/Status disagree'
-    $rootStatus=& $rootEntry Status -Feature Example -TaskId recovery | ConvertFrom-Json
+    $rootStatus=& $rootEntry Status -Feature Example -TaskId recovery -OutputFormat JsonLines | ConvertFrom-Json
     Assert ($rootStatus.status -eq $status.status -and $rootStatus.ownerStatus -eq $status.ownerStatus) 'Root Status still shows legacy state'
     Task Resume | Out-Null
     & (Join-Path $scripts 'workflow-owner.ps1') -Operation ForceRelease -Feature Example -SpecDirectory $spec -Workflow SUPERPOWERS -Agent CODEX -OwnerId 'task-recovery' | Out-Null
@@ -113,13 +113,13 @@ try {
     while ([DateTimeOffset]::UtcNow -lt $deadline -and -not $runner.HasExited) {
         $live=(Read-AiSopTask $spec 'recovery').verifications[-1]
         if ($live.outcome -eq 'RUNNING' -and $live.context.childPid) {
-            $log=Join-Path (Split-Path -Parent (Get-AiSopTaskPath $spec 'recovery')) $live.context.logFile
+            $log=Get-AiSopRunLogPath $live $workspace $spec 'recovery'
             if ((Test-Path -LiteralPath $log) -and (Read-LiveLog $log).Contains('READY')) { $streamed=$true; break }
         }
         [Threading.Thread]::Sleep(100)
     }
     Assert $streamed "Output was not streamed before exit: $($runner.HasExited)"
-    $liveStatus=Task Status | ConvertFrom-Json
+    $liveStatus=Task Status @{OutputFormat="JsonLines"} | ConvertFrom-Json
     Assert ($liveStatus.runs[0].activity -eq 'RUNNING') 'Status missed running process'
     Fails { Task Recover @{ForceRecovery=$true} } 'RUN_STILL_ACTIVE'
     Fails { Task Resume } 'RUN_UNFINISHED'
@@ -131,7 +131,7 @@ try {
     # Only terminate the Process instance created by this test, including its child.
     $runner.Kill($true); $runner.WaitForExit(5000) | Out-Null
     $runner.Dispose(); $runner=$null
-    $abandoned=Task Status | ConvertFrom-Json
+    $abandoned=Task Status @{OutputFormat="JsonLines"} | ConvertFrom-Json
     Assert ($abandoned.runs[0].activity -eq 'INTERRUPTED') 'Abrupt termination not diagnosed'
     Fails { Task Complete } 'RUN_UNFINISHED'
     Task Recover @{ForceRecovery=$true;Notes='Runner terminated during test'} | Out-Null

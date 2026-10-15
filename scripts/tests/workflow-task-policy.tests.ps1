@@ -36,7 +36,7 @@ try {
     Task Run urgent (@{Kind='compile'} + $check) | Out-Null
     Task Complete urgent | Out-Null
     Assert ((Read-AiSopTask $spec urgent).status -eq 'DONE') 'Pending follow-ups blocked T1 completion'
-    $discovery=& $entry -Operation Discover -WorkspacePath $workspace -Feature Example | ConvertFrom-Json
+    $discovery=& $entry -Operation Discover -OutputFormat JsonLines -WorkspacePath $workspace -Feature Example | ConvertFrom-Json
     Assert ($discovery.pendingFollowUps.Count -eq 2) 'Completed task pending items disappeared from discovery'
 
     # Another feature gets only a summary; startup does not request acknowledgement.
@@ -86,7 +86,7 @@ try {
     & $entry -Operation Resume -WorkspacePath $workspace -Feature Example -TaskId change -Agent CURSOR -ConfirmTakeover | Out-Null
     $env:CODEX_SESSION_ID='policy-new'
     Task Resume change @{ConfirmTakeover=$true} | Out-Null
-    $status=& $entry -Operation Status -WorkspacePath $workspace -Feature Example -TaskId change | ConvertFrom-Json
+    $status=& $entry -Operation Status -OutputFormat JsonLines -WorkspacePath $workspace -Feature Example -TaskId change | ConvertFrom-Json
     Assert ($status.tier -eq 'T1' -and $status.failedVerifications.Count -eq 1) 'Cross-agent handoff lost tier or concealed optional failed tests'
     $verification=Task Verify change | Out-String
     Assert ($verification -match 'UNRESOLVED_OPTIONAL_TEST' -and $verification -match 'VERIFY_COMPLETION_PASS') 'T1 must report unresolved optional tests without pretending they passed'
@@ -104,7 +104,7 @@ try {
     Task SetApplicability docs @{Kind='test'; Applicability='NOT_APPLICABLE'; Reason='Only spelling changed; no executable behavior affected.'} | Out-Null
     Task RecordSync docs @{Documentation='UPDATED'; Tests='NOT_APPLICABLE'; Summary='Corrected spelling only; no behavior or test definition changes.'} | Out-Null
     Task Verify docs | Out-Null
-    $docStatus=& $entry -Operation Status -WorkspacePath $workspace -Feature Example -TaskId docs | ConvertFrom-Json
+    $docStatus=& $entry -Operation Status -OutputFormat JsonLines -WorkspacePath $workspace -Feature Example -TaskId docs | ConvertFrom-Json
     Assert ($docStatus.verification -eq 'APPLICABILITY_RECORDED') 'Inapplicable checks were presented as executed evidence'
     [IO.File]::WriteAllText((Join-Path $workspace 'input.txt'), 'changed')
     Fails { Task Verify docs } 'Task Verify failed'

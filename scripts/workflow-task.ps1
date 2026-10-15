@@ -32,45 +32,55 @@ param(
     [string[]]$Scope = @(),
     [string]$SourceTaskId,
     [ValidateSet('RESOLVED','NOT_NEEDED')][string]$Disposition = 'RESOLVED',
-    [string]$Resolution
+    [string]$Resolution,
+    [switch]$Json,
+    [ValidateSet('Human','JsonLines')][string]$OutputFormat = 'Human',
+    [switch]$IncludeHistory
 )
 $ErrorActionPreference = 'Stop'
 . (Join-Path $PSScriptRoot 'task-context.ps1')
 . (Join-Path $PSScriptRoot 'workflow-session.ps1')
 $WorkspacePath = Resolve-PhysicalPathIdentity -Path $WorkspacePath
-$featuresRoot = Join-Path $WorkspacePath '.ai-workspace/specs/features'
+$featuresRoot = Resolve-AiSopWorkspaceChild $WorkspacePath '.ai-workspace/specs/features'
+if (-not $Feature -and $SpecDirectory) { $Feature = Split-Path -Leaf $SpecDirectory }
+$Feature = Resolve-AiSopFeatureName $WorkspacePath $Feature
+$deploymentWarnings = @(Get-AiSopDeploymentWarnings $WorkspacePath)
+if ($Operation -notin @('Discover','Status')) { foreach ($warning in $deploymentWarnings) { Write-Warning $warning } }
 if ($Operation -eq 'FollowUps') {
     $items = @(Get-AiSopPendingFollowUps $WorkspacePath | Where-Object { (-not $Feature -or $_.feature -ceq $Feature) -and (-not $TaskId -or $_.taskId -ceq $TaskId) })
     @{ pendingFollowUps=$items; count=$items.Count; blocking=$false } | ConvertTo-Json -Depth 8
     exit 0
 }
 if ($Operation -in @('Discover','Status')) {
-    if (-not $Feature -and $SpecDirectory) { $Feature = Split-Path -Leaf $SpecDirectory }
-    if ($Feature -and $Feature -notmatch '^[A-Za-z0-9](?:[A-Za-z0-9._-]*[A-Za-z0-9_-])?$') { throw 'FEATURE_INVALID' }
     $dirs = @(Get-ChildItem -LiteralPath $featuresRoot -Directory -ErrorAction SilentlyContinue | Where-Object { -not $Feature -or $_.Name -ceq $Feature })
-    if ($SpecDirectory -and (Resolve-PhysicalPathIdentity $SpecDirectory) -cne (Resolve-PhysicalPathIdentity (Join-Path $featuresRoot $Feature))) { throw 'TASK_WORKSPACE_MISMATCH' }
+    if ($SpecDirectory -and (Resolve-PhysicalPathIdentity $SpecDirectory) -cne (Resolve-AiSopWorkspaceChild $WorkspacePath ".ai-workspace/specs/features/$Feature")) { throw 'TASK_WORKSPACE_MISMATCH' }
+    $items = [Collections.Generic.List[object]]::new()
+    $validationContext = New-AiSopValidationContext
     foreach ($dir in $dirs) {
-        $records = @(Get-ChildItem -LiteralPath (Join-Path $dir.FullName 'tasks') -Directory -ErrorAction SilentlyContinue | Where-Object { -not $TaskId -or $_.Name -ceq $TaskId })
+        $canonicalDir = Resolve-AiSopWorkspaceChild $WorkspacePath ".ai-workspace/specs/features/$($dir.Name)"
+        $records = @(Get-ChildItem -LiteralPath (Join-Path $canonicalDir 'tasks') -Directory -ErrorAction SilentlyContinue | Where-Object { -not $TaskId -or $_.Name -ceq $TaskId })
         foreach ($entry in $records) {
             try {
-                $task = Read-AiSopTask $dir.FullName $entry.Name
-                Get-AiSopTaskSummary $task $WorkspacePath $dir.FullName -CheckInputs:($Operation -eq 'Status') | ConvertTo-Json -Depth 12 -Compress
-            } catch { @{ feature=$dir.Name; taskId=$entry.Name; status='CORRUPT'; diagnostic=$_.Exception.Message } | ConvertTo-Json -Compress }
+                $task = Read-AiSopTask $canonicalDir $entry.Name
+                if (-not $IncludeHistory -and -not $TaskId -and $task.status -in @('DONE','CANCELLED') -and -not @($task.followUps | Where-Object { $_.status -eq 'PENDING' }).Count) { continue }
+                $items.Add((Get-AiSopTaskSummary $task $WorkspacePath $canonicalDir -CheckInputs:($Operation -eq 'Status') -ValidationContext $validationContext))
+            } catch { $items.Add(@{ feature=$dir.Name; taskId=$entry.Name; status='CORRUPT'; diagnostic=$_.Exception.Message; suggestedAction='Inspect the task record; do not recreate it or infer ownership from damaged state.' }) }
         }
         if (-not $records.Count) {
-            @{ feature=$dir.Name; taskId=$TaskId; status=$(if ($TaskId) { 'NOT_FOUND' } else { 'LEGACY' }); recordedApprovals=(Get-AiSopRecordedApprovals $dir.FullName); suggestedAction='Inspect existing ownership and approvals; Start independent work or Resume the legacy task.' } | ConvertTo-Json -Depth 5 -Compress
+            if ($TaskId) { $items.Add(@{ feature=$dir.Name; taskId=$TaskId; status='NOT_FOUND'; suggestedAction='Select an existing TaskId or Start independent work.' }) }
+            else { $items.Add((Get-AiSopLegacyTaskSummary $canonicalDir $WorkspacePath)) }
         }
     }
-    if (-not $dirs.Count) { @{ feature=$Feature; taskId=$TaskId; status='NOT_FOUND'; suggestedAction='Start a task with an explicit feature and objective.' } | ConvertTo-Json -Compress }
-    $syncWarning = Get-AiSopSpecSyncWarning $WorkspacePath
-    if ($syncWarning) { Write-Warning $syncWarning }
+    if (-not $dirs.Count -and ($Feature -or $TaskId)) { $items.Add(@{ feature=$Feature; taskId=$TaskId; status='NOT_FOUND'; suggestedAction='Start a task with an explicit feature and objective.' }) }
+    $warnings = @($deploymentWarnings) + @(Get-AiSopSpecSyncWarning $WorkspacePath)
+    Write-AiSopTaskStatus -Items $items.ToArray() -WorkspacePath $WorkspacePath -Operation $Operation -Format $(if ($Json) { 'Json' } else { $OutputFormat }) -Warnings $warnings
     exit 0
 }
 if (-not $Feature -and $SpecDirectory) { $Feature = Split-Path -Leaf $SpecDirectory }
 if ($Feature -notmatch '^[A-Za-z0-9](?:[A-Za-z0-9._-]*[A-Za-z0-9_-])?$') { throw 'FEATURE_REQUIRED' }
 if (-not $SpecDirectory) { $SpecDirectory = Join-Path $featuresRoot $Feature }
 $SpecDirectory = Resolve-PhysicalPathIdentity -Path $SpecDirectory
-$canonicalSpec = Resolve-PhysicalPathIdentity -Path (Join-Path $featuresRoot $Feature)
+$canonicalSpec = Resolve-AiSopWorkspaceChild $WorkspacePath ".ai-workspace/specs/features/$Feature"
 if ($SpecDirectory -cne $canonicalSpec) { throw 'TASK_WORKSPACE_MISMATCH' }
 $ownerScript = Join-Path $PSScriptRoot 'workflow-owner.ps1'
 $ownerPath = Join-Path (Get-AiSopWorkflowOwnerRegistryRoot -WorkspacePath $WorkspacePath) ($Feature.ToLowerInvariant() + '.json')
@@ -81,8 +91,9 @@ if ($PSBoundParameters.ContainsKey('NextAction')) { $ownerArgs.NextAction = $Nex
 if ($PSBoundParameters.ContainsKey('Notes')) { $ownerArgs.Notes = $Notes }
 if ($Operation -eq 'Start') {
     if (-not $TaskId) { $TaskId = 'task-' + [guid]::NewGuid().ToString('N') }
+    if ([IO.File]::Exists((Get-AiSopTaskPath $SpecDirectory $TaskId))) { throw 'TASK_ALREADY_EXISTS: Start creates a new TaskId; use Resume to continue the existing task' }
     [IO.Directory]::CreateDirectory($SpecDirectory) | Out-Null
-    & $ownerScript -Operation Claim @ownerArgs -TaskId $TaskId -OwnerId ('task-' + $TaskId) -Tier $Tier -Objective $Objective
+    & $ownerScript -Operation Claim -CreateTaskOnly @ownerArgs -TaskId $TaskId -OwnerId ('task-' + $TaskId) -Tier $Tier -Objective $Objective
     if ($LASTEXITCODE -ne 0) { throw 'TASK_START_FAILED' }
     Write-Output "TASK_STARTED:$Feature/$TaskId tier=$Tier"
     Write-AiSopFollowUpReminder $WorkspacePath $Feature
@@ -97,6 +108,7 @@ if ($Operation -eq 'Resume' -and -not $TaskId -and $owner -and $owner.status -eq
         $Tier = (Get-Content -LiteralPath $legacyState -Raw | ConvertFrom-Json).tier
     }
     if (-not $PSBoundParameters.ContainsKey('Tier') -and -not (Test-Path -LiteralPath $legacyState)) { throw 'LEGACY_TIER_REQUIRED: inspect original scope and explicitly select its tier before adoption.' }
+    if ($Tier -notin @('T1','T2','T3')) { throw 'LEGACY_TIER_REQUIRED: original tier is not T1/T2/T3; select the intended tier explicitly for adoption' }
     if (-not $Objective) { $Objective = "Continue existing feature $Feature" }
     & $ownerScript -Operation Transfer @ownerArgs -OwnerId $owner.ownerId -TaskId $TaskId -Tier $Tier -Objective $Objective -ConfirmTakeover:$ConfirmTakeover
     if ($LASTEXITCODE -ne 0) { throw 'TASK_ADOPTION_FAILED' }
@@ -112,6 +124,7 @@ if ($Operation -eq 'Recover') {
     exit $LASTEXITCODE
 }
 if ($Operation -eq 'Resume') {
+    if ($PSBoundParameters.ContainsKey('Objective') -and $Objective -cne $task.objective) { throw 'RESUME_OBJECTIVE_MISMATCH: Resume preserves the existing objective; Start a new TaskId for independent work' }
     if ($PSBoundParameters.ContainsKey('Tier') -and $Tier -cne $task.tier) { throw 'TASK_TIER_CHANGE_REQUIRES_EXPLICIT_OPERATION: Resume preserves the original tier; use ChangeTier after resuming' }
     if (@($task.verifications | Where-Object { $_.outcome -eq 'RUNNING' }).Count) { throw 'RUN_UNFINISHED: inspect Status and Recover after execution stops' }
     if ($task.status -eq 'PAUSED') {
@@ -194,7 +207,7 @@ $context = @{
     sessionKey=$runOwner.sessionBinding.sessionKey; sessionEpochId=$runOwner.sessionBinding.sessionEpochId
     workspace=$WorkspacePath; runnerMachine=[Environment]::MachineName; runnerPid=[string]$PID
     runnerStartedAt=[Diagnostics.Process]::GetCurrentProcess().StartTime.ToUniversalTime().ToString('o')
-    engineScriptHash=(Get-FileHash -LiteralPath $PSCommandPath).Hash.ToLowerInvariant(); logFile="$runId.log"
+    engineScriptHash=(Get-FileHash -LiteralPath $PSCommandPath).Hash.ToLowerInvariant(); logPath=".ai-workspace/.runtime/verification/$Feature/$TaskId/$runId.log"
 }
 if ($profileInfo) { $context.profile=$Profile; $context.profileDigest=$profileInfo.digest }
 foreach ($repo in @(@{name='code';path=$WorkspacePath}, @{name='context';path=(Join-Path $WorkspacePath '.ai-workspace')}, @{name='spec';path=$SpecDirectory})) {
@@ -221,7 +234,7 @@ catch { $launchError = $_.Exception.Message; $context.executable = $Executable }
 $record = @{
     runId=$runId; outcome='RUNNING'; kind=$Kind; batch=$Batch; command=(@($Executable) + $Arguments | ConvertTo-Json -Compress)
     exitCode=-2; executedAt=[DateTimeOffset]::UtcNow.ToString('o'); inputDigest=$before.digest
-    context=$context; inputs=$before.files; inputsStable=$false; caseIds=@($CaseIds | Where-Object { $_ } | Sort-Object -Unique)
+    context=$context; inputsRef=(Save-AiSopInputManifest $before $WorkspacePath); inputsStable=$false; caseIds=@($CaseIds | Where-Object { $_ } | Sort-Object -Unique)
 }
 if ($bindSpecs) { $record.specDigest=$specBefore }
 $context.definitionDigest = Get-AiSopRunDefinitionDigest $record
@@ -248,7 +261,10 @@ function Update-RunLease {
 # Persist the attempt before launch so an abrupt runner termination cannot leave
 # an older successful batch appearing to be the latest execution.
 Save-RunEvidence
-$logPath = Join-Path $taskDir "$runId.log"
+$logPath = Get-AiSopRunLogPath $record $WorkspacePath $SpecDirectory $TaskId
+$runtimeIgnore = Resolve-AiSopWorkspaceChild $WorkspacePath '.ai-workspace/.runtime/.gitignore'
+if (-not [IO.File]::Exists($runtimeIgnore)) { Write-AiSopWorkflowTextAtomic -Path $runtimeIgnore -Text "*`n" }
+[IO.Directory]::CreateDirectory((Split-Path -Parent $logPath)) | Out-Null
 $logStream = [IO.FileStream]::new($logPath, [IO.FileMode]::Create, [IO.FileAccess]::Write, [IO.FileShare]::ReadWrite)
 $writer = [IO.StreamWriter]::new($logStream, [Text.UTF8Encoding]::new($false)); $writer.AutoFlush = $true
 $process = [Diagnostics.Process]::new()

@@ -86,7 +86,6 @@
           "exitCode",
           "executedAt",
           "inputDigest",
-          "inputs",
           "inputsStable",
           "caseIds"
         ],
@@ -155,8 +154,34 @@
               "TIMED_OUT",
               "INTERRUPTED"
             ]
+          },
+          "inputsRef": {
+            "type": "string",
+            "pattern": "^[0-9a-f]{64}$"
           }
-        }
+        },
+        "oneOf": [
+          {
+            "required": [
+              "inputs"
+            ],
+            "not": {
+              "required": [
+                "inputsRef"
+              ]
+            }
+          },
+          {
+            "required": [
+              "inputsRef"
+            ],
+            "not": {
+              "required": [
+                "inputs"
+              ]
+            }
+          }
+        ]
       }
     },
     "impactReview": {

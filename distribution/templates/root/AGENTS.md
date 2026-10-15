@@ -21,6 +21,8 @@
 
 **验证命令配置**：常用编译/测试命令可配置在 `.ai-workspace/context/verification-commands.json`，使用 `Run -Profile <名称>`；配置属于宿主上下文，不写入核心引擎。Run 会先记 RUNNING，再持续输出日志；超时/失败/中断不能复用更早成功结果。Status 的执行证据结果和已记录批准不替代完整 T3 Verify。
 
+**任务诊断与证据同步**：Start 只创建新 TaskId，已有任务用 Resume，独立新目标不要复用旧身份。Status/Discover 默认简明文本与未完成/有待同步项任务；`-IncludeHistory` 查看历史，自动化使用 `-Json` 的版本化 tasks/warnings 数组；兼容旧逐行输出用 `-OutputFormat JsonLines`。可在 `.ai-workspace/context/verification-inputs.json` 补充真实输入或带理由排除生成目录，不得随意排除共享源码来消除过期证据。新输入清单在 `.ai-workspace/specs/.artifacts/inputs/` 去重保存，必须随规格 Git 同步；本地 `.ai-workspace/.runtime/verification/` 日志无需同步。出现清单缺失/损坏先补同步或重跑，禁止改写成功摘要。投影/引擎部署版本提醒用安装器和 Doctor 处理，不自动升级任务档位。
+
 **任务完成条件**：T1 真实编译/基础检查成功，报告未测试范围；T2 编译与相关测试成功，并用 RecordSync 记录受影响需求、设计与测试的同步结果；T3 完整规格和审查门禁加当前任务证据。T1/T2 无独立代码审核环节。测试环境失败可以暂停交接，不能写成通过。本次任务 DONE 不代表旧 T3 或整个功能已全面验收。
 
 **并行边界**：不同功能使用独立工作区和测试数据；同功能多独立主会话并行暂不支持，可由一个主 Agent 协调辅助工作。无跨机器分布式锁，不保证发现未同步的远端会话。Session/Grant/本地 owner 不随 Git 变成新工作区权限。跨工作区先 Suspend、保存规格/任务及相同代码，再在新工作区 Resume；合并结果重新验证。

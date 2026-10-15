@@ -62,6 +62,7 @@ param(
     [switch]$ForceRecovery,
     [switch]$ConfirmTakeover,
     [switch]$RetryEvidence,
+    [switch]$CreateTaskOnly,
     [string]$Baseline = $null
 )
 
@@ -988,6 +989,7 @@ $taskPath = $null
 if ($TaskId) {
     $taskPath = Get-AiSopTaskPath $ResolvedSpecDirectory $TaskId
     if (Test-Path -LiteralPath $taskPath) {
+        if ($CreateTaskOnly) { throw 'TASK_ALREADY_EXISTS: Start creates a new TaskId; use Resume to continue the existing task' }
         $taskBefore = Read-AiSopTask $ResolvedSpecDirectory $TaskId
         if ($taskBefore.ownerId -cne $OwnerId) { throw 'TASK_OWNER_MISMATCH' }
         if ($Operation -eq 'Claim' -and $taskBefore.status -ne 'PAUSED') { throw 'TASK_NOT_RESUMABLE' }
@@ -1532,6 +1534,7 @@ if ($null -ne $taskAfter) {
     if ($ImpactReviewed) {
         if ($Operation -ne 'Checkpoint') { throw 'IMPACT_REQUIRES_CHECKPOINT' }
         $impactPath = Join-Path $ResolvedSpecDirectory '04_change_impact.json'
+        if (-not [IO.File]::Exists($impactPath)) { throw "IMPACT_ARTIFACT_MISSING: $impactPath; write and review the impact analysis before ReviewImpact" }
         $impactRaw = Get-Content -LiteralPath $impactPath -Raw
         if (-not ($impactRaw | Test-Json -SchemaFile (Join-Path $ClaudeRoot 'schemas/change-impact.schema.json'))) { throw 'IMPACT_SCHEMA_INVALID' }
         $taskAfter['impactReview'] = @{

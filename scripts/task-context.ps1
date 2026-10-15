@@ -3,6 +3,8 @@
 . (Join-Path $PSScriptRoot 'workflow-transaction.ps1')
 . (Join-Path $PSScriptRoot 'task-policy.ps1')
 . (Join-Path $PSScriptRoot 'verification-evidence.ps1')
+. (Join-Path $PSScriptRoot 'verification-inputs.ps1')
+. (Join-Path $PSScriptRoot 'task-diagnostics.ps1')
 
 function Get-AiSopTaskPath {
     param([string]$SpecDirectory, [string]$TaskId)
@@ -26,45 +28,6 @@ function Read-AiSopTask {
     return $task
 }
 
-function Get-AiSopInputSnapshot {
-    param([string]$WorkspacePath)
-    $root = Resolve-PhysicalPathIdentity -Path $WorkspacePath
-    # Conservative workspace-wide content snapshot. VCS status/staging and build
-    # output are deliberately absent. Input changes in shared code still invalidate.
-    $excludedDirectories = @('.git', '.svn', '.ai-sop', '.ai-workspace', '.claude', '.agents', '.agent', '.gemini', '.cursor', '.idea', '.vscode', '.superpowers', 'node_modules', '.gradle', '__pycache__')
-    $outputDirectories = @('build', 'target', 'bin', 'obj', 'out', 'classes')
-    $excludedFiles = @('.git', 'AGENTS.md', 'CLAUDE.md', 'ANTIGRAVITY.md', 'GEMINI.md', 'compile-evidence.json', 'test-evidence.json', '.guard-token.json')
-    $files = [Collections.Generic.SortedDictionary[string,string]]::new([StringComparer]::Ordinal)
-    $pending = [Collections.Generic.Stack[string]]::new()
-    $pending.Push($root)
-    while ($pending.Count) {
-        $dir = $pending.Pop()
-        # Conventional outputs belong to a project root, not arbitrary source
-        # packages such as src/com/example/build or scripts/bin.
-        $projectRoot = $dir -ceq $root
-        if (-not $projectRoot) {
-            $projectRoot = @('pom.xml','build.gradle','build.gradle.kts') | Where-Object { [IO.File]::Exists((Join-Path $dir $_)) } | Select-Object -First 1
-        }
-        $webOutputRoot = (Split-Path -Leaf $dir) -ceq 'WEB-INF' -and [IO.File]::Exists((Join-Path $dir 'web.xml'))
-        foreach ($item in Get-ChildItem -LiteralPath $dir -Force -ErrorAction Stop) {
-            if ($item.PSIsContainer -and $item.Name -in $excludedDirectories) { continue }
-            if ($item.PSIsContainer -and $projectRoot -and $item.Name -in $outputDirectories) { continue }
-            if ($item.PSIsContainer -and $webOutputRoot -and $item.Name -ceq 'classes') { continue }
-            if ($dir -ceq $root -and $item.Name -eq '.ai-sop-staging') { continue }
-            if (-not $item.PSIsContainer -and ($item.Name -in $excludedFiles -or $item.Extension -eq '.tmp' -or $item.Name -match '\.log(?:\.\d+)*(?:\.(?:zip|gz|bz2|xz))?$')) { continue }
-            # Fail closed for links: silently omitting linked inputs would make a
-            # successful snapshot misleading (and could traverse outside the root).
-            if ($item.Attributes -band [IO.FileAttributes]::ReparsePoint) { throw "INPUT_LINK_UNSUPPORTED: $($item.FullName)" }
-            if ($item.PSIsContainer) { $pending.Push($item.FullName); continue }
-            $physical = Resolve-PhysicalPathIdentity -Path $item.FullName
-            $rel = [IO.Path]::GetRelativePath($root, $physical).Replace('\', '/')
-            $files[$rel] = (Get-FileHash -LiteralPath $physical -Algorithm SHA256).Hash.ToLowerInvariant()
-        }
-    }
-    $lines = @($files.GetEnumerator() | ForEach-Object { "$($_.Key.Length):$($_.Key):$($_.Value)" })
-    return @{ algorithm = 'inputs-v2'; digest = Get-AiSopWorkflowSha256 ("inputs-v2`n" + ($lines -join "`n")); files = $files }
-}
-
 function Get-AiSopChangedInputs {
     param($Before, $After)
     return @(@($Before.files.Keys) + @($After.files.Keys) | Sort-Object -Unique | Where-Object {
@@ -73,26 +36,47 @@ function Get-AiSopChangedInputs {
 }
 
 function Get-AiSopTaskSpecDigest {
-    param([string]$SpecDirectory)
+    param([string]$SpecDirectory, $ValidationContext)
+    $SpecDirectory = Resolve-PhysicalPathIdentity $SpecDirectory
+    if ($ValidationContext -and $ValidationContext.specDigests.ContainsKey($SpecDirectory)) {
+        $cached = $ValidationContext.specDigests[$SpecDirectory]
+        if ($cached.error) { throw $cached.error }; return $cached.value
+    }
     $parts = @()
     foreach ($name in @('01_server_rules.md','06_design_contract.md','05_test_plan.md','05_test_coverage.json')) {
         $path = Join-Path $SpecDirectory $name
         if (-not (Test-Path -LiteralPath $path -PathType Leaf)) { $parts += "${name}:missing"; continue }
         $raw = [IO.File]::ReadAllText($path)
         if ($name -eq '05_test_coverage.json') {
-            $coverage = ConvertFrom-AiSopWorkflowJson -Json $raw -AsHashtable
+            try {
+                $coverage = ConvertFrom-AiSopWorkflowJson -Json $raw -AsHashtable
+                if ($coverage -isnot [Collections.IDictionary]) { throw 'expected a JSON object' }
+            } catch {
+                $diagnostic = "SPEC_JSON_INVALID: $path; $($_.Exception.Message)"
+                if ($ValidationContext) { $ValidationContext.specDigests[$SpecDirectory]=@{error=$diagnostic} }
+                throw $diagnostic
+            }
             $coverage.Remove('executionEvidence')
             $raw = ConvertTo-AiSopWorkflowCanonicalJson $coverage
         } else { $raw = ($raw -replace "`r`n", "`n").TrimEnd() }
         $parts += "${name}:$(Get-AiSopWorkflowSha256 $raw)"
     }
-    return Get-AiSopWorkflowSha256 ($parts -join "`n")
+    $digest = Get-AiSopWorkflowSha256 ($parts -join "`n")
+    if ($ValidationContext) { $ValidationContext.specDigests[$SpecDirectory]=@{value=$digest} }
+    return $digest
 }
 
 function Get-AiSopTaskProblems {
-    param($Task, [string]$WorkspacePath, [string]$SpecDirectory = '')
+    param($Task, [string]$WorkspacePath, [string]$SpecDirectory = '', $ValidationContext)
     $problems = [Collections.Generic.List[string]]::new()
-    $snapshot = Get-AiSopInputSnapshot $WorkspacePath
+    if (-not $ValidationContext) { $ValidationContext=New-AiSopValidationContext }
+    try { $snapshot = Get-AiSopValidationSnapshot $WorkspacePath $ValidationContext }
+    catch { return @($_.Exception.Message) }
+    $specDigest = $null
+    if ($Task.tier -eq 'T3' -and $SpecDirectory) {
+        try { $specDigest=Get-AiSopTaskSpecDigest $SpecDirectory $ValidationContext }
+        catch { $problems.Add($_.Exception.Message) }
+    }
     if ($Task.tier -eq 'T2' -and -not $Task.syncReview) { $problems.Add('MISSING_SYNC_REVIEW: record affected documentation and test updates, or explain why unchanged') }
     foreach ($pending in @($Task.verifications | Where-Object { $_.outcome -eq 'RUNNING' })) { $problems.Add("RUN_UNFINISHED:$($pending.runId):$(Get-AiSopRunActivity $pending $WorkspacePath)") }
     foreach ($kind in @('compile', 'test')) {
@@ -112,19 +96,24 @@ function Get-AiSopTaskProblems {
         # green batch cannot hide an unresolved failure in another batch.
         foreach ($group in @($records | Group-Object batch)) {
             $record = @($group.Group)[-1]
+            $recordInputs=$null
+            try { $recordInputs=Read-AiSopVerificationInputs $record $WorkspacePath $ValidationContext }
+            catch { $problems.Add($_.Exception.Message) }
             if ($record.exitCode -ne 0) { $problems.Add("EXECUTION_FAILED:${kind}:$($record.batch):exit=$($record.exitCode)") }
-            if ($Task.tier -eq 'T3' -and $kind -eq 'test' -and $SpecDirectory -and $record.specDigest -cne (Get-AiSopTaskSpecDigest $SpecDirectory)) {
+            if ($Task.tier -eq 'T3' -and $kind -eq 'test' -and $SpecDirectory -and $record.specDigest -cne $specDigest) {
                 $problems.Add("STALE_SPEC_EVIDENCE:test:$($record.batch):requirement/design/test-definition changed")
             }
             if ($record.inputDigest -cne $snapshot.digest -or -not $record.inputsStable) {
-                $changed = Get-AiSopChangedInputs -Before @{ files = $record.inputs } -After $snapshot
-                $problems.Add("STALE_EVIDENCE:${kind}:$($record.batch):$($changed -join ',')")
+                $changed = if ($recordInputs) { Get-AiSopChangedInputs -Before $recordInputs -After $snapshot } else { @('input manifest unavailable') }
+                $changed = @($changed)
+                $detail = if ($changed.Count) { (@($changed | Select-Object -First 20) -join ',') + $(if ($changed.Count -gt 20) { " (+$($changed.Count - 20) more)" }) } else { 'input policy/algorithm changed or inputs were unstable during execution' }
+                $problems.Add("STALE_EVIDENCE:${kind}:$($record.batch):$detail")
             }
         }
     }
     if ($Task.tier -eq 'T3') {
         $latestTests = @($Task.verifications | Where-Object { $_.kind -eq 'test' } | Group-Object batch | ForEach-Object { @($_.Group)[-1] })
-        $covered = @($latestTests | Where-Object { $_.exitCode -eq 0 -and $_.inputDigest -ceq $snapshot.digest -and $_.inputsStable -and (-not $SpecDirectory -or $_.specDigest -ceq (Get-AiSopTaskSpecDigest $SpecDirectory)) } | ForEach-Object { $_.caseIds } | Sort-Object -Unique)
+        $covered = @($latestTests | Where-Object { $_.exitCode -eq 0 -and $_.inputDigest -ceq $snapshot.digest -and $_.inputsStable -and (-not $SpecDirectory -or $_.specDigest -ceq $specDigest) } | ForEach-Object { $_.caseIds } | Sort-Object -Unique)
         $missing = @($Task.requiredCaseIds | Where-Object { $_ -notin $covered })
         if ($missing.Count) { $problems.Add("UNCOVERED_CASES:$($missing -join ',')") }
     }
@@ -146,10 +135,12 @@ function Get-AiSopSpecSyncWarning {
     $repo = & git -C $existing rev-parse --show-toplevel 2>$null
     if ($LASTEXITCODE -ne 0) { return }
     $repo = Resolve-PhysicalPathIdentity -Path ([string]$repo)
-    $probe = [IO.Path]::GetRelativePath($repo, (Join-Path $specRoot 'features/__sop_sync_probe__/06_design_contract.md')).Replace('\', '/')
-    $ignored = & git -C $repo check-ignore -- $probe 2>$null
-    if ($LASTEXITCODE -eq 0 -and $ignored) {
-        return "SPECS_IGNORED: specification paths are ignored by their owning Git repository '$repo'; review tracking there before handoff. No ignore rules or tracked files were changed."
+    foreach ($relative in @('features/__sop_sync_probe__/06_design_contract.md', '.artifacts/inputs/__sop_sync_probe__.json')) {
+        $probe = [IO.Path]::GetRelativePath($repo, (Join-Path $specRoot $relative)).Replace('\', '/')
+        $ignored = & git -C $repo check-ignore -- $probe 2>$null
+        if ($LASTEXITCODE -eq 0 -and $ignored) {
+            return "SPECS_IGNORED: $relative is ignored by its owning Git repository '$repo'; review feature and input-manifest tracking there before handoff. No ignore rules or tracked files were changed."
+        }
     }
 }
 
@@ -171,7 +162,7 @@ function Get-AiSopRunActivity {
 }
 
 function Get-AiSopTaskSummary {
-    param($Task, [string]$WorkspacePath, [string]$SpecDirectory, [switch]$CheckInputs)
+    param($Task, [string]$WorkspacePath, [string]$SpecDirectory, [switch]$CheckInputs, $ValidationContext)
     $ownerPath = Join-Path (Get-AiSopWorkflowOwnerRegistryRoot -WorkspacePath $WorkspacePath) ($Task.feature.ToLowerInvariant() + '.json')
     $owner = $null; $sessionStatus = 'MISSING'; $ownerStatus = 'MISSING'; $diagnostics = @()
     if (Test-Path -LiteralPath $ownerPath) {
@@ -187,7 +178,7 @@ function Get-AiSopTaskSummary {
     }
     $runs = @($Task.verifications | Where-Object { $_.outcome -eq 'RUNNING' } | ForEach-Object {
         $pendingResult = if ($_.runId) { Get-AiSopRunEvidencePath $SpecDirectory $Task.taskId $_.runId } else { '' }
-        @{ runId=$_.runId; kind=$_.kind; batch=$_.batch; activity=(Get-AiSopRunActivity $_ $WorkspacePath); logFile=$_.context.logFile; pendingResult=$(if ($pendingResult -and [IO.File]::Exists($pendingResult)) { $pendingResult } else { $null }) }
+        @{ runId=$_.runId; kind=$_.kind; batch=$_.batch; activity=(Get-AiSopRunActivity $_ $WorkspacePath); logFile=(Get-AiSopRunLogPath $_ $WorkspacePath $SpecDirectory $Task.taskId); pendingResult=$(if ($pendingResult -and [IO.File]::Exists($pendingResult)) { $pendingResult } else { $null }) }
     })
     $action = if ($Task.status -in @('DONE','CANCELLED')) { 'Start a new task for new work' }
         elseif (@($runs | Where-Object { $_.pendingResult }).Count) { 'Inspect pending result; RetryEvidence saves a terminal result without rerunning. If the session ended, Recover after execution stops, then Resume.' }
@@ -200,7 +191,7 @@ function Get-AiSopTaskSummary {
     $verification = 'NOT_CHECKED'
     if ($CheckInputs) {
         try {
-            $problems = @(Get-AiSopTaskProblems $Task $WorkspacePath $SpecDirectory)
+            $problems = @(Get-AiSopTaskProblems $Task $WorkspacePath $SpecDirectory $ValidationContext)
             $verification = if ($problems.Count) { 'NEEDS_ATTENTION' }
                 elseif ($Task.tier -ne 'T3' -and $Task.applicability -and @($Task.applicability.Values | Where-Object { $_.status -eq 'NOT_APPLICABLE' }).Count) { 'APPLICABILITY_RECORDED' }
                 else { 'EXECUTION_EVIDENCE_CURRENT' }

@@ -47,7 +47,10 @@ param(
     [string[]]$Scope = @(),
     [string]$SourceTaskId,
     [string]$Disposition,
-    [string]$Resolution
+    [string]$Resolution,
+    [switch]$Json,
+    [ValidateSet('Human','JsonLines')][string]$OutputFormat = 'Human',
+    [switch]$IncludeHistory
 )
 
 $ErrorActionPreference = "Stop"
@@ -115,7 +118,7 @@ function Invoke-Doctor {
 # --- Status (feature gate + phase) ---
 function Invoke-Status {
     param([string]$FeatureName, [string]$SpecDir)
-    $statusArgs = @{ Operation='Status'; WorkspacePath=$WorkspaceRoot }
+    $statusArgs = @{ Operation='Status'; WorkspacePath=$WorkspaceRoot; Json=$Json; OutputFormat=$OutputFormat; IncludeHistory=$IncludeHistory }
     if ($FeatureName) { $statusArgs.Feature=$FeatureName }
     if ($SpecDir) { $statusArgs.SpecDirectory=$SpecDir }
     if ($TaskId) { $statusArgs.TaskId=$TaskId }
@@ -216,6 +219,9 @@ Actions:
   Help       Show this help.
 
 Options:
+  -Json                   Status/Discover: one versioned JSON object with tasks[] and warnings[].
+  -OutputFormat JsonLines Legacy status output, one JSON object per task.
+  -IncludeHistory         Include completed/cancelled tasks without pending follow-ups.
   -Feature <Name>         Feature name (for Status).
   -SpecDirectory <path>   Spec dir (default: .ai-workspace/specs/features/<Feature>).
 
@@ -224,10 +230,13 @@ New users: run 'Doctor' first, then 'Install'.
 }
 
 # --- Dispatch ---
+if ($Action -in @('Task','Status') -and -not [IO.File]::Exists((Join-Path $WorkspaceRoot '.ai-sop/scripts/workflow-task.ps1'))) {
+    throw 'TASK_ENGINE_MISSING: initialize/update .ai-sop, then run ai-sop.ps1 Install and Doctor before using Task or Status.'
+}
 switch ($Action) {
     "Task" {
         $taskArgs = @{ Operation=$Operation; WorkspacePath=$WorkspaceRoot }
-        foreach ($name in @('Feature','SpecDirectory','TaskId','Tier','Objective','Agent','NextAction','Notes','Kind','Batch','Executable','Arguments','CaseIds','Profile','TimeoutSeconds','ForceRecovery','ConfirmTakeover','RunId','Reason','UserRequest','Documentation','Tests','Summary','Applicability','FollowUpId','FollowUpKind','Scope','SourceTaskId','Disposition','Resolution')) {
+        foreach ($name in @('Feature','SpecDirectory','TaskId','Tier','Objective','Agent','NextAction','Notes','Kind','Batch','Executable','Arguments','CaseIds','Profile','TimeoutSeconds','ForceRecovery','ConfirmTakeover','RunId','Reason','UserRequest','Documentation','Tests','Summary','Applicability','FollowUpId','FollowUpKind','Scope','SourceTaskId','Disposition','Resolution','Json','OutputFormat','IncludeHistory')) {
             if ($PSBoundParameters.ContainsKey($name)) { $taskArgs[$name] = $PSBoundParameters[$name] }
         }
         & (Join-Path $WorkspaceRoot '.ai-sop/scripts/workflow-task.ps1') @taskArgs

@@ -2,6 +2,10 @@
 
 ## 任务模式：按本次修改验证
 
+输入范围可由项目的 `.ai-workspace/context/verification-inputs.json` 配置：默认保守扫描不变，include 补入真实输入，exclude 用明确路径和理由排除输出。配置摘要参与 inputs-v3；无配置保持 inputs-v2，Git/SVN ignore 不是输入真源。配置的语义正确性仍依赖项目维护者，不允许通过随意排除源码消除失败。新 Run 的完整输入清单按哈希保存于 `.ai-workspace/specs/.artifacts/inputs/`，task.json 引用 inputsRef；验证检查清单存在、内容哈希和输入摘要，缺失/损坏必须补同步或重跑。旧内嵌清单兼容，历史 DONE 不迁移。本地日志不参与完成判定。
+
+一次 Status/Verify 使用同一调用内的内容快照；后续调用及 Run 的前后快照重新读取。Status 是诊断视图，`-Json` 提供固定结构；部署投影漂移只提醒，损坏规格 JSON 则在实际依赖它的 T3 校验中明确失败。Start 不得复用旧 TaskId 恢复暂停任务，Resume 不得静默丢弃新传入的不同目标。
+
 当前默认入口是 `ai-sop.ps1 Task`（底层 `workflow-task.ps1`）。功能保存长期规格，每次独立修改有固定 taskId 和独立 T1/T2/T3（默认 T2，人工指定优先）；接管只更换执行会话，不改变任务身份或档位。本节描述任务模式；后续旧矩阵中的功能级证据要求仅用于未提供 taskId 的兼容路径。
 
 | 项目 | T1 任务 | T2 任务 | T3 任务 |

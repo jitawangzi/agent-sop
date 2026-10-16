@@ -48,6 +48,10 @@ Run 自动续期当前绑定会话，不重新激活已结束或已转移的会�
 
 同一 kind/batch 的重跑保持命令、Profile 和 CaseIds 范围一致。确需更换时在 Run 提供 `-Reason "调整验证命令/范围的具体原因"`，保留旧尝试及替换关联；不得改用无关成功命令掩盖失败。修复代码后用原命令重跑不需要额外参数。
 
+新 Profile 证据使用 `profile-command-v1`，只绑定所选命令的规范化定义（命令及参数顺序、kind/batch、CaseIds、默认超时和可选报告/映射配置）。JSON 排版、键顺序或其他 Profile 的有效改动不使它过期。Status/Verify 及 Run 结束时都会核对当前定义；所选命令删除、损坏或语义改变会指出具体批次。按新定义重跑同批次时带 Reason，不重填旧摘要。旧 Profile 记录仍按原整文件摘要核对，不重新解释为新语义；格式升级后的首次重跑也可能需要 Reason。
+
+可选 JUnit 映射另保存 `junit-map-v1` 与工作区内的来源路径，映射内容变更、删除或越界会使相关证据失效；单纯 JSON 排版、对象键序和 Case 排列变化不影响新绑定。Run 期间变更所用定义会保存失败结果，即使命令退出码为 0。旧映射记录若没有来源路径，会提示 `JUNIT_MAP_SOURCE_UNBOUND`，继续当前任务时重跑相关批次以建立绑定；不猜测文件来源、不改写历史 DONE。Profile 与报告映射继续可选，不给普通 T1/T2 新增必填配置。
+
 T1/T2 的 Run 不读取历史需求设计和覆盖矩阵，历史损坏的覆盖 JSON 不会阻断轻量编译/测试。完整 T3 测试仍绑定规格摘要。未结束的运行会阻止 Complete、Suspend 和接管；失败/中断的必需测试批次需要同批次成功复跑，不能用旧成功记录覆盖。
 
 ## Guard 拦截与事务不确定状态
@@ -200,6 +204,8 @@ T1 只需真实编译/基础检查；T2 还需相关测试和 RecordSync 记录�
 `Preflight` 列出任务目标、检查点、非阻塞待办、需同步的 task.json、功能规格、inputs/changes 引用清单和项目验证配置；按实际所属 Git 仓库显示 TRACKED/UNTRACKED/IGNORED 及本地改动，适用于 `.ai-workspace` 与 `specs` 分别独立 Git 的布局。项目 context 和功能目录整体也列为同步范围，以覆盖自定义引用与附件。有清单引用时，syncRoots 同时列出 `.ai-workspace/specs/.artifacts/`；可同步整个目录，也可按 artifacts 中逐条列出的引用文件同步，不能只复制功能目录。TRACKED 不代表已推送或目标机器已收到；代码、共享依赖和规格需对应同一实际版本。
 
 预检读取清单并校验哈希，同时检查本机归属/会话、未完成运行、损坏 pending 结果和未决事务。它不读取业务源码内容、不编译、不抢锁、不续期、不执行事务恢复，也不修改完成状态。运行中的命令或 pending 结果应先在原工作区处理；本机注册表、事务日志及 `.runtime` 不作为可移植归属复制，接收方仍通过 Resume/Recover 获取本机执行权。
+
+没有 taskId 的旧功能也会列出根目录规格、嵌套仓库和同步范围，JSON 中放在 `legacyFeatures`，标记 `LEGACY_UNVERIFIED`。批准字段只展示原记录，不能据此宣称哈希或完成门禁有效；不会创建任务或采纳旧归属。明确指定不存在的 TaskId 仍报告选择为空。活动任务还会检查所选 Profile/JUnit 映射是否改变，并列出对应来源文件；目标引擎未声明支持这些绑定时提示兼容缺口。
 
 Preflight 将清单文件损坏与任务引用不匹配分开：文件有效但某条 inputDigest 或差异基线绑定不符时，诊断归属具体任务/记录，不把共享文件标为损坏。历史任务的本地归属显示 NOT_APPLICABLE，损坏任务显示 NOT_CHECKED。InspectRecovery 和 Preflight 都核对任务、Owner、工作区及会话绑定；OTHER_TASK 代表本地 Owner 属于其他任务，不读取它的会话作为当前任务的有效身份。
 

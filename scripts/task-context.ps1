@@ -132,6 +132,7 @@ function Get-AiSopTaskProblems {
         # green batch cannot hide an unresolved failure in another batch.
         foreach ($group in @($records | Group-Object batch)) {
             $record = @($group.Group)[-1]
+            foreach ($problem in @(Get-AiSopRunDefinitionProblems $record $WorkspacePath)) { $problems.Add($problem) }
             try { Assert-AiSopJUnitResult $record } catch { $problems.Add($_.Exception.Message) }
             $recordInputs=$null
             try { $recordInputs=Read-AiSopVerificationInputs $record $WorkspacePath $ValidationContext }
@@ -275,5 +276,41 @@ function Get-AiSopVerificationProfile {
     if (-not ($raw | Test-Json -SchemaFile (Join-Path (Split-Path -Parent $PSScriptRoot) 'schemas/verification-commands.schema.json'))) { throw 'PROFILE_CONFIG_INVALID' }
     $config = ConvertFrom-AiSopWorkflowJson $raw -AsHashtable
     if (-not $config.commands.Contains($Name)) { throw "PROFILE_NOT_FOUND: $Name" }
-    return @{ command=$config.commands[$Name]; path=$path; digest=(Get-AiSopWorkflowSha256 $raw) }
+    $command=$config.commands[$Name]
+    # Bind the selected command's meaning, not formatting or sibling profiles.
+    # Arrays representing sets are sorted; argument order remains significant.
+    $definition=@{
+        kind=$command.kind; executable=$command.executable; arguments=@($command.arguments)
+        batch=$(if ($command.batch) { $command.batch } else { $Name })
+        caseIds=@($command.caseIds | Where-Object { $_ } | Sort-Object -CaseSensitive -Unique)
+        timeoutSeconds=$(if ($command.timeoutSeconds) { [int]$command.timeoutSeconds } else { 0 })
+        junitReports=@($command.junitReports | Where-Object { $_ } | Sort-Object -CaseSensitive)
+        caseMap=[string]$command.caseMap
+    }
+    return @{ command=$command; path=$path; digest=(Get-AiSopWorkflowSha256 (ConvertTo-AiSopWorkflowCanonicalJson $definition)); digestAlgorithm='profile-command-v1'; legacyDigest=(Get-AiSopWorkflowSha256 $raw) }
+}
+
+function Get-AiSopRunDefinitionProblems {
+    param($Record, [string]$WorkspacePath)
+    $scope="$($Record.kind):$($Record.batch)"
+    if ($Record.context.profile) {
+        try {
+            $current=Get-AiSopVerificationProfile $WorkspacePath $Record.context.profile
+            $digest=switch ([string]$Record.context.profileDigestAlgorithm) {
+                'profile-command-v1' { $current.digest }
+                '' { $current.legacyDigest } # Old records bound the entire raw file.
+                default { throw 'PROFILE_DIGEST_ALGORITHM_UNSUPPORTED' }
+            }
+            if ($Record.context.profileDigest -cne $digest) { "STALE_PROFILE_EVIDENCE:${scope}:$($Record.context.profile); rerun the selected profile" }
+        } catch { "PROFILE_DEFINITION_UNAVAILABLE:${scope}:$($_.Exception.Message)" }
+    }
+    if ($Record.context.junitConfiguration) {
+        try {
+            $saved=ConvertFrom-AiSopWorkflowJson $Record.context.junitConfiguration -AsHashtable
+            if (-not $saved.mapPath) { throw 'JUNIT_MAP_SOURCE_UNBOUND: legacy record has no map path; rerun to bind its source' }
+            if ($saved.bindingVersion -cne 'junit-map-v1') { throw 'JUNIT_MAP_BINDING_UNSUPPORTED' }
+            $current=Get-AiSopJUnitConfiguration $WorkspacePath @($saved.reports) $saved.mapPath
+            if ((ConvertTo-AiSopWorkflowCanonicalJson $current) -cne (ConvertTo-AiSopWorkflowCanonicalJson $saved)) { "STALE_JUNIT_MAP_EVIDENCE:${scope}:$($saved.mapPath); rerun with the current mapping" }
+        } catch { "JUNIT_DEFINITION_UNAVAILABLE:${scope}:$($_.Exception.Message)" }
+    }
 }

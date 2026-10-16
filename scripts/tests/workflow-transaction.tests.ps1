@@ -542,6 +542,49 @@ try {
         }
     [System.IO.File]::Delete($kindMismatchPath)
 
+    # Inject the Exists/read race without deleting a live journal. Only a typed
+    # missing-journal error is benign; other IO failures must still fail closed.
+    & {
+        $registryBefore=$env:SERVER_NEW_WORKFLOW_TRANSACTION_REGISTRY
+        $probeRoot=Join-Path $TestRoot 'read-race-fixture'
+        [IO.Directory]::CreateDirectory($probeRoot) | Out-Null
+        $probe=Join-Path $probeRoot 'race.json'
+        [IO.File]::WriteAllText($probe,'fixture; reader is injected below')
+        $missing=Join-Path $probeRoot 'never-created.json'
+        try { Read-AiSopWorkflowTransactionJournal $missing; throw 'Missing read unexpectedly succeeded' }
+        catch {
+            Assert-True ($_.Exception.GetBaseException() -is [IO.FileNotFoundException]) 'Missing journal lost its typed IO cause'
+            Assert-Equal $_.Exception.GetBaseException().FileName $missing 'Missing journal cause lost its path'
+        }
+        & {
+            function Assert-AiSopWorkflowJsonSchema { throw [IO.FileNotFoundException]::new('missing schema','schema.json') }
+            try { Read-AiSopWorkflowTransactionJournal $probe; throw 'Schema loss unexpectedly succeeded' }
+            catch {
+                Assert-Equal $_.Exception.Message 'WORKFLOW_REGISTRY_IO_ERROR' 'Schema loss lost its IO code'
+                Assert-True ($_.Exception.GetBaseException() -isnot [IO.FileNotFoundException]) 'Schema loss was classified as journal cleanup'
+            }
+        }
+        try {
+            $env:SERVER_NEW_WORKFLOW_TRANSACTION_REGISTRY=$probeRoot
+            function Read-AiSopWorkflowTransactionJournal {
+                param([string]$JournalPath)
+                throw [IO.FileNotFoundException]::new('WORKFLOW_REGISTRY_IO_ERROR',$JournalPath)
+            }
+            Assert-Equal @(Invoke-AiSopWorkflowTransactionRecovery).Count 0 'Completed writer cleanup was treated as a recovery failure'
+            function Read-AiSopWorkflowTransactionJournal {
+                param([string]$JournalPath)
+                throw [IO.IOException]::new('WORKFLOW_REGISTRY_IO_ERROR')
+            }
+            Assert-ThrowsCode -Code 'WORKFLOW_REGISTRY_IO_ERROR' -Message 'General registry IO failure was swallowed' -Action { Invoke-AiSopWorkflowTransactionRecovery }
+            function Read-AiSopWorkflowTransactionJournal {
+                param([string]$JournalPath)
+                throw [IO.FileNotFoundException]::new('WORKFLOW_REGISTRY_IO_ERROR','different-target.json')
+            }
+            Assert-ThrowsCode -Code 'WORKFLOW_REGISTRY_IO_ERROR' -Message 'Missing target was mistaken for missing journal' -Action { Invoke-AiSopWorkflowTransactionRecovery }
+            Assert-Equal ([IO.File]::ReadAllText($probe)) 'fixture; reader is injected below' 'Fault injection changed its fixture file'
+        } finally { $env:SERVER_NEW_WORKFLOW_TRANSACTION_REGISTRY=$registryBefore }
+    }
+
     $workerPath = Join-Path $TestRoot "transaction-worker.ps1"
     $workerSource = @'
 param(

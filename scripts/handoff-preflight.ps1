@@ -83,6 +83,8 @@ function Get-AiSopHandoffPreflight {
     $currentEngine=Resolve-PhysicalPathIdentity (Split-Path -Parent $PSScriptRoot)
     $target=if ($TargetEnginePath) { Resolve-PhysicalPathIdentity $TargetEnginePath } else { $currentEngine }
     $issues=[Collections.Generic.List[object]]::new(); $tasks=[Collections.Generic.List[object]]::new()
+    $legacyFeatures=[Collections.Generic.List[object]]::new()
+    $selectedFeatures=[Collections.Generic.HashSet[string]]::new([StringComparer]::Ordinal)
     $artifacts=[Collections.Generic.Dictionary[string,object]]::new([StringComparer]::Ordinal)
     $repositories=[Collections.Generic.Dictionary[string,object]]::new([StringComparer]::Ordinal)
     $context=New-AiSopValidationContext
@@ -114,8 +116,14 @@ function Get-AiSopHandoffPreflight {
         $spec=Resolve-AiSopWorkspaceChild $WorkspacePath ".ai-workspace/specs/features/$($dir.Name)"
         $taskRoot=Resolve-AiSopWorkspaceChild $WorkspacePath ".ai-workspace/specs/features/$($dir.Name)/tasks"
         $records=@(Get-ChildItem -LiteralPath $taskRoot -Directory -ErrorAction SilentlyContinue | Where-Object { -not $TaskId -or $_.Name -ceq $TaskId } | Sort-Object Name)
-        if (-not $records.Count -and -not $TaskId) { $issues.Add(@{code='LEGACY_FEATURE';detail="$($dir.Name): inspect feature-level state and ownership with the original workflow before handoff"}) }
         $selected=$false
+        if (-not $records.Count -and -not $TaskId) {
+            $selected=$true
+            $statePath=Resolve-AiSopTaskWorkflowStatePath $spec
+            $statePath=Resolve-AiSopWorkspaceChild $WorkspacePath ([IO.Path]::GetRelativePath($WorkspacePath,$statePath))
+            $legacyFeatures.Add(@{feature=$dir.Name;status='LEGACY_UNVERIFIED';workflowStatePath=$(if ([IO.File]::Exists($statePath)) { [IO.Path]::GetRelativePath($WorkspacePath,$statePath).Replace('\','/') } else { $null });recordedApprovals=(Get-AiSopRecordedApprovals $spec)})
+            $issues.Add(@{code='LEGACY_FEATURE';detail="$($dir.Name): no task identity; inventory only, not approval or completion verification. Inspect original ownership before explicit adoption; do not create a task automatically"})
+        }
         foreach ($entry in $records) {
             $identity="$($dir.Name)/$($entry.Name)"; $task=$null
             $item=@{feature=$dir.Name;taskId=$entry.Name;status='UNAVAILABLE';tier=$null;diagnostics=@();localState=@{owner='NOT_CHECKED';session='NOT_CHECKED';runs=@()}}
@@ -198,6 +206,18 @@ function Get-AiSopHandoffPreflight {
                     } catch { $item.diagnostics+=@($_.Exception.Message) }
                 }
                 foreach ($record in @($task.verifications | Group-Object kind,batch | ForEach-Object { @($_.Group)[-1] })) {
+                    $item.diagnostics+=@(Get-AiSopRunDefinitionProblems $record $WorkspacePath)
+                    if ($capabilities -and $record.context.profileDigestAlgorithm -and $record.context.profileDigestAlgorithm -cnotin $capabilities.verificationDefinitionBindings) { $item.diagnostics+=@('TARGET_DEFINITION_BINDING_UNSUPPORTED: selected Profile semantics are not supported by the target engine') }
+                    if ($record.context.profile) {
+                        Add-AiSopPreflightArtifact $artifacts $WorkspacePath '.ai-workspace/context/verification-commands.json' 'VERIFICATION_DEFINITION' $identity $repositories | Out-Null
+                    }
+                    if ($record.context.junitConfiguration) {
+                        try {
+                            $mapping=ConvertFrom-AiSopWorkflowJson $record.context.junitConfiguration -AsHashtable
+                            if ($capabilities -and $mapping.bindingVersion -and $mapping.bindingVersion -cnotin $capabilities.verificationDefinitionBindings) { $item.diagnostics+=@('TARGET_DEFINITION_BINDING_UNSUPPORTED: current JUnit map binding is not supported by the target engine') }
+                            if ($mapping.mapPath) { Add-AiSopPreflightArtifact $artifacts $WorkspacePath $mapping.mapPath 'VERIFICATION_DEFINITION' $identity $repositories | Out-Null }
+                        } catch { $item.diagnostics+=@("JUNIT_DEFINITION_UNAVAILABLE: $($_.Exception.Message)") }
+                    }
                     if ($record.inputsRef -and $targetAlgorithm) {
                         try {
                             $snapshot=Read-AiSopVerificationInputs $record $WorkspacePath $context
@@ -218,12 +238,13 @@ function Get-AiSopHandoffPreflight {
             }
         }
         if ($selected) {
+            $selectedFeatures.Add($dir.Name) | Out-Null
             foreach ($file in @(Get-ChildItem -LiteralPath $spec -File | Sort-Object Name)) {
                 Add-AiSopPreflightArtifact $artifacts $WorkspacePath ".ai-workspace/specs/features/$($dir.Name)/$($file.Name)" 'FEATURE_SPEC' $dir.Name $repositories | Out-Null
             }
         }
     }
-    if (-not $tasks.Count -and ($Feature -or $TaskId)) { $issues.Add(@{code='TASK_SELECTION_EMPTY';detail='No matching task records; check Feature/TaskId or use IncludeHistory for terminal tasks'}) }
+    if (-not $tasks.Count -and -not $legacyFeatures.Count -and ($Feature -or $TaskId)) { $issues.Add(@{code='TASK_SELECTION_EMPTY';detail='No matching task records; check Feature/TaskId or use IncludeHistory for terminal tasks'}) }
     # Journals are local authority, never a portable handoff artifact. Merely
     # report them; session getters would replay them and violate read-only use.
     $txRoot=Resolve-PhysicalPathIdentity (Get-AiSopWorkflowTransactionRegistryRoot -WorkspacePath $WorkspacePath)
@@ -241,8 +262,8 @@ function Get-AiSopHandoffPreflight {
     return [ordered]@{
         schemaVersion='1.0';readOnly=$true;workspace=$WorkspacePath;status=$(if ($issues.Count) { 'NEEDS_ATTENTION' } else { 'NO_ISSUES_DETECTED' })
         engine=@{inspector=$currentEngine;target=$target;repository=(Get-AiSopPreflightRepository (Join-Path $target 'config/runtime-compatibility.json') $repositories);capabilities=$capabilities;expectedInputAlgorithm=$targetAlgorithm}
-        tasks=$tasks.ToArray();artifacts=@($artifacts.Values | Sort-Object path);issues=$issues.ToArray()
-        syncRoots=@('.ai-workspace/context/')+@($tasks | ForEach-Object { ".ai-workspace/specs/features/$($_.feature)/" } | Sort-Object -Unique)+@(
+        tasks=$tasks.ToArray();legacyFeatures=$legacyFeatures.ToArray();artifacts=@($artifacts.Values | Sort-Object path);issues=$issues.ToArray()
+        syncRoots=@('.ai-workspace/context/')+@($selectedFeatures | Sort-Object | ForEach-Object { ".ai-workspace/specs/features/$_/" })+@(
             if (@($artifacts.Values | Where-Object { $_.kind -in @('INPUT_MANIFEST','CHANGE_MANIFEST') }).Count) { '.ai-workspace/specs/.artifacts/' }
         )
         notes=@('Advisory preflight, not a completion gate. No business-input hashes, tests, locks or transaction recovery were run. Recheck after stopping edits; this is not an atomic snapshot.',
@@ -261,6 +282,9 @@ function Write-AiSopHandoffPreflight {
         Write-Output "  [$($task.status)] $($task.feature)/$($task.taskId) $($task.tier) owner=$($task.localState.owner) session=$($task.localState.session)"
         Write-Output "    objective=$($task.objective); checkpoint=$($task.nextAction); startInputs=$($task.startInputsStatus)"
         foreach ($followUp in $task.pendingFollowUps) { Write-Output "    follow-up (non-blocking): $($followUp.summary)" }
+    }
+    foreach ($legacy in $Report.legacyFeatures) {
+        Write-Output "  [LEGACY_UNVERIFIED] $($legacy.feature) state=$($legacy.workflowStatePath); no taskId, inventory only"
     }
     foreach ($root in $Report.syncRoots) { Write-Output "  sync tree: $root (includes project-specific references and attachments)" }
     foreach ($artifact in $Report.artifacts) { Write-Output "  sync: $($artifact.path) [$($artifact.status), $($artifact.tracking), dirty=$($artifact.dirty)] repo=$($artifact.repository.root)" }

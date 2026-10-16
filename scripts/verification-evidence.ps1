@@ -24,6 +24,7 @@ function Get-AiSopRunDefinitionDigest {
     }
     # Preserve digests of pre-mapping records when the optional format is absent.
     if ($Record.context.junitConfiguration) { $definition.junitConfiguration=$Record.context.junitConfiguration }
+    if ($Record.context.profileDigestAlgorithm) { $definition.profileDigestAlgorithm=$Record.context.profileDigestAlgorithm }
     return Get-AiSopWorkflowSha256 (ConvertTo-AiSopWorkflowCanonicalJson $definition)
 }
 

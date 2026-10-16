@@ -237,7 +237,7 @@ if ($junit) {
     $context.junitConfiguration=ConvertTo-AiSopWorkflowCanonicalJson $junit
     $context.junitBefore=ConvertTo-AiSopWorkflowCanonicalJson $junitBefore
 }
-if ($profileInfo) { $context.profile=$Profile; $context.profileDigest=$profileInfo.digest }
+if ($profileInfo) { $context.profile=$Profile; $context.profileDigest=$profileInfo.digest; $context.profileDigestAlgorithm=$profileInfo.digestAlgorithm }
 foreach ($repo in @(@{name='code';path=$WorkspacePath}, @{name='context';path=(Join-Path $WorkspacePath '.ai-workspace')}, @{name='spec';path=$SpecDirectory})) {
     if ((Get-Command git -CommandType Application -ErrorAction SilentlyContinue) -and (Test-Path -LiteralPath $repo.path -PathType Container)) {
         $gitRoot = & git -C $repo.path rev-parse --show-toplevel 2>$null
@@ -401,6 +401,13 @@ try {
         $record.inputsStable=($before.digest -ceq $after.digest) -and (-not $bindSpecs -or $specBefore -ceq (Get-AiSopTaskSpecDigest $SpecDirectory))
         if (-not $record.inputsStable) { $record.outcome='FAILED'; if ($record.exitCode -eq 0) { $record.exitCode=1 } }
     } catch { $record.inputsStable=$false; $record.outcome='FAILED'; $record.exitCode=1 }
+    $definitionProblems=@(Get-AiSopRunDefinitionProblems $record $WorkspacePath)
+    if ($definitionProblems.Count) {
+        $record.diagnostic=(@($record.diagnostic)+$definitionProblems | Where-Object { $_ }) -join '; '
+        $record.inputsStable=$false
+        if ($record.outcome -eq 'PASSED') { $record.outcome='FAILED'; $record.exitCode=1 }
+        Write-Host $record.diagnostic
+    }
     if ($junit) {
         try { $record.reportEvidence=Read-AiSopJUnitEvidence $junit $junitBefore $WorkspacePath }
         catch {

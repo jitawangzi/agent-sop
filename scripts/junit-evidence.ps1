@@ -18,7 +18,8 @@ function Get-AiSopJUnitConfiguration {
         $path=Resolve-AiSopWorkspaceChild $WorkspacePath $report
         if (-not $paths.Add($path)) { throw 'JUNIT_REPORT_DUPLICATE' }
     }
-    return @{ reports=@($paths | ForEach-Object { [IO.Path]::GetRelativePath($WorkspacePath,$_).Replace('\','/') } | Sort-Object -CaseSensitive); cases=@($map.cases); mapDigest=(Get-AiSopWorkflowSha256 (ConvertTo-AiSopWorkflowCanonicalJson $map)) }
+    $map.cases=@($map.cases | Sort-Object id -CaseSensitive)
+    return @{ bindingVersion='junit-map-v1'; mapPath=[IO.Path]::GetRelativePath($WorkspacePath,$mapPath).Replace('\','/'); reports=@($paths | ForEach-Object { [IO.Path]::GetRelativePath($WorkspacePath,$_).Replace('\','/') } | Sort-Object -CaseSensitive); cases=@($map.cases); mapDigest=(Get-AiSopWorkflowSha256 (ConvertTo-AiSopWorkflowCanonicalJson $map)) }
 }
 
 function Get-AiSopJUnitFileIdentity {

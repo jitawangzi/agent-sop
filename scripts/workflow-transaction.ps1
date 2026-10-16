@@ -641,6 +641,14 @@ function Read-AiSopWorkflowTransactionJournal {
 
     try {
         $raw = [System.IO.File]::ReadAllText($JournalPath)
+    } catch {
+        if ($_.Exception.GetBaseException() -is [IO.FileNotFoundException]) {
+            # Retain the public code and a typed cause for the cleanup race.
+            throw [IO.FileNotFoundException]::new('WORKFLOW_REGISTRY_IO_ERROR', $JournalPath)
+        }
+        throw "WORKFLOW_REGISTRY_IO_ERROR"
+    }
+    try {
         Assert-AiSopWorkflowJsonSchema -Json $raw -SchemaId TRANSACTION
         $journal = ConvertFrom-AiSopWorkflowJson -Json $raw -AsHashtable
     } catch {
@@ -822,6 +830,11 @@ function Invoke-AiSopWorkflowTransactionRecovery {
                     -DeadlineUtc $DeadlineUtc `
                     -WorkspacePath $WorkspacePath
             }
+        } catch {
+            $cause=$_.Exception.GetBaseException()
+            # A live writer may finish and remove its journal after Exists but
+            # before ReadAllText. Do not swallow other IO errors or target loss.
+            if ($cause -isnot [IO.FileNotFoundException] -or $cause.FileName -cne $journalPath) { throw }
         } finally {
             $journalLock.Dispose()
             Remove-AiSopWorkflowLockFile -LockPath $journalLockPath

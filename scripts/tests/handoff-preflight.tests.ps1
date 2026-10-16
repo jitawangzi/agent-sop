@@ -63,6 +63,26 @@ try {
     $config=$report.artifacts | Where-Object kind -eq 'PROJECT_CONTEXT'
     Assert ($config.repository.root -ceq (Resolve-PhysicalPathIdentity (Join-Path $workspace '.ai-workspace'))) 'Project context assigned to specs repository'
     Assert ($before -ceq (TreeHash)) 'Preflight wrote workspace, Git or registry files'
+    Put '.ai-workspace/specs/features/Legacy/workflow-state.json' '{"requirement":{"status":"APPROVED"},"design":{"status":"DRAFT"}}'
+    Put '.ai-workspace/specs/features/Legacy/06_design_contract.md' 'legacy design'
+    Put '.ai-workspace/specs/features/Legacy/.workflow-owner.json' '{"ownerId":"historical-only"}'
+    $before=TreeHash
+    $legacy=Get-AiSopHandoffPreflight $workspace Legacy
+    Assert ($legacy.tasks.Count -eq 0 -and $legacy.legacyFeatures.Count -eq 1 -and $legacy.legacyFeatures[0].status -eq 'LEGACY_UNVERIFIED') 'Legacy inventory invented task identity or omitted the feature'
+    Assert ($legacy.legacyFeatures[0].workflowStatePath -like '*/workflow-state.json' -and $legacy.legacyFeatures[0].recordedApprovals.requirement -eq 'APPROVED') 'Legacy state fallback was lost'
+    Assert ('.ai-workspace/specs/features/Legacy/' -in $legacy.syncRoots -and @($legacy.artifacts | Where-Object kind -eq 'FEATURE_SPEC').Count -eq 3) 'Legacy feature specs or sync root missing'
+    Assert (@($legacy.issues | Where-Object code -eq 'TASK_SELECTION_EMPTY').Count -eq 0 -and @($legacy.issues | Where-Object code -eq 'LEGACY_FEATURE').Count -eq 1) 'Legacy selection was mislabeled as missing task'
+    Assert (@($legacy.artifacts | Where-Object { $_.kind -eq 'FEATURE_SPEC' -and $_.tracking -eq 'UNTRACKED' -and $_.repository.root -eq (Resolve-PhysicalPathIdentity (Join-Path $workspace '.ai-workspace/specs')) }).Count -eq 3) 'Legacy artifacts lost nested repository ownership or sync warnings'
+    $humanLegacy=Write-AiSopHandoffPreflight $legacy | Out-String
+    Assert ($humanLegacy -match 'LEGACY_UNVERIFIED' -and $humanLegacy -match 'inventory only') 'Human output implies legacy feature is verified'
+    Assert ($before -ceq (TreeHash)) 'Legacy inventory mutated feature, owner or repository'
+    Put '.ai-workspace/specs/features/Legacy/00_workflow_state.json' '{broken'
+    $invalidLegacy=Get-AiSopHandoffPreflight $workspace Legacy
+    Assert ($invalidLegacy.legacyFeatures[0].workflowStatePath -like '*/00_workflow_state.json' -and $invalidLegacy.legacyFeatures[0].recordedApprovals.requirement -eq 'UNAVAILABLE') 'Corrupt primary legacy state fell back to old approval'
+    $missingTask=Get-AiSopHandoffPreflight $workspace Legacy absent
+    Assert ($missingTask.legacyFeatures.Count -eq 0 -and @($missingTask.issues | Where-Object code -eq 'TASK_SELECTION_EMPTY').Count -eq 1) 'Explicit missing TaskId silently selected legacy feature instead'
+    $allFeatures=Get-AiSopHandoffPreflight $workspace
+    Assert ($allFeatures.tasks.Count -eq 2 -and $allFeatures.legacyFeatures.Count -eq 1) 'Mixed legacy/task inventory lost an independent feature'
     $one.verifications=@(@{kind='compile';batch='binding';command='fixture';exitCode=0;executedAt=[DateTimeOffset]::UtcNow.ToString('o');inputDigest=('f'*64);inputsRef=$ref;inputsStable=$true;caseIds=@();runId=('c'*32);outcome='PASSED';context=@{protocol='2'}})
     SaveTask $one
     $before=TreeHash
@@ -113,6 +133,18 @@ try {
     Assert ($history.tasks[0].localState.owner -eq 'NOT_APPLICABLE' -and $history.tasks[0].localState.session -eq 'NOT_APPLICABLE') 'Historical ownership printed as an unexplained empty field'
     $unknown=Get-AiSopHandoffPreflight $workspace Example one (Join-Path $root 'missing-engine')
     Assert (@($unknown.issues | Where-Object code -eq 'ENGINE_COMPATIBILITY_UNKNOWN').Count -eq 1) 'Unknown target engine presented as compatible'
+    Put '.ai-workspace/context/verification-commands.json' '{"schemaVersion":"1.0","commands":{"build":{"kind":"compile","executable":"pwsh","arguments":["-NoProfile","-Command","exit 0"]}}}'
+    $profile=Get-AiSopVerificationProfile $workspace build
+    $one.verifications=@(@{kind='compile';batch='build';command='fixture';exitCode=0;executedAt=[DateTimeOffset]::UtcNow.ToString('o');inputDigest=$snapshot.digest;inputsRef=$ref;inputsStable=$true;caseIds=@();runId=('d'*32);outcome='PASSED';context=@{profile='build';profileDigest=$profile.digest;profileDigestAlgorithm=$profile.digestAlgorithm}})
+    SaveTask $one
+    $caps.Remove('verificationDefinitionBindings'); [IO.File]::WriteAllText($capPath,($caps | ConvertTo-Json -Depth 6))
+    $oldTarget=Get-AiSopHandoffPreflight $workspace Example one $candidate
+    Assert (($oldTarget.tasks[0].diagnostics -join ' ') -match 'TARGET_DEFINITION_BINDING_UNSUPPORTED') 'Older target was reported capable of current definition checks'
+    Put '.ai-workspace/context/verification-commands.json' '{"schemaVersion":"1.0","commands":{"build":{"kind":"compile","executable":"pwsh","arguments":["-NoProfile","-Command","exit 2"]}}}'
+    $drift=Get-AiSopHandoffPreflight $workspace Example one
+    Assert (($drift.tasks[0].diagnostics -join ' ') -match 'STALE_PROFILE_EVIDENCE') 'Preflight missed selected definition drift'
+    Assert (@($drift.artifacts | Where-Object { $_.path -eq '.ai-workspace/context/verification-commands.json' -and 'Example/one' -in $_.requiredBy }).Count -eq 1) 'Profile source was not assigned to the referencing task'
+    $one.verifications=@(); SaveTask $one
     $old=ConvertFrom-AiSopWorkflowJson (ConvertTo-AiSopWorkflowCanonicalJson $one) -AsHashtable
     $old.Remove('startInputs'); $old.baseline.source='ADOPTED'; SaveTask $old
     $adopted=Get-AiSopHandoffPreflight $workspace Example one

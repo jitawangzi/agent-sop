@@ -6,24 +6,24 @@
 
 ## 修改任务入口（优先于下文旧功能级命令）
 
-每次代码修改先运行 `pwsh -NoProfile -File ./ai-sop.ps1 Task -Operation Discover`，区分独立修改、继续原任务和补收尾。仅讨论不认领；有多个候选才询问一次。用户不需要说固定接管口令。
+进入新任务、切换功能/工作区或跨 Agent 接管时，先运行 `pwsh -NoProfile -File ./ai-sop.ps1 Task -Operation Discover`，区分独立修改、继续原任务和补收尾。同一会话已确认任务且没有归属异常时，连续修改直接沿用当前 taskId，无需按文件或回复重复 Discover / Resume。仅讨论不认领；有多个候选才询问一次。用户不需要说固定接管口令。
 
 - 新修改：`ai-sop.ps1 Task -Operation Start -Feature <功能> -TaskId <唯一任务名> -Tier <T1|T2|T3> -Objective "本次目标" -Agent <工具>`。
 - 续做：`ai-sop.ps1 Task -Operation Resume -Feature <功能> -TaskId <原任务> -Agent <工具>`。旧 ACTIVE owner 尚无任务记录时省略 TaskId，显式 Resume 收编，保留原 ownerId 和批准；若历史档位不明确，先确认，禁止凭空按 T2 收编。
-- 每阶段用 `Checkpoint -NextAction ... -Notes ...` 写下一步；失败/环境阻塞用 `Suspend`，不假装 DONE；独立后续任务可 Start。暂停前应说明未提交修改和依赖。
+- 长任务的重要阶段完成或准备交接时，用 `Checkpoint -NextAction ... -Notes ...` 保存下一步；短 T1/T2 不为每次编辑另写检查点。准备暂停时直接用 `Suspend -NextAction ... -Notes ...` 保存进度并释放占用，无需紧邻再写一次 Checkpoint；保留未提交修改、失败和依赖说明，不假装 DONE。
 - 编译/测试通过 `Run -Kind compile|test -Batch <批次> -Executable <程序> -Arguments <参数数组>` 采集真实结果；T3 测试带 `-CaseIds` 映射本次运行覆盖的用例。运行命令必须是实际构建/测试，不能用空命令或固定 exit 0 伪造成功。
-- 收尾调用 `Verify` 一次列齐缺项，再 `Complete`；T3 继续执行需求设计、审查、覆盖定义等完整步骤。需要 04 时，先核查其语义覆盖当前改动，再 `ReviewImpact` 记录分析哈希与输入指纹。
+- 证据与本档产物就绪后直接 `Complete`：它会执行完成校验，通过才标记 DONE 并释放归属。`Verify` 是需要提前查看缺项时的可选诊断，不是 Complete 的前置步骤；失败按返回的具体缺项修复，输入和证据未变时不反复重试。T3 仍执行需求设计、审查、覆盖定义等完整步骤。需要 04 时，先核查语义覆盖，再 `ReviewImpact` 记录绑定。
 - `TaskId` 是一次独立修改，SDD 计划中的 Task/Step 是该修改内部的执行单元。T1/T2 不额外写整套计划文档。
 
 **执行强度属于本次任务。** 用户明确指定 T1/T2 时保留该档位，不因功能有旧 01/06/04 或旧失败记录自动升 T3。风险扫描提供具体建议；发现范围超出原任务时及时说明，不能到收尾才强加完整流程。未指定强度一律默认 T2；T1/T3 由用户选择。Agent 判断影响范围并提出具体建议，不自行升降档，也不因协议、存储或风险关键词要求重复确认。旧功能级校验只供兼容恢复，新修改必须使用 Task 入口。
 
-**状态与异常恢复**：`ai-sop.ps1 Status -Feature <功能>` 与 Task Status 使用同一任务状态，Discover 用于快速发现。缺本地归属或异常中断时先检查 Status，再 Recover → Resume；原会话仍活跃时先确认旧 Agent 已停止，再使用 ForceRecovery 并记录 Notes。检测到本机验证进程仍运行时不可接管。旧 ForceRelease 也同步暂停任务，不代表验收通过。
+**状态与异常恢复**：日常识别任务、查看运行进度用 `Task -Operation Discover -Feature <功能>`，不扫描全部验证输入；查看日志可加 `-LogTailLines 20`。需要核对证据是否适用于当前代码时用 `ai-sop.ps1 Status`，不在每次编辑或轮询进度时重复全量核对。缺本地归属或异常中断时先 InspectRecovery，按诊断 Recover → Resume；原会话仍活跃时先确认旧 Agent 已停止，再使用 ForceRecovery 并记录 Notes。检测到本机验证进程仍运行时不可接管。旧 ForceRelease 也同步暂停任务，不代表验收通过。
 
-**验证命令配置**：常用编译/测试命令可配置在 `.ai-workspace/context/verification-commands.json`，使用 `Run -Profile <名称>`；配置属于宿主上下文，不写入核心引擎。Run 会先记 RUNNING，再持续输出日志；超时/失败/中断不能复用更早成功结果。Status 的执行证据结果和已记录批准不替代完整 T3 Verify。
+**验证命令配置**：常用编译/测试命令可配置在 `.ai-workspace/context/verification-commands.json`，使用 `Run -Profile <名称>`；配置属于宿主上下文，不写入核心引擎。Run 会先记 RUNNING，再持续输出日志；超时/失败/中断不能复用更早成功结果。Status 的执行证据结果和已记录批准不替代 T3 Complete 的完整校验。
 
 **任务诊断与证据同步**：Start 只创建新 TaskId，已有任务用 Resume，独立新目标不要复用旧身份。Status/Discover 默认简明文本与未完成/有待同步项任务；`-IncludeHistory` 查看历史，自动化使用 `-Json` 的版本化 tasks/warnings 数组；兼容旧逐行输出用 `-OutputFormat JsonLines`。可在 `.ai-workspace/context/verification-inputs.json` 补充真实输入或带理由排除生成目录，不得随意排除共享源码来消除过期证据。新输入清单在 `.ai-workspace/specs/.artifacts/inputs/` 去重保存，必须随规格 Git 同步；本地 `.ai-workspace/.runtime/verification/` 日志无需同步。出现清单缺失/损坏先补同步或重跑，禁止改写成功摘要。投影/引擎部署版本提醒用安装器和 Doctor 处理，不自动升级任务档位。
 
-**可选只读排查**：`ai-sop.ps1 Inputs -InputPath <宿主相对路径>` 解释真实输入规则与扫描开销；`-CandidatePolicy <候选JSON相对路径>` 预览范围差异，不覆盖正式配置。`ai-sop.ps1 Preflight -Feature <Feature> -TaskId <taskId>` 检查交接记录、引用清单和本机执行状态，`-TargetEnginePath <候选引擎目录>` 比较升级兼容性；二者支持 `-Json`。Preflight 按嵌套 Git 实际归属提示同步，不运行源码扫描、事务恢复或归属写入。缺目标声明只报告 UNKNOWN；输出不是完成证据或发布认证。只在排查、交接或升级时按需使用，不增加 T1/T2 必经步骤。命令与边界见操作手册。
+**可选只读排查**：`ai-sop.ps1 Inputs -ExplainOnly -InputPath <宿主相对路径>` 快速解释指定路径的输入规则；需要完整扫描统计时省略 ExplainOnly。`-CandidatePolicy <候选JSON相对路径>` 预览规则/范围差异，不覆盖正式配置。`ai-sop.ps1 Preflight -Feature <Feature> -TaskId <taskId>` 检查交接记录、引用清单和本机执行状态，`-TargetEnginePath <候选引擎目录>` 比较升级兼容性；二者支持 `-Json`。Preflight 按嵌套 Git 实际归属提示同步，不运行源码扫描、事务恢复或归属写入。缺目标声明只报告 UNKNOWN；输出不是完成证据或发布认证。只在排查、交接或升级时按需使用，不增加 T1/T2 必经步骤。命令与边界见操作手册。
 
 **任务完成条件**：T1 真实编译/基础检查成功，报告未测试范围；T2 编译与相关测试成功，并用 RecordSync 记录受影响需求、设计与测试的同步结果；T3 完整规格和审查门禁加当前任务证据。T1/T2 无独立代码审核环节。测试环境失败可以暂停交接，不能写成通过。本次任务 DONE 不代表旧 T3 或整个功能已全面验收。
 
@@ -272,7 +272,7 @@ AI 可在一次响应内同时呈递 `01_server_rules.md` 与 `06_design_contrac
 
 **Guard 拦截后的任务识别**：先 `ai-sop.ps1 Task -Operation Discover` 识别功能和任务。独立修改用 Start，继续原任务用 Resume；异常中断先 Status / InspectRecovery，再 Recover → Resume。不要生成临时 ownerId 直接 Claim 来绕过任务入口。已获授权且任务明确时自动继续；存在归属冲突则说明原因，确认旧 Agent 停止后才进行强制恢复，不要求固定接管口令。
 
-新任务由 Task Start 管理归属、基线与 taskId，Task Verify 通过后 Task Complete；中断用 Checkpoint / Suspend。已有功能继续使用原 FeatureName，独立修改创建新 taskId。同功能不并行运行多个主任务。
+新任务由 Task Start 管理归属、基线与 taskId，证据就绪后直接 Task Complete（内含完成校验）；长任务按需 Checkpoint，暂停用 Suspend。已有功能继续使用原 FeatureName，独立修改创建新 taskId。同功能不并行运行多个主任务。
 
 **旧功能级命令兼容**：下方 Claim / Validate / Complete / Transfer 示例仅用于尚未迁移、没有 taskId 的存量归属；有 taskId 时使用任务入口，不混用完成语义。各 harness 统一 `SUPERPOWERS` 归属（它是身份标识，不代表 T1/T2 依赖完整 Superpowers 流程），`agent` 字段区分实际工具。
 
@@ -339,7 +339,7 @@ pwsh -NoProfile -File ./.ai-sop/scripts/feature-state.ps1 -Operation Get -Featur
 
 ## 完成验证
 
-新任务按下节档位要求使用 Task Run / Verify / Complete。以下覆盖校验示例用于 T3 或旧流程诊断（任务模式调用 ValidateTestCoverage 时加 `-TaskId`）；修改 SOP 脚本本身时另须运行聚合测试。普通宿主 T1/T2 不默认执行 SOP 全量套件或完整覆盖检查：
+新任务按下节档位要求使用 Task Run 留证，再 Task Complete；Verify 仅作可选的提前诊断。以下覆盖校验示例用于 T3 或旧流程诊断（任务模式调用 ValidateTestCoverage 时加 `-TaskId`）；修改 SOP 脚本本身时另须运行聚合测试。普通宿主 T1/T2 不默认执行 SOP 全量套件或完整覆盖检查：
 
 ```powershell
 pwsh -NoProfile -File .\.ai-sop\scripts\run-all-tests.ps1 -IncludeCompile
@@ -357,7 +357,7 @@ pwsh -NoProfile -File .\.ai-sop\scripts\workflow-state.ps1 -Operation LintSpecs 
 
 质量保证分层（机器硬门禁 vs AI 自报、证据绑定、明确不做）见 `.ai-sop/docs/QUALITY_GATES.md`。下表是操作清单。
 
-完成条件**按档位分**（`workflow-state.ps1 -Operation Status` 显示当前 tier + 门禁 SHA；`workflow-state.ps1 -Operation CheckCompletion -Path .../00_workflow_state.json` 输出机检 ASCII checklist（门禁 SHA/coverage/`07`/`compile-evidence.json`/SVN status）。**机检项 [v]=pass/[X]=fail，人工项 [?]=需 AI 验证**。`CheckCompletion` 是诊断（exit 0）；硬失败只在 `VerifyCompletion` / `Complete`。AI 据下表 + CheckCompletion 结果逐项检查并报告）：
+完成条件**按档位分**。任务模式由 Task Complete 执行机器校验，AI 如实报告本档验证范围与自报项。下表用于理解检查内容，不要求把各诊断命令再串行执行一遍。旧功能级 `workflow-state.ps1 -Operation Status` / `CheckCompletion` 按需排查；后者 exit 0 不代表门禁通过。
 
 **Complete 前硬门禁**：新任务由 Task Complete 调用 VerifyCompletion -TaskId。T1 检查真实编译；T2 检查真实编译、相关测试及 RecordSync；T3 另外检查批准与当前规格哈希、设计审核、覆盖映射及适用的影响分析。T1/T2 的明确适用性说明按上文处理。失败不释放为已完成，可 Suspend 保留问题并释放执行占用。机器不以 FollowUp 标记阻断任何档位；T3 仍需解决实际相关规格和验证缺口。旧 compile-evidence.json/test-evidence.json 仅用于未迁移的功能级兼容路径，新任务不手写这些执行记录。
 
@@ -424,9 +424,9 @@ SVN 是团队源码真源。本项目基于 **SVN 分支**开发（不是 trunk 
 - **本机覆盖**：若本机环境某 STRICT 工具实际不支持 subagent/evidence，写 `.ai-sop/.harness-capability-override.json`（gitignored，不共享）降级该能力。格式 `{"CLAUDE_CODE":{"subagent":false,"_reason":"此 build 的 subagent 失效"}}`。`harness-capability.ps1` 合并覆盖后重判（STRICT→BLOCKED），`doctor.ps1` 提示覆盖存在。覆盖文件是本机降级的诚实记录，不静默。
 - **T3 子代理不可用**：保留当前任务进度并说明缺失能力，提出切换工具或人工改档的选项；不能静默按 T2 完成。已经选择 T1/T2 的任务不依赖独立子代理，不因此拦截。
 
-## AI 回复状态行（必带）
+## 进度与结果汇报
 
-AI 每次回复末尾必带一行：`档位=T2 | 阶段=实现 | 下一步=编译 | owner=<id>`。`ai-sop.ps1 Status -Feature <Name>` 打同一行，让人/AI/工具三端能对上进度。
+在开始、长耗时操作、重要结论、阻塞和交接时简短说明进展；完成时报告实际改动、验证结果和剩余事项。无需每次回复附固定状态行或重复 owner ID，也不为生成汇报专门调用 Status。交接/异常时明确 Feature、taskId、档位和下一步，身份以任务记录为准；长操作仍需持续提供有意义的进度。
 
 ## SOP 拦截标准输出格式
 

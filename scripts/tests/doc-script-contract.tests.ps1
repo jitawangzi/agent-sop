@@ -343,7 +343,7 @@ exit 0
     Assert-Contract "Implementation delivery loop must be scoped to T3" `
         ($engineText -match '### D\. T3 Delivery Loop \(仅 T3 完整交付闭环\)' -and $engineText -match 'T1 不强制增加测试阶段')
     Assert-Contract "Adapter diagram must use task completion and explicitly select T3" `
-        ($adapterText -match 'Task Start -Tier T3' -and $adapterText -match 'Task Verify -> Task Complete')
+        ($adapterText -match 'Task Start -Tier T3' -and $adapterText -match 'Task Complete（内含完成校验；Task Verify 仅作可选的提前诊断）')
 
     # --- Semantic drift guards: prevent known contradiction phrases from recurring ---
     # These were real drift bugs (single-point fix not propagated). Lock them out so the

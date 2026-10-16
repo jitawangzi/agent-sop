@@ -267,7 +267,7 @@ T3 只有在以下条件满足时，才能宣称本次选定测试完成：
 
 返回的状态语义（供 controller 路由，非 Handoff 字段）：
 - `PLAN` 成功：返回测试计划就绪，交 controller 路由到测试计划审计；产物须含带 meta 的 `05_test_plan.md` 和 **SyncCoverage 生成的** `05_test_coverage.json`
-- `VERIFY` 成功：返回本次相关测试通过及 Task Run 记录，交当前任务执行者进行 Task Verify / Complete
+- `VERIFY` 成功：返回本次相关测试通过及 Task Run 记录，交当前任务执行者进行 Task Complete（内含完成校验，Task Verify 仅作可选的提前诊断）
 - `VERIFY` 发现业务实现错误：返回 `FAIL`，路由回实现修复
 - `VERIFY` 修改业务测试入口或生产相邻测试挂钩：返回影响范围，T3 重新审核，T1/T2 按档位同步和验证
 - 发现需求或设计冲突：说明冲突；T3 回到对应批准步骤，T1/T2 按人工明确的本次需求处理，不自行升档

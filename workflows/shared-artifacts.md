@@ -10,10 +10,10 @@
 这里的修改任务与 SDD 计划里的 Task/Step 不同，T1 可延期同步，T2 按影响同步相关需求、设计与测试；不要求额外创建整套规格或计划。
 
 - 功能长期存在；任务有固定目标、独立 T1/T2/T3（默认 T2）、不可变 ownerId；Agent/session 可以更换。
-- 使用 `workflow-task.ps1` 或根入口 `ai-sop.ps1 Task`。先 Discover，确定是 Start、Resume 还是原任务收尾；仅讨论不认领，有歧义只询问候选任务。
+- 使用 `workflow-task.ps1` 或根入口 `ai-sop.ps1 Task`。进入任务、切换功能/工作区或跨 Agent 接管时先 Discover，确定是 Start、Resume 还是原任务收尾；同一会话连续执行已确认的任务无需重复 Discover / Resume；仅讨论不认领，有歧义只询问候选任务。
 - Start 为独立修改创建新记录，不继承历史成功证据，不修改功能级进度和批准。
 - Resume 保持 taskId/ownerId/tier。ACTIVE 任务用 Transfer；PAUSED 任务重新 Claim。旧 ACTIVE owner 可显式 Resume 收编为任务，保留批准但重新采集执行证据。
-- Checkpoint 记录下一步与说明；Suspend 保存 PAUSED 并释放本地归属；Cancel 保存 CANCELLED；Complete 只有本任务检查通过才保存 DONE。
+- Checkpoint 在长任务重要节点记录下一步与说明；Suspend 可直接保存 NextAction / Notes、置 PAUSED 并释放本地归属，无需紧邻重复 Checkpoint；Cancel 保存 CANCELLED。证据就绪后直接 Complete，内含本任务完成校验，通过才保存 DONE；Verify 仅作可选的提前诊断。
 - 任务、owner、session、grant 在同一两阶段事务中变化；TASK 记录受功能 Owner Lock 保护，锁顺序仍是 Session → Owner → Grant。
 - 一个功能在一个工作区只有一个执行 owner。同功能多独立会话并行不支持；不同功能用独立工作区。没有跨机器分布式锁，远端未同步活动不能自动探测。
 - `task.json` 和必要规格应纳入宿主选定的持久化策略；日志按需保留。Session/Grant/Owner 权限记录留本机。Discover/Doctor 根据 specs 实际所属仓库检查忽略规则，独立 specs 仓库不受父仓库忽略规则的误报影响，不自动修改宿主忽略规则或提交历史文件。

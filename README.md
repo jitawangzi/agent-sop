@@ -255,7 +255,7 @@ pwsh -NoProfile -File ./ai-sop.ps1 Doctor
 按 T2 修复导入模块中的空指针异常。
 ```
 
-> **执行效果**：AI 先 Discover 识别功能，再 Start 独立任务或 Resume 原任务，修改代码并同步受影响的规格/用例，通过 Task Run 编译与运行相关测试，用 RecordSync 记录同步结果，最后 Verify / Complete。无需完整头脑风暴或独立代码审核；未指定档位时同样默认 T2。
+> **执行效果**：AI 先 Discover 识别功能，再 Start 独立任务或 Resume 原任务，修改代码并同步受影响的规格/用例，通过 Task Run 编译与运行相关测试，用 RecordSync 记录同步结果，最后直接 Complete（内含完成校验，Verify 仅作可选的提前诊断）。无需完整头脑风暴或独立代码审核；未指定档位时同样默认 T2。
 
 #### 路径 2：完整新功能开发（T3 模式，双门禁严密闭环 🛡️）
 

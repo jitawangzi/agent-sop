@@ -2,15 +2,15 @@
 
 ## 修改任务入口（优先于下方兼容示例）
 
-每次修改先 `ai-sop.ps1 Task -Operation Discover`，根据用户目标与已有记录选择 Start 或 Resume；不要求用户记住接管口令。任务身份、档位和下一动作记录在功能目录的 `tasks/<taskId>/task.json`，与 SDD 计划内的 Task/Step 区分。
+进入新任务、切换功能/工作区或跨 Agent 接管时先 `ai-sop.ps1 Task -Operation Discover`，根据用户目标与已有记录选择 Start 或 Resume。同一会话连续执行已确认的任务时无需重复 Discover / Resume；不要求用户记住接管口令。任务身份、档位和下一动作记录在功能目录的 `tasks/<taskId>/task.json`，与 SDD 计划内的 Task/Step 区分。
 
 - T1/T2 使用任务自己的档位和验证，不因历史 T3 规格自动升档；无需创建完整计划。
 - T3 沿用本适配器的需求设计、独立审查和覆盖要求。调用 `workflow-state.ps1` 的 ValidateChangeImpact、ValidateTestCoverage、VerifyCompletion 时带 `-TaskId`，避免误走旧执行证据规则。
 - 用 `Task Run` 执行编译和测试并留存真实结果；T3 测试批次提供实际覆盖的 CaseIds。原有文字编译摘录用于审查上下文，不能替代执行记录。
 - T3 Start 固定任务基线。用 `Task Changes` 获取本次内容差异，04 的 taskId/baseline/baselineInputDigest/changedFiles/changeSetDigest 必须对应当前任务；用 SetCaseScope 登记本次必测 CaseIds 和理由，包含 04 要求的回归用例。其他未开发用例不作为本任务执行要求，整体规格覆盖定义仍检查。可选 JUnitReports + CaseMap 从报告映射结果。
-- 检查 04 分析后使用 `Task ReviewImpact` 记录当前绑定；最终 `Task Verify`、`Task Complete` 只完成本次修改。
-- 状态统一通过根 Status 或 Task Status 查询；异常中断或归属丢失用 Recover → Resume。发现 RUNNING 先检查实际进程和日志，不能覆盖旧运行记录。常用验证命令可由宿主 context/verification-commands.json 提供，用 Run -Profile 调用。
-- 中断或环境阻塞用 Checkpoint/Suspend，释放执行占用并保留未完成项；独立后续任务另建身份。接管 Resume 保留原身份和档位。
+- 检查 04 分析后使用 `Task ReviewImpact` 记录当前绑定；证据就绪后直接 `Task Complete`，内含完成校验，只完成本次修改。`Task Verify` 仅作可选的提前诊断。
+- 日常任务和进度查询用 Task Discover；需要核对当前代码的证据适用性时用根 Status 或 Task Status。异常中断或归属丢失先 InspectRecovery，再按诊断 Recover → Resume。发现 RUNNING 先检查实际进程和日志，不能覆盖旧运行记录。常用验证命令可由宿主 context/verification-commands.json 提供，用 Run -Profile 调用。
+- 长任务重要节点按需 Checkpoint；中断或环境阻塞时直接 Suspend 保存未完成项并释放执行占用。独立后续任务另建身份，接管 Resume 保留原身份和档位。
 - 不同功能在独立工作区并行；同功能多个独立主会话并行不支持。合并后的输入需要重新验证。
 
 下方旧 Claim/Complete 与功能级 evidence 命令用于未迁移任务的兼容路径；新任务以本节及 `shared-artifacts.md` 为准。
@@ -38,7 +38,7 @@ Task Discover -> Task Start -Tier T3（或 Resume 原 T3 任务）
 -> ValidateTestCoverage（覆盖校验，实现后）
 -> superpowers:requesting-code-review（整体收尾审查）
 -> superpowers:verification-before-completion
--> Task Verify -> Task Complete
+-> Task Complete（内含完成校验；Task Verify 仅作可选的提前诊断）
 ```
 
 **流程关键点**：
@@ -110,7 +110,7 @@ implementation-engine（一次只做一个 Task）
 - 只有完整的 `01_server_rules.md` 与 `06_design_contract.md` 需要最终确认。
 - 设计最终确认后自动继续，除非需求/设计变得模糊或环境被阻塞。
 - 不要让用户选择执行策略；当任务可独立 review 时默认采用 `subagent-driven-development`。
-- **子代理进度可见（覆盖 Superpowers SDD）**：原生 `subagent-driven-development` 写「不要向人汇报进度 / progress summaries waste time」——**对本项目不生效**。每个独立 subagent（`design-reviewer` / `design-architect` / `implementation-engine` / `implementation-auditor` / `logic-auditor`）**返回后、发起下一串工具或下一个 subagent 之前**，controller 必须先向用户输出可见进度（1–3 行）：谁完成、结论（PASS/FAIL/阻塞/已交编译证据）、下一步。预计超过约 10 秒的编译/测试/门禁扫描，开始前同样先报正在跑什么。禁止 subagent 已 idle 后连续静默调工具，导致主窗口像卡死。回复末尾状态行不能替代本条。
+- **子代理进度可见（覆盖 Superpowers SDD）**：原生 `subagent-driven-development` 写「不要向人汇报进度 / progress summaries waste time」——**对本项目不生效**。每个独立 subagent（`design-reviewer` / `design-architect` / `implementation-engine` / `implementation-auditor` / `logic-auditor`）**返回后、发起下一串工具或下一个 subagent 之前**，controller 必须先向用户输出可见进度（1–3 行）：谁完成、结论（PASS/FAIL/阻塞/已交编译证据）、下一步。预计超过约 10 秒的编译/测试/门禁扫描，开始前同样先报正在跑什么。禁止 subagent 已 idle 后连续静默调工具，导致主窗口像卡死。无需固定的回复末尾状态行；有意义的进度不能省略。
 
 ## 领域专家（执行单元，非流程节点）
 
@@ -254,7 +254,7 @@ PreToolUse hook 在每次文件编辑前运行 `guard-production-edit.ps1`（各
 
 ## 归属完成
 
-任务模式使用 Task Run 留证，T2 另用 RecordSync 说明同步结果，Task Verify 通过后 Task Complete。中断用 Checkpoint / Suspend 保存下一动作并释放执行占用；异常中断用 Status / InspectRecovery 检查后 Recover → Resume。独立新修改沿用功能名、创建新 taskId。只读审计不创建任务或认领归属。
+任务模式使用 Task Run 留证，T2 另用 RecordSync 说明同步结果，证据就绪后直接 Task Complete，失败按返回缺项修复；不把 Verify / Status 串成固定收尾步骤。长任务在重要阶段用 Checkpoint 保存下一动作；暂停时直接 Suspend 并带 NextAction / Notes，无需紧邻重复 Checkpoint。异常中断先 InspectRecovery，再按诊断 Recover → Resume。独立新修改沿用功能名、创建新 taskId。只读审计不创建任务或认领归属。
 
 仅没有 taskId 的旧归属使用 ledger 中的 owner ID 调用 `workflow-owner.ps1 -Operation Validate` / Complete；不得把旧命令用作新任务的捷径。事务不确定时保留 journal 与目标文件，Preflight 只做诊断，不通过删除日志或强制释放绕过。
 

@@ -21,6 +21,8 @@ Status 默认仅对未完成任务检查当前输入；DONE/CANCELLED 即使有�
 | 必需验证失败或环境阻塞 | Suspend/交接，不能冒充通过 | 同左 | 同左 |
 | 历史待同步项 | 提醒，不阻塞 | 提醒，不继承为本次义务 | 提醒；实际相关缺口按 T3 验收 |
 
+正常收尾直接 Task Complete，在提交 DONE/释放归属前执行 `VerifyCompletion -TaskId`；不需要先单独 Task Verify。移除重复调用不缓存或跳过最终校验，证据缺失/失败/过期仍拒绝完成。Verify 保留为可选的提前诊断，Discover 用于不扫描全部输入的进度查询。
+
 `VerifyCompletion -TaskId` 一次输出缺失命令记录、失败批次、输入变更文件和 T3 规格问题；`CheckCompletion -TaskId` 使用同一检查但仅作诊断。原有 `testCount >= cases.Count` 数量代理已经移除，旧记录仍必须真实成功且数量自洽。
 
 验证输入使用内容指纹 `inputs-v2`，覆盖工作区中的保守输入集合（包括公共源码、测试、构建及依赖声明），不受暂存或提交状态影响。常规 build/target/bin/obj/out/classes 仅在工作区根或可识别的 Maven/Gradle 模块根排除，不按任意层级的源码包名过滤；有 web.xml 的 WEB-INF/classes 为标准 Java Web 编译输出，排除 classes 而保留 web.xml。另排除治理目录、worktree 的 .git 文件、根 .ai-sop-staging、依赖缓存、滚动日志与临时文件。依赖锁文件仍属于输入。算法版本参与摘要，旧 v1 证据需重新运行验证，历史 DONE 不迁移。未排除的符号链接会明确失败，不静默漏掉链接输入。该快照不等于密封构建：外部服务、未声明环境和工具链变化仍需控制器判断并重跑；不同工作区及合并后的代码不能仅凭各自历史 PASS 宣称集成通过。

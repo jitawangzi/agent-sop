@@ -88,7 +88,7 @@ description: 编排人工请求的独立审计片段，默认只出报告；明�
 & ./ai-sop.ps1 Task -Operation Resume -Feature Example -TaskId audit-fix-1 -Agent CODEX
 ```
 
-示例中的工具身份、目标和档位按当前请求填写。验证用 Task Run，按档位同步规格与用例（T2 使用 RecordSync），本次完成用 Task Verify / Complete。正常暂停先停止本次运行、处理待入账结果，再 Suspend 释放执行占用并保留 taskId 和检查点。异常中断先 Status / InspectRecovery，再按诊断 Recover；已恢复为 PAUSED 时直接 Resume，不重复 Suspend。正常交接用 Resume，不自动强制接管；暂停不代表验收完成。T1 的延期事项用 AddFollowUp 非阻断提醒。只读审计发现旧 DONE 有待办时，不因当前代码变化要求旧任务重新完成。
+示例中的工具身份、目标和档位按当前请求填写。验证用 Task Run，按档位同步规格与用例（T2 使用 RecordSync），证据就绪后直接 Task Complete（内含完成校验，Verify 仅作可选的提前诊断）。正常暂停先停止本次运行、处理待入账结果，再 Suspend 释放执行占用并保留 taskId 和检查点。异常中断先 Status / InspectRecovery，再按诊断 Recover；已恢复为 PAUSED 时直接 Resume，不重复 Suspend。正常交接用 Resume，不自动强制接管；暂停不代表验收完成。T1 的延期事项用 AddFollowUp 非阻断提醒。只读审计发现旧 DONE 有待办时，不因当前代码变化要求旧任务重新完成。
 
 旧 Owner Claim / Complete 仅用于已有无 taskId 流程的兼容恢复，参见 `.ai-sop/SUPERPOWERS_MANUAL.md`；新修复不进入该兼容路径。
 

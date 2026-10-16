@@ -2,15 +2,27 @@
 
 > **任务模式更新**：新修改优先使用 `ai-sop.ps1 Task`。默认 T2，人工指定优先。T1/T2/T3 属于本次修改，不由风险关键词或历史功能产物自动决定。未带 taskId 的旧命令仍保留兼容语义，下面的旧功能级证据说明不覆盖任务模式。
 
+## 日常最短路径
+
+进入新任务、切换功能/工作区或跨 Agent 接管时先 Discover，确认目标后 Start 或 Resume。同一会话连续执行已确认的任务，无需按文件或回复重复识别/接管。人工指定档位优先，未指定为 T2。
+
+| 档位 | 正常执行路径 |
+|---|---|
+| T1 | Start / Resume → 修改 → Run 编译/基础检查 → Complete；确有延期时，在 Complete 前记 FollowUp |
+| T2 | Start / Resume → 修改并同步受影响规格/用例 → Run 编译和相关测试 → RecordSync → Complete |
+| T3 | Start / Resume → 需求设计、审查、实现及覆盖等完整流程 → Run 和适用的证据绑定 → Complete |
+
+Complete 内含本档完成校验，成功才保存 DONE、释放归属。Verify 用于想提前列出缺项时；日常无需固定执行 Verify → Status → Complete。Complete 失败按实际缺项修复，条件未变时不重复尝试。长任务重要节点按需 Checkpoint；准备暂停直接 Suspend 并带 NextAction / Notes，保存进度并释放占用。
+
 ## 任务状态、异常恢复和验证命令配置
 
-`ai-sop.ps1 Status` 与 `Task -Operation Status` 使用同一任务摘要；支持 `-Feature`、`-TaskId` 筛选。Discover 显示相同的任务/归属/会话信息而不扫描全部验证输入。摘要中的 `recordedApprovals` 是批准记录展示，`EXECUTION_EVIDENCE_CURRENT` 只说明执行证据适用；`APPLICABILITY_RECORDED` 表示含不适用声明，不是未运行的命令通过，完整 T3 收尾仍使用 Verify。
+`ai-sop.ps1 Status` 与 `Task -Operation Status` 使用同一任务摘要；支持 `-Feature`、`-TaskId` 筛选。Discover 显示相同的任务/归属/会话信息而不扫描全部验证输入。摘要中的 `recordedApprovals` 是批准记录展示，`EXECUTION_EVIDENCE_CURRENT` 只说明执行证据适用；`APPLICABILITY_RECORDED` 表示含不适用声明，不是未运行的命令通过，完整 T3 收尾由 Complete 执行最终校验。日常查进度优先 Discover；Status 用于需要核对当前输入时，避免把全树内容扫描用于频繁轮询。
 
 Status/Discover 默认输出简明文本，列出未完成任务及仍有待同步项的历史任务。指定 `-TaskId` 始终显示该任务；`-IncludeHistory` 查看完整历史。自动化请使用 `-Json`：输出单个 JSON 文档，固定包含 `schemaVersion: "1.0"`、`operation`、`workspace`、`tasks[]`、`warnings[]`（空结果仍为数组），契约见 `schemas/task-status.schema.json`。原逐行 JSON 调用需加 `-OutputFormat JsonLines`；不要解析默认文本。Start 遇到已存在的 TaskId 会提示使用 Resume，不会恢复旧任务或忽略新目标；Resume 保留原目标，新目标使用新 TaskId。
 
 DONE/CANCELLED 默认显示 `HISTORICAL_NOT_RECHECKED`，保留已记录的终态、失败记录与待同步项，不用后续代码变化重新判旧任务“需要处理”。这不表示历史证据仍适用于当前代码。需要复核时使用 `Status -TaskId <任务> -RecheckHistory`，或 `Status -IncludeHistory -RecheckHistory`；JSON 的 `verificationScope=CURRENT_INPUTS` 表示本次显式核对，结果不改变任务状态。Discover 始终不扫描输入，不接受 RecheckHistory。
 
-正常切换 Agent 用 Resume。异常中断、本地 owner 丢失、或接收到没有本地 owner 的 ACTIVE 任务时，先 Status，再 `Task -Operation Recover`，恢复为 PAUSED 后 Resume。Recover 不把任务标成完成，不导入其他工作区的权限。若原会话仍标记 ACTIVE/IDLE，先确认旧 Agent 已停止，再显式使用 `-ForceRecovery -Notes "恢复原因"`；本机验证进程还在运行时，即使带该参数也会拒绝恢复。旧 ForceRelease 也会同步暂停任务、清除原会话绑定，使用同一事务。
+正常切换 Agent 用 Resume。异常中断、本地 owner 丢失、或接收到没有本地 owner 的 ACTIVE 任务时，先 InspectRecovery，再按诊断 `Task -Operation Recover`，恢复为 PAUSED 后 Resume。Recover 不把任务标成完成，不导入其他工作区的权限。若原会话仍标记 ACTIVE/IDLE，先确认旧 Agent 已停止，再显式使用 `-ForceRecovery -Notes "恢复原因"`；本机验证进程还在运行时，即使带该参数也会拒绝恢复。旧 ForceRelease 也会同步暂停任务、清除原会话绑定，使用同一事务。
 
 Start、Resume（含旧 owner 收编、同会话续接及跨会话转移）和会话绑定都会在同功能归属锁内检查其他 ACTIVE 任务；即使本地 owner 注册表为空，也不能绕过同步来的未结束任务。`TASK_ACTIVE_CONFLICT:<taskId>` 指出需要继续或恢复的任务；独立新任务可在旧任务 Suspend/Recover 为 PAUSED 后启动，无需先通过旧任务完成门禁。冲突检查不阻止 Suspend、Cancel 或 Recover 清理占用。该检查仅覆盖本工作区已同步的状态，不是跨机器实时分布式锁，不支持同功能并行写入。
 
@@ -44,7 +56,7 @@ Task Verify 和 Complete 使用相同的批准文件定位规则：优先 `00_wo
 
 Run 在启动前持久保存 RUNNING，再持续输出并写入任务日志，结束时更新为 PASSED、FAILED 或 TIMED_OUT。异常退出可能留下 RUNNING；Status 根据本机进程身份（PID 与启动时间）区分仍运行和已中断，Recover 将已停止的尝试记为 INTERRUPTED。远端进程无法本地确认，需要先确认原执行已停止。超时会终止本次启动的进程树并记录退出码 124。查看实时日志可使用 PowerShell 的 Get-Content -Wait；停止运行器后，后续 Agent 应检查是否还有遗留子进程。
 
-Status/Discover 显示未完成运行的开始时间、已运行秒数、配置的超时、日志字节数及最后更新时间，默认只读取日志元数据。需要最近输出时，可用 `./ai-sop.ps1 Status -Feature Example -TaskId change-1 -LogTailLines 20`；也支持 `Task -Operation InspectRecovery -LogTailLines 20`。最多请求 200 行，每份日志最多读取末尾 32 KiB，截断时标记 `tailTruncated`。远端运行不读取同名本地日志；旧记录未保存超时则显示 UNKNOWN，不能推断为无限运行。日志不更新不等于卡死；这些即时观察不续期、不终止进程、不构成执行证据。
+Status/Discover 显示未完成运行的开始时间、已运行秒数、配置的超时、日志字节数及最后更新时间，默认只读取日志元数据。需要最近输出时，可用 `./ai-sop.ps1 Task -Operation Discover -Feature Example -TaskId change-1 -LogTailLines 20`，无需为看日志扫描当前源码；Status 也支持此参数；也支持 `Task -Operation InspectRecovery -LogTailLines 20`。最多请求 200 行，每份日志最多读取末尾 32 KiB，截断时标记 `tailTruncated`。远端运行不读取同名本地日志；旧记录未保存超时则显示 UNKNOWN，不能推断为无限运行。日志不更新不等于卡死；这些即时观察不续期、不终止进程、不构成执行证据。
 
 Run 自动续期当前绑定会话，不重新激活已结束或已转移的会话。运行中的会话检查/续期遇到锁竞争，会在最后确认的原租约有效期内退避重试，连续重试最多 30 秒；租约到期、身份变化或其他协调错误会停止子进程，记为 INTERRUPTED 并保留 RUN_CONTROL_INTERRUPTED 诊断，不冒充测试断言失败。执行结果先原子保存到任务目录的 `<runId>.pending.json`，再通过事务入账；只有成功入账才删除待保存文件。事务失败时可用 `Task -Operation RetryEvidence -Feature Example -TaskId fix-1 -Agent CODEX -RunId <id>` 重试保存，不重新执行命令。会话已结束/到期时，待原进程停止后 Recover：匹配的本地终态结果会随恢复事务保存，再 Resume；没有有效终态结果才记 INTERRUPTED。旧任务的终态 owner 不阻塞另一任务的恢复。
 
@@ -134,9 +146,9 @@ Status、Discover、InspectRecovery 和 Preflight 共用恢复建议，JSON 提�
 
 ## 独立修改、续做与暂停
 
-1. `pwsh -NoProfile -File ./ai-sop.ps1 Task -Operation Discover` 查看候选；讨论不认领。
+1. 进入新任务、切换功能/工作区或跨 Agent 接管时，用 `pwsh -NoProfile -File ./ai-sop.ps1 Task -Operation Discover` 查看候选；同一会话持续执行已确认的任务无需重复；讨论不认领。
 2. 独立修改使用 `Task -Operation Start -Feature Example -TaskId fix-1 -Tier T2 -Objective "修复既有行为" -Agent CODEX`。
-3. 中断后使用 `Task -Operation Resume -Feature Example -TaskId fix-1 -Agent CODEX`；任务身份和档位不变。旧 ACTIVE owner 可省略 TaskId 显式收编，不重置批准。
+3. 继续原任务使用 `Task -Operation Resume -Feature Example -TaskId fix-1 -Agent CODEX`，异常中断先按 InspectRecovery 的建议处理；任务身份和档位不变。旧 ACTIVE owner 可省略 TaskId 显式收编，不重置批准。
 4. 使用 Run 执行真实构建与测试，自动保存成功/失败和输入指纹。参数数组推荐在 PowerShell 中调用：
 
 ```powershell
@@ -150,8 +162,8 @@ Status、Discover、InspectRecovery 和 Preflight 共用恢复建议，JSON 提�
 
 可执行文件的相对路径按宿主工作区解析，与调用端当前目录无关。`.ps1` 使用 `pwsh -File`；`.bat/.cmd` 使用显式宿主调用，直接传给 Executable 会得到明确诊断。SVN CLI 缺失仅跳过 Run 的版本号注记并提示；真正依赖 SVN 的基线/版本操作仍需要相应工具。
 
-5. 每阶段 `Task -Operation Checkpoint ... -NextAction "下一步" -Notes "已完成与未解决项"`；环境阻塞或离开时 `Suspend` 保存暂停并释放执行占用。取消用 Cancel，均不宣称完成。
-6. `Task -Operation Verify ...` 列齐缺失/失败批次、变化文件和 T3 规格问题；通过后 `Complete`。T3 要求的影响分析必须经检查，再用 ReviewImpact 显式记录当前分析与代码绑定，禁止盲目刷新哈希。
+5. 长任务在重要阶段或准备交接时，用 `Task -Operation Checkpoint ... -NextAction "下一步" -Notes "已完成与未解决项"` 保存恢复线索；短 T1/T2 不为每次编辑写检查点。环境阻塞或离开时，直接 `Suspend -NextAction ... -Notes ...` 保存暂停并释放占用，无需紧邻再写 Checkpoint。取消用 Cancel，均不宣称完成。
+6. 证据与本档产物就绪后直接 `Task -Operation Complete ...`，内含完成校验；需要提前列出缺失/失败批次、变化文件和 T3 规格问题时，可选 `Verify`。T3 要求的影响分析必须经检查，再用 ReviewImpact 显式记录当前分析与代码绑定，禁止盲目刷新哈希。
 
 T1 只需真实编译/基础检查；T2 还需相关测试和 RecordSync 记录受影响规格/用例的同步结果，均不背负原功能历史 T3 收尾。涉及原契约语义变化要明确告知用户，不能把原批准当成新语义已批准。暂停任务与独立新任务可以顺序存在；同功能不同时推进两个独立主会话。
 
@@ -258,7 +270,7 @@ flowchart TD
     B -->|T2: 默认快速| D[Start 任务 + 非阻断待同步提醒]
     D --> D1[修改代码 + 同步相关规格与用例 + 编译]
     D1 --> D2[定向单元测试验证]
-    D2 --> S[Task Verify / Complete 按本次档位验收]
+    D2 --> S[Task Complete 内含本次档位验收]
     
     B -->|T3: 人工选择完整流程| E[Start 任务]
     E --> F[Superpowers brainstorming 澄清与探索]
@@ -354,7 +366,7 @@ ChangeTier 只改变活动任务的交付要求，保留原 taskId、ownerId、�
 - 设计最终确认后，测试计划、审计、实现、验证、修复与回归自动连续完成，不再增设批准检查点。
 - 当任务可独立 review 时，默认采用 `subagent-driven-development`，不让用户选择执行策略。
 
-新修改先 Discover，再 Start / Resume；归属与进度由任务入口管理，默认 T2，人工指定优先。独立修改沿用功能名、创建新 taskId；完成用 Task Verify / Complete，中断用 Checkpoint / Suspend。下面的直接 Claim / Validate / Complete 仅用于没有 taskId 的旧流程兼容，不能作为新任务入口。各 harness 统一使用 `SUPERPOWERS` 归属，`agent` 区分实际工具。
+新修改先 Discover，再 Start / Resume；归属与进度由任务入口管理，默认 T2，人工指定优先。独立修改沿用功能名、创建新 taskId；证据就绪后直接 Task Complete，长任务按需 Checkpoint，暂停用 Suspend。下面的直接 Claim / Validate / Complete 仅用于没有 taskId 的旧流程兼容，不能作为新任务入口。各 harness 统一使用 `SUPERPOWERS` 归属，`agent` 区分实际工具。
 
 ```powershell
 pwsh -NoProfile -File .\.ai-sop\scripts\workflow-owner.ps1 -Operation Claim `
@@ -837,7 +849,7 @@ T3 最后由 Superpowers `verification-before-completion` 复查测试覆盖与�
 
 ### 交付闭环时序
 
-新任务统一为 Task Run 留证 → Task Verify → Task Complete；T1/T2/T3 分别检查各自完成条件，T2 需要 RecordSync，T3 另需适用的批准与覆盖/影响绑定。中断或环境阻塞用 Checkpoint / Suspend。以下是无 taskId 的旧功能级 T3 与 SVN 交付示例，不要求新任务补写功能级执行证据：
+新任务正常收尾为 Task Run 留证 → Task Complete（内含完成校验，Verify 仅作可选的提前诊断）；T1/T2/T3 分别检查各自完成条件，T2 需要 RecordSync，T3 另需适用的批准与覆盖/影响绑定。中断或环境阻塞用 Checkpoint / Suspend。以下是无 taskId 的旧功能级 T3 与 SVN 交付示例，不要求新任务补写功能级执行证据：
 
 ```text
 阶段 1（验证）：AI 运行 VerifyCompletion（硬门禁：01/06 APPROVED+SHA、覆盖矩阵无占位、07_design_review PASS/PASS_WITH_WARNINGS 且审查对象 sha256 匹配当前 06、compile-evidence exitCode=0 且 workingTreeDigest 匹配当前工作区；仅类型/公共分发扩展或风险无法评估时要求 04；类型/公共分发扩展时再校验 8 切面与表征方法体。implementation-auditor/logic-auditor 仍为自报）
@@ -886,7 +898,7 @@ T3 最后由 Superpowers `verification-before-completion` 复查测试覆盖与�
 **AI**：自动执行 `writing-plans` $\rightarrow$ 生成 `05_test_plan.md` 并同步 `05_test_coverage.json` $\rightarrow$ **按 Task** 派发 `implementation-engine` 编写测试与实现并等待【编译证据】（`exitCode=0`）$\rightarrow$ 再派发 `implementation-auditor` 和（按风险）`logic-auditor` 双重内审 $\rightarrow$ 有修复则回派实现者再编译再审 $\rightarrow$ 运行 `ValidateTestCoverage` 校验 100% 覆盖。禁止实现未结束就并发派审，禁止编排会话自己改生产代码。
 
 ### 第 5 步：收尾、验证与 SVN 交付准备
-**AI**：调用 `requesting-code-review` 整体收尾 $\rightarrow$ 用 Task Run 留存编译和本次必测用例结果，完成 ReviewImpact 等适用绑定 $\rightarrow$ Task Verify 通过后 Task Complete 释放归属 $\rightarrow$ 执行 `svn status`/`svn add`，输出变更总结并提示：
+**AI**：调用 `requesting-code-review` 整体收尾 $\rightarrow$ 用 Task Run 留存编译和本次必测用例结果，完成 ReviewImpact 等适用绑定 $\rightarrow$ Task Complete 校验通过后释放归属 $\rightarrow$ 执行 `svn status`/`svn add`，输出变更总结并提示：
 ```text
 ✅ ShopBuyLimit 功能开发与全量验证已完成！
 请人工核对改动并执行提交：

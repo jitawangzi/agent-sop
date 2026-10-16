@@ -71,7 +71,7 @@ try {
     Assert ($runContext.contextGitRevision -ceq $expectedContextRevision) 'Project context revision missing'
     Assert ($runContext.specGitRoot -ceq (Resolve-PhysicalPathIdentity $specsRoot)) 'Wrong specification repository root'
     Assert ($runContext.contextGitRoot -ceq (Resolve-PhysicalPathIdentity $contextRoot)) 'Wrong context repository root'
-    Task Verify fix-a | Out-Null
+    # Complete below must validate T2 without a preceding standalone Verify.
     # Content snapshot ignores staging/commit metadata and generated output.
     $before = Get-AiSopInputSnapshot $workspace
     git -C $workspace add src/input.txt
@@ -129,7 +129,7 @@ try {
     # A successful old compile must not survive a real input change.
     [IO.File]::WriteAllText((Join-Path $workspace 'src/input.txt'), 'changed')
     MustFail { & (Join-Path $scripts 'workflow-state.ps1') -Operation ValidateChangeImpact -Path $impactPath -TaskId fix-b } 'Changed source retained old impact review'
-    MustFail { Task Verify fix-b } 'Changed input did not invalidate evidence'
+    MustFail { Task Complete fix-b } 'Direct completion accepted stale evidence'
     Task Run fix-b @{ Kind='compile'; Executable='pwsh'; Arguments=@('-NoProfile','-Command','exit 0') } | Out-Null
     Task Complete fix-b | Out-Null
     # Failure in one test batch must not be hidden by a green different batch.

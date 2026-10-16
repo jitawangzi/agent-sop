@@ -12,7 +12,7 @@ Claude Code 用 **Skill 工具**显式调用 Superpowers 技能（`superpowers:b
 
 ### subagent_type 派发语法
 
-Claude Code 用 **Agent 工具**作为独立 subagent 派发领域专家：
+以下语法用于公共流程或用户请求已要求的独立专家调用，不为 T1/T2 自动增加审查阶段。Claude Code 用 **Agent 工具**作为独立 subagent 派发领域专家：
 
 - `design-reviewer` 必须用 Agent 工具作为独立 subagent 派发（`subagent_type=design-reviewer`），**禁止用 `Skill()` 加载到当前上下文自审**（审查与设计同上下文共享盲区）。
 - `design-architect` 修正也用 Agent 派发（`subagent_type=design-architect`）。

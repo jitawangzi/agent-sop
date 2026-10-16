@@ -326,6 +326,10 @@ exit 0
         ($logicText -match 'INDETERMINATE' -and $logicText -match 'COMPILE_REQUIRED')
     Assert-Contract "ANTIGRAVITY.md must warn against racing auditor with engine" `
         ($antigravityText -match '编译准入')
+    $geminiText = Get-Content -LiteralPath (Join-Path $SopRoot 'distribution/templates/root/GEMINI.md') -Raw
+    Assert-Contract "Tool adapters must use shared task entry and project context" `
+        ($antigravityText -match 'Task Start / Resume' -and $geminiText -match 'Task Start / Resume' -and
+         $geminiText -match '\.ai-workspace/context/README\.md' -and $geminiText -notmatch '\.claude/context/')
     Assert-Contract "AGENTS.md must not treat 2-5 minute steps as Task splits" `
         ($agentsText -notmatch '拆分为 2-5 分钟可完成的小任务')
     Assert-Contract "AGENTS.md must distinguish Task vs Step for writing-plans" `
@@ -371,6 +375,8 @@ exit 0
     $bannedPhrases = [ordered]@{
         '默认 T3'             = "default is T2; human selection takes priority"
         '默认T3'              = "default is T2; human selection takes priority"
+        '新功能/新协议/新存储走 T3' = "tool adapters must not select task tier by change category"
+        '固定使用一个 Antigravity task/session' = "tool sessions may change while task identity persists"
         '不管需求多简单'      = "removed; no blanket T3 requirement"
         '自动降级为 T2'       = "tier changes require the human request; capability failures do not change tier"
         '必须强制走 T3'       = "risk assessment advises scope and validation; it does not override the task tier"

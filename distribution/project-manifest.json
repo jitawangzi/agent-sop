@@ -14,8 +14,8 @@
     {
       "source": "distribution/templates/root/CLAUDE.md",
       "target": "CLAUDE.md",
-      "sourceBlobSha256": "20305dfa8014985dc84755abfcbc27651961b05fd8821766c90db8aae36a01d3",
-      "targetSha256": "20305dfa8014985dc84755abfcbc27651961b05fd8821766c90db8aae36a01d3",
+      "sourceBlobSha256": "654851840e14319a632ce413e350668e9a7df29cf4d0bb3856a3401983b01ae9",
+      "targetSha256": "654851840e14319a632ce413e350668e9a7df29cf4d0bb3856a3401983b01ae9",
       "legacySha256": "92bebe5c475de01e480311abe623ab55a714066267decdda906789d3bf86d1f5",
       "encoding": "utf8-no-bom",
       "lineEnding": "lf"
@@ -32,8 +32,8 @@
     {
       "source": "distribution/templates/root/ANTIGRAVITY.md",
       "target": "ANTIGRAVITY.md",
-      "sourceBlobSha256": "a89dfd65ad1ebed11e54aa27fbcd495da9448f35ff0d9e49c6b8ba4bca2044ec",
-      "targetSha256": "a89dfd65ad1ebed11e54aa27fbcd495da9448f35ff0d9e49c6b8ba4bca2044ec",
+      "sourceBlobSha256": "3e6ce0a3c999dd3a7831411588b22eb4a6735109b75cd5119375624188c15719",
+      "targetSha256": "3e6ce0a3c999dd3a7831411588b22eb4a6735109b75cd5119375624188c15719",
       "legacySha256": "48e29a97bf70a1690f3c20a91eb4c2f1bad8d20a340abfaa92e2e76f9e469e25",
       "encoding": "utf8-no-bom",
       "lineEnding": "lf"
@@ -41,8 +41,8 @@
     {
       "source": "distribution/templates/root/GEMINI.md",
       "target": "GEMINI.md",
-      "sourceBlobSha256": "9135d12802638eb7d8bc9639dd44ca76482189264d368c8be989b1395296beb2",
-      "targetSha256": "9135d12802638eb7d8bc9639dd44ca76482189264d368c8be989b1395296beb2",
+      "sourceBlobSha256": "9d5f3015219be28900768a2aaaf18e791060dadb0ac38889a321e95dee3e9c58",
+      "targetSha256": "9d5f3015219be28900768a2aaaf18e791060dadb0ac38889a321e95dee3e9c58",
       "legacySha256": "9135d12802638eb7d8bc9639dd44ca76482189264d368c8be989b1395296beb2",
       "encoding": "utf8-no-bom",
       "lineEnding": "lf"

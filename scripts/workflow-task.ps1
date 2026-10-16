@@ -41,9 +41,11 @@ param(
     [string]$BaselineInputsRef,
     [switch]$CaptureBaseline,
     [string[]]$JUnitReports = @(),
-    [string]$CaseMap
+    [string]$CaseMap,
+    [ValidateRange(0,200)][int]$LogTailLines=0
 )
 $ErrorActionPreference = 'Stop'
+if ($LogTailLines -and $Operation -notin @('Status','Discover','InspectRecovery')) { throw 'LOG_TAIL_REQUIRES_DIAGNOSTIC_OPERATION' }
 . (Join-Path $PSScriptRoot 'task-context.ps1')
 . (Join-Path $PSScriptRoot 'workflow-session.ps1')
 $WorkspacePath = Resolve-PhysicalPathIdentity -Path $WorkspacePath
@@ -71,7 +73,7 @@ if ($Operation -in @('Discover','Status')) {
             try {
                 $task = Read-AiSopTask $canonicalDir $entry.Name
                 if (-not $IncludeHistory -and -not $TaskId -and $task.status -in @('DONE','CANCELLED') -and -not @($task.followUps | Where-Object { $_.status -eq 'PENDING' }).Count) { continue }
-                $items.Add((Get-AiSopTaskSummary $task $WorkspacePath $canonicalDir -CheckInputs:($Operation -eq 'Status') -ValidationContext $validationContext -RecheckHistory:$RecheckHistory))
+                $items.Add((Get-AiSopTaskSummary $task $WorkspacePath $canonicalDir -CheckInputs:($Operation -eq 'Status') -ValidationContext $validationContext -RecheckHistory:$RecheckHistory -LogTailLines $LogTailLines))
             } catch { $items.Add(@{ feature=$dir.Name; taskId=$entry.Name; status='CORRUPT'; diagnostic=$_.Exception.Message; suggestedAction='Inspect the task record; do not recreate it or infer ownership from damaged state.' }) }
         }
         if (-not $records.Count) {
@@ -92,7 +94,7 @@ $canonicalSpec = Resolve-AiSopWorkspaceChild $WorkspacePath ".ai-workspace/specs
 if ($SpecDirectory -cne $canonicalSpec) { throw 'TASK_WORKSPACE_MISMATCH' }
 $ownerScript = Join-Path $PSScriptRoot 'workflow-owner.ps1'
 $ownerPath = Join-Path (Get-AiSopWorkflowOwnerRegistryRoot -WorkspacePath $WorkspacePath) ($Feature.ToLowerInvariant() + '.json')
-if ($Operation -eq 'InspectRecovery') { Get-AiSopTaskRecoveryDiagnostics $SpecDirectory $TaskId $WorkspacePath $ownerPath | ConvertTo-Json -Depth 12; exit 0 }
+if ($Operation -eq 'InspectRecovery') { Get-AiSopTaskRecoveryDiagnostics $SpecDirectory $TaskId $WorkspacePath $ownerPath -LogTailLines $LogTailLines | ConvertTo-Json -Depth 12; exit 0 }
 $owner = if ($Operation -ne 'Changes' -and (Test-Path -LiteralPath $ownerPath)) { Get-Content -LiteralPath $ownerPath -Raw | ConvertFrom-Json -AsHashtable } else { $null }
 if ($Operation -notin @('Verify','Changes')) { $Agent = Resolve-AiSopInvocationAgent $Agent }
 $ownerArgs = @{ Feature=$Feature; SpecDirectory=$SpecDirectory; Workflow='SUPERPOWERS'; Agent=$Agent }
@@ -230,6 +232,7 @@ $context = @{
     workspace=$WorkspacePath; runnerMachine=[Environment]::MachineName; runnerPid=[string]$PID
     runnerStartedAt=[Diagnostics.Process]::GetCurrentProcess().StartTime.ToUniversalTime().ToString('o')
     engineScriptHash=(Get-FileHash -LiteralPath $PSCommandPath).Hash.ToLowerInvariant(); logPath=".ai-workspace/.runtime/verification/$Feature/$TaskId/$runId.log"
+    timeoutSeconds=[string]$TimeoutSeconds
 }
 if ($junit) {
     $junitBefore=@{}

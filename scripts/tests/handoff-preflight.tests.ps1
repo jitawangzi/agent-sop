@@ -56,6 +56,7 @@ try {
     $before=TreeHash
     $report=Get-AiSopHandoffPreflight $workspace
     Assert ($report.status -eq 'NO_ISSUES_DETECTED' -and $report.tasks.Count -eq 2) 'Valid paused tasks were not inspectable'
+    Assert (@($report.tasks | Where-Object { $_.localState.suggestedActionCode -ne 'RESUME_SESSION' -or -not $_.localState.guidanceSteps.Count }).Count -eq 0) 'Preflight lost shared recovery guidance for paused tasks'
     $manifest=@($report.artifacts | Where-Object kind -eq 'INPUT_MANIFEST')
     Assert ($manifest.Count -eq 1 -and $manifest[0].requiredBy.Count -eq 2) 'Shared manifest references were not deduplicated'
     Assert ('.ai-workspace/specs/.artifacts/' -in $report.syncRoots) 'Sync roots omitted the shared immutable manifests'

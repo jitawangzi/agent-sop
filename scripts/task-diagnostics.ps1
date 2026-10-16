@@ -1,5 +1,41 @@
 #requires -Version 7.0
 
+function Get-AiSopRunProgress {
+    param($Record, [string]$WorkspacePath, [string]$SpecDirectory, [string]$TaskId, [ValidateRange(0,200)][int]$LogTailLines=0)
+    $result=@{observationOnly=$true;startedAt=$Record.executedAt;elapsedSeconds=$null;timeoutSeconds=$null;logFile=$null;logStatus='UNKNOWN';logUpdatedAt=$null;logBytes=$null;logTail=@();tailBytesRead=0;tailTruncated=$false;diagnostics=@()}
+    try {
+        $elapsed=([DateTimeOffset]::UtcNow-[DateTimeOffset]::Parse($Record.executedAt)).TotalSeconds
+        if ($elapsed -ge 0) { $result.elapsedSeconds=[long][math]::Floor($elapsed) }
+    } catch { $result.diagnostics+=@('RUN_START_TIME_UNAVAILABLE') }
+    $limit=0
+    if ($null -ne $Record.context.timeoutSeconds -and [int]::TryParse([string]$Record.context.timeoutSeconds,[ref]$limit) -and $limit -ge 0 -and $limit -le 86400) { $result.timeoutSeconds=$limit }
+    if ($Record.context.runnerMachine -cne [Environment]::MachineName -or $Record.context.workspace -cne (Resolve-PhysicalPathIdentity $WorkspacePath)) {
+        $result.logStatus='REMOTE_UNKNOWN'; return $result
+    }
+    try {
+        $result.logFile=Get-AiSopRunLogPath $Record $WorkspacePath $SpecDirectory $TaskId
+        if (-not $result.logFile -or -not [IO.File]::Exists($result.logFile)) { $result.logStatus='MISSING'; return $result }
+        $info=[IO.FileInfo]::new($result.logFile)
+        $result.logBytes=$info.Length; $result.logUpdatedAt=$info.LastWriteTimeUtc.ToString('o'); $result.logStatus='AVAILABLE'
+        if ($LogTailLines) {
+            $stream=[IO.FileStream]::new($result.logFile,[IO.FileMode]::Open,[IO.FileAccess]::Read,([IO.FileShare]::ReadWrite -bor [IO.FileShare]::Delete))
+            try {
+                $length=$stream.Length; $start=[math]::Max(0,$length-32768)
+                [void]$stream.Seek($start,[IO.SeekOrigin]::Begin)
+                $buffer=[byte[]]::new([int]($length-$start)); $read=0
+                while ($read -lt $buffer.Length) { $count=$stream.Read($buffer,$read,$buffer.Length-$read); if (-not $count) { break }; $read+=$count }
+                $result.tailBytesRead=$read; $result.tailTruncated=$start -gt 0
+                $text=[Text.Encoding]::UTF8.GetString($buffer,0,$read)
+                if ($start -gt 0 -and $text.Contains("`n")) { $text=$text.Substring($text.IndexOf("`n")+1) }
+                $lines=@($text.TrimEnd("`r","`n") -split '\r?\n')
+                if ($lines.Count -gt $LogTailLines) { $result.tailTruncated=$true }
+                $result.logTail=@($lines | Select-Object -Last $LogTailLines)
+            } finally { $stream.Dispose() }
+        }
+    } catch { $result.logStatus='UNAVAILABLE'; $result.diagnostics+=@($_.Exception.Message) }
+    return $result
+}
+
 function Resolve-AiSopFeatureName {
     param([string]$WorkspacePath, [string]$Feature)
     if (-not $Feature) { return '' }
@@ -96,7 +132,17 @@ function Write-AiSopTaskStatus {
             if ($item.startInputs.status -eq 'UNAVAILABLE') { Write-Output '  start inputs: UNAVAILABLE; normal tier verification remains available; no post-change baseline adoption' }
             if ($item.nextAction) { Write-Output "  checkpoint: $($item.nextAction)" }
             Write-Output "  next: $($item.suggestedAction)"
-            foreach ($run in $item.runs) { Write-Output "  run: $($run.kind)/$($run.batch) $($run.activity) log=$($run.logFile)" }
+            foreach ($run in $item.runs) {
+                $limit=if ($null -eq $run.timeoutSeconds) { 'UNKNOWN (older record)' } elseif ($run.timeoutSeconds -eq 0) { 'unlimited' } else { "$($run.timeoutSeconds)s" }
+                $elapsed=if ($null -eq $run.elapsedSeconds) { 'UNKNOWN' } else { "$($run.elapsedSeconds)s" }
+                Write-Output "  run: $($run.kind)/$($run.batch) $($run.activity) elapsed=$elapsed limit=$limit pending=$($run.pendingStatus)/$($run.pendingOutcome)"
+                Write-Output "    log=$($run.logFile) status=$($run.logStatus) bytes=$($run.logBytes) updated=$($run.logUpdatedAt)"
+                if ($run.logTail.Count) {
+                    Write-Output "    log tail (observed output, truncated=$($run.tailTruncated)):"
+                    foreach ($line in $run.logTail) { Write-Output "      $line" }
+                }
+                foreach ($diagnostic in $run.diagnostics) { Write-Output "    ! $diagnostic" }
+            }
             foreach ($failed in $item.failedVerifications) { Write-Output "  failed verification: $($failed.kind)/$($failed.batch) exit=$($failed.exitCode) $($failed.outcome)" }
             foreach ($followUp in $item.pendingFollowUps) { Write-Output "  follow-up (non-blocking): $($followUp.id) $($followUp.summary)" }
             foreach ($diagnostic in @($item.diagnostics) + @($item.diagnostic) | Where-Object { $_ }) { Write-Output "  ! $diagnostic" }

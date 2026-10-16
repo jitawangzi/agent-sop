@@ -94,6 +94,13 @@ function Get-AiSopBudgetedFileHash {
 function Get-AiSopInputSnapshot {
     param([string]$WorkspacePath, [ValidateRange(0,60000)][int]$BudgetMilliseconds=0, [ValidateRange(1,[long]::MaxValue)][long]$MaxBytes=8MB,
         [hashtable]$Diagnostics, [string]$PolicyPath)
+    Invoke-AiSopInputTraversal @PSBoundParameters
+}
+
+function Invoke-AiSopInputTraversal {
+    param([string]$WorkspacePath, [ValidateRange(0,60000)][int]$BudgetMilliseconds=0, [ValidateRange(1,[long]::MaxValue)][long]$MaxBytes=8MB,
+        [hashtable]$Diagnostics, [string]$PolicyPath, [switch]$ExplainOnly, [string[]]$ExplainPaths=@())
+    if ($ExplainOnly -and (-not $ExplainPaths.Count -or $null -eq $Diagnostics)) { throw 'INPUT_EXPLANATION_PATH_REQUIRED' }
     # Optional diagnostics use the real traversal and hash rules. Normal task
     # operations allocate no trace and retain their existing capture budget.
     $tracing = $null -ne $Diagnostics
@@ -118,7 +125,20 @@ function Get-AiSopInputSnapshot {
         $webOutputRoot = (Split-Path -Leaf $dir) -ceq 'WEB-INF' -and [IO.File]::Exists((Join-Path $dir 'web.xml'))
         # Enumerate lazily so a large directory does not defeat light Start's
         # budget before the first file. Native IO itself has no hard time limit.
-        $iterator=[IO.DirectoryInfo]::new($dir).EnumerateFileSystemInfos().GetEnumerator()
+        if ($ExplainOnly) {
+            # Visit only the requested branches, without enumerating siblings or
+            # reading input contents. Selection below is shared with full scans.
+            $dirRel=[IO.Path]::GetRelativePath($root,$dir).Replace('\','/')
+            $children=@(foreach ($requested in $ExplainPaths) {
+                if ($dirRel -eq '.') { $requested.Split('/')[0] }
+                elseif ((Test-AiSopInputPathWithin $requested $dirRel) -and $requested.Length -gt $dirRel.Length) { $requested.Substring($dirRel.Length+1).Split('/')[0] }
+            }) | Sort-Object -Unique
+            $entries=@(foreach ($name in $children) {
+                $child=Join-Path $dir $name
+                if (Test-Path -LiteralPath $child) { Get-Item -LiteralPath $child -Force -ErrorAction Stop }
+            })
+            $iterator=([Collections.Generic.List[IO.FileSystemInfo]]$entries).GetEnumerator()
+        } else { $iterator=[IO.DirectoryInfo]::new($dir).EnumerateFileSystemInfos().GetEnumerator() }
         try { while ($iterator.MoveNext()) {
             Assert-AiSopInputCaptureBudget $budget
             $item=$iterator.Current
@@ -173,13 +193,20 @@ function Get-AiSopInputSnapshot {
             }
             if ($excluded -and -not $descend) { continue }
             if ($item.Attributes -band [IO.FileAttributes]::ReparsePoint) { throw "INPUT_LINK_UNSUPPORTED: $($item.FullName)" }
-            if ($isDirectory) { $pending.Push(@{path=$item.FullName; defaultExcludeLength=$defaultExcludeLength; defaultRule=$defaultRule}); continue }
+            if ($isDirectory) {
+                if (-not $ExplainOnly -or @($ExplainPaths | Where-Object { $_.Length -gt $rel.Length -and (Test-AiSopInputPathWithin $_ $rel) }).Count) {
+                    $pending.Push(@{path=$item.FullName; defaultExcludeLength=$defaultExcludeLength; defaultRule=$defaultRule})
+                }
+                continue
+            }
+            if ($ExplainOnly) { continue }
             $physical = Resolve-AiSopWorkspaceChild $root $rel
             $readBefore=if ($tracing) { $Diagnostics.readBytes } else { 0 }
             $files[$rel] = if ($budget -or $tracing) { Get-AiSopBudgetedFileHash $physical $budget $Diagnostics } else { (Get-FileHash -LiteralPath $physical -Algorithm SHA256).Hash.ToLowerInvariant() }
             if ($tracing) { $trace.bytes=$Diagnostics.readBytes-$readBefore; $Diagnostics.hashedFiles++ }
         } } finally { $iterator.Dispose() }
     }
+    if ($ExplainOnly) { $Diagnostics.elapsedMilliseconds=$timer.ElapsedMilliseconds; return }
     # Preserve existing v2 evidence when no policy has been configured.
     $snapshot = @{ algorithm='inputs-v2'; files=$files }
     if ($policy.digest) { $snapshot.algorithm='inputs-v4'; $snapshot.policyDigest=$policy.digest }

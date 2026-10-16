@@ -44,6 +44,8 @@ Task Verify 和 Complete 使用相同的批准文件定位规则：优先 `00_wo
 
 Run 在启动前持久保存 RUNNING，再持续输出并写入任务日志，结束时更新为 PASSED、FAILED 或 TIMED_OUT。异常退出可能留下 RUNNING；Status 根据本机进程身份（PID 与启动时间）区分仍运行和已中断，Recover 将已停止的尝试记为 INTERRUPTED。远端进程无法本地确认，需要先确认原执行已停止。超时会终止本次启动的进程树并记录退出码 124。查看实时日志可使用 PowerShell 的 Get-Content -Wait；停止运行器后，后续 Agent 应检查是否还有遗留子进程。
 
+Status/Discover 显示未完成运行的开始时间、已运行秒数、配置的超时、日志字节数及最后更新时间，默认只读取日志元数据。需要最近输出时，可用 `./ai-sop.ps1 Status -Feature Example -TaskId change-1 -LogTailLines 20`；也支持 `Task -Operation InspectRecovery -LogTailLines 20`。最多请求 200 行，每份日志最多读取末尾 32 KiB，截断时标记 `tailTruncated`。远端运行不读取同名本地日志；旧记录未保存超时则显示 UNKNOWN，不能推断为无限运行。日志不更新不等于卡死；这些即时观察不续期、不终止进程、不构成执行证据。
+
 Run 自动续期当前绑定会话，不重新激活已结束或已转移的会话。运行中的会话检查/续期遇到锁竞争，会在最后确认的原租约有效期内退避重试，连续重试最多 30 秒；租约到期、身份变化或其他协调错误会停止子进程，记为 INTERRUPTED 并保留 RUN_CONTROL_INTERRUPTED 诊断，不冒充测试断言失败。执行结果先原子保存到任务目录的 `<runId>.pending.json`，再通过事务入账；只有成功入账才删除待保存文件。事务失败时可用 `Task -Operation RetryEvidence -Feature Example -TaskId fix-1 -Agent CODEX -RunId <id>` 重试保存，不重新执行命令。会话已结束/到期时，待原进程停止后 Recover：匹配的本地终态结果会随恢复事务保存，再 Resume；没有有效终态结果才记 INTERRUPTED。旧任务的终态 owner 不阻塞另一任务的恢复。
 
 同一 kind/batch 的重跑保持命令、Profile 和 CaseIds 范围一致。确需更换时在 Run 提供 `-Reason "调整验证命令/范围的具体原因"`，保留旧尝试及替换关联；不得改用无关成功命令掩盖失败。修复代码后用原命令重跑不需要额外参数。
@@ -126,6 +128,8 @@ Profile 可使用 `junitReports` 和 `caseMap` 同名字段。配置二者后不
 
 先用 `Task -Operation InspectRecovery -Feature Example -TaskId change-1` 只读检查 task、owner、session 和待入账结果。任务/权限记录损坏时需可信备份或事务恢复，不能删除后猜测重建。待入账结果损坏或身份不匹配时，默认 Recover 明确报错；确认原执行停止且结果不可信后，可用 `Recover -QuarantineInvalidEvidence -Reason "损坏原因和重跑安排"`，会话仍活跃时还需 ForceRecovery。
 
+Status、Discover、InspectRecovery 和 Preflight 共用恢复建议，JSON 提供 `suggestedActionCode` 与 `guidanceSteps`。存在 pending 文件不代表可以 RetryEvidence：仍在运行时先等待，远端/不明状态先确认原执行停止；停止后，只有校验通过的终态记录才建议保存，RUNNING 记录需要恢复中断，损坏记录需先诊断。未完成 T3 还会单独检查原始基线及输入策略；缺失或不兼容时，恢复可信的原始记录/策略，或按旧任务兼容处理。Resume 只处理接管身份，不能修复或重拍原始基线。这些建议不会自动执行操作，也不会增加新任务的必经步骤。
+
 隔离先原样备份到 `.ai-workspace/.runtime/quarantine/`，再通过恢复事务把尝试记为 INTERRUPTED、任务记为 PAUSED，并在 lastRecovery 保留路径和哈希。成功提交且原文件未变化后才清除原待入账文件；事务失败保留原文件。备份留在源机器，接管端能看到审计引用但不要求同步备份，也不会把坏结果当成功。Resume 后重跑相关批次。
 
 ## 独立修改、续做与暂停
@@ -188,9 +192,12 @@ T1 只需真实编译/基础检查；T2 还需相关测试和 RecordSync 记录�
 & ./ai-sop.ps1 Inputs -InputPath @('src/example.txt', 'module/build/output.bin')
 & ./ai-sop.ps1 Inputs -InputPath 'module/build/output.bin' `
   -CandidatePolicy '.ai-workspace/context/verification-inputs.candidate.json' -Json
+& ./ai-sop.ps1 Inputs -ExplainOnly -InputPath 'module/build/output.bin'
 ```
 
 `Inputs` 复用真实扫描规则，显示路径是否纳入、获胜规则、命中的 include/exclude、默认排除原因，以及扫描条目数、哈希文件数、实际读取的输入内容字节数、耗时和最大的 10 个输入文件。被剪枝目录的子文件按祖先规则解释，不为诊断额外读取其内容；统计不含目录元数据及配置读取开销，耗时仅代表这次诊断。
+
+只想知道某个路径为何纳入/排除时，加 `-ExplainOnly -InputPath ...`，只检查指定路径及父目录的元数据并复用相同选择规则，不遍历无关目录、不哈希文件内容。此模式返回 `mode=RULES_ONLY`，无输入摘要和完整文件清单，不能用于证明验证通过；`CandidatePolicy` 在此模式也只比较指定路径的规则。默认完整扫描返回 `mode=FULL`。两种模式均在扫描前验证候选配置，配置缺失或无效时立即报告。
 
 `CandidatePolicy` 是宿主根下的候选 JSON 字面路径，结构与正式配置相同；建议放在上述 context 目录。预览报告列出新增/移除输入及策略摘要是否变化，不安装配置、不保存证据。命令完整扫描一次，候选比较再扫描一次，只在排查时使用，不自动加入 Start。比较期间继续改文件可能影响结果；报告会指出共同输入的内容变化，正式采用前应在文件稳定时复核。即使文件集合不变，配置摘要变化也可能使旧证据过期。
 

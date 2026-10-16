@@ -59,7 +59,9 @@ param(
     [switch]$QuarantineInvalidEvidence,
     [string[]]$InputPath = @(),
     [string]$CandidatePolicy,
-    [string]$TargetEnginePath
+    [string]$TargetEnginePath,
+    [switch]$ExplainOnly,
+    [ValidateRange(0,200)][int]$LogTailLines=0
 )
 
 $ErrorActionPreference = "Stop"
@@ -127,7 +129,7 @@ function Invoke-Doctor {
 # --- Status (feature gate + phase) ---
 function Invoke-Status {
     param([string]$FeatureName, [string]$SpecDir)
-    $statusArgs = @{ Operation='Status'; WorkspacePath=$WorkspaceRoot; Json=$Json; OutputFormat=$OutputFormat; IncludeHistory=$IncludeHistory; RecheckHistory=$RecheckHistory }
+    $statusArgs = @{ Operation='Status'; WorkspacePath=$WorkspaceRoot; Json=$Json; OutputFormat=$OutputFormat; IncludeHistory=$IncludeHistory; RecheckHistory=$RecheckHistory; LogTailLines=$LogTailLines }
     if ($FeatureName) { $statusArgs.Feature=$FeatureName }
     if ($SpecDir) { $statusArgs.SpecDirectory=$SpecDir }
     if ($TaskId) { $statusArgs.TaskId=$TaskId }
@@ -209,9 +211,11 @@ Actions:
   Update     Re-generate projections (same as Install).
   Verify     Read-only verification of projections vs lock.
   Status     Show task, ownership, execution evidence and suggested next action.
+             -LogTailLines <1..200> optionally reads the last 32 KiB of each unfinished run log.
   Inputs     Read-only scan statistics, large inputs and inclusion/exclusion rules.
              -InputPath <workspace-relative path> -CandidatePolicy <workspace-relative JSON> -Json
-             CandidatePolicy previews a configuration without installing it; Inputs performs a full scan.
+             CandidatePolicy previews a configuration without installing it; Inputs defaults to a full scan.
+             -ExplainOnly -InputPath <path> explains rules using path metadata only, without hashing inputs.
   Preflight  Advisory handoff/upgrade inventory; no source scan or state changes.
              -Feature X -TaskId fix-1 -TargetEnginePath <local candidate engine> -Json
              Without TargetEnginePath, checks the current engine only. Findings do not become task gates.
@@ -258,7 +262,7 @@ switch ($Action) {
     "Inputs" {
         $script=Join-Path $WorkspaceRoot '.ai-sop/scripts/inspect-inputs.ps1'
         if (-not [IO.File]::Exists($script)) { throw 'DIAGNOSTIC_ENGINE_MISSING: update the engine and entry projection together' }
-        & $script -WorkspacePath $WorkspaceRoot -InputPath $InputPath -CandidatePolicy $CandidatePolicy -Json:$Json
+        & $script -WorkspacePath $WorkspaceRoot -InputPath $InputPath -CandidatePolicy $CandidatePolicy -ExplainOnly:$ExplainOnly -Json:$Json
         exit $LASTEXITCODE
     }
     "Preflight" {
@@ -269,7 +273,7 @@ switch ($Action) {
     }
     "Task" {
         $taskArgs = @{ Operation=$Operation; WorkspacePath=$WorkspaceRoot }
-        foreach ($name in @('Feature','SpecDirectory','TaskId','Tier','Objective','Agent','NextAction','Notes','Kind','Batch','Executable','Arguments','CaseIds','Profile','TimeoutSeconds','ForceRecovery','ConfirmTakeover','RunId','Reason','UserRequest','Documentation','Tests','Summary','Applicability','FollowUpId','FollowUpKind','Scope','SourceTaskId','Disposition','Resolution','Json','OutputFormat','IncludeHistory','RecheckHistory','BaselineInputsRef','CaptureBaseline','JUnitReports','CaseMap','QuarantineInvalidEvidence')) {
+        foreach ($name in @('Feature','SpecDirectory','TaskId','Tier','Objective','Agent','NextAction','Notes','Kind','Batch','Executable','Arguments','CaseIds','Profile','TimeoutSeconds','ForceRecovery','ConfirmTakeover','RunId','Reason','UserRequest','Documentation','Tests','Summary','Applicability','FollowUpId','FollowUpKind','Scope','SourceTaskId','Disposition','Resolution','Json','OutputFormat','IncludeHistory','RecheckHistory','BaselineInputsRef','CaptureBaseline','JUnitReports','CaseMap','QuarantineInvalidEvidence','LogTailLines')) {
             if ($PSBoundParameters.ContainsKey($name)) { $taskArgs[$name] = $PSBoundParameters[$name] }
         }
         & (Join-Path $WorkspaceRoot '.ai-sop/scripts/workflow-task.ps1') @taskArgs

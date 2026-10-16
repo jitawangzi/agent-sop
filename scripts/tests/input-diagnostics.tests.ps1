@@ -47,6 +47,27 @@ try {
     if ([OperatingSystem]::IsWindows()) { Assert ($caseProbe.decision -eq 'INCLUDED' -and -not $caseProbe.inherited) 'Windows case-only difference lost exact-path match' }
     else { Assert ($caseProbe.decision -eq 'NOT_FOUND') 'POSIX case distinction lost' }
     Assert ($before -ceq (TreeHash)) 'Inspection wrote workspace files'
+    $light=Get-AiSopInputInspection $root $paths -ExplainOnly
+    Assert ($light.mode -eq 'RULES_ONLY' -and $null -eq $light.inputDigest -and $null -eq $light.algorithm -and $light.statistics.readBytes -eq 0 -and $light.statistics.hashedFiles -eq 0) 'Rules-only explanation claimed a content scan/digest'
+    foreach ($path in $paths) {
+        $fullDecision=$report.paths | Where-Object path -eq $path
+        $lightDecision=$light.paths | Where-Object path -eq $path
+        Assert ((ConvertTo-AiSopWorkflowCanonicalJson $fullDecision) -ceq (ConvertTo-AiSopWorkflowCanonicalJson $lightDecision)) "Rule explanation disagrees with full scanner: $path"
+    }
+    # Refuse accidental hashing even when included files are unreadable; do not
+    # visit unrelated branches containing unsupported links or huge inputs.
+    $originalHash=(Get-Command Get-AiSopBudgetedFileHash).ScriptBlock
+    try {
+        function Get-AiSopBudgetedFileHash { throw 'UNEXPECTED_INPUT_READ' }
+        $single=Get-AiSopInputInspection $root @('src/build/Main.txt') -ExplainOnly
+        Assert ($single.statistics.scannedEntries -eq 3 -and $single.paths[0].decision -eq 'INCLUDED') 'Single-path diagnosis scanned unrelated branches'
+        Put '.ai-workspace/context/bad-inputs.json' '{broken'
+        foreach ($candidate in @('missing.json','.ai-workspace/context/bad-inputs.json','../escape.json')) {
+            $failure=''; try { Get-AiSopInputInspection $root @() $candidate | Out-Null } catch { $failure=$_.Exception.Message }
+            Assert ($failure -match 'INPUT_POLICY_MISSING|INPUT_POLICY_INVALID|WORKSPACE_PATH_ESCAPE' -and $failure -notmatch 'UNEXPECTED_INPUT_READ') 'Invalid candidate triggered a content scan before validation'
+        }
+        [IO.File]::Delete((Join-Path $root '.ai-workspace/context/bad-inputs.json'))
+    } finally { Set-Item Function:\Get-AiSopBudgetedFileHash -Value $originalHash }
     $policy.exclude+=@{path='shared';reason='Candidate-only exclusion'}
     $policy.include+=@('build/noise.txt')
     Put '.ai-workspace/context/candidate-inputs.json' ($policy | ConvertTo-Json -Depth 8)
@@ -56,6 +77,9 @@ try {
     Assert ($preview.candidate.removed.Count -eq 1 -and $preview.candidate.removed[0] -eq 'shared/base.txt') 'Candidate removed input mismatch'
     Assert ($preview.candidate.policyChanged -and -not $preview.candidate.contentChangedDuringComparison.Count) 'Candidate comparison was not stable'
     Assert (($preview.candidate.paths | Where-Object path -eq 'build').decision -eq 'TRAVERSE_ONLY') 'Candidate no longer explains traversed output directory'
+    $lightPreview=Get-AiSopInputInspection $root @('shared/base.txt','build/noise.txt','build') '.ai-workspace/context/candidate-inputs.json' -ExplainOnly
+    Assert ($lightPreview.candidate.policyChanged -and $null -eq $lightPreview.candidate.added -and $null -eq $lightPreview.candidate.removed) 'Light candidate preview claimed a full inventory comparison'
+    Assert ((ConvertTo-AiSopWorkflowCanonicalJson $lightPreview.candidate.paths) -ceq (ConvertTo-AiSopWorkflowCanonicalJson $preview.candidate.paths)) 'Candidate rules differ between light/full modes'
     $human=Write-AiSopInputInspection $preview | Out-String
     Assert ($human -match 'ancestor pruned at shared' -and $human -match 'traversed only to reach explicitly included descendants' -and $human -notmatch 'TRAVERSE_ONLY') 'Candidate human output hid pruning or exposed internal traversal enum'
     Assert ($before -ceq (TreeHash) -and (Get-AiSopInputSnapshot $root).digest -ceq $snapshot.digest) 'Candidate policy was installed or evidence persisted'
@@ -70,6 +94,8 @@ try {
     foreach ($dir in @('scripts','schemas')) { Copy-Item -LiteralPath (Join-Path (Split-Path -Parent $scripts) $dir) -Destination (Join-Path $root '.ai-sop') -Recurse }
     $json=& (Join-Path $root 'ai-sop.ps1') Inputs -InputPath 'src/build/Main.txt' -Json | ConvertFrom-Json -AsHashtable
     Assert ($LASTEXITCODE -eq 0 -and $json.readOnly -and $json.paths[0].decision -eq 'INCLUDED') 'Root Inputs JSON dispatch failed'
+    $json=& (Join-Path $root 'ai-sop.ps1') Inputs -InputPath 'src/build/Main.txt' -ExplainOnly -Json | ConvertFrom-Json -AsHashtable
+    Assert ($LASTEXITCODE -eq 0 -and $json.mode -eq 'RULES_ONLY' -and $null -eq $json.inputDigest -and $json.paths[0].decision -eq 'INCLUDED') 'Root ExplainOnly dispatch failed'
     $human=& (Join-Path $root 'ai-sop.ps1') Inputs -InputPath 'module/build/cache.bin' | Out-String
     Assert ($LASTEXITCODE -eq 0 -and $human -match 'read-only' -and $human -match 'EXCLUDED') 'Human input explanation missing'
     Write-Output 'input-diagnostics.tests PASS'

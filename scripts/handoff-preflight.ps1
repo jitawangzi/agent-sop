@@ -81,6 +81,7 @@ function Get-AiSopPreflightLocalState {
     $ownerRoot=Resolve-PhysicalPathIdentity (Get-AiSopWorkflowOwnerRegistryRoot -WorkspacePath $WorkspacePath)
     $ownerPath=Resolve-AiSopWorkspaceChild $ownerRoot ($Task.feature.ToLowerInvariant()+'.json')
     $recovery=Get-AiSopTaskRecoveryDiagnostics $SpecDirectory $Task.taskId $WorkspacePath $ownerPath
+    $result.guidance=$recovery.guidance; $result.guidanceSteps=$recovery.guidanceSteps; $result.suggestedActionCode=$recovery.suggestedActionCode
     if ([IO.File]::Exists($ownerPath)) {
         $ownerRecord=@($recovery.records | Where-Object kind -eq 'OWNER')[0]
         $result.owner=if ($ownerRecord.status -eq 'VALID') { $ownerRecord.ownerStatus } else { $ownerRecord.status }
@@ -312,6 +313,7 @@ function Write-AiSopHandoffPreflight {
     foreach ($task in $Report.tasks) {
         Write-Output "  [$($task.status)] $($task.feature)/$($task.taskId) $($task.tier) owner=$($task.localState.owner) session=$($task.localState.session)"
         Write-Output "    objective=$($task.objective); checkpoint=$($task.nextAction); startInputs=$($task.startInputsStatus)"
+        if ($task.localState.guidance) { Write-Output "    next: $($task.localState.guidance)" }
         foreach ($followUp in $task.pendingFollowUps) { Write-Output "    follow-up (non-blocking): $($followUp.summary)" }
     }
     foreach ($legacy in $Report.legacyFeatures) {

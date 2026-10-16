@@ -64,6 +64,23 @@ try {
         [IO.File]::WriteAllText($ownerPath,$ownerRaw)
         [IO.File]::WriteAllText($sessionPath,$sessionRaw)
     }
+    # A missing historical T3 baseline is independent of an expired session.
+    $taskPath=Get-AiSopTaskPath $spec recovery; $taskRaw=[IO.File]::ReadAllText($taskPath)
+    try {
+        $legacy=ConvertFrom-AiSopWorkflowJson $taskRaw -AsHashtable
+        $legacy.tier='T3'; $legacy.Remove('startInputs'); $legacy.baseline.Remove('inputsRef'); $legacy.baseline.Remove('inputDigest')
+        [IO.File]::WriteAllText($taskPath,(ConvertTo-AiSopWorkflowCanonicalJson $legacy))
+        $legacyRaw=[IO.File]::ReadAllText($taskPath)
+        $inspection=Task InspectRecovery | ConvertFrom-Json
+        Assert ($inspection.suggestedActionCode -eq 'RESTORE_BASELINE' -and $inspection.guidance -match 'Resume only repairs') 'Missing baseline was reduced to a session handoff'
+        $steps=@(Get-AiSopRecoveryGuidance $legacy @(@{kind='BASELINE';status='UNAVAILABLE'}) ACTIVE EXPIRED)
+        Assert (($steps.code -join ',') -ceq 'RESTORE_BASELINE,RESUME_SESSION') 'Expired session hid the independent baseline problem'
+        $status=Task Discover @{OutputFormat='JsonLines'} | ConvertFrom-Json
+        Assert ($status.suggestedActionCode -ceq $inspection.suggestedActionCode) 'Discover and InspectRecovery disagree on missing baseline'
+        Assert ($legacyRaw -ceq [IO.File]::ReadAllText($taskPath) -and $ownerRaw -ceq [IO.File]::ReadAllText($ownerPath) -and $sessionRaw -ceq [IO.File]::ReadAllText($sessionPath)) 'Recovery guidance changed authority'
+    } finally { [IO.File]::WriteAllText($taskPath,$taskRaw) }
+    $steps=@(Get-AiSopRecoveryGuidance @{status='PAUSED'} @() RELEASED MISSING)
+    Assert ($steps[0].code -eq 'RESUME_SESSION') 'Normal paused task unnecessarily requires Recover'
     Task RecordSync @{ Documentation='UNCHANGED'; Tests='UNCHANGED'; Summary='Recovery fixture uses existing command scenarios; no contract change.' } | Out-Null
     # A synchronized task record grants no execution ownership in another workspace.
     $remoteWorkspace=Join-Path $root 'receiver'
@@ -236,6 +253,12 @@ exit 0
     Assert $streamed "Output was not streamed before exit: $($runner.HasExited)"
     $liveStatus=Task Status @{OutputFormat="JsonLines"} | ConvertFrom-Json
     Assert ($liveStatus.runs[0].activity -eq 'RUNNING') 'Status missed running process'
+    Assert ($liveStatus.suggestedActionCode -eq 'WAIT_FOR_RUN') 'Live command suggested recovery'
+    Assert ($liveStatus.runs[0].elapsedSeconds -ge 0 -and $liveStatus.runs[0].timeoutSeconds -eq 0 -and
+        $liveStatus.runs[0].logBytes -gt 0 -and $liveStatus.runs[0].logUpdatedAt -and
+        $liveStatus.runs[0].logTail.Count -eq 0 -and $liveStatus.runs[0].tailBytesRead -eq 0) 'Default status omitted progress or read log contents'
+    $rootStatus=& $rootEntry Status -Feature Example -TaskId recovery -LogTailLines 2 -Json | ConvertFrom-Json
+    Assert ($LASTEXITCODE -eq 0 -and 'READY' -in $rootStatus.tasks[0].runs[0].logTail) 'Root Status did not forward bounded log tail'
     Fails { Task Recover @{ForceRecovery=$true} } 'RUN_STILL_ACTIVE'
     Fails { Task Resume } 'RUN_UNFINISHED'
     Fails { Task Suspend } 'RUN_UNFINISHED'
@@ -250,9 +273,35 @@ exit 0
     Assert ($abandoned.runs[0].activity -eq 'INTERRUPTED') 'Abrupt termination not diagnosed'
     Fails { Task Complete } 'RUN_UNFINISHED'
     $pendingPath=Get-AiSopRunEvidencePath $spec recovery $live.runId
+    $live=(Read-AiSopTask $spec recovery).verifications[-1]
+    [IO.File]::WriteAllText($pendingPath,(ConvertTo-AiSopWorkflowCanonicalJson $live))
+    $status=Task Status @{OutputFormat='JsonLines'} | ConvertFrom-Json
+    Assert ($status.runs[0].pendingStatus -eq 'VALID' -and $status.runs[0].pendingOutcome -eq 'RUNNING' -and $status.suggestedActionCode -eq 'RECOVER_RUN') 'Valid RUNNING pending was treated as a terminal result'
+    $terminal=ConvertFrom-AiSopWorkflowJson (ConvertTo-AiSopWorkflowCanonicalJson $live) -AsHashtable
+    $terminal.outcome='FAILED'; $terminal.exitCode=1
+    [IO.File]::WriteAllText($pendingPath,(ConvertTo-AiSopWorkflowCanonicalJson $terminal))
+    $taskBefore=[IO.File]::ReadAllText((Get-AiSopTaskPath $spec recovery)); $ownerBefore=[IO.File]::ReadAllText($ownerPath)
+    $status=Task Status @{OutputFormat='JsonLines'} | ConvertFrom-Json
+    Assert ($status.runs[0].pendingStatus -eq 'VALID' -and $status.runs[0].pendingOutcome -eq 'FAILED' -and $status.suggestedActionCode -eq 'RETRY_EVIDENCE') 'Validated terminal pending did not suggest saving the result'
+    Assert ($taskBefore -ceq [IO.File]::ReadAllText((Get-AiSopTaskPath $spec recovery)) -and $ownerBefore -ceq [IO.File]::ReadAllText($ownerPath)) 'Status saved pending evidence or changed authority'
+    # Log inspection is bounded, optional, and never reads a remote run's local namesake.
+    $progressRecord=ConvertFrom-AiSopWorkflowJson (ConvertTo-AiSopWorkflowCanonicalJson $live) -AsHashtable
+    $progressRecord.context.logPath='.ai-workspace/.runtime/progress.log'; $progressRecord.context.Remove('timeoutSeconds')
+    $progressLog=Resolve-AiSopWorkspaceChild $workspace $progressRecord.context.logPath
+    [IO.File]::WriteAllText($progressLog,(('x'*65536)+"`nfirst`nlast`n"))
+    $progress=Get-AiSopRunProgress $progressRecord $workspace $spec recovery -LogTailLines 2
+    Assert ($progress.timeoutSeconds -eq $null -and $progress.tailBytesRead -eq 32768 -and $progress.tailTruncated -and ($progress.logTail -join ',') -ceq 'first,last') 'Log tail exceeded bounds or invented a legacy timeout'
+    $progressRecord.context.runnerMachine='remote-fixture'
+    $progress=Get-AiSopRunProgress $progressRecord $workspace $spec recovery -LogTailLines 2
+    Assert ($progress.logStatus -eq 'REMOTE_UNKNOWN' -and $progress.tailBytesRead -eq 0 -and $progress.logTail.Count -eq 0) 'Remote run read a local log'
+    $progressRecord.context.runnerMachine=[Environment]::MachineName; $progressRecord.context.logPath='../outside.log'
+    $progress=Get-AiSopRunProgress $progressRecord $workspace $spec recovery -LogTailLines 2
+    Assert ($progress.logStatus -eq 'UNAVAILABLE' -and $progress.diagnostics.Count -gt 0) 'Invalid log path did not degrade to a diagnostic'
     [IO.File]::WriteAllText($pendingPath,'{damaged result')
     $diagnostic=Task InspectRecovery | ConvertFrom-Json
     Assert (@($diagnostic.records | Where-Object { $_.kind -eq 'PENDING' -and $_.status -eq 'INVALID' }).Count -eq 1) 'Corrupt pending result not diagnosed'
+    $status=Task Status @{OutputFormat='JsonLines'} | ConvertFrom-Json
+    Assert ($status.suggestedActionCode -eq 'INSPECT_PENDING' -and $status.suggestedActionCode -ceq $diagnostic.suggestedActionCode) 'Status suggested retrying corrupt pending evidence'
     Fails { Task Recover @{ForceRecovery=$true} } 'PENDING_EVIDENCE_INVALID'
     Assert ((Read-AiSopTask $spec recovery).verifications[-1].outcome -eq 'RUNNING') 'Rejected recovery changed task state'
     Fails { Task Recover @{ForceRecovery=$true;QuarantineInvalidEvidence=$true} } 'QUARANTINE_REASON_REQUIRED'

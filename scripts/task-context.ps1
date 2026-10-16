@@ -204,32 +204,18 @@ function Get-AiSopRunActivity {
 }
 
 function Get-AiSopTaskSummary {
-    param($Task, [string]$WorkspacePath, [string]$SpecDirectory, [switch]$CheckInputs, $ValidationContext, [switch]$RecheckHistory)
+    param($Task, [string]$WorkspacePath, [string]$SpecDirectory, [switch]$CheckInputs, $ValidationContext, [switch]$RecheckHistory, [ValidateRange(0,200)][int]$LogTailLines=0)
     $ownerPath = Join-Path (Get-AiSopWorkflowOwnerRegistryRoot -WorkspacePath $WorkspacePath) ($Task.feature.ToLowerInvariant() + '.json')
-    $owner = $null; $sessionStatus = 'MISSING'; $ownerStatus = 'MISSING'; $diagnostics = @()
-    if (Test-Path -LiteralPath $ownerPath) {
-        try {
-            $ownerRaw = [IO.File]::ReadAllText($ownerPath)
-            Assert-AiSopWorkflowJsonSchema -Json $ownerRaw -SchemaId OWNER
-            $owner = ConvertFrom-AiSopWorkflowJson $ownerRaw -AsHashtable
-            $ownerStatus = if ($owner.taskId -ceq $Task.taskId -and $owner.ownerId -ceq $Task.ownerId) { $owner.status } else { 'OTHER_TASK' }
-            if ($ownerStatus -eq 'ACTIVE' -and $owner.sessionBinding) {
-                $sessionStatus = (Get-AiSopWorkflowSession -SessionKey $owner.sessionBinding.sessionKey -WorkspacePath $WorkspacePath).EffectiveStatus
-            }
-        } catch { $diagnostics += $_.Exception.Message; $sessionStatus = 'UNAVAILABLE' }
-    }
-    $runs = @($Task.verifications | Where-Object { $_.outcome -eq 'RUNNING' } | ForEach-Object {
-        $pendingResult = if ($_.runId) { Get-AiSopRunEvidencePath $SpecDirectory $Task.taskId $_.runId } else { '' }
-        @{ runId=$_.runId; kind=$_.kind; batch=$_.batch; activity=(Get-AiSopRunActivity $_ $WorkspacePath); logFile=(Get-AiSopRunLogPath $_ $WorkspacePath $SpecDirectory $Task.taskId); pendingResult=$(if ($pendingResult -and [IO.File]::Exists($pendingResult)) { $pendingResult } else { $null }) }
+    $inspection=Get-AiSopTaskRecoveryDiagnostics $SpecDirectory $Task.taskId $WorkspacePath $ownerPath -LogTailLines $LogTailLines
+    $ownerStatus=$inspection.ownerStatus; $sessionStatus=$inspection.sessionStatus
+    $diagnostics=@($inspection.records | Where-Object { $_.diagnostic -and $_.status -ne 'MISSING' } | ForEach-Object { $_.diagnostic })
+    $runs=@(foreach ($record in @($Task.verifications | Where-Object outcome -eq 'RUNNING')) {
+        $pending=@($inspection.records | Where-Object { $_.kind -eq 'PENDING' -and $_.runId -ceq $record.runId })[0]
+        $run=@{runId=$record.runId;kind=$record.kind;batch=$record.batch;activity=$pending.activity;pendingStatus=$pending.status;pendingOutcome=$pending.outcome;pendingResult=$(if ($pending.status -ne 'MISSING') { $pending.path } else { $null })}
+        foreach ($key in $pending.progress.Keys) { $run[$key]=$pending.progress[$key] }
+        $run
     })
-    $action = if ($Task.status -in @('DONE','CANCELLED')) { 'Start a new task for new work' }
-        elseif (@($runs | Where-Object { $_.pendingResult }).Count) { 'Inspect pending result; RetryEvidence saves a terminal result without rerunning. If the session ended, Recover after execution stops, then Resume.' }
-        elseif ($runs.Count -and @($runs | Where-Object activity -eq 'RUNNING').Count) { 'Wait for the running command; inspect its log' }
-        elseif ($runs.Count) { 'Recover interrupted/foreign run, then Resume' }
-        elseif ($Task.status -eq 'PAUSED') { 'Resume' }
-        elseif ($ownerStatus -ne 'ACTIVE' -or $sessionStatus -eq 'UNAVAILABLE') { 'Recover local ownership, then Resume' }
-        elseif ($sessionStatus -in @('ACTIVE','IDLE')) { 'Existing session may still be active; Resume only for intentional handoff' }
-        else { 'Resume' }
+    $action=$inspection.guidance
     $terminal = $Task.status -in @('DONE','CANCELLED')
     $checkCurrentInputs = $CheckInputs -and (-not $terminal -or $RecheckHistory)
     $verification = if ($terminal) { 'HISTORICAL_NOT_RECHECKED' } else { 'NOT_CHECKED' }
@@ -247,7 +233,7 @@ function Get-AiSopTaskSummary {
         ownerStatus=$ownerStatus; sessionStatus=$sessionStatus; verification=$verification
         verificationScope=$(if ($checkCurrentInputs) { 'CURRENT_INPUTS' } else { 'NOT_CHECKED' })
         recordedApprovals=(Get-AiSopRecordedApprovals $SpecDirectory)
-        nextAction=$Task.nextAction; suggestedAction=$action; notes=$Task.notes; runs=$runs
+        nextAction=$Task.nextAction; suggestedAction=$action; suggestedActionCode=$inspection.suggestedActionCode; guidanceSteps=$inspection.guidanceSteps; notes=$Task.notes; runs=$runs
         baseline=$Task.baseline; startInputs=$Task.startInputs; caseScope=$Task.caseScope; requiredCaseIds=@($Task.requiredCaseIds)
         syncReview=$Task.syncReview; applicability=$Task.applicability
         tierHistory=@($Task.tierHistory | Where-Object { $null -ne $_ })

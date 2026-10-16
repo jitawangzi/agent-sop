@@ -59,6 +59,8 @@ Preflight 的旧功能盘点会列出无 taskId 功能的根目录规格、批�
 
 损坏待入账结果默认阻断恢复；InspectRecovery 只读诊断。原进程停止后可显式 QuarantineInvalidEvidence，先保存原字节和哈希再以两阶段事务记为中断，必须重跑；损坏 task/owner/session 不自动猜测修复。日志路径先准备再登记 RUNNING，避免尚未启动就留下虚假运行状态。
 
+Status/Discover、InspectRecovery、Preflight 共用只读恢复建议：校验 pending 的身份与结果后才提示 RetryEvidence，RUNNING/远端未知/损坏记录分别提示等待、确认停止或诊断恢复。未完成 T3 的原始基线缺失/策略不兼容与会话失效分别呈现，Resume 不修复基线。运行时长、超时配置、日志更新时间和可选日志尾部仅为即时观察；尾部限 200 行、32 KiB，不改变任务/会话，不以日志静默判定进程死亡。旧记录没有超时字段时保持未知。
+
 暂停释放的是执行占用，不是验收义务；本次 T2 DONE 不能替原 T3 宣告功能整体完成。独立后续任务不继承旧测试欠账，实际依赖与代码重叠仍需先辨明。
 
 Claim（包括 Start 和 PAUSED Resume）、BindSession、RebindSession、Transfer（包括旧 owner 收编）以及 Schema 1.1 Validate 在 Session → Owner → Grant 锁内检查同功能其他 ACTIVE task.json，随后以原两阶段事务提交，避免本地注册表丢失或旧 owner 收编时误建第二个活动任务。同会话 Resume 的 Validate 使用锁内读取的 owner.taskId 排除自身。PAUSED、DONE、CANCELLED 不挡新任务；Suspend、Cancel、Recover 不增加此项前置检查，恢复旧任务无需补完旧完成门禁。检查只针对本地已同步状态，不保证其他机器未同步的并行写入安全。
@@ -213,6 +215,8 @@ T3 完成表第 4 项（`implementation-auditor` / `logic-auditor` PASS）是 **
 ## 8. 后续验证方向
 
 已有可选 `Inputs` 输入解释和 `Preflight` 交接/升级预检：前者复用扫描规则，后者校验任务引用、识别嵌套 Git 和兼容性声明，均不写入任务权威状态。Preflight 不调用带事务恢复的会话查询、不运行候选引擎，避免只读检查改变现场。报告具有即时观察的限制，不证明远端同步或业务语义正确，UNKNOWN 不作为兼容通过。继续用实际项目布局验证独立任务、跨 Agent 接管与不同功能工作区的完整流程；T1/T2 保持轻量，是否增加新的审查门禁需有实际问题依据。
+
+`Inputs -ExplainOnly -InputPath ...` 使用同一遍历规则但只读取指定路径及祖先的元数据，返回 RULES_ONLY、无输入指纹，不可代替真实验证扫描。候选配置在扫描前校验；默认 FULL 保留完整清单/内容哈希及候选增删对比。两种模式均为按需诊断，不加入 Start 或完成门禁。
 
 ---
 

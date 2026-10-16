@@ -13,6 +13,48 @@
 
 $ErrorActionPreference = "Stop"
 . (Join-Path $PSScriptRoot '../scripts/path-identity.ps1')
+. (Join-Path $PSScriptRoot '../scripts/hidden-process.ps1')
+$script:AiSopInstallGitLogRoot = Join-Path ([IO.Path]::GetTempPath()) ('ai-sop-install-' + [guid]::NewGuid().ToString('N'))
+
+function Invoke-AiSopInstallGit {
+    param(
+        [string[]]$Arguments,
+        [ValidatePattern('^[a-z-]+$')][string]$Operation,
+        [ValidateRange(1,3600)][int]$TimeoutSeconds=300,
+        [switch]$ReadOutput
+    )
+    [IO.Directory]::CreateDirectory($script:AiSopInstallGitLogRoot) | Out-Null
+    $prefix=Join-Path $script:AiSopInstallGitLogRoot ($Operation+'-'+[guid]::NewGuid().ToString('N').Substring(0,8))
+    $outFile=$prefix+'.stdout.log'; $errFile=$prefix+'.stderr.log'; $failureFile=$prefix+'.failure.json'
+    $child=$null
+    try {
+        $child=Start-AiSopHiddenProcess -FilePath 'git' -ArgumentList $Arguments `
+            -RedirectStandardOutput $outFile -RedirectStandardError $errFile -FailurePath $failureFile `
+            -TimeoutSeconds $TimeoutSeconds -HeartbeatSeconds 30 -CloseStandardInput -PassThru `
+            -Environment @{LC_ALL='C';GIT_TERMINAL_PROMPT='0';GCM_INTERACTIVE='never'} -Label "installer git $Operation"
+        # Keep stdout a single JSON result for -OutputFormat Json callers.
+        & { $child.WaitForExit() } 6>&1 | ForEach-Object { [Console]::Error.WriteLine([string]$_) }
+        if ($child.ExitCode -ne 0) {
+            $code=if ($child.Diagnostic -like 'PROCESS_TIMED_OUT:*') { 'AI_SOP_GIT_TIMED_OUT' } else { 'AI_SOP_GIT_FAILED' }
+            $exception=[InvalidOperationException]::new("${code}: $Operation exit=$($child.ExitCode); stdout=$outFile; stderr=$errFile; $($child.Diagnostic)")
+            $exception.Data['AiSopCode']=$code
+            throw $exception
+        }
+        return @{stdoutPath=$outFile;stderrPath=$errFile;output=$(if ($ReadOutput) { [IO.File]::ReadAllText($outFile) } else { '' })}
+    } catch {
+        if (-not $_.Exception.Data['AiSopCode']) { $_.Exception.Data['AiSopCode']='AI_SOP_GIT_START_FAILED' }
+        @{operation=$Operation;errorCode=$_.Exception.Data['AiSopCode'];message=$_.Exception.Message;stdout=$outFile;stderr=$errFile} |
+            ConvertTo-Json | Set-Content -LiteralPath ($prefix+'.result.json') -Encoding utf8
+        throw
+    } finally { if ($child) { $child.Dispose() } }
+}
+
+function Get-AiSopGitHead {
+    param([Parameter(Mandatory)][string]$Path)
+    $path=Resolve-PhysicalPathIdentity $Path
+    $result=Invoke-AiSopInstallGit -Arguments @('-C',$path,'rev-parse','HEAD') -Operation head -TimeoutSeconds 10 -ReadOutput
+    return $result.output.Trim()
+}
 
 function Get-AiSopSchemaRoot {
     return Join-Path $PSScriptRoot "..\schemas"
@@ -46,7 +88,7 @@ function Get-AiSopSha256 {
     if (Test-Path -LiteralPath $Path -PathType Container) {
         $gitDir = Join-Path $Path ".git"
         if (Test-Path -LiteralPath $gitDir) {
-            try { return [string](& git -C $Path rev-parse HEAD 2>$null) } catch { return "" }
+            return Get-AiSopGitHead -Path $Path
         }
         return ""
     }
@@ -61,14 +103,9 @@ function Get-AiSopGitBlobSha256 {
     )
     # DC-004: hash the raw Git blob byte stream (git cat-file blob <commit>:<path>).
     $spec = "$Commit`:$Path"
-    $blob = & git "--git-dir=$GitDir" cat-file blob $spec 2>$null
-    if ($null -eq $blob -or $LASTEXITCODE -ne 0) {
-        throw "AI_SOP_BLOB_NOT_FOUND"
-    }
-    $enc = [System.Text.UTF8Encoding]::new($false)
-    return [System.Security.Cryptography.SHA256]::Create().ComputeHash(
-        $enc.GetBytes($blob)
-    ) | ForEach-Object { $_.ToString("x2") } | Join-String
+    $GitDir=Resolve-PhysicalPathIdentity $GitDir
+    $result=Invoke-AiSopInstallGit -Arguments @("--git-dir=$GitDir",'cat-file','blob',$spec) -Operation blob -TimeoutSeconds 10
+    return (Get-FileHash -LiteralPath $result.stdoutPath -Algorithm SHA256).Hash.ToLowerInvariant()
 }
 
 function Read-AiSopLock {
@@ -249,7 +286,11 @@ function Invoke-AiSopVerify {
     }
     # Verify .claude checkout HEAD == lock commit.
     if (Test-Path -LiteralPath (Join-Path $claudeRoot ".git")) {
-        $head = & git -C $claudeRoot rev-parse HEAD 2>$null
+        try { $head = Get-AiSopGitHead -Path $claudeRoot }
+        catch {
+            return New-AiSopInstallResult -Action 'Verify' -Mode $Mode -SourceUrl $lock.sourceUrl -Commit $lock.commit `
+                -Result 'GIT_FAILED' -ErrorCode ([string]$_.Exception.Data['AiSopCode']) -ErrorMessage $_.Exception.Message
+        }
         if ([string]$head -cne $lock.commit) {
             return New-AiSopInstallResult -Action "Verify" -Mode $Mode `
                 -SourceUrl $lock.sourceUrl -Commit $lock.commit `
@@ -507,9 +548,11 @@ function Invoke-AiSopSvnInstall {
     param(
         [Parameter(Mandatory)][string]$WorkspaceRoot,
         [Parameter(Mandatory)][object]$Lock,
-        [Parameter(Mandatory)][string]$TransactionId
+        [Parameter(Mandatory)][ValidatePattern('^[A-Za-z0-9][A-Za-z0-9_-]*$')][string]$TransactionId,
+        [ValidateRange(1,3600)][int]$GitTimeoutSeconds=300
     )
     $ErrorActionPreference = "Stop"
+    $WorkspaceRoot=Resolve-PhysicalPathIdentity $WorkspaceRoot
     $stagingRoot = Join-Path $WorkspaceRoot ".ai-sop-staging"
     $txDir = Join-Path $stagingRoot ("transactions\" + $TransactionId)
     $stagingCheckout = Join-Path $stagingRoot ("staging-" + $TransactionId)
@@ -521,24 +564,32 @@ function Invoke-AiSopSvnInstall {
     New-Item -ItemType Directory -Path $txDir -Force | Out-Null
     # Ensure the staging root exists so same-volume backup/checkout moves succeed.
     New-Item -ItemType Directory -Path $stagingRoot -Force | Out-Null
-    # Clean any stale staging/backup for this tx id.
-    if (Test-Path -LiteralPath $stagingCheckout) { Remove-Item -Recurse -Force -LiteralPath $stagingCheckout }
-    if (Test-Path -LiteralPath $backupDir) { Remove-Item -Recurse -Force -LiteralPath $backupDir }
-    # Clean stale incomplete transactions from previous interrupted installs
+    # Preserve unresolved journals. A retry must not erase recovery evidence.
     if (Test-Path -LiteralPath (Join-Path $stagingRoot "transactions")) {
         Get-ChildItem -LiteralPath (Join-Path $stagingRoot "transactions") -Directory -ErrorAction SilentlyContinue | ForEach-Object {
             $jp = Join-Path $_.FullName "journal.json"
             $mp = Join-Path $_.FullName "commit.marker"
             if ((Test-Path -LiteralPath $jp) -and -not (Test-Path -LiteralPath $mp)) {
-                Remove-Item -Recurse -Force -LiteralPath $_.FullName -ErrorAction SilentlyContinue
+                throw "AI_SOP_TX_PREPARED_NO_MARKER: inspect $jp before retrying installation"
             }
+        }
+    }
+
+    # Only clean unused paths after checking journals, including this transaction.
+    foreach ($cleanupPath in @($stagingCheckout,$backupDir)) {
+        if (Test-Path -LiteralPath $cleanupPath) {
+            $physicalCleanup = Resolve-PhysicalPathIdentity $cleanupPath
+            $physicalStaging = (Resolve-PhysicalPathIdentity $stagingRoot).TrimEnd('\','/') + [IO.Path]::DirectorySeparatorChar
+            $comparison = if ($IsWindows) { [StringComparison]::OrdinalIgnoreCase } else { [StringComparison]::Ordinal }
+            if (-not $physicalCleanup.StartsWith($physicalStaging,$comparison)) { throw 'AI_SOP_UNSAFE_STAGING_PATH' }
+            Remove-Item -Recurse -Force -LiteralPath $cleanupPath
         }
     }
 
     # 1. Clone the SOP repo to a same-volume staging directory (detached).
     #    Skip clone if .ai-sop already exists at the locked commit (re-install = re-projection only).
     $existingHead = $null
-    try { $existingHead = [string](& git -C $claudeTarget rev-parse HEAD 2>$null) } catch { }
+    if (Test-Path -LiteralPath (Join-Path $claudeTarget '.git')) { $existingHead=Get-AiSopGitHead $claudeTarget }
     if ($existingHead -eq $Lock.commit) {
         # Already at locked commit — skip clone/backup/move entirely.
         # Write a COMMITTED journal (no staging needed) and return.
@@ -569,11 +620,9 @@ function Invoke-AiSopSvnInstall {
         Set-Content -LiteralPath $markerPath -Value $Lock.commit -NoNewline
         return $journalPath
     } else {
-        & git clone --quiet $Lock.sourceUrl $stagingCheckout 2>&1 | Out-Null
-        if ($LASTEXITCODE -ne 0) { throw "AI_SOP_CLONE_FAILED" }
-        & git -C $stagingCheckout checkout --quiet $Lock.commit 2>&1 | Out-Null
-        if ($LASTEXITCODE -ne 0) { throw "AI_SOP_CHECKOUT_FAILED" }
-        $stagedHead = (& git -C $stagingCheckout rev-parse HEAD)
+        Invoke-AiSopInstallGit -Arguments @('clone','--quiet',$Lock.sourceUrl,$stagingCheckout) -Operation clone -TimeoutSeconds $GitTimeoutSeconds | Out-Null
+        Invoke-AiSopInstallGit -Arguments @('-C',$stagingCheckout,'checkout','--quiet',$Lock.commit) -Operation checkout -TimeoutSeconds $GitTimeoutSeconds | Out-Null
+        $stagedHead = Get-AiSopGitHead $stagingCheckout
         if ([string]$stagedHead -cne $Lock.commit) { throw "AI_SOP_STAGED_HEAD_DRIFT" }
     }
 
@@ -582,7 +631,7 @@ function Invoke-AiSopSvnInstall {
     # checkout (empty when .claude is absent or not a git repo).
     $beforeSha = ""
     if (Test-Path -LiteralPath (Join-Path $claudeTarget ".git")) {
-        try { $beforeSha = [string](& git -C $claudeTarget rev-parse HEAD 2>$null) } catch { $beforeSha = "" }
+        $beforeSha = Get-AiSopGitHead $claudeTarget
     }
     $journal = [ordered]@{
         schemaVersion = "1.0"

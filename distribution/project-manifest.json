@@ -14,8 +14,8 @@
     {
       "source": "distribution/templates/root/CLAUDE.md",
       "target": "CLAUDE.md",
-      "sourceBlobSha256": "654851840e14319a632ce413e350668e9a7df29cf4d0bb3856a3401983b01ae9",
-      "targetSha256": "654851840e14319a632ce413e350668e9a7df29cf4d0bb3856a3401983b01ae9",
+      "sourceBlobSha256": "92bf6824f2eff03b911a51206bd4e7eac7ec097e8b1ba498a3564fc37422f9e4",
+      "targetSha256": "92bf6824f2eff03b911a51206bd4e7eac7ec097e8b1ba498a3564fc37422f9e4",
       "legacySha256": "92bebe5c475de01e480311abe623ab55a714066267decdda906789d3bf86d1f5",
       "encoding": "utf8-no-bom",
       "lineEnding": "lf"
@@ -23,8 +23,8 @@
     {
       "source": "distribution/templates/root/AGENTS.md",
       "target": "AGENTS.md",
-      "sourceBlobSha256": "cdfa338126ec6cd796fede879cac38749792792f45dd990bb21b3f6ccc96a0a0",
-      "targetSha256": "cdfa338126ec6cd796fede879cac38749792792f45dd990bb21b3f6ccc96a0a0",
+      "sourceBlobSha256": "faf6022e3851714fc6c7b83b7fb4779e3b0f49eec815c5827884989bcc2e95bb",
+      "targetSha256": "faf6022e3851714fc6c7b83b7fb4779e3b0f49eec815c5827884989bcc2e95bb",
       "legacySha256": "25903e4b86512c55ac3f7e7aee50f1c7ab4557e276cd9322619c731a180574dc",
       "encoding": "utf8-no-bom",
       "lineEnding": "lf"
@@ -32,8 +32,8 @@
     {
       "source": "distribution/templates/root/ANTIGRAVITY.md",
       "target": "ANTIGRAVITY.md",
-      "sourceBlobSha256": "3e6ce0a3c999dd3a7831411588b22eb4a6735109b75cd5119375624188c15719",
-      "targetSha256": "3e6ce0a3c999dd3a7831411588b22eb4a6735109b75cd5119375624188c15719",
+      "sourceBlobSha256": "b29e38ee7066a64053c8ad20a6fe60cadf28e0ae91e954a69bd612c168809cc0",
+      "targetSha256": "b29e38ee7066a64053c8ad20a6fe60cadf28e0ae91e954a69bd612c168809cc0",
       "legacySha256": "48e29a97bf70a1690f3c20a91eb4c2f1bad8d20a340abfaa92e2e76f9e469e25",
       "encoding": "utf8-no-bom",
       "lineEnding": "lf"
@@ -59,8 +59,8 @@
     {
       "source": "distribution/templates/tools/install-ai-sop.ps1",
       "target": "tools/ai-sop/install-ai-sop.ps1",
-      "sourceBlobSha256": "902d646972734dfbc0e6a30f15ca604dc88131c9ed710a83e1d3feab6e7cd9d1",
-      "targetSha256": "902d646972734dfbc0e6a30f15ca604dc88131c9ed710a83e1d3feab6e7cd9d1",
+      "sourceBlobSha256": "125ad16e8320abd35bc5257cc66a4dfdf242e598b85f57ce1e6882a7ad427a93",
+      "targetSha256": "125ad16e8320abd35bc5257cc66a4dfdf242e598b85f57ce1e6882a7ad427a93",
       "legacySha256": "",
       "encoding": "utf8-no-bom",
       "lineEnding": "lf"

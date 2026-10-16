@@ -157,8 +157,12 @@ try {
         throw "AGENTS.md template not found: $AgentsMd"
     }
 
-    $docCommands = Get-DocCommands -DocPath $AgentsMd
-    Assert-Contract "AGENTS.md should contain at least one workflow command example" `
+    $referencePaths=@('workflows/agent-t3.md','workflows/agent-legacy.md')
+    foreach ($relative in $referencePaths) {
+        Assert-Contract "On-demand reference exists: $relative" (Test-Path -LiteralPath (Join-Path $SopRoot $relative))
+    }
+    $docCommands = @(Get-DocCommands -DocPath $AgentsMd; foreach ($relative in $referencePaths) { Get-DocCommands -DocPath (Join-Path $SopRoot $relative) })
+    Assert-Contract "Agent entry and on-demand references contain workflow examples" `
         ($docCommands.Count -gt 0) "found $($docCommands.Count) commands"
 
     $stateOps = Get-ScriptOperations -ScriptPath $WorkflowStateScript
@@ -219,7 +223,7 @@ try {
     $taskContract=Get-TaskScriptContract (Join-Path $SopRoot 'scripts/workflow-task.ps1')
     $rootContract=Get-TaskScriptContract (Join-Path $SopRoot 'distribution/templates/root/ai-sop.ps1')
     $taskExampleCount=0
-    foreach ($relative in @('distribution/templates/root/AGENTS.md','SUPERPOWERS_MANUAL.md','workflows/superpowers-adapter.md','skills/quality-assurance/SKILL.md','skills/workflow-orchestrator/SKILL.md')) {
+    foreach ($relative in @('distribution/templates/root/AGENTS.md','workflows/agent-t3.md','workflows/agent-legacy.md','SUPERPOWERS_MANUAL.md','workflows/superpowers-adapter.md','skills/quality-assurance/SKILL.md','skills/workflow-orchestrator/SKILL.md')) {
         $examples=@(Get-TaskDocCommands ([IO.File]::ReadAllText((Join-Path $SopRoot $relative))))
         if ($relative -in @('skills/quality-assurance/SKILL.md','skills/workflow-orchestrator/SKILL.md')) { Assert-Contract "$relative must provide a Task command example" ($examples.Count -gt 0) }
         foreach ($example in $examples) {
@@ -302,6 +306,15 @@ exit 0
 
     # --- Compile-before-audit (SDD): prevent racing auditor before javac ---
     $agentsText = Get-Content -LiteralPath $AgentsMd -Raw
+    $t3Text = Get-Content -LiteralPath (Join-Path $SopRoot 'workflows/agent-t3.md') -Raw
+    $legacyText = Get-Content -LiteralPath (Join-Path $SopRoot 'workflows/agent-legacy.md') -Raw
+    Assert-Contract 'Default entry remains compact and routes optional detail' `
+        (($agentsText -split "`n").Count -le 160 -and $agentsText.Length -lt 10000 -and
+         $agentsText -match '必须先读' -and $agentsText -match '\.ai-sop/workflows/agent-t3\.md' -and
+         $agentsText -match '\.ai-sop/workflows/agent-legacy\.md' -and $agentsText -notmatch 'workflow-owner\.ps1 -Operation Claim')
+    Assert-Contract 'T3 and legacy detail remains available after entry reduction' `
+        ($t3Text -match 'design-reviewer' -and $t3Text -match 'ValidateChangeImpact' -and $t3Text -match 'SetCaseScope' -and
+         $t3Text -match '先编译通过再内审' -and $legacyText -match '仅在处理无 taskId' -and $legacyText -match 'ForceRelease')
     $adapterPath = Join-Path $SopRoot "workflows/superpowers-adapter.md"
     $engineSkill = Join-Path $SopRoot "skills/implementation-engine/SKILL.md"
     $auditorSkill = Join-Path $SopRoot "skills/implementation-auditor/SKILL.md"
@@ -332,8 +345,8 @@ exit 0
          $geminiText -match '\.ai-workspace/context/README\.md' -and $geminiText -notmatch '\.claude/context/')
     Assert-Contract "AGENTS.md must not treat 2-5 minute steps as Task splits" `
         ($agentsText -notmatch '拆分为 2-5 分钟可完成的小任务')
-    Assert-Contract "AGENTS.md must distinguish Task vs Step for writing-plans" `
-        ($agentsText -match '默认 1 个 Task' -and $agentsText -match 'Step')
+    Assert-Contract "T3 reference must distinguish Task vs Step for writing-plans" `
+        ($t3Text -match '默认 1 个 Task' -and $t3Text -match 'Step')
     Assert-Contract "adapter must define writing-plans Task granularity overlay" `
         ($adapterText -match 'writing-plans Task 粒度')
     Assert-Contract "Task policy must default to T2 and respect human selection" `

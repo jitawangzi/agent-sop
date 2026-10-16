@@ -1,9 +1,9 @@
 #requires -Version 7.0
 # Root entry point (DC-014): the only installer invocation surface in the
-# game project root. It locates the external SOP checkout and delegates to
+# host project root. It locates the external SOP checkout and delegates to
 # distribution/bootstrap/install-ai-sop.ps1 inside it. Fixed CLI:
 #   Mode=Auto|Git|Svn, Action=Install|Verify, WorkspaceRoot, SourceUrl,
-#   OutputFormat=Text|Json
+#   OutputFormat=Text|Json, GitTimeoutSeconds=300 (1..3600 seconds per command)
 # JSON result fields: schemaVersion/action/mode/sourceUrl/commit/result/
 #                     changedProjections/errorCode/errorMessage
 #
@@ -24,7 +24,10 @@ param(
     [string]$SourceUrl = "",
 
     [ValidateSet("Text", "Json")]
-    [string]$OutputFormat = "Text"
+    [string]$OutputFormat = "Text",
+
+    [ValidateRange(1,3600)]
+    [int]$GitTimeoutSeconds = 300
 )
 
 $ErrorActionPreference = "Stop"
@@ -44,5 +47,5 @@ if (-not (Test-Path -LiteralPath $ExternalBootstrap)) {
 
 & pwsh -NoProfile -File $ExternalBootstrap `
     -Mode $Mode -Action $Action -WorkspaceRoot $WorkspaceRoot `
-    -SourceUrl $SourceUrl -OutputFormat $OutputFormat
+    -SourceUrl $SourceUrl -OutputFormat $OutputFormat -GitTimeoutSeconds $GitTimeoutSeconds
 exit $LASTEXITCODE

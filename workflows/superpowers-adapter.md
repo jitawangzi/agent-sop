@@ -104,7 +104,7 @@ implementation-engine（一次只做一个 Task）
 
 以下需求、设计确认与 SDD 编排适用于 T3；T1/T2 只澄清影响当前实现的必要信息，不新增批准阶段。
 
-- 每轮最多 3 个聚焦问题，每个聚焦单一决策点，允许用户一句话给齐（统一口径见 AGENTS.md「人工 review 阶段」）。
+- 每轮最多 3 个聚焦问题，每个聚焦单一决策点，允许用户一句话给齐（统一口径见 AGENTS.md「汇报」与 `.ai-sop/workflows/agent-t3.md`「人工 review 阶段」）。
 - 对有意义的备选方案进行比较并推荐其一。
 - 需求与设计可在同一 brainstorming 内多轮澄清与分段确认。
 - 只有完整的 `01_server_rules.md` 与 `06_design_contract.md` 需要最终确认。

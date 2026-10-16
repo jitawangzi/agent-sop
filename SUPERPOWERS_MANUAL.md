@@ -235,6 +235,16 @@ Preflight 将清单文件损坏与任务引用不匹配分开：文件有效但�
 
 本指南说明多个 harness（Claude Code / GitHub Copilot / Antigravity / Cursor / Codex / Pi）如何使用本项目的 AI SOP 完成游戏服务端开发。**T3 由 Superpowers 过程引擎编排；T2/T1用 AGENTS.md + 专家 Skills，不调用 Superpowers**。领域专家 Skill 被强制绑定调用；详见 `.ai-sop/workflows/superpowers-adapter.md`。各 harness 共享 `.ai-workspace/context/` 与规范化功能产物。各工具的能力差异（能跑 T3 还是支持 T1/T2）见 `.ai-sop/scripts/harness-capability.ps1` 的 STRICT/BLOCKED 判定。
 
+## 安装器的等待上限与日志
+
+正式安装入口 `tools/ai-sop/install-ai-sop.ps1` 的 Git clone、fetch、checkout 默认每条最多运行 300 秒；网络较慢时可指定 `-GitTimeoutSeconds 600`（允许 1～3600 秒）。读取 HEAD 和 Git blob 等本地元数据操作最多 10 秒。超时后终止子进程并有界清理，不把超时记成成功。这是各条 Git 命令的上限，不是整个安装流程的总时限。
+
+等待期间每 30 秒输出一次进度，包含操作、PID、耗时和日志路径；使用 `-OutputFormat Json` 时，进度写入 stderr，stdout 保持单个 JSON 结果。Git 使用非交互认证，认证失败应先在安装器外配置凭据。Git 非零退出或超时立即中止后续安装步骤，返回非零退出码与 `AI_SOP_GIT_FAILED` / `AI_SOP_GIT_TIMED_OUT` 等诊断。
+
+日志保存在系统临时目录的 `ai-sop-install-<标识>/` 中，包含每次 Git 操作的 stdout、stderr；失败还保留结构化诊断。失败后先按返回路径查看日志，不连续盲目重试。SVN 模式在 clone/checkout 成功前保留当前安装；发现上次未决安装事务时保留其日志与备份，先检查、恢复，再重试。
+
+宿主根 `AGENTS.md` 只保留日常 T1/T2、任务交接与证据规则。已选 T3 时必须再读 `.ai-sop/workflows/agent-t3.md` 和适配器；旧功能级归属/证据按需读 `.ai-sop/workflows/agent-legacy.md`。精简入口不改变档位、批准或完成门禁。
+
 ## 🧭 用户任务选择
 
 - 日常任务直接描述，默认 T2；用户提供的明确需求可以直接实施。

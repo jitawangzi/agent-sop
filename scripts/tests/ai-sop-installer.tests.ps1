@@ -199,8 +199,8 @@ Invoke-Test "Get-AiSopGitBlobSha256 hashes real blob bytes" {
         $work = Join-Path $tmp "work"
         New-Item -ItemType Directory -Path $work | Out-Null
         & git -C $work init --quiet 2>&1 | Out-Null
-        $content = "manifest content`n"
-        $content | Set-Content -LiteralPath (Join-Path $work "manifest.txt") -NoNewline
+        $content = [byte[]]@(0,255,13,10,128,65,10)
+        [IO.File]::WriteAllBytes((Join-Path $work 'manifest.txt'), $content)
         & git -C $work add manifest.txt 2>&1 | Out-Null
         & git -C $work -c user.email=t@t -c user.name=t commit -m x --quiet 2>&1 | Out-Null
         $commit = & git -C $work rev-parse HEAD
@@ -208,11 +208,8 @@ Invoke-Test "Get-AiSopGitBlobSha256 hashes real blob bytes" {
         & git -C $work remote add origin $bare 2>&1 | Out-Null
         & git -C $work push --quiet origin HEAD 2>&1 | Out-Null
         $hash = Get-AiSopGitBlobSha256 -GitDir $bare -Commit $commit -Path "manifest.txt"
-        # Expected hash is over the bytes git actually stores (DC-004); read them
-        # back from the bare repo to compute the reference independently.
-        $stored = & git "--git-dir=$bare" cat-file blob "$commit`:manifest.txt"
-        $enc = [System.Text.UTF8Encoding]::new($false)
-        $expected = [System.Security.Cryptography.SHA256]::Create().ComputeHash($enc.GetBytes($stored)) | ForEach-Object { $_.ToString("x2") } | Join-String
+        # Binary fixture detects accidental text decoding or newline conversion.
+        $expected = [Convert]::ToHexString([System.Security.Cryptography.SHA256]::HashData($content)).ToLowerInvariant()
         Assert-Equal $expected $hash "blob hash must match stored blob bytes"
     } finally { Remove-Item -Recurse -Force -LiteralPath $tmp }
 }
@@ -380,6 +377,61 @@ Invoke-Test "Complete-AiSopSvnTransaction marks COMMITTED + writes marker" {
     } finally { Remove-Item -Recurse -Force -LiteralPath $tmp }
 }
 
+Invoke-Test "Installer Git failures and timeouts retain logs and preserve checkout" {
+    $tmp = Join-Path ([IO.Path]::GetTempPath()) ('aisop-git-bounds-' + [guid]::NewGuid().ToString('N'))
+    $workspace = Join-Path $tmp 'workspace'
+    New-Item -ItemType Directory -Path (Join-Path $workspace '.ai-sop') -Force | Out-Null
+    $marker = Join-Path $workspace '.ai-sop/keep.txt'
+    [IO.File]::WriteAllText($marker, 'original checkout')
+    $worker = Join-Path $tmp 'fake-git.ps1'
+    [IO.File]::WriteAllText($worker, @'
+param([string]$Mode)
+[Console]::Out.WriteLine('git operation started')
+[Console]::Error.WriteLine('fixture diagnostic')
+if ($Mode -eq 'stall') { Start-Sleep -Seconds 30 }
+exit 7
+'@)
+    $nativeStart = ${function:Start-AiSopHiddenProcess}
+    $savedLogRoot = $script:AiSopInstallGitLogRoot
+    $script:AiSopInstallGitLogRoot = Join-Path $tmp 'logs'
+    try {
+        function Start-AiSopHiddenProcess {
+            param($FilePath,$ArgumentList,$RedirectStandardOutput,$RedirectStandardError,$FailurePath,
+                $TimeoutSeconds,$HeartbeatSeconds,$Environment,$Label,[switch]$CloseStandardInput,[switch]$PassThru)
+            Assert-Equal '0' $Environment.GIT_TERMINAL_PROMPT 'Git must not wait for terminal input'
+            $PSBoundParameters.FilePath = (Get-Process -Id $PID).Path
+            $PSBoundParameters.ArgumentList = @('-NoProfile','-File',$worker,$mode)
+            $PSBoundParameters.HeartbeatSeconds = 1
+            & $nativeStart @PSBoundParameters
+        }
+        foreach ($mode in @('fail','stall')) {
+            $watch = [Diagnostics.Stopwatch]::StartNew()
+            $caught = $null
+            try {
+                Invoke-AiSopSvnInstall -WorkspaceRoot $workspace -Lock @{sourceUrl='fixture';commit=('a'*40)} -TransactionId $mode -GitTimeoutSeconds 2 | Out-Null
+            } catch { $caught = $_ }
+            Assert-True ($null -ne $caught) 'failed Git must abort installation'
+            $expectedCode = if ($mode -eq 'stall') { 'AI_SOP_GIT_TIMED_OUT' } else { 'AI_SOP_GIT_FAILED' }
+            Assert-Equal $expectedCode $caught.Exception.Data['AiSopCode'] 'failure must be classified'
+            Assert-True ($watch.Elapsed.TotalSeconds -lt 15) 'stalled child must return within bounded cleanup time'
+            Assert-True ($caught.Exception.Message -match 'stdout=.*; stderr=') 'failure must locate retained logs'
+            Assert-Equal 'original checkout' ([IO.File]::ReadAllText($marker)) 'failure must preserve installed files'
+        }
+        $results = @(Get-ChildItem -LiteralPath $script:AiSopInstallGitLogRoot -Filter '*.result.json')
+        Assert-Equal 2 $results.Count 'both failures retain structured diagnostics'
+        foreach ($file in $results) {
+            $record = Get-Content -LiteralPath $file.FullName -Raw | ConvertFrom-Json
+            Assert-True ([IO.File]::ReadAllText($record.stderr).Contains('fixture diagnostic')) 'stderr survives child disposal'
+        }
+    } finally {
+        $script:AiSopInstallGitLogRoot = $savedLogRoot
+        $resolved = [IO.Path]::GetFullPath($tmp)
+        $tempRoot = [IO.Path]::GetFullPath([IO.Path]::GetTempPath()).TrimEnd('\','/') + [IO.Path]::DirectorySeparatorChar
+        if (-not $resolved.StartsWith($tempRoot, [StringComparison]::OrdinalIgnoreCase)) { throw 'Unsafe fixture cleanup path' }
+        Remove-Item -LiteralPath $resolved -Recurse -Force
+    }
+}
+
 Invoke-Test "SVN upgrade verifies before commit and isolates its pending transaction" {
     $tmp = Join-Path ([IO.Path]::GetTempPath()) ('aisop-svn-upgrade-' + [guid]::NewGuid().ToString('N'))
     $source = Join-Path $tmp 'source'
@@ -391,6 +443,7 @@ Invoke-Test "SVN upgrade verifies before commit and isolates its pending transac
         }
         New-Item -ItemType Directory -Path (Join-Path $source 'scripts') | Out-Null
         Copy-Item -LiteralPath (Join-Path $ClaudeRoot 'scripts/path-identity.ps1') -Destination (Join-Path $source 'scripts')
+        Copy-Item -LiteralPath (Join-Path $ClaudeRoot 'scripts/hidden-process.ps1') -Destination (Join-Path $source 'scripts')
         Copy-Item -LiteralPath (Join-Path $ClaudeRoot '.gitattributes') -Destination $source
         git -C $source init --quiet
         git -C $source add .
@@ -432,6 +485,26 @@ Invoke-Test "SVN upgrade verifies before commit and isolates its pending transac
         Assert-Equal $commit ((& git -C $installed rev-parse HEAD).Trim()) 'new checkout is installed'
         Assert-Equal 'VERIFIED' (Invoke-AiSopVerify $workspace Svn -OutputFormat Json).result 'ordinary Verify succeeds after commit'
 
+        # A failed fetch must not checkout even a locally available target or overwrite projections.
+        git -C $installed remote set-url origin (Join-Path $tmp 'missing-source')
+        $lock.commit = $oldCommit
+        $lock | ConvertTo-Json -Depth 5 | Set-Content -LiteralPath (Join-Path $lockDir 'ai-sop.lock.json')
+        $agents = Join-Path $workspace 'AGENTS.md'
+        $original = [IO.File]::ReadAllBytes($agents)
+        [IO.File]::AppendAllText($agents, 'local edit to preserve')
+        $exitCode = Start-AiSopHiddenProcess -FilePath (Get-Process -Id $PID).Path `
+            -ArgumentList @('-NoProfile','-File',(Join-Path $installed 'distribution/bootstrap/install-ai-sop.ps1'),
+                '-WorkspaceRoot',$workspace,'-Mode','Git','-Action','Install','-OutputFormat','Json','-GitTimeoutSeconds','2') `
+            -RedirectStandardOutput $output -RedirectStandardError $errorLog -TimeoutSeconds 30 -CloseStandardInput
+        Assert-Equal 1 $exitCode 'fetch failure exits nonzero'
+        $failed = Get-Content -LiteralPath $output -Raw | ConvertFrom-Json
+        Assert-Equal 'AI_SOP_GIT_FAILED' $failed.errorCode 'fetch failure remains structured JSON'
+        Assert-Equal $commit ((& git -C $installed rev-parse HEAD).Trim()) 'failed fetch must not proceed to checkout'
+        Assert-True ([IO.File]::ReadAllText($agents).EndsWith('local edit to preserve')) 'failed fetch must not regenerate projections'
+        [IO.File]::WriteAllBytes($agents, $original)
+        $lock.commit = $commit
+        $lock | ConvertTo-Json -Depth 5 | Set-Content -LiteralPath (Join-Path $lockDir 'ai-sop.lock.json')
+
         $pendingDir = Join-Path $txRoot 'pending-test'
         New-Item -ItemType Directory -Path $pendingDir | Out-Null
         $journal.transactionId='pending-test'; $journal.phase='PREPARED'
@@ -459,6 +532,15 @@ Invoke-Test "SVN upgrade verifies before commit and isolates its pending transac
         $journal.transactionId='other-pending'
         $journal | ConvertTo-Json -Depth 8 | Set-Content -LiteralPath (Join-Path $otherDir 'journal.json')
         Assert-Equal 'INSTALL_TRANSACTION_INCOMPLETE' (Invoke-AiSopVerify $workspace Svn -OutputFormat Json -CompletingTransactionId 'pending-test').result 'another pending transaction still blocks install'
+        $pendingBefore = [IO.File]::ReadAllText($pendingPath)
+        $pendingBackup = Join-Path $workspace '.ai-sop-staging/backup-pending-test'
+        New-Item -ItemType Directory -Path $pendingBackup | Out-Null
+        [IO.File]::WriteAllText((Join-Path $pendingBackup 'keep.txt'), 'recovery backup')
+        $caught = $null
+        try { Invoke-AiSopSvnInstall -WorkspaceRoot $workspace -Lock $lock -TransactionId 'pending-test' | Out-Null } catch { $caught = $_ }
+        Assert-True ($null -ne $caught -and $caught.Exception.Message -like 'AI_SOP_TX_PREPARED_NO_MARKER:*') 'retry must preserve unresolved installation'
+        Assert-Equal $pendingBefore ([IO.File]::ReadAllText($pendingPath)) 'retry must not delete prior recovery evidence'
+        Assert-Equal 'recovery backup' ([IO.File]::ReadAllText((Join-Path $pendingBackup 'keep.txt'))) 'same transaction retry preserves its recovery backup'
     } finally {
         $resolved = [IO.Path]::GetFullPath($tmp)
         $tempRoot = [IO.Path]::GetFullPath([IO.Path]::GetTempPath()).TrimEnd('\','/') + [IO.Path]::DirectorySeparatorChar

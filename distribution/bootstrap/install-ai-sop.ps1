@@ -21,7 +21,10 @@ param(
     [string]$SourceUrl = "",
 
     [ValidateSet("Text", "Json")]
-    [string]$OutputFormat = "Text"
+    [string]$OutputFormat = "Text",
+
+    [ValidateRange(1,3600)]
+    [int]$GitTimeoutSeconds = 300
 )
 
 $ErrorActionPreference = "Stop"
@@ -41,6 +44,8 @@ if (-not (Test-Path -LiteralPath $CorePath)) {
 
 . $CorePath
 
+try {
+$WorkspaceRoot = Resolve-PhysicalPathIdentity $WorkspaceRoot
 $resolvedMode = Resolve-AiSopMode -Mode $Mode -WorkspaceRoot $WorkspaceRoot
 Restore-AiSopInstallTransactions -WorkspaceRoot $WorkspaceRoot -ClaudeRoot $SopRoot
 
@@ -56,7 +61,7 @@ $lockPath = Join-Path $WorkspaceRoot "tools\ai-sop\ai-sop.lock.json"
 if (-not (Test-Path -LiteralPath $lockPath)) {
     $headCommit = ""
     if (Test-Path -LiteralPath (Join-Path $SopRoot ".git")) {
-        try { $headCommit = [string](& git -C $SopRoot rev-parse HEAD 2>$null) } catch { }
+        $headCommit = Get-AiSopGitHead $SopRoot
     }
     if ([string]::IsNullOrWhiteSpace($headCommit) -or $headCommit.Trim().Length -ne 40) {
         $result = New-AiSopInstallResult -Action "Install" -Mode $resolvedMode -SourceUrl $SourceUrl `
@@ -109,21 +114,21 @@ $lock = Read-AiSopLock -WorkspaceRoot $WorkspaceRoot
 if ($resolvedMode -eq "Git") {
     $sopRoot = Join-Path $WorkspaceRoot ".ai-sop"
     if (Test-Path -LiteralPath (Join-Path $sopRoot ".git")) {
-        & git -C $sopRoot fetch --quiet origin 2>&1 | Out-Null
-        & git -C $sopRoot checkout $lock.commit 2>&1 | Out-Null
+        Invoke-AiSopInstallGit -Arguments @('-C',$sopRoot,'fetch','--quiet','origin') -Operation fetch -TimeoutSeconds $GitTimeoutSeconds | Out-Null
+        Invoke-AiSopInstallGit -Arguments @('-C',$sopRoot,'checkout',$lock.commit) -Operation checkout -TimeoutSeconds $GitTimeoutSeconds | Out-Null
     }
 } else {
     # SVN Install: independent clone + same-volume rename (DC-012).
     $txId = "svn-" + [guid]::NewGuid().ToString("N").Substring(0, 12)
     try {
         $journalPath = Invoke-AiSopSvnInstall -WorkspaceRoot $WorkspaceRoot `
-            -Lock $lock -TransactionId $txId
+            -Lock $lock -TransactionId $txId -GitTimeoutSeconds $GitTimeoutSeconds
     } catch {
         # On clone/checkout failure, attempt rollback before reporting.
         [void](Invoke-AiSopSvnRollback -WorkspaceRoot $WorkspaceRoot -TransactionId $txId)
         $result = New-AiSopInstallResult -Action "Install" -Mode $resolvedMode `
             -SourceUrl $lock.sourceUrl -Commit $lock.commit `
-            -Result "INSTALL_FAILED" -ErrorCode "$_" -ErrorMessage "$($_.Exception.Message)"
+            -Result "INSTALL_FAILED" -ErrorCode $(if ($_.Exception.Data['AiSopCode']) { [string]$_.Exception.Data['AiSopCode'] } else { $_.Exception.Message }) -ErrorMessage "$($_.Exception.Message)"
         Write-AiSopInstallResult -Result $result -OutputFormat $OutputFormat
         exit 1
     }
@@ -156,3 +161,11 @@ if ($result.result -eq "VERIFIED" -and $resolvedMode -eq "Svn") {
 if ($generated) { $result.changedProjections = @($generated) }
 Write-AiSopInstallResult -Result $result -OutputFormat $OutputFormat
 if ($result.result -eq "VERIFIED") { exit 0 } else { exit 1 }
+} catch {
+    $code=if ($_.Exception.Data['AiSopCode']) { [string]$_.Exception.Data['AiSopCode'] } else { 'AI_SOP_INSTALLER_FAILED' }
+    $result=New-AiSopInstallResult -Action $Action -Mode $Mode -SourceUrl $SourceUrl -Commit '' `
+        -Result $(if ($Action -eq 'Install') { 'INSTALL_FAILED' } else { 'VERIFY_FAILED' }) `
+        -ErrorCode $code -ErrorMessage $_.Exception.Message
+    Write-AiSopInstallResult -Result $result -OutputFormat $OutputFormat
+    exit 1
+}

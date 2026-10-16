@@ -22,10 +22,11 @@ function Start-Suite {
     $index=$script:NextIndex; $script:NextIndex++
     $outFile=Join-Path $script:LogRoot "$index.stdout.log"
     $errFile=Join-Path $script:LogRoot "$index.stderr.log"
-    $job=[pscustomobject]@{name=$Name;file=$File;process=$null;outFile=$outFile;errFile=$errFile;diagnostic='';limit=$Limit}
+    $failureFile=Join-Path $script:LogRoot "$index.failure.json"
+    $job=[pscustomobject]@{name=$Name;file=$File;process=$null;outFile=$outFile;errFile=$errFile;failureFile=$failureFile;diagnostic='';limit=$Limit}
     try {
         $heartbeat=if ($Quiet) { 0 } else { $HeartbeatSeconds }
-        $job.process=Start-AiSopHiddenProcess -FilePath (Get-Process -Id $PID).Path -ArgumentList (@('-NoProfile','-File',$File)+$ExtraArguments) -RedirectStandardOutput $outFile -RedirectStandardError $errFile -TimeoutSeconds $Limit -HeartbeatSeconds $heartbeat -Label $Name -CloseStandardInput -PassThru
+        $job.process=Start-AiSopHiddenProcess -FilePath (Get-Process -Id $PID).Path -ArgumentList (@('-NoProfile','-File',$File)+$ExtraArguments) -RedirectStandardOutput $outFile -RedirectStandardError $errFile -FailurePath $failureFile -TimeoutSeconds $Limit -HeartbeatSeconds $heartbeat -Label $Name -CloseStandardInput -PassThru
         if (-not $Quiet) { Write-Host "START $Name pid=$($job.process.Id) limit=$($Limit)s" -ForegroundColor Cyan }
     } catch { $job.diagnostic="PROCESS_START_FAILED: $($_.Exception.Message)" }
     return $job
@@ -41,7 +42,7 @@ function Complete-Suite {
     $outcome=if ($code -eq 0) { 'PASSED' } elseif ($code -eq 124 -and $diagnostic -like 'PROCESS_TIMED_OUT:*') { 'TIMED_OUT' } else { 'FAILED' }
     $result=[pscustomobject]@{
         Name=$Job.name; File=$Job.file; ExitCode=$code; Passed=($code -eq 0); Outcome=$outcome
-        DurationMs=$duration; TimeoutSeconds=$Job.limit; Diagnostic=$diagnostic; OutFile=$Job.outFile; ErrFile=$Job.errFile
+        DurationMs=$duration; TimeoutSeconds=$Job.limit; Diagnostic=$diagnostic; OutFile=$Job.outFile; ErrFile=$Job.errFile; FailureFile=$Job.failureFile
     }
     if ($Job.process) { $Job.process.Dispose() }
     $script:Results.Add($result)
@@ -53,7 +54,9 @@ function Complete-Suite {
         if (-not $result.Passed) {
             if ($diagnostic) { Write-Host $diagnostic -ForegroundColor Red }
             foreach ($path in @($Job.outFile,$Job.errFile)) {
-                if (Test-Path -LiteralPath $path) { Get-Content -LiteralPath $path -Tail 10 | ForEach-Object { Write-Host "        $_" } }
+                try {
+                    if (Test-Path -LiteralPath $path) { Get-Content -LiteralPath $path -Tail 10 | ForEach-Object { Write-Host "        $_" } }
+                } catch { Write-Host "        LOG_TAIL_UNAVAILABLE: $($_.Exception.Message)" }
             }
             Write-Host "Logs: stdout=$($Job.outFile) stderr=$($Job.errFile)"
         }

@@ -802,9 +802,13 @@ pwsh -NoProfile -File .\.ai-sop\scripts\run-all-tests.ps1 -IncludeCompile
 pwsh -NoProfile -File .\.ai-sop\scripts\run-all-tests.ps1 -SuiteTimeoutSeconds 3600
 ```
 
-每次运行在系统临时目录的 `ai-sop-tests-<id>/` 保存独立的 stdout/stderr 日志及逐套更新的 `results.json`。超时记录为 `TIMED_OUT` / exitCode 124，运行器终止该套件进程树并继续其他套件，最后整体返回非零；日志保留供排查，可在不再需要时清理。运行器退出清理不再无限等待。父进程退出后，输出管道最多再等 5 秒，仍未关闭则报告 `OUTPUT_DRAIN_TIMED_OUT` 并判失败；已脱离父进程的后台进程不保证能由 .NET 进程树清理追溯，不能据此声称所有后台进程均已退出。
+每次运行在系统临时目录的 `ai-sop-tests-<id>/` 保存独立的 stdout/stderr 日志及逐套更新的 `results.json`。超时记录为 `TIMED_OUT` / exitCode 124，运行器先保存 `<序号>.failure.json`，再尝试终止该套件进程树并继续其他套件，最后整体返回非零；日志保留供排查，可在不再需要时清理。父进程退出后，输出管道最多再等 5 秒，仍未关闭则报告 `OUTPUT_DRAIN_TIMED_OUT` 并判失败。
+
+终止进程、取消输出复制、关闭流和释放进程对象共用独立的 **5 秒清理预算**，在后台线程执行。超过预算报告 `PROCESS_CLEANUP_TIMED_OUT`，保留原失败码；重复 Dispose 不会重新等待。`Task Run` 同样使用这层保护，失败结果在清理前保存为待入账记录，之后仍走原 Checkpoint 事务。清理超时或已脱离父进程的后台进程都可能无法确认退出；这时不能声称所有后台进程已被结束，也不能把未确认的清理当作验证成功。
 
 `Task Run` 的 Git/SVN 版本注记和任务入口的 Git 诊断探测每条默认最多等 10 秒。探测超时会报告元信息不可用，并继续真正的编译/测试；这只影响可选版本注记，不产生成功验证证据，也不跳过门禁。业务命令本身的时限仍由 Profile 或 `-TimeoutSeconds` 指定，0 仍表示不限制业务运行时间；运行时每 30 秒报告进度，输出管道关闭也有 5 秒兜底。需要自动结束业务长任务时，应显式设定命令时限。
+
+`Start` 的 Git/SVN 基线查询也使用 10 秒探测时限；有仓库但无法取得基线时明确报 `TASK_BASELINE_UNAVAILABLE`，不伪装成无仓库继续认领。尚无提交的合法 Git 仓库可使用 revision `0`，仍由任务输入快照记录起点。`Preflight` 的 Git 查询失败则标为 `UNKNOWN`，无法确认的 dirty 为 `null`（文本输出为 `UNKNOWN`），并提示检查不可用；不把失败解释成未跟踪或干净。一次预检中遇到探测超时、启动失败或清理异常后，后续 Git 查询直接返回未知，避免按产物数量累加等待；下次预检会重新尝试。探测运行、输出排空和清理分别计时，后两项各最多另等 5 秒。
 
 这些保护对新启动的运行生效，更新脚本不能让已经卡住的旧进程自动获得超时。
 

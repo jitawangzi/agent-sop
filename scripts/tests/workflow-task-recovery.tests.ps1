@@ -148,6 +148,42 @@ try {
     Assert ($last.diagnostic -match 'VERIFICATION_TIMED_OUT' -and (Read-LiveLog (Get-AiSopRunLogPath $last $workspace $spec recovery)) -match 'VERIFICATION_TIMED_OUT') 'Timeout reason was lost from evidence/log'
     Fails { Task Verify } 'Task Verify failed'
 
+    # Inject the cleanup outcome only in this disposable installed copy. Real
+    # resources are still released; production has no fault-injection switch.
+    $installedHelper=Join-Path $sopRoot 'scripts/hidden-process.ps1'
+    $helperRaw=[IO.File]::ReadAllText($installedHelper)
+    $cleanupFixture=@'
+
+function Invoke-AiSopProcessCleanup {
+    param([Diagnostics.Process]$Process,[bool]$Started=$true,[bool]$Terminate=$true,
+        [Threading.CancellationTokenSource]$Cancellation,[Threading.Tasks.Task[]]$Copies=@(),
+        [IDisposable[]]$Resources=@(),[int]$BudgetMilliseconds=5000)
+    $isRun=@($Resources | Where-Object { $_ -is [IO.StreamWriter] }).Count -gt 0
+    $observed='MISSING'
+    if ($isRun) {
+        $pending=Get-AiSopRunEvidencePath $SpecDirectory $TaskId $runId
+        if ([IO.File]::Exists($pending)) { $observed=(Get-Content -LiteralPath $pending -Raw | ConvertFrom-Json).outcome }
+    }
+    $result=Invoke-AiSopProcessCleanupReal @PSBoundParameters
+    if ($isRun) { $result.confirmed=$false; $result.diagnostic="PROCESS_CLEANUP_TIMED_OUT: injected; preCleanupOutcome=$observed" }
+    return $result
+}
+'@
+    try {
+        [IO.File]::WriteAllText($installedHelper,($helperRaw.Replace('function Invoke-AiSopProcessCleanup {','function Invoke-AiSopProcessCleanupReal {')+$cleanupFixture))
+        foreach ($profileName in @('slow','check')) {
+            & (Join-Path $sopRoot 'scripts/workflow-task.ps1') -Operation Run -WorkspacePath $workspace -Feature Example -TaskId recovery -Agent CODEX -Profile $profileName -TimeoutSeconds $(if ($profileName -eq 'slow') { 1 } else { 15 }) -Reason 'Exercise cleanup failure evidence' | Out-Null
+            Assert ($LASTEXITCODE -ne 0) 'Unconfirmed cleanup passed verification'
+            $last=(Read-AiSopTask $spec recovery).verifications[-1]
+            Assert ($last.diagnostic -match 'PROCESS_CLEANUP_TIMED_OUT') 'Cleanup failure diagnosis was lost'
+            if ($profileName -eq 'slow') {
+                Assert ($last.outcome -eq 'TIMED_OUT' -and $last.exitCode -eq 124 -and $last.diagnostic -match 'preCleanupOutcome=TIMED_OUT') 'Failure was not durable before cleanup or lost its original code'
+            } else {
+                Assert ($last.outcome -eq 'FAILED' -and $last.exitCode -ne 0) 'Exit-zero child hid cleanup failure'
+            }
+        }
+    } finally { [IO.File]::WriteAllText($installedHelper,$helperRaw) }
+
     # A successful launcher can leave a descendant holding its stdout pipe.
     # Even TimeoutSeconds=0 must not hang after the launcher has exited, and
     # that incomplete output must not become PASSED evidence.

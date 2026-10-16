@@ -341,10 +341,16 @@ if (-not [IO.File]::Exists($runtimeIgnore)) { Write-AiSopWorkflowTextAtomic -Pat
 $logStream = [IO.FileStream]::new($logPath, [IO.FileMode]::Create, [IO.FileAccess]::Write, [IO.FileShare]::ReadWrite)
 $writer = [IO.StreamWriter]::new($logStream, [Text.UTF8Encoding]::new($false)); $writer.AutoFlush = $true
 } catch {
-    if ($writer) { $writer.Dispose() } elseif ($logStream) { $logStream.Dispose() }
-    throw "RUN_LOG_UNAVAILABLE: $($_.Exception.Message)"
+    $logFailure=$_.Exception.Message
+    $resource=if ($writer) { $writer } else { $logStream }
+    $cleanup=Invoke-AiSopProcessCleanup -Started $false -Resources @($resource)
+    throw "RUN_LOG_UNAVAILABLE: $logFailure; $($cleanup.diagnostic)"
 }
-try { Save-RunEvidence; Update-RunLease } catch { $writer.Dispose(); throw }
+try { Save-RunEvidence; Update-RunLease } catch {
+    $cleanup=Invoke-AiSopProcessCleanup -Started $false -Resources @($writer)
+    if ($cleanup.diagnostic) { Write-Warning $cleanup.diagnostic }
+    throw
+}
 $process = [Diagnostics.Process]::new()
 $info = $process.StartInfo
 $info.WorkingDirectory=$WorkspacePath; $info.UseShellExecute=$false; $info.CreateNoWindow=$true
@@ -410,19 +416,27 @@ try {
     $message=if ($controlInterrupted) { $record.diagnostic } else { 'VERIFICATION_FAILED: ' + $record.diagnostic }
     $writer.WriteLine($message); Write-Host $message
 } finally {
+    if (-not $finished -and $record.outcome -eq 'RUNNING') { $record.outcome='INTERRUPTED'; $record.exitCode=-2 }
+    # Preserve failure before cleanup; RetryEvidence/Recover can see it even
+    # if the host is interrupted while disposing native process resources.
     try {
-        if ($started -and -not $process.HasExited) {
-            $process.Kill($true)
-            if (-not $process.WaitForExit(5000)) { throw 'child did not exit after tree termination' }
+        if ($record.outcome -ne 'PASSED') {
+            Write-AiSopWorkflowTextAtomic -Path (Get-AiSopRunEvidencePath $SpecDirectory $TaskId $runId) -Text (ConvertTo-AiSopWorkflowCanonicalJson $record)
         }
     } catch {
-        $cleanup="PROCESS_CLEANUP_FAILED: $($_.Exception.Message)"
-        $record.diagnostic=(@($record.diagnostic,$cleanup) | Where-Object { $_ }) -join '; '
-        if ($record.outcome -eq 'PASSED') { $record.outcome='FAILED'; $record.exitCode=1 }
-        $writer.WriteLine($cleanup); Write-Host $cleanup
+        $record.diagnostic=(@($record.diagnostic,"PRE_CLEANUP_EVIDENCE_SAVE_FAILED: $($_.Exception.Message)") | Where-Object { $_ }) -join '; '
     }
-    $process.Dispose(); $writer.Dispose()
-    if (-not $finished -and $record.outcome -eq 'RUNNING') { $record.outcome='INTERRUPTED'; $record.exitCode=-2 }
+    $cleanup=Invoke-AiSopProcessCleanup -Process $process -Started $started -Resources @($writer)
+    if ($cleanup.diagnostic) {
+        $record.diagnostic=(@($record.diagnostic,$cleanup.diagnostic) | Where-Object { $_ }) -join '; '
+        if ($record.outcome -eq 'PASSED') { $record.outcome='FAILED'; $record.exitCode=1 }
+        Write-Host $cleanup.diagnostic
+        try {
+            Write-AiSopWorkflowTextAtomic -Path (Get-AiSopRunEvidencePath $SpecDirectory $TaskId $runId) -Text (ConvertTo-AiSopWorkflowCanonicalJson $record)
+        } catch {
+            $record.diagnostic+="; CLEANUP_EVIDENCE_SAVE_FAILED: $($_.Exception.Message)"
+        }
+    }
     try {
         $after=Get-AiSopInputSnapshot $WorkspacePath
         $record.inputsStable=($before.digest -ceq $after.digest) -and (-not $bindSpecs -or $specBefore -ceq (Get-AiSopTaskSpecDigest $SpecDirectory))

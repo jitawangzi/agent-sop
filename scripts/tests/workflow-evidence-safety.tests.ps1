@@ -132,18 +132,26 @@ try {
     Task Cancel imported | Out-Null
 
     Task Start paths @{Tier='T1';Objective='Workspace executable and optional VCS metadata'} | Out-Null
-    [IO.Directory]::CreateDirectory((Join-Path $workspace '.svn')) | Out-Null
+    $svnFixture=Join-Path $workspace '.svn'
+    [IO.Directory]::CreateDirectory($svnFixture) | Out-Null
     try {
         $env:PATH=Join-Path $root 'empty-path'
         $relative=[IO.Path]::GetRelativePath($workspace,$pwsh)
         Task Run paths @{Kind='compile';Executable=$relative;Arguments=@('-NoProfile','-Command',"if (-not (Test-Path src/package/build/source.txt)) { exit 5 }")} | Out-Null
         Assert ((Read-AiSopTask $spec paths).verifications[-1].context.codeSvnMetadata -eq 'CLI_MISSING') 'Missing SVN did not produce a metadata annotation'
-    } finally { $env:PATH=$saved.PATH }
+        Fails { New-AiSopTaskBaseline $workspace } 'TASK_BASELINE_UNAVAILABLE: SVN CLI missing'
+    } finally {
+        $env:PATH=$saved.PATH
+        # This empty marker only models optional Run metadata. It must not
+        # masquerade as a working copy for the independent Start cases below.
+        [IO.Directory]::Delete($svnFixture)
+    }
     Fails { Resolve-AiSopRunExecutable './scripts/build.ps1' $workspace } 'RUN_SCRIPT_REQUIRES_HOST'
     Task Complete paths | Out-Null
 
     # Exercise real subprocesses, short leases and failed final transactions.
     foreach ($scenario in @('lease','contention','expired','revoked','retry','ended')) {
+        Write-Output "Evidence safety scenario: $scenario"
         Task Start $scenario @{Tier='T1';Objective="Runtime $scenario"} | Out-Null
         $ready=Join-Path $workspace ".ai-workspace/$scenario.ready"
         $finish=Join-Path $workspace ".ai-workspace/$scenario.finish"
@@ -233,6 +241,9 @@ try {
         Task Complete $scenario | Out-Null
     }
     Write-Output 'PASS: input boundaries, evidence forgery, batch identity, session fencing, recovery, lease renewal and durable retry'
+} catch {
+    Write-Output $_.ScriptStackTrace
+    throw
 } finally {
     if ($heldLock) { $heldLock.Dispose() }
     if ($runner) { if (-not $runner.HasExited) { $runner.Kill($true); $runner.WaitForExit(5000) | Out-Null }; $runner.Dispose() }

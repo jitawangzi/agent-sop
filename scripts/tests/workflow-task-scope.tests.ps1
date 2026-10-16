@@ -33,6 +33,33 @@ try {
     git -C $workspace add src tests
     git -C $workspace -c user.name=Test -c user.email=test@example.invalid commit --quiet -m initial
     $originalRevision=[string](& git -C $workspace rev-parse HEAD)
+    # A broken/timed-out VCS query must not silently downgrade the Start
+    # baseline to vcs=none or mutate the in-memory task before failing.
+    $realProbe=(Get-Command Invoke-AiSopMetadataProbe).ScriptBlock
+    try {
+        function Invoke-AiSopMetadataProbe { param([string]$FilePath,[string[]]$ArgumentList) return $baselineProbe }
+        foreach ($baselineProbe in @(
+            @{exitCode=124;output='';stderr='';diagnostic='PROCESS_TIMED_OUT: fixture'},
+            @{exitCode=128;output='';stderr='fatal: repository inaccessible';diagnostic=''},
+            @{exitCode=0;output='invalid-revision';stderr='';diagnostic=''}
+        )) {
+            $unchanged=@{baseline=@{vcs='git';revision=$originalRevision}}
+            Fails { Initialize-AiSopTaskStart $unchanged $workspace 'unused' -NewStart } 'TASK_BASELINE_UNAVAILABLE'
+            Assert ($unchanged.baseline.revision -ceq $originalRevision -and -not $unchanged.startInputs) 'Failed baseline query changed task state'
+        }
+    } finally { Set-Item Function:\Invoke-AiSopMetadataProbe -Value $realProbe }
+    $unborn=Join-Path $root 'unborn'
+    [IO.Directory]::CreateDirectory($unborn) | Out-Null
+    & git -C $unborn init -b main --quiet
+    $emptyBaseline=New-AiSopTaskBaseline $unborn
+    Assert ($emptyBaseline.vcs -eq 'git' -and $emptyBaseline.revision -eq '0') 'Legitimate unborn repository was treated as a probe failure'
+    if (Get-Command svn -CommandType Application -ErrorAction SilentlyContinue) {
+        $svnFixture=Join-Path $workspace '.svn'
+        [IO.Directory]::CreateDirectory($svnFixture) | Out-Null
+        try {
+            Fails { New-AiSopTaskBaseline $workspace } 'TASK_BASELINE_UNAVAILABLE: SVN'
+        } finally { [IO.Directory]::Delete($svnFixture) }
+    }
     Put 'src/inherited.txt' 'prior unfinished change'
     Task Start one @{Tier='T3';Objective='Independent scoped change'} | Out-Null
     $task=Read-AiSopTask $spec one

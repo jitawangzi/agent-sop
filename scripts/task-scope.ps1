@@ -5,13 +5,23 @@ function New-AiSopTaskBaseline {
     param([string]$WorkspacePath)
     $baseline=@{ vcs='none'; revision='0'; capturedAt=[DateTimeOffset]::UtcNow.ToString('o'); source='START' }
     if (Test-Path -LiteralPath (Join-Path $WorkspacePath '.svn')) {
-        if (Get-Command svn -CommandType Application -ErrorAction SilentlyContinue) {
-            $revision=& svn info --non-interactive --show-item revision $WorkspacePath 2>$null
-            if ($LASTEXITCODE -eq 0 -and [string]$revision -match '^\d+$') { $baseline.vcs='svn'; $baseline.revision=[string]$revision }
-        }
+        $svn=@(Get-Command svn -CommandType Application -ErrorAction SilentlyContinue)[0]
+        if (-not $svn) { throw 'TASK_BASELINE_UNAVAILABLE: SVN CLI missing' }
+        $revision=Invoke-AiSopMetadataProbe $svn.Source @('info','--non-interactive','--show-item','revision',$WorkspacePath)
+        if ($revision.exitCode -ne 0 -or $revision.diagnostic -or $revision.output -notmatch '^\d+$') { throw "TASK_BASELINE_UNAVAILABLE: SVN exit=$($revision.exitCode); $($revision.diagnostic) $($revision.stderr)" }
+        $baseline.vcs='svn'; $baseline.revision=$revision.output
     } elseif (Test-Path -LiteralPath (Join-Path $WorkspacePath '.git')) {
-        $revision=& git -C $WorkspacePath rev-parse --verify HEAD 2>$null
-        if ($LASTEXITCODE -eq 0) { $baseline.vcs='git'; $baseline.revision=[string]$revision }
+        $git=@(Get-Command git -CommandType Application -ErrorAction SilentlyContinue)[0]
+        if (-not $git) { throw 'TASK_BASELINE_UNAVAILABLE: Git CLI missing' }
+        $revision=Invoke-AiSopMetadataProbe $git.Source @('-C',$WorkspacePath,'rev-parse','--verify','--quiet','HEAD')
+        if ($revision.diagnostic -or $revision.exitCode -notin @(0,1)) { throw "TASK_BASELINE_UNAVAILABLE: Git exit=$($revision.exitCode); $($revision.diagnostic) $($revision.stderr)" }
+        # Exit 1 from --verify --quiet means HEAD is absent (an unborn repo),
+        # not a timeout. The immutable input snapshot still anchors this task.
+        $baseline.vcs='git'
+        if ($revision.exitCode -eq 0) {
+            if ($revision.output -notmatch '^(?:[0-9a-f]{40}|[0-9a-f]{64})$') { throw 'TASK_BASELINE_UNAVAILABLE: invalid Git revision' }
+            $baseline.revision=$revision.output
+        }
     }
     return $baseline
 }

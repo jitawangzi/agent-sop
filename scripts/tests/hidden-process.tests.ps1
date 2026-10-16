@@ -121,6 +121,67 @@ Start-Sleep 60
     $exclusive=[IO.File]::Open($outFile,[IO.FileMode]::Open,[IO.FileAccess]::ReadWrite,[IO.FileShare]::None)
     $exclusive.Dispose()
 
+    # Fault injection: cancellation callbacks and Dispose can block in native
+    # I/O. A cleanup budget must include them, not only Task.WaitAll afterward.
+    $blockerSource=@'
+using System;
+using System.IO;
+using System.Threading;
+public class AiSopBlockingCleanupStream : MemoryStream {
+    public readonly ManualResetEventSlim Entered = new ManualResetEventSlim(false);
+    public readonly ManualResetEventSlim Release = new ManualResetEventSlim(false);
+    public string FailurePath;
+    public bool SawFailure;
+    public void Block() {
+        SawFailure = File.Exists(FailurePath) && File.ReadAllText(FailurePath).Contains("PROCESS_TIMED_OUT");
+        Entered.Set(); Release.Wait();
+    }
+    public void BlockCancellation(CancellationTokenSource source) { source.Token.Register(Block); }
+    protected override void Dispose(bool disposing) { Block(); base.Dispose(disposing); }
+}
+'@
+    Add-Type -TypeDefinition $blockerSource
+    foreach ($stage in @('dispose','cancel')) {
+        $blocked=$null; $blocker=[AiSopBlockingCleanupStream]::new()
+        $failureFile=Join-Path $TestRoot "$stage.failure.json"; $blocker.FailurePath=$failureFile
+        try {
+            $blocked=Start-AiSopHiddenProcess -FilePath (Get-Process -Id $PID).Path -ArgumentList @('-NoProfile','-Command','Start-Sleep 60') -TimeoutSeconds 1 -CleanupTimeoutMilliseconds 200 -FailurePath $failureFile -PassThru
+            if ($stage -eq 'dispose') { $blocked.Streams.Add($blocker) }
+            else { $blocker.BlockCancellation($blocked.CopyCancellation) }
+            $timer.Restart(); $blocked.WaitForExit()
+            if ($timer.Elapsed.TotalSeconds -gt 6 -or $blocked.ExitCode -ne 124 -or $blocked.Diagnostic -notmatch 'PROCESS_CLEANUP_TIMED_OUT') { throw "Blocked $stage escaped cleanup budget or lost original failure" }
+            if (-not $blocker.Entered.Wait(3000) -or -not $blocker.SawFailure) { throw 'Failure was not saved before entering blocking cleanup' }
+            $savedFailure=Get-Content -LiteralPath $failureFile -Raw | ConvertFrom-Json
+            if ($savedFailure.exitCode -ne 124 -or $savedFailure.diagnostic -notmatch 'PROCESS_CLEANUP_TIMED_OUT') { throw 'Cleanup timeout diagnosis was not retained' }
+            $timer.Restart(); $blocked.Dispose(); $blocked.Dispose()
+            if ($timer.Elapsed.TotalSeconds -gt 1) { throw 'Dispose retried an already timed out cleanup' }
+        } finally {
+            $blocker.Release.Set()
+            if ($blocked) {
+                $blocked.Dispose()
+                if (-not $blocked.Cleanup.pending.Wait(5000)) { throw 'Fault fixture cleanup did not finish after release' }
+            }
+        }
+    }
+
+    # A permanently blocked BACKGROUND cleanup must not hold the CLI open.
+    $fixtureType=Join-Path $TestRoot 'blocker.cs'; [IO.File]::WriteAllText($fixtureType,$blockerSource)
+    $fixtureHost=Join-Path $TestRoot 'cleanup-host.ps1'
+    [IO.File]::WriteAllText($fixtureHost,@'
+param([string]$Helper,[string]$Fixture,[string]$Failure)
+. $Helper
+Add-Type -Path $Fixture
+$blocker=[AiSopBlockingCleanupStream]::new(); $blocker.FailurePath=$Failure
+$child=Start-AiSopHiddenProcess -FilePath (Get-Process -Id $PID).Path -ArgumentList @('-NoProfile','-Command','Start-Sleep 60') -TimeoutSeconds 1 -CleanupTimeoutMilliseconds 200 -FailurePath $Failure -PassThru
+$child.Streams.Add($blocker)
+$child.WaitForExit(); $child.Dispose()
+if ($child.Diagnostic -notmatch 'PROCESS_CLEANUP_TIMED_OUT') { exit 9 }
+exit 7
+'@)
+    $hostProcess=Start-AiSopHiddenProcess -FilePath (Get-Process -Id $PID).Path -ArgumentList @('-NoProfile','-File',$fixtureHost,(Join-Path $ScriptsRoot 'hidden-process.ps1'),$fixtureType,(Join-Path $TestRoot 'host.failure.json')) -TimeoutSeconds 12 -PassThru
+    try { $hostProcess.WaitForExit(); if ($hostProcess.ExitCode -ne 7) { throw 'Blocked background cleanup kept the CLI alive or hid failure' } }
+    finally { $hostProcess.Dispose() }
+
     # Regression lock: suite runners and tests must not call Start-Process.
     # That cmdlet opens a console when combined with stdout redirect.
     $scanRoots = @(

@@ -1,20 +1,45 @@
 #requires -Version 7.0
-# Observational only: do not call session getters that perform transaction
-# recovery, acquire locks, execute a target engine, or scan business inputs.
+# Observational only: no authority locks, recovery or business input scan.
+function Invoke-AiSopPreflightGit {
+    param([string[]]$Arguments, [Collections.IDictionary]$Cache)
+    # After a hanging/failed launch, do not spend another deadline per artifact.
+    if ($Cache.ContainsKey('@gitFailure')) {
+        return @{exitCode=-1;output='';stderr='';diagnostic="PREFLIGHT_GIT_SKIPPED: $($Cache['@gitFailure'])"}
+    }
+    $git=@(Get-Command git -CommandType Application -ErrorAction SilentlyContinue)[0]
+    if (-not $git) {
+        $Cache['@gitFailure']='Git CLI missing'
+        return @{exitCode=-1;output='';stderr='';diagnostic='PREFLIGHT_GIT_UNAVAILABLE: Git CLI missing'}
+    }
+    $probe=Invoke-AiSopMetadataProbe $git.Source (@('--no-optional-locks')+$Arguments)
+    if ($probe.diagnostic -or $probe.exitCode -in @(-1,124,125)) {
+        $Cache['@gitFailure']="exit=$($probe.exitCode); $($probe.diagnostic)"
+    }
+    return $probe
+}
+
 function Get-AiSopPreflightRepository {
     param([string]$Path, [Collections.IDictionary]$Cache)
     $dir=Split-Path -Parent $Path
-    while (-not [IO.Directory]::Exists($dir)) { $parent=Split-Path -Parent $dir; if (-not $parent -or $parent -eq $dir) { return $null }; $dir=$parent }
+    while (-not [IO.Directory]::Exists($dir)) { $parent=Split-Path -Parent $dir; if (-not $parent -or $parent -eq $dir) { return @{status='UNKNOWN';root=$null;diagnostics=@('No existing parent directory')} }; $dir=$parent }
     if ($Cache.ContainsKey($dir)) { return $Cache[$dir] }
-    $result=$null
-    if (Get-Command git -CommandType Application -ErrorAction SilentlyContinue) {
-        $repo=& git --no-optional-locks -C $dir rev-parse --show-toplevel 2>$null
-        if ($LASTEXITCODE -eq 0) {
-            $repo=Resolve-PhysicalPathIdentity ([string]$repo)
-            $branch=& git --no-optional-locks -C $repo symbolic-ref --quiet --short HEAD 2>$null
-            $commit=& git --no-optional-locks -C $repo rev-parse --verify HEAD 2>$null
-            $result=@{root=$repo;branch=[string]$branch;commit=[string]$commit}
+    $result=@{status='UNKNOWN';root=$null;branch=$null;commit=$null;diagnostics=@()}
+    $repo=Invoke-AiSopPreflightGit @('-C',$dir,'rev-parse','--show-toplevel') $Cache
+    if ($repo.exitCode -eq 0 -and -not $repo.diagnostic) {
+        $result.root=Resolve-PhysicalPathIdentity $repo.output
+        $branch=Invoke-AiSopPreflightGit @('-C',$result.root,'symbolic-ref','--quiet','--short','HEAD') $Cache
+        $commit=Invoke-AiSopPreflightGit @('-C',$result.root,'rev-parse','--verify','--quiet','HEAD') $Cache
+        if ($branch.exitCode -in @(0,1) -and -not $branch.diagnostic -and $commit.exitCode -in @(0,1) -and -not $commit.diagnostic) {
+            $result.status='READY'
+            if ($branch.exitCode -eq 0) { $result.branch=$branch.output }
+            if ($commit.exitCode -eq 0) { $result.commit=$commit.output }
+        } else {
+            $result.diagnostics+=@("PREFLIGHT_REPOSITORY_UNKNOWN: branch exit=$($branch.exitCode) $($branch.diagnostic) $($branch.stderr); commit exit=$($commit.exitCode) $($commit.diagnostic) $($commit.stderr)")
         }
+    } elseif (-not $repo.diagnostic -and $repo.exitCode -eq 128 -and $repo.stderr -match '^fatal: not a git repository') {
+        $result.status='NO_GIT'
+    } else {
+        $result.diagnostics+=@("PREFLIGHT_REPOSITORY_UNKNOWN: exit=$($repo.exitCode) $($repo.diagnostic) $($repo.stderr)")
     }
     $Cache[$dir]=$result
     return $result
@@ -30,19 +55,22 @@ function Add-AiSopPreflightArtifact {
     $path=Resolve-AiSopWorkspaceChild $WorkspacePath $RelativePath
     $exists=[IO.File]::Exists($path)
     $repo=Get-AiSopPreflightRepository $path $Repositories
-    $tracking='NO_GIT'; $dirty=$false
-    if ($repo) {
+    $tracking=if ($repo.status -eq 'NO_GIT') { 'NO_GIT' } else { 'UNKNOWN' }
+    $dirty=$null; $gitDiagnostics=@($repo.diagnostics)
+    if ($repo.status -eq 'READY') {
         $relative=[IO.Path]::GetRelativePath($repo.root,$path).Replace('\','/')
-        & git --no-optional-locks -C $repo.root ls-files --error-unmatch -- ":(literal)$relative" 2>$null | Out-Null
-        if ($LASTEXITCODE -eq 0) { $tracking='TRACKED' }
-        else {
-            & git --no-optional-locks -C $repo.root check-ignore -- $relative 2>$null | Out-Null
-            $tracking=if ($LASTEXITCODE -eq 0) { 'IGNORED' } else { 'UNTRACKED' }
-        }
-        $status=& git --no-optional-locks -C $repo.root status --porcelain --untracked-files=all -- ":(literal)$relative" 2>$null
-        $dirty=-not [string]::IsNullOrWhiteSpace([string]$status)
+        $tracked=Invoke-AiSopPreflightGit @('-C',$repo.root,'ls-files','--error-unmatch','--',":(literal)$relative") $Repositories
+        if ($tracked.exitCode -eq 0 -and -not $tracked.diagnostic) { $tracking='TRACKED' }
+        elseif ($tracked.exitCode -eq 1 -and -not $tracked.diagnostic) {
+            $ignored=Invoke-AiSopPreflightGit @('-C',$repo.root,'check-ignore','--',$relative) $Repositories
+            if ($ignored.exitCode -in @(0,1) -and -not $ignored.diagnostic) { $tracking=if ($ignored.exitCode -eq 0) { 'IGNORED' } else { 'UNTRACKED' } }
+            else { $gitDiagnostics+=@("PREFLIGHT_TRACKING_UNKNOWN: check-ignore exit=$($ignored.exitCode) $($ignored.diagnostic) $($ignored.stderr)") }
+        } else { $gitDiagnostics+=@("PREFLIGHT_TRACKING_UNKNOWN: ls-files exit=$($tracked.exitCode) $($tracked.diagnostic) $($tracked.stderr)") }
+        $status=Invoke-AiSopPreflightGit @('-C',$repo.root,'status','--porcelain','--untracked-files=all','--',":(literal)$relative") $Repositories
+        if ($status.exitCode -eq 0 -and -not $status.diagnostic) { $dirty=-not [string]::IsNullOrWhiteSpace($status.output) }
+        else { $gitDiagnostics+=@("PREFLIGHT_DIRTY_UNKNOWN: exit=$($status.exitCode) $($status.diagnostic) $($status.stderr)") }
     }
-    $item=@{path=$RelativePath;kind=$Kind;requiredBy=@($RequiredBy);status=$(if ($exists) { 'PRESENT' } else { 'MISSING' });repository=$repo;tracking=$tracking;dirty=$dirty;diagnostics=@()}
+    $item=@{path=$RelativePath;kind=$Kind;requiredBy=@($RequiredBy);status=$(if ($exists) { 'PRESENT' } else { 'MISSING' });repository=$repo;tracking=$tracking;dirty=$dirty;gitDiagnostics=$gitDiagnostics;diagnostics=@()}
     $Artifacts[$RelativePath]=$item
     return $item
 }
@@ -256,12 +284,15 @@ function Get-AiSopHandoffPreflight {
         foreach ($diagnostic in $item.diagnostics) { $issues.Add(@{code='TASK_ATTENTION';detail="$($item.feature)/$($item.taskId): $diagnostic"}) }
     }
     foreach ($artifact in $artifacts.Values) {
+        foreach ($diagnostic in $artifact.gitDiagnostics) { $issues.Add(@{code='SYNC_CHECK_UNAVAILABLE';detail="$($artifact.path): $diagnostic"}) }
         if ($artifact.status -in @('MISSING','INVALID')) { $issues.Add(@{code='ARTIFACT_UNAVAILABLE';detail="$($artifact.path): $($artifact.status) $($artifact.diagnostics -join '; ')"}) }
-        if ($artifact.tracking -ne 'TRACKED' -or $artifact.dirty) { $issues.Add(@{code='SYNC_REQUIRED';detail="$($artifact.path): $($artifact.tracking) dirty=$($artifact.dirty); sync using its owning repository or an explicit file transfer"}) }
+        if ($artifact.tracking -in @('NO_GIT','IGNORED','UNTRACKED') -or $artifact.dirty -eq $true) { $issues.Add(@{code='SYNC_REQUIRED';detail="$($artifact.path): $($artifact.tracking) dirty=$($artifact.dirty); sync using its owning repository or an explicit file transfer"}) }
     }
+    $engineRepository=Get-AiSopPreflightRepository (Join-Path $target 'config/runtime-compatibility.json') $repositories
+    if ($engineRepository.status -eq 'UNKNOWN') { $issues.Add(@{code='ENGINE_REPOSITORY_UNKNOWN';detail=($engineRepository.diagnostics -join '; ')}) }
     return [ordered]@{
         schemaVersion='1.0';readOnly=$true;workspace=$WorkspacePath;status=$(if ($issues.Count) { 'NEEDS_ATTENTION' } else { 'NO_ISSUES_DETECTED' })
-        engine=@{inspector=$currentEngine;target=$target;repository=(Get-AiSopPreflightRepository (Join-Path $target 'config/runtime-compatibility.json') $repositories);capabilities=$capabilities;expectedInputAlgorithm=$targetAlgorithm}
+        engine=@{inspector=$currentEngine;target=$target;repository=$engineRepository;capabilities=$capabilities;expectedInputAlgorithm=$targetAlgorithm}
         tasks=$tasks.ToArray();legacyFeatures=$legacyFeatures.ToArray();artifacts=@($artifacts.Values | Sort-Object path);issues=$issues.ToArray()
         syncRoots=@('.ai-workspace/context/')+@($selectedFeatures | Sort-Object | ForEach-Object { ".ai-workspace/specs/features/$_/" })+@(
             if (@($artifacts.Values | Where-Object { $_.kind -in @('INPUT_MANIFEST','CHANGE_MANIFEST') }).Count) { '.ai-workspace/specs/.artifacts/' }
@@ -287,7 +318,10 @@ function Write-AiSopHandoffPreflight {
         Write-Output "  [LEGACY_UNVERIFIED] $($legacy.feature) state=$($legacy.workflowStatePath); no taskId, inventory only"
     }
     foreach ($root in $Report.syncRoots) { Write-Output "  sync tree: $root (includes project-specific references and attachments)" }
-    foreach ($artifact in $Report.artifacts) { Write-Output "  sync: $($artifact.path) [$($artifact.status), $($artifact.tracking), dirty=$($artifact.dirty)] repo=$($artifact.repository.root)" }
+    foreach ($artifact in $Report.artifacts) {
+        $dirty=if ($null -eq $artifact.dirty) { 'UNKNOWN' } else { [string]$artifact.dirty }
+        Write-Output "  sync: $($artifact.path) [$($artifact.status), $($artifact.tracking), dirty=$dirty] repo=$($artifact.repository.root)"
+    }
     foreach ($issue in $Report.issues) { Write-Output "  ! $($issue.code): $($issue.detail)" }
     foreach ($note in $Report.notes) { Write-Output "  $note" }
 }

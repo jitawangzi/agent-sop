@@ -63,6 +63,70 @@ try {
     $config=$report.artifacts | Where-Object kind -eq 'PROJECT_CONTEXT'
     Assert ($config.repository.root -ceq (Resolve-PhysicalPathIdentity (Join-Path $workspace '.ai-workspace'))) 'Project context assigned to specs repository'
     Assert ($before -ceq (TreeHash)) 'Preflight wrote workspace, Git or registry files'
+    # Failed Git observations must not become NO_GIT/UNTRACKED/clean. The
+    # circuit breaker also keeps a large inventory from paying N timeouts.
+    $realProbe=(Get-Command Invoke-AiSopMetadataProbe).ScriptBlock
+    $probeState=@{fault='TIMEOUT';calls=0}
+    try {
+        function Invoke-AiSopMetadataProbe {
+            param([string]$FilePath,[string[]]$ArgumentList)
+            $probeState.calls++
+            $result=@{exitCode=0;output='';stderr='';diagnostic=''}
+            if ($probeState.fault -eq 'TIMEOUT') { $result.exitCode=124; $result.diagnostic='PROCESS_TIMED_OUT: fixture'; return $result }
+            if ('--show-toplevel' -in $ArgumentList) {
+                $result.output=$workspace
+                if ($probeState.fault -in @('DENIED','NO_GIT')) {
+                    $result.exitCode=128
+                    $result.stderr=if ($probeState.fault -eq 'NO_GIT') { 'fatal: not a git repository (or any of the parent directories): .git' } else { 'fatal: detected dubious ownership in repository' }
+                }
+            } elseif ('symbolic-ref' -in $ArgumentList) {
+                $result.output='main'
+                if ($probeState.fault -eq 'BRANCH') { $result.exitCode=128; $result.stderr='branch read failed' }
+                if ($probeState.fault -eq 'DETACHED') { $result.exitCode=1; $result.output='' }
+            } elseif ('rev-parse' -in $ArgumentList) {
+                $result.output='a'*40
+                if ($probeState.fault -eq 'HEAD') { $result.exitCode=128; $result.stderr='HEAD read failed' }
+                if ($probeState.fault -eq 'UNBORN') { $result.exitCode=1; $result.output='' }
+            } elseif ('ls-files' -in $ArgumentList) {
+                if ($probeState.fault -eq 'TRACKING') { $result.exitCode=128; $result.stderr='index read failed' }
+                if ($probeState.fault -eq 'IGNORE') { $result.exitCode=1 }
+            } elseif ('check-ignore' -in $ArgumentList) {
+                $result.exitCode=128; $result.stderr='ignore read failed'
+            } elseif ('status' -in $ArgumentList -and $probeState.fault -eq 'STATUS') {
+                $result.exitCode=128; $result.stderr='status read failed'
+            }
+            return $result
+        }
+        $unavailable=Get-AiSopHandoffPreflight $workspace
+        Assert ($probeState.calls -eq 1) 'Preflight repeated a failed probe for every artifact'
+        Assert ($unavailable.status -eq 'NEEDS_ATTENTION' -and $unavailable.engine.repository.status -eq 'UNKNOWN') 'Git timeout was presented as a healthy preflight'
+        Assert (@($unavailable.artifacts | Where-Object { $_.tracking -ne 'UNKNOWN' -or $null -ne $_.dirty }).Count -eq 0) 'Git timeout invented tracking/dirty state'
+        Assert ('SYNC_CHECK_UNAVAILABLE' -in $unavailable.issues.code -and 'ENGINE_REPOSITORY_UNKNOWN' -in $unavailable.issues.code -and 'SYNC_REQUIRED' -notin $unavailable.issues.code) 'Unknown Git state was mislabeled as missing synchronization'
+        Assert ((Write-AiSopHandoffPreflight $unavailable | Out-String) -match 'dirty=UNKNOWN') 'Human output hid unknown dirty state'
+        foreach ($fault in @('DENIED','BRANCH','HEAD','DETACHED','UNBORN','NO_GIT')) {
+            $probeState.fault=$fault
+            $repository=Get-AiSopPreflightRepository (Join-Path $workspace 'src/main.txt') @{}
+            if ($fault -in @('DENIED','BRANCH','HEAD')) {
+                Assert ($repository.status -eq 'UNKNOWN' -and $repository.diagnostics.Count -gt 0) "$fault was mistaken for missing or healthy repository"
+            } elseif ($fault -eq 'NO_GIT') {
+                Assert ($repository.status -eq 'NO_GIT') 'Real no-repository result was lost'
+            } else {
+                Assert ($repository.status -eq 'READY') "$fault is a valid repository state"
+                Assert (($fault -eq 'DETACHED' -and $null -eq $repository.branch) -or ($fault -eq 'UNBORN' -and $null -eq $repository.commit)) 'Missing branch/commit was fabricated'
+            }
+        }
+        foreach ($fault in @('TRACKING','IGNORE','STATUS')) {
+            $probeState.fault=$fault
+            $artifact=Add-AiSopPreflightArtifact @{} $workspace 'src/main.txt' 'FIXTURE' 'Example/one' @{}
+            Assert ($artifact.gitDiagnostics.Count -gt 0) "$fault failed without a diagnosis"
+            if ($fault -eq 'STATUS') {
+                Assert ($artifact.tracking -eq 'TRACKED' -and $null -eq $artifact.dirty) 'Failed status was interpreted as clean'
+            } else {
+                Assert ($artifact.tracking -eq 'UNKNOWN') 'Failed tracking query was interpreted as untracked'
+            }
+        }
+    } finally { Set-Item Function:\Invoke-AiSopMetadataProbe -Value $realProbe }
+    Assert ($before -ceq (TreeHash)) 'Failed preflight mutated repositories or task state'
     Put '.ai-workspace/specs/features/Legacy/workflow-state.json' '{"requirement":{"status":"APPROVED"},"design":{"status":"DRAFT"}}'
     Put '.ai-workspace/specs/features/Legacy/06_design_contract.md' 'legacy design'
     Put '.ai-workspace/specs/features/Legacy/.workflow-owner.json' '{"ownerId":"historical-only"}'

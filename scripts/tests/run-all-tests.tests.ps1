@@ -143,6 +143,8 @@ try {
     if ($observed.exitCode -eq 0 -or $hung.Outcome -ne 'TIMED_OUT' -or $hung.ExitCode -ne 124 -or -not $after.Passed) { throw 'Serial timeout did not fail safely and continue' }
     if ($observed.output -notmatch 'WAIT aaa-hang.tests pid=\d+ elapsed=' -or $hung.DurationMs -gt 12000) { throw 'No bounded wait/progress for hung suite' }
     if ([IO.File]::ReadAllText($hung.OutFile) -notmatch 'before-hang' -or [IO.File]::ReadAllText($hung.ErrFile) -notmatch 'error-before-hang') { throw 'Timeout lost stdout/stderr logs' }
+    $failure=Get-Content -LiteralPath $hung.FailureFile -Raw | ConvertFrom-Json
+    if ($failure.exitCode -ne 124 -or $failure.diagnostic -notmatch 'PROCESS_TIMED_OUT') { throw 'Timeout lost its pre-cleanup failure record' }
 
     Clear-FakeSuites
     New-FakeSuite 'aaa-hang' 'Start-Sleep 60'

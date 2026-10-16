@@ -30,9 +30,9 @@
 
 - [ ] **C1**：brainstorming 时 AI **每轮最多问 3 个聚焦问题**（每个聚焦单一决策点，允许用户一句话给齐；统一口径见 AGENTS.md「汇报」与 `.ai-sop/workflows/agent-t3.md`「人工 review 阶段」），对有意义的备选给出 2-4 选项并推荐其一（做选择题而非填空题）。
 - [ ] **C2**：需求阶段产出 `01_server_rules.md`（含 `BR-*`/`EX-*`/`AC-*`），AI 自审后**等待你的最终确认**才继续。
-- [ ] **C3**：设计阶段产出 `06_design_contract.md`（含 `DC-*`/`DR-*`/`TW-*`），等待你的最终确认。需求与设计在**同一轮 `brainstorming` skill 调用中连续产出，但分两次独立呈递人工确认**（先确认 01 需求再确认 06 设计，不可合并确认）。
-- [ ] **C3a**：设计产出后、人工确认前，AI 调用 `design-reviewer` 做**机器审查**（宏观规范守门 + 设计完整性自检 + 已知缺陷模式对照），且是**闭环自审自修**——有 BLOCKER/MAJOR/MINOR 自动回 design-architect 修后重审，**不占你时间**；你只看到"已通过机器审查的方案"。若 AI 把未过审的方案直接交你确认，视为不合规。严重度术语统一为 BLOCKER/MAJOR/MINOR/INFO（与 AGENTS.md/adapter 一致，非 CRITICAL/HIGH/MEDIUM）。
-- [ ] **C4**：设计确认后，AI **自动连续**进入 writing-plans → subagent-driven-development + TDD → 覆盖校验 → 收尾审查 → 验证，**不**在中间增设批准检查点。**不**前置 QA 测试计划（TC 在 TDD 中产出）。
+- [ ] **C3**：设计阶段产出 `06_design_contract.md`（含 `DC-*`/`DR-*`/`TW-*`），等待最终确认。需求与设计默认分两次独立呈递；合并呈递须满足 [T3 执行参考「人工 review 阶段」](workflows/agent-t3.md#人工-review-阶段) 的条件，单次确认仍分别写入两道 Approve；DESIGN_ONLY 按同节规则处理。
+- [ ] **C3a**：设计产出后由独立 `design-reviewer` 审查，报告包含状态、发现分级、专项覆盖和轮次。BLOCKER/MAJOR 可触发修正与重审，**最多 2 轮**；MINOR/INFO 不触发 NEEDS_FIX，可记 PASS_WITH_WARNINGS。达到上限仍有阻断项时，保留 NEEDS_FIX 和报告交人工裁决，不冒充通过，也不继续无限返修。规则见 [T3 执行参考「工作流归属」](workflows/agent-t3.md#工作流归属)。
+- [ ] **C4**：设计确认后，AI **自动连续**进入 writing-plans → subagent-driven-development + TDD → 覆盖校验 → 收尾审查 → 验证，不在中间增设批准检查点。GREENFIELD 的新 TC 在 TDD 中产出，不前置完整测试计划；LEGACY_EXTENSION 按 T3 规则在改生产代码前先建立并跑绿代表旧行为的表征 Case。
 
 ### D. 领域专家 Skill 强制绑定（关键）
 

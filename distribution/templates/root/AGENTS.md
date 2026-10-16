@@ -10,7 +10,7 @@
 |---|---|---|
 | T1 极速 | 完成实现，真实编译/基础检查通过，说明未验证范围；确有延期才记 FollowUp | 无需头脑风暴、正式计划、独立审核；可延期文档与测试同步 |
 | T2 快速（默认） | 明确验收点，完成实现，同步受影响需求/设计/用例，编译与相关测试通过，记录 RecordSync | 不重复批准需求设计，不强制计划或独立审核 |
-| T3 完整 | 当前范围的完整规格、批准、独立审查、覆盖与验证 | 执行前必须读取 `.ai-sop/workflows/agent-t3.md` 和 `.ai-sop/workflows/superpowers-adapter.md` |
+| T3 完整 | 当前范围的完整规格、批准、独立审查、覆盖与验证；复用仍有效的成果，不重复已满足步骤 | 执行前必须读取 `.ai-sop/workflows/agent-t3.md` 和 `.ai-sop/workflows/superpowers-adapter.md` |
 
 **T1/T2 无独立代码审核环节**，不依赖 Superpowers 或独立 subagent。已选 T3 却缺少能力时说明缺口，由用户决定切换工具或改档；STRICT 表示具备 T3 能力，不替用户选择档位。
 
@@ -23,7 +23,7 @@
 ## 开始、执行、完成
 
 1. 新任务、切换功能/工作区或跨 Agent 接管时，先 `pwsh -NoProfile -File ./ai-sop.ps1 Task -Operation Discover`，区分独立修改、原任务续做、补收尾。仅讨论不认领；多个候选才询问一次，无需固定接管口令。同会话任务已明确时沿用 taskId，不按文件或回复重复 Discover/Resume。
-2. 独立修改用 Start，先建立任务再改代码；继续原修改用 Resume。沿用现有 FeatureName，独立小任务使用新的 taskId；新功能名使用 PascalCase 并向用户回显，不为躲避旧任务状态改功能名。
+2. 独立修改用 Start，先建立任务再改代码；继续原修改用 Resume。沿用现有 FeatureName，独立小任务使用新的 taskId；新功能名使用 PascalCase（`[A-Z][A-Za-z0-9]+`，无连字符）并向用户回显，不为躲避旧任务状态改功能名。
 3. 编译/测试用 Task Run 记录真实执行。满足本档条件后直接 Complete；它内含完成校验，成功才标记 DONE 并释放归属。Verify 仅用于提前诊断，不固定串行 Verify → Status → Complete；失败后修复具体缺项，条件未变不反复重试。
 
 ```powershell
@@ -55,13 +55,13 @@ pwsh -NoProfile -File ./ai-sop.ps1 Task -Operation Complete -Feature <Feature> -
 
 ## 项目知识与文档一致性
 
-按 `.ai-workspace/context/README.md` 读取项目摘要、coding-style、构建测试与版本控制说明，再按任务加载领域规则。读取前检查文件存在性；缺失时简短提示并检查现有代码，不编造上下文、不因缺文件停工。过期 context 与现行代码不符时提示漂移，以代码核实实际行为。
+按 `.ai-workspace/context/README.md` 加载项目知识；`project-summary.md`、`coding-style.md`、`business-logic-pattern.md`、`project-tooling.md` 存在时须阅读，领域规则按需加载。读取前检查存在性；缺失时简短提示并检查现有代码，不编造上下文、不因缺文件停工。过期 context 须提示；与现行代码不符时核实漂移，不按旧 context 改动已正确的代码。详细降级与更新规则见操作手册「项目上下文与能力诊断」。
 
-设计、实现、审查角色须读取实际存在的 coding-style.md 等默认工程规范；功能 06 不得违反强制规范，人工确认的 AUDIT-EXEMPT 例外须有记录。派发专家时附规范路径，不能以摘要替代原文。领域规则由宿主 context 注入。
+设计、实现、审查角色须读取实际存在的 coding-style.md 等默认工程规范，协议修改还须读 proto-rules.md；功能 06 不得违反强制规范。冲突记为设计缺陷，用 `ResetApproval -Gate design` 作废批准，不能因“与已批 06 一致”放行；人工确认的 AUDIT-EXEMPT 例外须有记录。派发专家时附规范路径，不能以摘要替代原文。领域规则由宿主 context 注入。
 
 **已批准文档**：修改语义前用 `workflow-state.ps1 -Operation ResetApproval -Gate <requirement|design>`；T2 记录本次需求依据并同步，不补完整 T3 批准。T3 修改后须重新确认 + Approve；requirement 重置会同时重置 design。仅错字、格式等不改语义的润色可用 `workflow-state.ps1 -Operation UpdateHash -Gate <requirement|design>`，提交说明注明“不改语义”；判断不准时 ResetApproval。T1 延期同步记录 FollowUp。
 
-版本控制遵循宿主 context 和用户约定；先确认每个文件实际所属仓库，提交只含本任务相关改动。新增/删除/移动文件及时登记版本控制。SVN 宿主的最终 svn commit 由人工执行，本地 Git 检查点不代表 SVN 交付；不推送到未批准的 remote，不用文件覆盖代替合并。
+版本控制遵循宿主 context 和用户约定；先确认每个文件实际所属仓库，提交只含本任务相关改动。新增/删除后立即用相应 VCS 登记，不拖到交付；重命名/移动优先用 VCS move 保留历史。SVN 宿主的最终 svn commit 由人工执行，本地 Git 检查点不代表 SVN 交付；不推送到未批准的 remote，不用文件覆盖代替合并。
 
 ## 按需加载与诊断
 

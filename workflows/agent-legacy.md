@@ -81,6 +81,8 @@ pwsh -NoProfile -File .\.ai-sop\scripts\workflow-state.ps1 -Operation LintSpecs 
 
 ## 门禁状态诊断（Status）
 
+旧 `CheckCompletion` 的 exit 0 不等于完成门禁通过，必须读取返回的诊断；新任务只以 Task Complete 成功作为完成并释放归属的依据。FAST_TRACK 仅用于读取历史任务，不创建第四档新任务。
+
 查看当前门禁状态 + SHA 是否匹配（只读，不锁不报错）：
 
 ```powershell

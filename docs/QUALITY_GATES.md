@@ -78,7 +78,7 @@ Cancel 提交成功后，非阻塞提示该任务已关闭的 FollowUp；取消�
 T1/T2 的 NOT_APPLICABLE 必须提供具体理由，同时绑定 startInputsRef 和当前输入。声明及 Verify 都检查起点到当前的全部输入增删改仅落在项目预先配置的 nonExecutable 字面路径中，并检查输入策略未变；未配置路径按可能执行输入处理。这些文件仍被哈希，不能用事后改配置或重声明消除源码变化。起点未知、旧豁免无起点绑定时改回 REQUIRED 并正常验证，不自动升级档位。不能豁免尚未解决的失败或环境故障；T3 不接受此轻量豁免。nonExecutable 的语义正确性仍由项目维护者/Agent 负责，不以扩展名猜测语义。旧任务仍能读取，正常 T1/T2 验证不要求补起点，不强制迁移历史 DONE。
 
 > 面向：维护 SOP 的人，以及需要分清「机器查什么 / AI 自报什么」的人。  
-> 操作清单（命令、完成表）仍以宿主投影 `AGENTS.md`「完成定义」为准。  
+> 各档完成条件见宿主投影 `AGENTS.md`「执行强度：默认 T2，人工显式选择优先」与「开始、执行、完成」（[源模板](../distribution/templates/root/AGENTS.md)）；T3 详细清单见 [T3 执行参考「完成验收」](../workflows/agent-t3.md#完成验收)。
 > 本文件回答：**为什么这样分层、假绿收到哪一层、机器上限在哪、下一步不加什么。**
 
 相关：`docs/ARCHITECTURE.md`（决策 11/12）、`workflows/shared-artifacts.md`（产物契约）、`SUPERPOWERS_MANUAL.md`（人工操作）、`skills/quality-assurance/SKILL.md`（测试方法论）。

@@ -2,6 +2,8 @@
 
 > 仅在用户选择 T3，或接管既有 T3 任务时读取。公共任务入口与 T1/T2 规则以项目根 AGENTS.md 为准。本文件保存详细编排要求，流程顺序见 superpowers-adapter.md。
 
+接管或继续已有 T3 时，先核对已有产物、批准、审查与证据是否仍适用于当前版本和任务范围；符合条件的成果可复用，不从头重复已满足的步骤。发生变化时按对应失效规则补做，不能把旧成功当作当前结果。
+
 ## 当前任务范围
 
 **T3 任务范围**：Start 固定修改前内容基线，功能长期批准基线独立保留。用 `Task Changes` 读取本次新增/修改/删除范围；需要 04 时，taskId、baseline、baselineInputDigest、changedFiles、changeSetDigest 必须匹配该范围，ReviewImpact 保存的 `.ai-workspace/specs/.artifacts/changes/` 清单随 specs 同步。用 `SetCaseScope -CaseIds ... -Reason ...` 登记本次必测用例，包含 04 的 requiredRegressionCases；规格变化后重新核对。其他未开发用例不强制本次执行，整体规格覆盖定义仍检查。ChangeTier/SetBaseline 只接受本任务 Start 已记录的起点；缺起点拒绝升级并保留原档位，不能用后续 Run 清单或理由替代。旧 T3 source=START 基线兼容，旧手工 ADOPTED 无起点证明则诊断；历史 DONE 不迁移。T1/T2 不新增上述范围登记。可选 JUnitReports + CaseMap 从本次 JUnit XML 映射结果，不能用旧/跳过/失败报告充当通过。
@@ -186,7 +188,9 @@ AI 可在一次响应内同时呈递 `01_server_rules.md` 与 `06_design_contrac
 
 ## 完成验收
 
-**T3 完成清单（机检项 1–3 由 `VerifyCompletion` 强制；第 4–6 项为 AI 自报，机器不读 08/09）**：
+新任务通过 Task Run 采集真实编译/测试结果，T3 测试批次带实际覆盖的 CaseIds（或使用本次 JUnitReports + CaseMap 映射），不能用文字摘录或旧功能级证据替代。Task Complete 内含 VerifyCompletion -TaskId；它核对当前批准与规格哈希、07 设计审查、覆盖定义、本次必测用例、适用的 04 绑定及执行证据。下面是核对清单，不要求把所有诊断命令再串行执行一遍。
+
+**T3 完成清单（机器检查批准、设计审查、覆盖/影响绑定和执行记录；独立内审结论及验证范围仍需如实自报，机器不读 08/09）**：
 
 | # | 条件 | 验证命令 | 成功输出 | 失败恢复 |
 |---|---|---|---|---|
@@ -194,5 +198,7 @@ AI 可在一次响应内同时呈递 `01_server_rules.md` 与 `06_design_contrac
 | 2 | 测试计划与覆盖矩阵已创建/更新 | `workflow-state.ps1 -Operation ValidateTestCoverage -Path .../05_test_coverage.json` | `VALID` | 补 05_test_plan.md + 05_test_coverage.json |
 | 3 | 代码编译通过 | Task Run -Kind compile | 当前输入下真实成功 | 修复后重新执行编译 |
 | 4 | 必要全局审计与逻辑审计通过 | `implementation-auditor` + `logic-auditor` 报告 PASS | **AI 据独立 subagent 报告自报**（`VerifyCompletion` 不读 08/09） | 修复发现 + 重审 |
-| 5 | 目标自动化场景通过 | `run-all-tests.ps1 -IncludeCompile` + 定向 JUnit | exit 0 | 修测试 + 重跑 |
+| 5 | 目标自动化场景通过 | Task Run 执行相关项目测试，绑定本次必测 CaseIds | 当前输入下成功且用例范围满足要求；不夸大覆盖 | 修测试 + 重跑 |
 | 6 | 中途失败已修复、复审和回归 | 检查无未解决发现 | 无未解决发现 | 补修复 + 回归 |
+
+修改 SOP 脚本本身仍须执行仓库要求的全量套件；普通宿主功能按本次目标运行相关项目测试，不将引擎自身的回归套件当成业务验收。

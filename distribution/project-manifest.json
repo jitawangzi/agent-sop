@@ -14,8 +14,8 @@
     {
       "source": "distribution/templates/root/CLAUDE.md",
       "target": "CLAUDE.md",
-      "sourceBlobSha256": "92bf6824f2eff03b911a51206bd4e7eac7ec097e8b1ba498a3564fc37422f9e4",
-      "targetSha256": "92bf6824f2eff03b911a51206bd4e7eac7ec097e8b1ba498a3564fc37422f9e4",
+      "sourceBlobSha256": "5abdeffd4350cf750ee131e7caf79b44cdbb5033368b95e5d7086aee9fe04ec3",
+      "targetSha256": "5abdeffd4350cf750ee131e7caf79b44cdbb5033368b95e5d7086aee9fe04ec3",
       "legacySha256": "92bebe5c475de01e480311abe623ab55a714066267decdda906789d3bf86d1f5",
       "encoding": "utf8-no-bom",
       "lineEnding": "lf"
@@ -23,8 +23,8 @@
     {
       "source": "distribution/templates/root/AGENTS.md",
       "target": "AGENTS.md",
-      "sourceBlobSha256": "faf6022e3851714fc6c7b83b7fb4779e3b0f49eec815c5827884989bcc2e95bb",
-      "targetSha256": "faf6022e3851714fc6c7b83b7fb4779e3b0f49eec815c5827884989bcc2e95bb",
+      "sourceBlobSha256": "4577cc40a41f89d048f80686de4f2e336b2db1c9fefc9c57ad86566da9fbe50f",
+      "targetSha256": "4577cc40a41f89d048f80686de4f2e336b2db1c9fefc9c57ad86566da9fbe50f",
       "legacySha256": "25903e4b86512c55ac3f7e7aee50f1c7ab4557e276cd9322619c731a180574dc",
       "encoding": "utf8-no-bom",
       "lineEnding": "lf"

@@ -1,5 +1,7 @@
 # Superpowers Adapter（唯一过程引擎）
 
+宿主 `AGENTS.md` 是公共入口（源模板：[AGENTS.md](../distribution/templates/root/AGENTS.md)）；T3 详细规则见 [T3 执行参考](agent-t3.md)，无 taskId 的旧归属与旧证据见 [旧流程兼容与诊断](agent-legacy.md)。本适配器说明编排顺序，不另设一套档位、批准或完成规则。
+
 ## 修改任务入口（优先于下方兼容示例）
 
 进入新任务、切换功能/工作区或跨 Agent 接管时先 `ai-sop.ps1 Task -Operation Discover`，根据用户目标与已有记录选择 Start 或 Resume。同一会话连续执行已确认的任务时无需重复 Discover / Resume；不要求用户记住接管口令。任务身份、档位和下一动作记录在功能目录的 `tasks/<taskId>/task.json`，与 SDD 计划内的 Task/Step 区分。
@@ -42,7 +44,7 @@ Task Discover -> Task Start -Tier T3（或 Resume 原 T3 任务）
 ```
 
 **流程关键点**：
-- 需求与设计在同一轮 `brainstorming` skill 调用中连续产出，但分两次独立呈递人工确认（先确认 01 需求再确认 06 设计，不可合并确认）。
+- 需求与设计默认在同一轮 `brainstorming` skill 调用中连续产出，分两次独立呈递人工确认。合并呈递须满足 [T3 执行参考「人工 review 阶段」](agent-t3.md#人工-review-阶段) 的用户显式要求、DC≤3 且无存储迁移条件，仍分别写入两道 Approve；DESIGN_ONLY 技术契约调整按同节规则处理，不把例外变成默认。
 - 设计产出后由 `design-reviewer` 做**机器闭环自审自修**（宏观规范守门 + 设计完整性自检 + 已知缺陷模式对照），不进人工门禁、不占人工时间；存在 `BLOCKER`/`MAJOR` 未修复时不交人工确认。机器闭环**最多 2 轮**（审查→修正→重审）；第 2 轮后仅剩 `MINOR`/`INFO` → 自动豁免通过（`PASS_WITH_WARNINGS`）；仍有 `BLOCKER`/`MAJOR` → 交人工确认。`design-reviewer` 阻断级（`BLOCKER`/`MAJOR`）可判 `NEEDS_FIX`，建议级（`MINOR`/`INFO`）不得判 `NEEDS_FIX`（防挑刺震荡）。**硬证据约束**：进入 `writing-plans` 前必须附 `design-reviewer` 审查报告（含 PASS/NEEDS_FIX/PASS_WITH_WARNINGS、发现分级、专项覆盖、循环轮次）；本条仅适用于 T3，无报告不得进 writing-plans。**独立派发约束**：`design-reviewer` 必须用 Agent 工具作为独立 subagent 派发（`subagent_type=design-reviewer`），禁止用 `Skill()` 内联自审；NEEDS_FIX 时由 controller 回派独立的 `design-architect`（Agent 派发）修正，禁止 design-reviewer 自改方案。
 - **不前置**完整新功能测试计划（GREENFIELD）：具体新 TC 在 TDD 中产出；`ValidateTestCoverage` 在实现后做覆盖完整性校验。
 - **LEGACY_EXTENSION 例外**：旧系统加类型/改分发时，抽 1–2 个共享同一分发的 `IDENTICAL_TO_LEGACY` 表征 Case，必须在改生产代码前写好，并能在当前基线上跑绿。锁的是已有行为，不是尚未实现的新类型，也不是每个旧类型一条 Case。表征 Case 必须声明 `assertions.persistenceColdReload` 并在载体方法体再读存储。
@@ -191,10 +193,10 @@ Superpowers 控制器派发 subagent 时，应按角色复杂度选档，平衡�
 
 ## 不适用本项目
 
-- `superpowers:dispatching-parallel-agents` — 与本项目的并行运行时冲突；并行开发走 `.ai-workspace/workflows/parallel-development.md` + `feature-runtime.ps1`。
-- `superpowers:using-git-worktrees` — 代码隔离用 **SVN 分支**（不是 Git worktree）；运行时隔离（多 Tomcat）由 `feature-runtime.ps1` 分配独立端口/`CATALINA_BASE`，与 SVN 分支无关。
-- `superpowers:executing-plans` — 触发 `using-git-worktrees`（与 `feature-runtime.ps1` 冲突）；有 subagent 时统一用 `subagent-driven-development`。
-- `superpowers:finishing-a-development-branch` — 基于 git merge/PR 收尾，本项目交付走 SVN；subagent 末尾的 finishing 由 `verification-before-completion` + 人工 SVN 提交替代。git 仅作开发隔离/检查点，非交付目标。
+- `superpowers:dispatching-parallel-agents` — 不另起并行编排；不同功能的独立工作区和测试数据隔离遵循宿主 context 与 SOP 任务规则。
+- `superpowers:using-git-worktrees` — 不自动创建 worktree；代码隔离方式由宿主版本控制约定决定，不能把所有宿主都当成 SVN 工程。
+- `superpowers:executing-plans` — 与本 SOP 的 T3 编排重叠；T3 统一用 `subagent-driven-development`。
+- `superpowers:finishing-a-development-branch` — 收尾由验证、Task Complete 和宿主提交约定管理，不额外引入另一套分支交付流程。
 
 ## 执行强度分层
 
@@ -231,20 +233,22 @@ pwsh -NoProfile -File .\.ai-sop\scripts\workflow-state.ps1 -Operation ValidateTe
 - QA 遵循项目测试上下文与 `quality-assurance` 的路径决策表。覆盖定义用 SyncCoverage；执行通过 Task Run 保存证据，T3 使用 SetCaseScope 登记本次必测用例。未使用 taskId 的历史流程才按旧功能级兼容规则处理 executionEvidence，不给新任务补旧证据。
 - 完成校验会复查测试覆盖与所需的项目测试。
 
-## SVN + 本地 Git
+## 宿主版本控制与并行
 
-SVN 是团队源码真源与代码隔离手段（每功能一 SVN 分支，合并用 `svn merge` 有冲突检测）。本地 Git **仅作 SDD 的 commit 检查点 / review diff / 回滚，不做代码隔离**（隔离交给 SVN 分支）。运行时隔离（多 Tomcat）由 `feature-runtime.ps1` 分配独立端口 + 物理 `CATALINA_BASE`，与 SVN 分支无关。
+先读取宿主 context 的版本控制与并行约定，确认代码、`.ai-workspace`、`specs` 各自所属仓库；它们可能使用不同 VCS。公共规则见宿主 `AGENTS.md`「项目知识与文档一致性」及「暂停、接管与异常」。不同功能使用独立工作区和测试数据，合并后重新验证；同功能不并行运行多个独立主任务。
+
+以下仅适用于明确采用 **SVN + 本地 Git 检查点** 的宿主：SVN 是团队源码真源与代码隔离手段，本地 Git 仅作 SDD 的 commit 检查点 / review diff / 回滚。项目如提供运行时隔离工具，按项目 context 使用，通用流程不假定存在 Tomcat 或特定脚本。
 
 推荐：
 
 1. 在带 `.svn` 的 SVN 工作副本里开发（每功能一 SVN 分支）。
-2. 维护不含未批准 remote 的本地 Git baseline，仅用于 SDD 检查点（commit/diff/回滚），不承担隔离。
+2. 检测并维护本地 Git 检查点仓库；宿主已约定使用它但尚不存在时，初始化无 remote 的 Git、排除构建产物/SVN 元数据并建立 baseline。它仅用于 SDD 检查点（commit/diff/回滚），不承担隔离，不覆盖 SVN properties。
 3. 开发、测试与 review 都在该 SVN 工作副本中进行。
 4. 交付前：`svn status` / `svn diff` 确认改动范围，对新增文件 `svn add`、删除文件 `svn delete`（未跟踪文件 `?` 不会被 `svn commit` 包含）。
 5. 通过 SVN 提交（`svn commit` 涉及团队真源，由人工确认提交，不由 AI 自动执行）。
 6. 如需合并到主干/其他分支，用 `svn merge`（有冲突检测，**禁止用文件复制覆盖**，会静默回退他人代码）。
 
-**禁止"Git worktree 开发→复制回 SVN 工作副本"**：Git worktree 没有 `.svn` 元数据，`svn add`/`svn delete`/`svn commit`/`svn merge` 跑不通；文件复制覆盖会静默回退他人代码。详见 `AGENTS.md`「版本控制」「并行开发」与 `.ai-workspace/workflows/parallel-development.md`。
+**SVN 宿主禁止“Git worktree 开发→复制回 SVN 工作副本”**：缺少 `.svn` 元数据的目录不能直接完成 SVN 操作，文件复制覆盖也会静默回退他人代码；应使用宿主规定的工作副本与合并流程。若宿主提供 `.ai-workspace/workflows/parallel-development.md`，按需读取其代码和运行时隔离细则。
 
 ## 归属强制
 

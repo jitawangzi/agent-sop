@@ -4,7 +4,7 @@
 
 ## Claude Code 专属差异
 
-以下为 Claude Code 特有语法/约束，公共部分（Superpowers 流程、T 档、guard、归属、产物、并行、能力准入）由上方 `@AGENTS.md` 导入。
+以下为 Claude Code 特有语法/约束；上方 `@AGENTS.md` 导入公共入口。T3 流程与旧兼容细则按入口指引分别读取，引用路径不代表文件内容已自动加载。
 
 ### Skill 工具显式调用
 

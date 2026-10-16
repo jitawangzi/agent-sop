@@ -233,7 +233,33 @@ Preflight 将清单文件损坏与任务引用不匹配分开：文件有效但�
 旧安装没有 Preflight 入口时，可直接运行候选引擎的 `scripts/preflight.ps1 -WorkspacePath <宿主根目录>`，先检查再决定升级。没有指定 Feature/TaskId 时检查未结束或有待同步项的任务；`-IncludeHistory` 纳入全部历史。`-Json` 输出 schemaVersion 1.0 的单个报告。发现问题时返回 NEEDS_ATTENTION，但报告成功生成仍退出 0；参数、路径或执行错误才失败。结果是非原子的即时观察，不代表目标代码相同或远端同步成功，也不是新门禁，不要求每个 T1/T2 任务先执行。
 
 
-本指南说明多个 harness（Claude Code / GitHub Copilot / Antigravity / Cursor / Codex / Pi）如何使用本项目的 AI SOP 完成游戏服务端开发。**T3 由 Superpowers 过程引擎编排；T2/T1用 AGENTS.md + 专家 Skills，不调用 Superpowers**。领域专家 Skill 被强制绑定调用；详见 `.ai-sop/workflows/superpowers-adapter.md`。各 harness 共享 `.ai-workspace/context/` 与规范化功能产物。各工具的能力差异（能跑 T3 还是支持 T1/T2）见 `.ai-sop/scripts/harness-capability.ps1` 的 STRICT/BLOCKED 判定。
+本指南说明多个 harness（Claude Code / GitHub Copilot / Antigravity / Cursor / Codex / Pi）如何使用 AI SOP 开发宿主项目。**T3 由 Superpowers 过程引擎编排；T2/T1 用 AGENTS.md 与按需专家 Skills，不调用 Superpowers**。T3 派发角色须绑定项目专家 Skill；详见 `.ai-sop/workflows/superpowers-adapter.md`。各 harness 共享 `.ai-workspace/context/` 与规范化功能产物。各工具的能力差异（能跑 T3 还是支持 T1/T2）见 `.ai-sop/scripts/harness-capability.ps1` 的 STRICT/BLOCKED 判定。
+
+## 指令分层与规则索引
+
+宿主 `AGENTS.md` 是默认加载的公共入口，T3 与旧流程细节按触发场景读取。下表记录拆分前各类规则的现行位置，供维护和排查使用，不是新增的任务步骤。T3 的“必须读取”需要 Agent 实际打开文件，仅看见路径不代表已读取。默认入口缩短不改变各档完成条件或机器门禁。
+
+| 原规则主题 | 现行位置 |
+|---|---|
+| 任务入口、T 档、证据、起点、待同步提醒 | [入口模板](distribution/templates/root/AGENTS.md)「执行强度」「开始、执行、完成」；命令细节见本手册开头的 Task 使用说明 |
+| 暂停、跨 Agent 接管、损坏恢复、不同功能并行 | 入口模板「暂停、接管与异常」；本手册的 Preflight 与事务恢复说明 |
+| T3 工作流、影响与覆盖、独立审查、人工确认及例外 | [T3 执行参考](workflows/agent-t3.md)，编排顺序见 [适配器](workflows/superpowers-adapter.md) |
+| 全新功能与旧系统扩展、全功能审计、AUDIT-EXEMPT | T3 执行参考中的对应章节；全功能审计仍为人工按需触发 |
+| 共享项目知识、规范优先级、已批准文档修改 | 入口模板「项目知识与文档一致性」与本手册「项目上下文与能力诊断」 |
+| 规范产物、ID 缩写、专家职责与派发约束 | T3 执行参考「规范功能产物」「领域专家 Skills」；[共享产物契约](workflows/shared-artifacts.md) |
+| 完成定义、验证范围与机检/自报边界 | 入口模板的档位表；T3 执行参考「完成验收」；[质量门禁](docs/QUALITY_GATES.md) |
+| Claim / Transfer / ForceRelease、feature-state、旧诊断与 FAST_TRACK | [旧流程兼容与诊断](workflows/agent-legacy.md)；不用于创建新任务 |
+| SVN 与本地 Git、VCS 增删移动、运行时隔离 | 入口模板「项目知识与文档一致性」；适配器「宿主版本控制与并行」保留 SVN 宿主条件示例；具体工具由宿主 context 指定 |
+| 工具能力、Superpowers 缺失、术语释义 | 本手册下一节、[能力验证](SUPERPOWERS_VERIFICATION.md)、[架构说明](docs/ARCHITECTURE.md)；Superpowers 是 T3 流程技能包，harness 指 AI 编码工具 |
+| 进度、SOP 拦截与交接汇报 | 入口模板「汇报」；T3 人工澄清与批准的详细规则见 T3 执行参考「人工 review 阶段」 |
+
+## 项目上下文与能力诊断
+
+项目知识以 `.ai-workspace/context/README.md` 为导航。存在时须读取 `project-summary.md`、`coding-style.md`、`business-logic-pattern.md`、`project-tooling.md`；配置、协议和业务验证按需读 `config-rules.md`、`proto-rules.md`、项目测试及领域模式文件。设计、实现和审查角色必须读实际规范原文，不能以 06 或 Skill 摘要替代。缺失文件记 INFO，先从现有代码及基础组件核实惯例，不停工、不臆造规则；完成时提示可根据项目代码补全缺失 context。
+
+context 的 `<!-- context-meta owner:X reviewedAt:YYYY-MM expiresAt:YYYY-MM -->` 标记用于过期提醒。Doctor 提示 WARN 后，Agent 仍须说明过期文件并核实现行代码/配置，不能根据旧 context 改坏正确实现。强制工程规范与功能 06 冲突时，以强制规范为准，记设计缺陷并 ResetApproval -Gate design；经人工确认的 AUDIT-EXEMPT 除外。项目存储字段、协议命名等具体规则留在 context，不写入通用引擎。
+
+`harness-capability.ps1` 的 STRICT/BLOCKED 表是能力声明，**不是运行时探测**。某工具版本实际缺少 subagent/evidence 时，可在本机 `.ai-sop/.harness-capability-override.json`（gitignored，不共享）记录降级，例如 `{"CLAUDE_CODE":{"subagent":false,"_reason":"当前环境无法派发独立审查"}}`。脚本合并覆盖后重判，Doctor 提示覆盖存在；不能以静态 STRICT 声明代替真实独立审查。已选 T3 缺能力时保留进度并说明缺口，由用户选择切换工具或改档；T1/T2 不依赖这些能力，不因此受阻。
 
 ## 安装器的等待上限与日志
 
@@ -296,9 +322,9 @@ flowchart TD
     N --> O[ValidateTestCoverage 覆盖校验]
     O --> P[Superpowers requesting-code-review 最终自审]
     P --> Q[Superpowers verification-before-completion 全量验证]
-    Q --> S[VerifyCompletion 机器硬门禁]
+    Q --> S
     
-    S --> T[workflow-owner.ps1 Complete 释放归属]
+    S --> T[完成校验通过后自动标记 DONE 并释放归属]
     T --> U[VCS 提交交付]
 ```
 
@@ -855,7 +881,7 @@ T3 最后由 Superpowers `verification-before-completion` 复查测试覆盖与�
 
 ## 完成定义与交付闭环
 
-各档位完成条件与门禁硬指标统一以 [AGENTS.md「完成定义」](../AGENTS.md) 为操作清单；分层设计（机器 vs 自报、证据绑定）见 [QUALITY_GATES.md](docs/QUALITY_GATES.md)。
+各档位完成条件以宿主 `AGENTS.md` 的档位表及「开始、执行、完成」为准（[源模板](distribution/templates/root/AGENTS.md)）；T3 详细清单见 [T3 执行参考「完成验收」](workflows/agent-t3.md#完成验收)，无 taskId 的旧命令见 [旧流程兼容与诊断](workflows/agent-legacy.md)。分层设计（机器 vs 自报、证据绑定）见 [QUALITY_GATES.md](docs/QUALITY_GATES.md)。
 
 ### 交付闭环时序
 

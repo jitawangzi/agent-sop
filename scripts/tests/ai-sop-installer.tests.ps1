@@ -380,6 +380,93 @@ Invoke-Test "Complete-AiSopSvnTransaction marks COMMITTED + writes marker" {
     } finally { Remove-Item -Recurse -Force -LiteralPath $tmp }
 }
 
+Invoke-Test "SVN upgrade verifies before commit and isolates its pending transaction" {
+    $tmp = Join-Path ([IO.Path]::GetTempPath()) ('aisop-svn-upgrade-' + [guid]::NewGuid().ToString('N'))
+    $source = Join-Path $tmp 'source'
+    $workspace = Join-Path $tmp 'workspace'
+    New-Item -ItemType Directory -Path $source,$workspace -Force | Out-Null
+    try {
+        foreach ($dir in @('distribution','schemas')) {
+            Copy-Item -LiteralPath (Join-Path $ClaudeRoot $dir) -Destination $source -Recurse
+        }
+        New-Item -ItemType Directory -Path (Join-Path $source 'scripts') | Out-Null
+        Copy-Item -LiteralPath (Join-Path $ClaudeRoot 'scripts/path-identity.ps1') -Destination (Join-Path $source 'scripts')
+        Copy-Item -LiteralPath (Join-Path $ClaudeRoot '.gitattributes') -Destination $source
+        git -C $source init --quiet
+        git -C $source add .
+        git -C $source -c user.name=Test -c user.email=test@example.invalid -c commit.gpgsign=false commit --quiet -m initial
+        Assert-Equal 0 $LASTEXITCODE 'initial fixture commit'
+        $oldCommit = (& git -C $source rev-parse HEAD).Trim()
+        [IO.File]::WriteAllText((Join-Path $source 'upgrade.txt'), 'new version')
+        git -C $source add upgrade.txt
+        git -C $source -c user.name=Test -c user.email=test@example.invalid -c commit.gpgsign=false commit --quiet -m upgrade
+        Assert-Equal 0 $LASTEXITCODE 'upgrade fixture commit'
+        $commit = (& git -C $source rev-parse HEAD).Trim()
+        $installed = Join-Path $workspace '.ai-sop'
+        git clone --quiet $source $installed
+        git -C $installed checkout --quiet $oldCommit
+        Assert-Equal 0 $LASTEXITCODE 'old checkout ready'
+        $lockDir = Join-Path $workspace 'tools/ai-sop'
+        New-Item -ItemType Directory -Path $lockDir -Force | Out-Null
+        $lock = [ordered]@{ schemaVersion='1.0'; sourceUrl=$source; commit=$commit }
+        foreach ($entry in @(
+            @('manifest','distribution/project-manifest.json'), @('core','distribution/install-ai-sop-core.ps1'),
+            @('bootstrap','distribution/bootstrap/install-ai-sop.ps1'), @('certification','distribution/harness-certification.json')
+        )) { $lock[$entry[0]] = @{path=$entry[1];blobSha256=(Get-AiSopSha256 (Join-Path $source $entry[1]))} }
+        $lock | ConvertTo-Json -Depth 5 | Set-Content -LiteralPath (Join-Path $lockDir 'ai-sop.lock.json')
+        . (Join-Path $ClaudeRoot 'scripts/hidden-process.ps1')
+        $output = Join-Path $tmp 'install.stdout.log'
+        $errorLog = Join-Path $tmp 'install.stderr.log'
+        $exitCode = Start-AiSopHiddenProcess -FilePath (Get-Process -Id $PID).Path `
+            -ArgumentList @('-NoProfile','-File',(Join-Path $installed 'distribution/bootstrap/install-ai-sop.ps1'),
+                '-WorkspaceRoot',$workspace,'-Mode','Svn','-Action','Install','-OutputFormat','Json') `
+            -RedirectStandardOutput $output -RedirectStandardError $errorLog -TimeoutSeconds 60 -CloseStandardInput
+        Assert-Equal 0 $exitCode ('SVN upgrade must finish: ' + [IO.File]::ReadAllText($output) + [IO.File]::ReadAllText($errorLog))
+        $result = Get-Content -LiteralPath $output -Raw | ConvertFrom-Json
+        Assert-Equal 'VERIFIED' $result.result 'install performs final verification'
+        $txRoot = Get-AiSopTransactionRoot $workspace
+        $transaction = Get-ChildItem -LiteralPath $txRoot -Directory | Select-Object -First 1
+        $journal = Get-Content -LiteralPath (Join-Path $transaction.FullName 'journal.json') -Raw | ConvertFrom-Json
+        Assert-Equal 'COMMITTED' $journal.phase 'verified upgrade is committed'
+        Assert-True (Test-Path -LiteralPath (Join-Path $transaction.FullName 'commit.marker')) 'committed marker exists'
+        Assert-Equal $commit ((& git -C $installed rev-parse HEAD).Trim()) 'new checkout is installed'
+        Assert-Equal 'VERIFIED' (Invoke-AiSopVerify $workspace Svn -OutputFormat Json).result 'ordinary Verify succeeds after commit'
+
+        $pendingDir = Join-Path $txRoot 'pending-test'
+        New-Item -ItemType Directory -Path $pendingDir | Out-Null
+        $journal.transactionId='pending-test'; $journal.phase='PREPARED'
+        $journal.committedAt=''; $journal.finalStateSha256=''
+        $pendingPath = Join-Path $pendingDir 'journal.json'
+        $journal | ConvertTo-Json -Depth 8 | Set-Content -LiteralPath $pendingPath
+        Assert-Equal 'INSTALL_TRANSACTION_INCOMPLETE' (Invoke-AiSopVerify $workspace Svn -OutputFormat Json).result 'public Verify still rejects pending work'
+        Assert-Equal 'VERIFIED' (Invoke-AiSopVerify $workspace Svn -OutputFormat Json -CompletingTransactionId 'pending-test').result 'install may validate its own applied transaction'
+        Assert-True (-not (Test-Path -LiteralPath (Join-Path $pendingDir 'commit.marker'))) 'verification itself does not commit'
+        $agents = Join-Path $workspace 'AGENTS.md'
+        $original = [IO.File]::ReadAllBytes($agents)
+        [IO.File]::AppendAllText($agents, 'drift')
+        Assert-Equal 'PROJECTION_DRIFT' (Invoke-AiSopVerify $workspace Svn -OutputFormat Json -CompletingTransactionId 'pending-test').result 'own pending journal does not bypass content checks'
+        [IO.File]::WriteAllBytes($agents, $original)
+        foreach ($field in @('workspaceRoot','sourceCommit','sourceUrl')) {
+            $savedValue=$journal.$field
+            $journal.$field = switch ($field) { 'workspaceRoot' {$source} 'sourceCommit' {('a'*40)} 'sourceUrl' {'other-source'} }
+            $journal | ConvertTo-Json -Depth 8 | Set-Content -LiteralPath $pendingPath
+            Assert-Equal 'INSTALL_TRANSACTION_INCOMPLETE' (Invoke-AiSopVerify $workspace Svn -OutputFormat Json -CompletingTransactionId 'pending-test').result "reject mismatched $field"
+            $journal.$field=$savedValue
+        }
+        $journal | ConvertTo-Json -Depth 8 | Set-Content -LiteralPath $pendingPath
+        $otherDir=Join-Path $txRoot 'other-pending'
+        New-Item -ItemType Directory -Path $otherDir | Out-Null
+        $journal.transactionId='other-pending'
+        $journal | ConvertTo-Json -Depth 8 | Set-Content -LiteralPath (Join-Path $otherDir 'journal.json')
+        Assert-Equal 'INSTALL_TRANSACTION_INCOMPLETE' (Invoke-AiSopVerify $workspace Svn -OutputFormat Json -CompletingTransactionId 'pending-test').result 'another pending transaction still blocks install'
+    } finally {
+        $resolved = [IO.Path]::GetFullPath($tmp)
+        $tempRoot = [IO.Path]::GetFullPath([IO.Path]::GetTempPath()).TrimEnd('\','/') + [IO.Path]::DirectorySeparatorChar
+        if (-not $resolved.StartsWith($tempRoot, [StringComparison]::OrdinalIgnoreCase)) { throw 'Unsafe fixture cleanup path' }
+        Remove-Item -LiteralPath $resolved -Recurse -Force
+    }
+}
+
 Write-Host ""
 Write-Host ("{0} installer tests passed, {1} failed" -f $script:PassCount, $script:FailCount) -ForegroundColor Cyan
 if ($script:FailCount -gt 0) { exit 1 } else { exit 0 }

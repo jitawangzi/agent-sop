@@ -12,6 +12,7 @@
 # same-volume directory rename (DC-012). Verify is local read-only (DC-015).
 
 $ErrorActionPreference = "Stop"
+. (Join-Path $PSScriptRoot '../scripts/path-identity.ps1')
 
 function Get-AiSopSchemaRoot {
     return Join-Path $PSScriptRoot "..\schemas"
@@ -203,7 +204,9 @@ function Invoke-AiSopVerify {
         [Parameter(Mandatory)][string]$WorkspaceRoot,
         [Parameter(Mandatory)][string]$Mode,
         [string]$SourceUrl = "",
-        [Parameter(Mandatory)][string]$OutputFormat
+        [Parameter(Mandatory)][string]$OutputFormat,
+        # Internal Install continuation only; public Verify never supplies it.
+        [string]$CompletingTransactionId = ""
     )
     try {
         $lock = Read-AiSopLock -WorkspaceRoot $WorkspaceRoot
@@ -221,6 +224,22 @@ function Invoke-AiSopVerify {
             $jp = Join-Path $p.FullName "journal.json"
             $mp = Join-Path $p.FullName "commit.marker"
             if ((Test-Path -LiteralPath $jp) -and -not (Test-Path -LiteralPath $mp)) {
+                # Verify the just-applied installation before writing its marker.
+                # Only this exact, fully applied transaction may be pending; other
+                # journals and mismatched identities must still block completion.
+                if ($Mode -eq 'Svn' -and $CompletingTransactionId -ceq $p.Name -and
+                    (Test-AiSopInstallTransaction -Path $jp)) {
+                    $journal = Get-Content -LiteralPath $jp -Raw | ConvertFrom-Json
+                    $item = @($journal.items)[0]
+                    if ($journal.transactionId -ceq $CompletingTransactionId -and
+                        $journal.phase -ceq 'PREPARED' -and $journal.mode -ceq 'Svn' -and
+                        $journal.action -ceq 'Install' -and
+                        (Resolve-PhysicalPathIdentity $journal.workspaceRoot) -ceq (Resolve-PhysicalPathIdentity $WorkspaceRoot) -and
+                        $journal.sourceCommit -ceq $lock.commit -and $journal.sourceUrl -ceq $lock.sourceUrl -and
+                        @($journal.items).Count -eq 1 -and $item.kind -ceq 'svn-directory' -and
+                        $item.targetPath -ceq '.ai-sop' -and $item.applied -eq $true -and
+                        $item.afterSha256 -ceq $lock.commit) { continue }
+                }
                 return New-AiSopInstallResult -Action "Verify" -Mode $Mode `
                     -SourceUrl $lock.sourceUrl -Commit $lock.commit `
                     -Result "INSTALL_TRANSACTION_INCOMPLETE" `

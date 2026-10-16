@@ -147,7 +147,8 @@ if (Test-Path -LiteralPath $manifestPath) {
 
 # After install, verify projections + commit the transaction (DC-017).
 $result = Invoke-AiSopVerify -WorkspaceRoot $WorkspaceRoot -Mode $resolvedMode `
-    -SourceUrl $lock.sourceUrl -OutputFormat $OutputFormat
+    -SourceUrl $lock.sourceUrl -OutputFormat $OutputFormat `
+    -CompletingTransactionId $(if ($resolvedMode -eq 'Svn') { $txId } else { '' })
 if ($result.result -eq "VERIFIED" -and $resolvedMode -eq "Svn") {
     $finalSha = (Get-AiSopSha256 -Path (Join-Path $WorkspaceRoot ".ai-sop"))
     Complete-AiSopSvnTransaction -JournalPath $journalPath -FinalStateSha256 $finalSha

@@ -164,7 +164,8 @@ description: 高级开发工程师，负责基于当前项目架构的高质量�
 *   **默认工程规范**：开始实现前必须用 Read 打开 `.ai-workspace/context/coding-style.md`（若存在），不得只凭本 Skill 或 06 摘要。06 与其中硬规则冲突时不得按图索骥。
 *   必须加载 `.ai-workspace/context/project-summary.md`、`coding-style.md` 和 `business-logic-pattern.md`。
 *   若功能涉及活动、任务、条件、事件等高频模式，补充加载 `business-patterns/` 下对应专题文档。
-*   若功能涉及静态配置接入，补充加载 `config-rules.md`；若涉及协议变更，补充加载 `proto-rules.md`。
+*   实现、排查或编写测试需要读取静态配置、外部数据文件（包括 XLSX）时，先读 `.ai-workspace/context/config-rules.md`（若存在），不只在“新增配置接入”时加载；若涉及协议变更，补充加载 `proto-rules.md`。
+*   **配置与测试数据定位**：按宿主规则追踪生效配置项、环境和版本，核实实际文件路径；仓库里的同名资源、默认目录和个人机器路径不能被猜作权威数据源。宿主的具体路径与版本选择策略留在 context，本 Skill 不规定所有项目都选最新版本。缺失数据时报告解析结果，不静默切换来源或用空数据/跳过断言充当验证成功；模拟、历史兼容夹具应明确其测试目标。实际使用的来源与版本记录在现有测试日志或结果说明中，不增加独立审批或门禁。
 *   **新增/修改对外协议字段前，必须 grep 既有同类响应组装处**（`result.put("consume_items"` / `result.put("collected_items"` / `setCollected_` 等），复用既有命名与结构，不自造同义驼峰名或新结构。对照 `06_design_contract.md` 的"协议字段设计核对表"（proto-rules §3.6）逐字段实现。
 *   闭环由 Superpowers controller 调度；项目构建与验证入口读取 `.ai-workspace/context/ai-automation-workflow.md` 和 `client-test.md`。
 

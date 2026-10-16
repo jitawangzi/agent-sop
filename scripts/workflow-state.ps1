@@ -139,7 +139,9 @@ $MutationDeadlineUtc = [DateTimeOffset]::UtcNow.AddMilliseconds($mutationDeadlin
 . (Join-Path $PSScriptRoot "workflow-transaction.ps1")
 . (Join-Path $PSScriptRoot "workflow-session.ps1")
 . (Join-Path $PSScriptRoot "task-context.ps1")
+. (Join-Path $PSScriptRoot "workflow-vcs.ps1")
 $script:TaskValidationContext = New-AiSopValidationContext
+$script:WorkflowVcsContext = New-AiSopWorkflowVcsContext
 
 function Assert-Argument {
     param(
@@ -1166,9 +1168,11 @@ function Test-SvnWorkingCopyUsable {
     if ([string]::IsNullOrWhiteSpace($WorkspaceRoot)) { return $false }
     if (-not (Test-Path -LiteralPath (Join-Path $WorkspaceRoot ".svn"))) { return $false }
     try {
-        $svnRev = (& svn info --non-interactive --show-item revision $WorkspaceRoot 2>&1 | Out-String).Trim()
-        if ($LASTEXITCODE -eq 0 -and $svnRev -match '^\d+$') { return $true }
-        $svnInfo = (& svn info --non-interactive $WorkspaceRoot 2>&1 | Out-String)
+        $vcs = Invoke-AiSopWorkflowVcs -Context $script:WorkflowVcsContext -Tool svn -Arguments @('info';'--non-interactive';'--show-item';'revision';$WorkspaceRoot) -AllowNonZero
+        $svnRev = $vcs.output.Trim()
+        if ($vcs.exitCode -eq 0 -and $svnRev -match '^\d+$') { return $true }
+        $vcs = Invoke-AiSopWorkflowVcs -Context $script:WorkflowVcsContext -Tool svn -Arguments @('info';'--non-interactive';$WorkspaceRoot)
+        $svnInfo = $vcs.output
         return [bool]($svnInfo -match '(?m)^Revision:\s*(\d+)')
     } catch {
         return $false
@@ -1193,10 +1197,11 @@ function Test-GitCommitExists {
     if (-not (Test-Path -LiteralPath (Join-Path $WorkspaceRoot ".git"))) { return $false }
     try {
         $spec = $Baseline + '^{commit}'
-        & git -C $WorkspaceRoot cat-file -e $spec 2>&1 | Out-Null
-        return ($LASTEXITCODE -eq 0)
+        $vcs = Invoke-AiSopWorkflowVcs -Context $script:WorkflowVcsContext -Tool git -Arguments @('-C';$WorkspaceRoot;'cat-file';'-e';$spec) -AllowNonZero
+        return ($vcs.exitCode -eq 0)
     } catch {
-        return $false
+        # An unavailable probe is not proof that the commit does not exist.
+        throw
     }
 }
 
@@ -1261,16 +1266,19 @@ function Get-VcsBaselineRevision {
     # Overlay git + production SVN: the production changeset identity is the SVN revision.
     if (-not [string]::IsNullOrWhiteSpace($svnRoot) -and (Test-SvnWorkingCopyUsable -WorkspaceRoot $svnRoot)) {
         try {
-            $svnRev = (& svn info --non-interactive --show-item revision $svnRoot 2>&1 | Out-String).Trim()
-            if ($LASTEXITCODE -eq 0 -and $svnRev -match '^\d+$') { return $svnRev }
-            $svnInfo = (& svn info --non-interactive $svnRoot 2>&1 | Out-String)
+            $vcs = Invoke-AiSopWorkflowVcs -Context $script:WorkflowVcsContext -Tool svn -Arguments @('info';'--non-interactive';'--show-item';'revision';$svnRoot) -AllowNonZero
+            $svnRev = $vcs.output.Trim()
+            if ($vcs.exitCode -eq 0 -and $svnRev -match '^\d+$') { return $svnRev }
+            $vcs = Invoke-AiSopWorkflowVcs -Context $script:WorkflowVcsContext -Tool svn -Arguments @('info';'--non-interactive';$svnRoot)
+            $svnInfo = $vcs.output
             if ($svnInfo -match '(?m)^Revision:\s*(\d+)') { return $Matches[1] }
         } catch {}
     }
     if (-not [string]::IsNullOrWhiteSpace($gitRoot)) {
         try {
-            $headSha = (& git -C $gitRoot rev-parse HEAD 2>&1 | Out-String).Trim()
-            if ($LASTEXITCODE -eq 0 -and (Test-IsGitCommitBaseline -Baseline $headSha)) {
+            $vcs = Invoke-AiSopWorkflowVcs -Context $script:WorkflowVcsContext -Tool git -Arguments @('-C';$gitRoot;'rev-parse';'HEAD')
+            $headSha = $vcs.output.Trim()
+            if ($vcs.exitCode -eq 0 -and (Test-IsGitCommitBaseline -Baseline $headSha)) {
                 return $headSha
             }
         } catch {}
@@ -1822,13 +1830,15 @@ function Get-ChangeSetDigest {
                 throw "Baseline commit '$Baseline' does not exist in git workspace: $WorkspaceRoot"
             }
         } else {
-            $mb = (& git -C $WorkspaceRoot merge-base HEAD origin/main 2>&1 | Out-String).Trim()
-            $gitTarget = if ($LASTEXITCODE -eq 0 -and -not [string]::IsNullOrWhiteSpace($mb)) { $mb } else { "HEAD~1" }
+            $vcs = Invoke-AiSopWorkflowVcs -Context $script:WorkflowVcsContext -Tool git -Arguments @('-C';$WorkspaceRoot;'merge-base';'HEAD';'origin/main') -AllowNonZero
+            $mb = $vcs.output.Trim()
+            $gitTarget = if ($vcs.exitCode -eq 0 -and -not [string]::IsNullOrWhiteSpace($mb)) { $mb } else { "HEAD~1" }
         }
 
         if (-not $skipOverlayGitRange -and -not [string]::IsNullOrWhiteSpace($gitTarget)) {
-        $gitDiff = & git -C $WorkspaceRoot -c core.quotepath=false diff $gitTarget -- . 2>&1
-        if ($LASTEXITCODE -ne 0) {
+        $vcs = Invoke-AiSopWorkflowVcs -Context $script:WorkflowVcsContext -Tool git -Arguments @('-C';$WorkspaceRoot;'-c';'core.quotepath=false';'diff';$gitTarget;'--';'.')
+        $gitDiff = $vcs.lines
+        if ($vcs.exitCode -ne 0) {
             throw "git diff failed against target '$gitTarget' in workspace: $WorkspaceRoot"
         }
         if ($null -ne $gitDiff) {
@@ -1854,7 +1864,8 @@ function Get-ChangeSetDigest {
             if (-not [string]::IsNullOrWhiteSpace($diffStr)) { $combined.Add("GIT_DIFF:`n$diffStr") }
         }
 
-        $gitStat = & git -C $WorkspaceRoot -c core.quotepath=false status --porcelain -uall 2>&1
+        $vcs = Invoke-AiSopWorkflowVcs -Context $script:WorkflowVcsContext -Tool git -Arguments @('-C';$WorkspaceRoot;'-c';'core.quotepath=false';'status';'--porcelain';'-uall')
+        $gitStat = $vcs.lines
         if ($null -ne $gitStat) {
             foreach ($line in ($gitStat | Out-String -Stream)) {
                 $trimmed = $line.Trim()
@@ -1885,18 +1896,21 @@ function Get-ChangeSetDigest {
         $svnRev = if (-not [string]::IsNullOrWhiteSpace($Baseline) -and ($Baseline -replace '^(?:rev|r)', '') -match '^\d+$') {
             $Baseline -replace '^(?:rev|r)', ''
         } else {
-            $infoRev = (& svn info --non-interactive --show-item revision $WorkspaceRoot 2>&1 | Out-String).Trim()
-            if ($LASTEXITCODE -eq 0 -and $infoRev -match '^\d+$') { $infoRev } else {
+            $vcs = Invoke-AiSopWorkflowVcs -Context $script:WorkflowVcsContext -Tool svn -Arguments @('info';'--non-interactive';'--show-item';'revision';$WorkspaceRoot) -AllowNonZero
+            $infoRev = $vcs.output.Trim()
+            if ($vcs.exitCode -eq 0 -and $infoRev -match '^\d+$') { $infoRev } else {
                 throw "SVN_INFO_FAILED: svn info failed in workspace '$WorkspaceRoot'. Output: $infoRev"
             }
         }
 
         $diffArgs = if (-not [string]::IsNullOrWhiteSpace($svnRev)) { @("-r", $svnRev) } else { @() }
-        $svnDiff = & svn diff --non-interactive @diffArgs $WorkspaceRoot 2>&1
-        if ($LASTEXITCODE -ne 0) {
+        $vcs = Invoke-AiSopWorkflowVcs -Context $script:WorkflowVcsContext -Tool svn -Arguments @('diff';'--non-interactive';$diffArgs;$WorkspaceRoot)
+        $svnDiff = $vcs.lines
+        if ($vcs.exitCode -ne 0) {
             throw "svn diff failed against revision '$Baseline' in workspace: $WorkspaceRoot"
         }
-        $svnStat = & svn status --non-interactive --ignore-externals $WorkspaceRoot 2>&1
+        $vcs = Invoke-AiSopWorkflowVcs -Context $script:WorkflowVcsContext -Tool svn -Arguments @('status';'--non-interactive';'--ignore-externals';$WorkspaceRoot)
+        $svnStat = $vcs.lines
         if ($null -ne $svnDiff) {
             $filteredSvnDiff = Filter-SvnDiffBlocks -DiffText ($svnDiff | Out-String)
             if (-not [string]::IsNullOrWhiteSpace($filteredSvnDiff)) { $combined.Add("SVN_DIFF:`n$filteredSvnDiff") }
@@ -2134,8 +2148,9 @@ function Get-WorkspaceChangedRelativePaths {
             @("diff", "--cached", "--name-only", $diffTarget, "--", "."),
             @("ls-files", "--others", "--exclude-standard")
         )) {
-            $lines = & git -C $WorkspaceRoot -c core.quotepath=false @cmd 2>&1
-            if ($LASTEXITCODE -ne 0) { continue }
+            $vcs = Invoke-AiSopWorkflowVcs -Context $script:WorkflowVcsContext -Tool git -Arguments @('-C';$WorkspaceRoot;'-c';'core.quotepath=false';$cmd)
+            $lines = $vcs.lines
+            if ($vcs.exitCode -ne 0) { continue }
             foreach ($line in @($lines | Out-String -Stream)) {
                 $rel = Unquote-GitPath -Path ([string]$line).Trim()
                 if ([string]::IsNullOrWhiteSpace($rel)) { continue }
@@ -2154,8 +2169,9 @@ function Get-WorkspaceChangedRelativePaths {
         $sumArgs = @("diff", "--summarize", "--non-interactive")
         if (-not [string]::IsNullOrWhiteSpace($svnRev)) { $sumArgs += @("-r", $svnRev) }
         $sumArgs += $WorkspaceRoot
-        $sumLines = & svn @sumArgs 2>&1
-        if ($LASTEXITCODE -eq 0) {
+        $vcs = Invoke-AiSopWorkflowVcs -Context $script:WorkflowVcsContext -Tool svn -Arguments @($sumArgs)
+        $sumLines = $vcs.lines
+        if ($vcs.exitCode -eq 0) {
             foreach ($line in @($sumLines | Out-String -Stream)) {
                 if ($line -match '^\s*[A-Z]\s+(.*)$') {
                     $full = $Matches[1].Trim()
@@ -2169,8 +2185,9 @@ function Get-WorkspaceChangedRelativePaths {
                 }
             }
         }
-        $statLines = & svn status --non-interactive --ignore-externals $WorkspaceRoot 2>&1
-        if ($LASTEXITCODE -eq 0) {
+        $vcs = Invoke-AiSopWorkflowVcs -Context $script:WorkflowVcsContext -Tool svn -Arguments @('status';'--non-interactive';'--ignore-externals';$WorkspaceRoot)
+        $statLines = $vcs.lines
+        if ($vcs.exitCode -eq 0) {
             foreach ($line in @($statLines | Out-String -Stream)) {
                 if ($line -match '^\s*[?ACMR]\s+(.*)$') {
                     $full = $Matches[1].Trim()
@@ -2665,19 +2682,23 @@ function Get-SemanticRiskAssessment {
         catch { return [pscustomobject]@{TriggersHit=@('TASK_SCOPE_UNAVAILABLE');Details=@($_.Exception.Message);MinRequiredTier=$(if ($scopeTask.tier -eq 'T3') { 'T3' } else { $null });HasHighRisk=$(if ($scopeTask.tier -eq 'T3') { $true } else { $null });Baseline=$scopeTask.baseline.revision} }
     }
     # 1. Resolve baseline from authoritative state or VCS
-    $effectiveBaseline = if (-not [string]::IsNullOrWhiteSpace($Baseline)) {
-        $Baseline
-    } elseif (-not [string]::IsNullOrWhiteSpace($SpecDir)) {
-        Get-AuthoritativeFeatureBaseline -SpecDir $SpecDir -WorkspaceRoot $WorkspaceRoot
-    } else {
-        Get-VcsBaselineRevision -StartPath $WorkspaceRoot
-    }
-    if (
-        (Test-IsGitCommitBaseline -Baseline $effectiveBaseline) -and
-        -not (Test-GitCommitExists -WorkspaceRoot $WorkspaceRoot -Baseline $effectiveBaseline) -and
-        (Test-CanFailSoftStaleOverlayGitBaseline -WorkspaceRoot $WorkspaceRoot)
-    ) {
-        $details.Add("Overlay git baseline '$effectiveBaseline' is not in this repository; production risk is assessed from the SVN working copy.")
+    try {
+        $effectiveBaseline = if (-not [string]::IsNullOrWhiteSpace($Baseline)) {
+            $Baseline
+        } elseif (-not [string]::IsNullOrWhiteSpace($SpecDir)) {
+            Get-AuthoritativeFeatureBaseline -SpecDir $SpecDir -WorkspaceRoot $WorkspaceRoot
+        } else {
+            Get-VcsBaselineRevision -StartPath $WorkspaceRoot
+        }
+        if (
+            (Test-IsGitCommitBaseline -Baseline $effectiveBaseline) -and
+            -not (Test-GitCommitExists -WorkspaceRoot $WorkspaceRoot -Baseline $effectiveBaseline) -and
+            (Test-CanFailSoftStaleOverlayGitBaseline -WorkspaceRoot $WorkspaceRoot)
+        ) {
+            $details.Add("Overlay git baseline '$effectiveBaseline' is not in this repository; production risk is assessed from the SVN working copy.")
+        }
+    } catch {
+        return [pscustomobject]@{TriggersHit=@('VCS_ERROR');Details=@($_.Exception.Message);MinRequiredTier='T3';HasHighRisk=$true;Baseline=$Baseline}
     }
 
     # 2. Collect full diff string against baseline.
@@ -2686,17 +2707,19 @@ function Get-SemanticRiskAssessment {
     $fullDiff = ""
     $vcsFailed = $false
     if ($isGit -and -not $isHybrid) {
-        $diffTarget = if (Test-IsGitCommitBaseline -Baseline $effectiveBaseline) {
-            $effectiveBaseline
-        } else {
-            $mb = (& git -C $WorkspaceRoot merge-base HEAD origin/main 2>&1 | Out-String).Trim()
-            if ($LASTEXITCODE -eq 0 -and -not [string]::IsNullOrWhiteSpace($mb)) { $mb } else { "HEAD~1" }
-        }
-        
         try {
-            $gitDiff = & git -C $WorkspaceRoot -c core.quotepath=false diff $diffTarget -- . 2>&1
-            if ($LASTEXITCODE -ne 0) {
+            $diffTarget = if (Test-IsGitCommitBaseline -Baseline $effectiveBaseline) {
+                $effectiveBaseline
+            } else {
+                $vcs = Invoke-AiSopWorkflowVcs -Context $script:WorkflowVcsContext -Tool git -Arguments @('-C';$WorkspaceRoot;'merge-base';'HEAD';'origin/main') -AllowNonZero
+                $mb = $vcs.output.Trim()
+                if ($vcs.exitCode -eq 0 -and -not [string]::IsNullOrWhiteSpace($mb)) { $mb } else { "HEAD~1" }
+            }
+            $vcs = Invoke-AiSopWorkflowVcs -Context $script:WorkflowVcsContext -Tool git -Arguments @('-C';$WorkspaceRoot;'-c';'core.quotepath=false';'diff';$diffTarget;'--';'.') -AllowNonZero
+            $gitDiff = $vcs.lines
+            if ($vcs.exitCode -ne 0) {
                 $vcsFailed = $true
+                $details.Add("VCS_COMMAND_FAILED: diff exit=$($vcs.exitCode); $($vcs.stderr)")
             } elseif ($null -ne $gitDiff) {
                 $filteredGitLines = [System.Collections.Generic.List[string]]::new()
                 $skipBlock = $false
@@ -2719,7 +2742,8 @@ function Get-SemanticRiskAssessment {
                 $diffStr = ($filteredGitLines -join "`n").Trim()
                 if (-not [string]::IsNullOrWhiteSpace($diffStr)) { $fullDiff += "`n" + $diffStr }
             }
-            $gitStat = & git -C $WorkspaceRoot -c core.quotepath=false status --porcelain -uall 2>&1
+            $vcs = Invoke-AiSopWorkflowVcs -Context $script:WorkflowVcsContext -Tool git -Arguments @('-C';$WorkspaceRoot;'-c';'core.quotepath=false';'status';'--porcelain';'-uall')
+            $gitStat = $vcs.lines
             if ($null -ne $gitStat) {
                 foreach ($line in ($gitStat | Out-String -Stream)) {
                     $trimmed = $line.Trim()
@@ -2736,28 +2760,33 @@ function Get-SemanticRiskAssessment {
             }
         } catch {
             $vcsFailed = $true
+            $details.Add($_.Exception.Message)
         }
     }
     if ($isSvn) {
-        $svnRev = if (Test-IsSvnRevisionBaseline -Baseline $effectiveBaseline) {
-            $effectiveBaseline -replace '^(?:rev|r)', ''
-        } else {
-            $infoRev = (& svn info --non-interactive --show-item revision $WorkspaceRoot 2>&1 | Out-String).Trim()
-            if ($LASTEXITCODE -eq 0 -and $infoRev -match '^\d+$') { $infoRev } else {
-                $vcsFailed = $true
-                $null
-            }
-        }
-        $diffArgs = if (-not [string]::IsNullOrWhiteSpace($svnRev)) { @("-r", $svnRev) } else { @() }
         try {
-            $svnDiff = & svn diff --non-interactive @diffArgs $WorkspaceRoot 2>&1
-            if ($LASTEXITCODE -ne 0) {
+            $svnRev = if (Test-IsSvnRevisionBaseline -Baseline $effectiveBaseline) {
+                $effectiveBaseline -replace '^(?:rev|r)', ''
+            } else {
+                $vcs = Invoke-AiSopWorkflowVcs -Context $script:WorkflowVcsContext -Tool svn -Arguments @('info';'--non-interactive';'--show-item';'revision';$WorkspaceRoot) -AllowNonZero
+                $infoRev = $vcs.output.Trim()
+                if ($vcs.exitCode -eq 0 -and $infoRev -match '^\d+$') { $infoRev } else {
+                    $vcsFailed = $true
+                    $null
+                }
+            }
+            $diffArgs = if (-not [string]::IsNullOrWhiteSpace($svnRev)) { @("-r", $svnRev) } else { @() }
+            $vcs = Invoke-AiSopWorkflowVcs -Context $script:WorkflowVcsContext -Tool svn -Arguments @('diff';'--non-interactive';$diffArgs;$WorkspaceRoot) -AllowNonZero
+            $svnDiff = $vcs.lines
+            if ($vcs.exitCode -ne 0) {
                 $vcsFailed = $true
+                $details.Add("VCS_COMMAND_FAILED: diff exit=$($vcs.exitCode); $($vcs.stderr)")
             } elseif ($null -ne $svnDiff) {
                 $filteredSvnDiff = Filter-SvnDiffBlocks -DiffText ($svnDiff | Out-String)
                 if (-not [string]::IsNullOrWhiteSpace($filteredSvnDiff)) { $fullDiff += "`n" + $filteredSvnDiff }
             }
-            $svnStat = & svn status --non-interactive --ignore-externals $WorkspaceRoot 2>&1
+            $vcs = Invoke-AiSopWorkflowVcs -Context $script:WorkflowVcsContext -Tool svn -Arguments @('status';'--non-interactive';'--ignore-externals';$WorkspaceRoot)
+            $svnStat = $vcs.lines
             if ($null -ne $svnStat) {
                 foreach ($line in ($svnStat | Out-String -Stream)) {
                     $trimmed = $line.Trim()
@@ -2779,6 +2808,7 @@ function Get-SemanticRiskAssessment {
             }
         } catch {
             $vcsFailed = $true
+            $details.Add($_.Exception.Message)
         }
     }
     if ($isHybrid) {
@@ -3588,9 +3618,10 @@ function Get-CoveragePlaceholderWarnings {
                     if ($hasSvn -and (Test-IsSvnRevisionBaseline -Baseline $ev.sourceCommitSha)) {
                     $svnNum = $ev.sourceCommitSha -replace '^(?:rev|r)', ''
                     if ($svnNum -match '^\d+$') {
-                        $currentSvn = (& svn info --non-interactive --show-item revision $carrierWsRoot 2>&1 | Out-String).Trim()
-                        if ($LASTEXITCODE -ne 0 -or $currentSvn -notmatch '^\d+$') {
-                            $errors.Add("ERROR: svn info failed in SVN workspace '$carrierWsRoot' (exitCode=$LASTEXITCODE, output=$currentSvn). Corrupted SVN copy or unavailable VCS.")
+                        $vcs = Invoke-AiSopWorkflowVcs -Context $script:WorkflowVcsContext -Tool svn -Arguments @('info';'--non-interactive';'--show-item';'revision';$carrierWsRoot) -AllowNonZero
+                        $currentSvn = $vcs.output.Trim()
+                        if ($vcs.exitCode -ne 0 -or $currentSvn -notmatch '^\d+$') {
+                            $errors.Add("ERROR: svn info failed in SVN workspace '$carrierWsRoot' (exitCode=$($vcs.exitCode), output=$currentSvn). Corrupted SVN copy or unavailable VCS.")
                         } elseif ([long]$svnNum -ne [long]$currentSvn) {
                             $errors.Add("ERROR: executionEvidence sourceCommitSha '$($ev.sourceCommitSha)' does not match current SVN working revision ($currentSvn)")
                         } else {
@@ -3605,12 +3636,14 @@ function Get-CoveragePlaceholderWarnings {
                         $errors.Add("ERROR: executionEvidence sourceCommitSha '$($ev.sourceCommitSha)' is not a valid SVN revision in SVN workspace")
                     }
                     } elseif ($hasGit -and (Test-IsGitCommitBaseline -Baseline $ev.sourceCommitSha)) {
-                        $verifyRef = & git -C $carrierWsRoot rev-parse --verify --quiet "$($ev.sourceCommitSha)^{commit}" 2>&1
-                        if ($LASTEXITCODE -ne 0) {
+                        $vcs = Invoke-AiSopWorkflowVcs -Context $script:WorkflowVcsContext -Tool git -Arguments @('-C';$carrierWsRoot;'rev-parse';'--verify';'--quiet';"$($ev.sourceCommitSha)^{commit}") -AllowNonZero
+                        $verifyRef = $vcs.lines
+                        if ($vcs.exitCode -ne 0) {
                             $errors.Add("ERROR: executionEvidence sourceCommitSha '$($ev.sourceCommitSha)' does not exist in git repository history")
                         } else {
-                            $headSha = (& git -C $carrierWsRoot rev-parse HEAD 2>&1 | Out-String).Trim()
-                            if ($LASTEXITCODE -eq 0 -and -not [string]::IsNullOrWhiteSpace($headSha)) {
+                            $vcs = Invoke-AiSopWorkflowVcs -Context $script:WorkflowVcsContext -Tool git -Arguments @('-C';$carrierWsRoot;'rev-parse';'HEAD')
+                            $headSha = $vcs.output.Trim()
+                            if ($vcs.exitCode -eq 0 -and -not [string]::IsNullOrWhiteSpace($headSha)) {
                                 $isCleanHead = $headSha.Equals($ev.sourceCommitSha, [System.StringComparison]::OrdinalIgnoreCase) -or
                                                ($headSha.StartsWith($ev.sourceCommitSha, [System.StringComparison]::OrdinalIgnoreCase) -and $ev.sourceCommitSha.Length -ge 7)
                                 if (-not $isCleanHead) {
@@ -5678,8 +5711,10 @@ switch ($Operation) {
                 }
                 try {
                     $risk = Get-SemanticRiskAssessment -WorkspaceRoot $lightRoot -DeclaredTier $lightTask.tier -SpecDir $specDir -TaskId $TaskId
-                    if ($risk.HasHighRisk) { Write-Output "RISK_ADVISORY: $($risk.TriggersHit -join ', '); explicit task tier preserved." }
-                } catch { Write-Output 'RISK_ADVISORY: risk scan unavailable; inspect actual change scope.' }
+                    if ($null -eq $risk.HasHighRisk -or @($risk.TriggersHit | Where-Object { $_ -in @('TASK_SCOPE_UNAVAILABLE','TASK_DIFF_INCOMPLETE','VCS_ERROR','WORKSPACE_UNRESOLVED','HYBRID_PRODUCTION_VCS_UNSCANNED') }).Count) {
+                        Write-Output "RISK_ADVISORY: scope UNKNOWN ($($risk.TriggersHit -join ', ')); $($risk.Details -join '; '); explicit task tier preserved; inspect actual change scope."
+                    } elseif ($risk.HasHighRisk) { Write-Output "RISK_ADVISORY: $($risk.TriggersHit -join ', '); explicit task tier preserved." }
+                } catch { Write-Output "RISK_ADVISORY: scope UNKNOWN; $($_.Exception.Message); explicit task tier preserved; inspect actual change scope." }
                 foreach ($problem in $problems) { Write-Output "[X] $problem" }
                 Write-Output '[i] Task verification only; track and deliver changed files separately.'
                 if ($problems.Count) { Write-Output 'VERIFY_COMPLETION_FAIL'; exit 1 }
@@ -5900,26 +5935,36 @@ switch ($Operation) {
                 $hasSourceCodeChanges = $false
                 if (Test-Path -LiteralPath (Join-Path $wsRoot ".git")) {
                     try {
-                        $gitStat = & git -C $wsRoot status --porcelain -uall 2>&1
+                        $vcs = Invoke-AiSopWorkflowVcs -Context $script:WorkflowVcsContext -Tool git -Arguments @('-C';$wsRoot;'status';'--porcelain';'-uall')
+                        $gitStat = $vcs.lines
                         if ($gitStat -match '(?m)^\s*[MADRCU?]+\s+(src|pkg|internal|app)/') {
                             $hasSourceCodeChanges = $true
                         }
-                        $gitDiff = & git -C $wsRoot diff HEAD~1 2>&1
+                        $vcs = Invoke-AiSopWorkflowVcs -Context $script:WorkflowVcsContext -Tool git -Arguments @('-C';$wsRoot;'diff';'HEAD~1')
+                        $gitDiff = $vcs.lines
                         if ($gitDiff -match '(?m)^diff --git a/(src|pkg|internal|app)/') {
                             $hasSourceCodeChanges = $true
                         }
-                    } catch {}
+                    } catch {
+                        $failures.Add("VCS_SCOPE_UNAVAILABLE: $($_.Exception.Message)")
+                        $checks.Add("[X] 快通道变更范围未知: $($_.Exception.Message)")
+                    }
                 } elseif (Test-Path -LiteralPath (Join-Path $wsRoot ".svn")) {
                     try {
-                        $svnStat = & svn status --non-interactive --ignore-externals $wsRoot 2>&1
+                        $vcs = Invoke-AiSopWorkflowVcs -Context $script:WorkflowVcsContext -Tool svn -Arguments @('status';'--non-interactive';'--ignore-externals';$wsRoot)
+                        $svnStat = $vcs.lines
                         if ($svnStat -match '(?m)^[MAD?]\s+.*(src|pkg|internal|app)[/\\].*') {
                             $hasSourceCodeChanges = $true
                         }
-                        $svnDiff = & svn diff --non-interactive $wsRoot 2>&1
+                        $vcs = Invoke-AiSopWorkflowVcs -Context $script:WorkflowVcsContext -Tool svn -Arguments @('diff';'--non-interactive';$wsRoot)
+                        $svnDiff = $vcs.lines
                         if ($svnDiff -match '(?m)^Index:\s+.*(src|pkg|internal|app)[/\\].*') {
                             $hasSourceCodeChanges = $true
                         }
-                    } catch {}
+                    } catch {
+                        $failures.Add("VCS_SCOPE_UNAVAILABLE: $($_.Exception.Message)")
+                        $checks.Add("[X] 快通道变更范围未知: $($_.Exception.Message)")
+                    }
                 }
                 if ($hasSourceCodeChanges) {
                     $failures.Add("FAST_TRACK violation: production source code was modified under src/. Changes to source code require at least T2 tier.")
@@ -5967,9 +6012,11 @@ switch ($Operation) {
         $codeDirPrefixes = @("src/", "test/", "scripts/", "distribution/", "config/")
         
         if (-not $currentTask -and (Test-Path -LiteralPath (Join-Path $wsRoot ".svn") -PathType Container)) {
+            $vcsStatusUnavailable=$false
             try {
-                $svnOutput = & svn status --non-interactive --ignore-externals $wsRoot 2>&1
-                if ($LASTEXITCODE -eq 0) {
+                $vcs = Invoke-AiSopWorkflowVcs -Context $script:WorkflowVcsContext -Tool svn -Arguments @('status';'--non-interactive';'--ignore-externals';$wsRoot)
+                $svnOutput = $vcs.lines
+                if ($vcs.exitCode -eq 0) {
                     foreach ($line in $svnOutput) {
                         if ($line -match '^(\?|\!)\s+(.+)$') {
                             $flag = $Matches[1]
@@ -5990,17 +6037,23 @@ switch ($Operation) {
                         }
                     }
                 }
-            } catch {}
+            } catch {
+                $vcsStatusUnavailable=$true
+                $failures.Add("VCS_STATUS_UNAVAILABLE: $($_.Exception.Message)")
+                $checks.Add("[X] VCS 交付状态未知: $($_.Exception.Message)")
+            }
             if ($untrackedFiles.Count -gt 0) {
                 $failures.Add("VCS untracked/missing code files found: $($untrackedFiles -join ', ') -> AI 请在后台自动执行 svn add <files> / svn delete <files> 修复后重试 VerifyCompletion")
                 $checks.Add("[X] VCS 交付状态: SVN 存在未同步代码 ($($untrackedFiles.Count) 个文件未执行 svn add/delete)")
-            } else {
+            } elseif (-not $vcsStatusUnavailable) {
                 $checks.Add("[?] VCS 交付状态: SVN 工作副本 (准备 svn commit)")
             }
         } elseif (-not $currentTask -and (Test-Path -LiteralPath (Join-Path $wsRoot ".git") -PathType Container)) {
+            $vcsStatusUnavailable=$false
             try {
-                $gitOutput = & git -C $wsRoot status --porcelain -uall 2>&1
-                if ($LASTEXITCODE -eq 0) {
+                $vcs = Invoke-AiSopWorkflowVcs -Context $script:WorkflowVcsContext -Tool git -Arguments @('-C';$wsRoot;'status';'--porcelain';'-uall')
+                $gitOutput = $vcs.lines
+                if ($vcs.exitCode -eq 0) {
                     foreach ($line in $gitOutput) {
                         if ($line -match '^\?\?\s+(.+)$') {
                             $rawPath = $Matches[1].Trim()
@@ -6016,11 +6069,15 @@ switch ($Operation) {
                         }
                     }
                 }
-            } catch {}
+            } catch {
+                $vcsStatusUnavailable=$true
+                $failures.Add("VCS_STATUS_UNAVAILABLE: $($_.Exception.Message)")
+                $checks.Add("[X] VCS 交付状态未知: $($_.Exception.Message)")
+            }
             if ($untrackedFiles.Count -gt 0) {
                 $failures.Add("VCS untracked code files found: $($untrackedFiles -join ', ') -> AI 请在后台自动执行 git add <files> 修复后重试 VerifyCompletion")
                 $checks.Add("[X] VCS 交付状态: Git 存在未跟踪代码 ($($untrackedFiles.Count) 个文件未执行 git add)")
-            } else {
+            } elseif (-not $vcsStatusUnavailable) {
                 $checks.Add("[?] VCS 交付状态: Git 仓库 (人工确认 git commit / status)")
             }
         } elseif ($currentTask) {

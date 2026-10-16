@@ -225,13 +225,16 @@ function Start-AiSopHiddenProcess {
 # Bounded observation; each caller decides whether unknown metadata is fatal.
 # Never use a failed probe to satisfy a gate.
 function Invoke-AiSopMetadataProbe {
-    param([string]$FilePath, [string[]]$ArgumentList, [ValidateRange(1,60)][int]$TimeoutSeconds=10)
+    param([string]$FilePath, [string[]]$ArgumentList, [ValidateRange(1,600)][int]$TimeoutSeconds=10, [switch]$PreserveWhitespace)
     $outFile=[IO.Path]::GetTempFileName(); $errFile=[IO.Path]::GetTempFileName(); $child=$null
     try {
         $child=Start-AiSopHiddenProcess -FilePath $FilePath -ArgumentList $ArgumentList -RedirectStandardOutput $outFile -RedirectStandardError $errFile -TimeoutSeconds $TimeoutSeconds -CloseStandardInput -Environment @{LC_ALL='C';GIT_TERMINAL_PROMPT='0'} -PassThru
         $child.WaitForExit()
         $output=''; $errorOutput=''
-        if ($child.Cleanup.confirmed) { $output=[IO.File]::ReadAllText($outFile).Trim(); $errorOutput=[IO.File]::ReadAllText($errFile).Trim() }
+        if ($child.Cleanup.confirmed) {
+            $output=[IO.File]::ReadAllText($outFile); $errorOutput=[IO.File]::ReadAllText($errFile).Trim()
+            if (-not $PreserveWhitespace) { $output=$output.Trim() }
+        }
         return @{ exitCode=$child.ExitCode; output=$output; stderr=$errorOutput; diagnostic=$child.Diagnostic }
     } catch { return @{exitCode=-1; output=''; stderr=''; diagnostic="METADATA_PROBE_FAILED: $($_.Exception.Message)"} }
     finally {

@@ -2,6 +2,8 @@
 $ErrorActionPreference='Stop'
 $scripts=Split-Path -Parent $PSScriptRoot
 . (Join-Path $scripts 'task-context.ps1')
+. (Join-Path $scripts 'workflow-vcs.ps1')
+$script:WorkflowVcsContext=New-AiSopWorkflowVcsContext
 $root=Join-Path ([IO.Path]::GetTempPath()) ('sop-task-scope-' + [guid]::NewGuid().ToString('N'))
 $workspace=Join-Path $root 'workspace'
 $spec=Join-Path $workspace '.ai-workspace/specs/features/Example'
@@ -288,6 +290,13 @@ try {
         }
         # Older/light Starts may have no complete snapshot: unknown stays a
         # diagnostic and does not manufacture a baseline or force T3.
+        Task Run $id @{Kind='compile';Executable='pwsh';Arguments=@('-NoProfile','-Command','exit 0')} | Out-Null
+        if ($tier -eq 'T2') {
+            Task Run $id @{Kind='test';Executable='pwsh';Arguments=@('-NoProfile','-File','tests/check.ps1')} | Out-Null
+            Task RecordSync $id @{Documentation='UNCHANGED';Tests='UNCHANGED';Summary='Fixture checks existing behavior with the current unit command.'} | Out-Null
+        }
+        $lightTask=Read-AiSopTask $spec $id
+        $protected[$taskPath]=[IO.File]::ReadAllText($taskPath)
         $lightTask.startInputs.status='UNAVAILABLE'; $lightTask.startInputs.Remove('inputsRef'); $lightTask.startInputs.Remove('inputDigest'); $lightTask.startInputs.reason='bounded capture fixture'
         $unknownRaw=ConvertTo-AiSopWorkflowCanonicalJson $lightTask
         [IO.File]::WriteAllText($taskPath,$unknownRaw)
@@ -295,6 +304,9 @@ try {
             $unknown=& $stateEntry -Operation AssessRisk -Path $spec -TaskId $id | ConvertFrom-Json
             Assert ($unknown.scopeStatus -eq 'UNAVAILABLE' -and $unknown.taskId -ceq $id -and $unknown.declaredTier -ceq $tier) 'Missing light Start lost diagnostic identity'
             Assert ($null -eq $unknown.changeSetDigest -and $null -eq $unknown.minRequiredTier -and $null -eq $unknown.hasHighRisk -and 'TASK_SCOPE_UNAVAILABLE' -in $unknown.triggersHit) 'Unknown light scope invented a verdict or forced escalation'
+            $completion=& $stateEntry -Operation VerifyCompletion -Path (Join-Path $spec '00_workflow_state.json') -TaskId $id | Out-String
+            Assert ($LASTEXITCODE -eq 0 -and $completion -match 'VERIFY_COMPLETION_PASS') "Unknown risk blocked valid $tier completion: $completion"
+            Assert ($completion -match 'RISK_ADVISORY: scope UNKNOWN.*TASK_SCOPE_UNAVAILABLE' -and $completion -match 'explicit task tier preserved') 'Unknown light risk was silently omitted from completion'
             Assert ([IO.File]::ReadAllText($taskPath) -ceq $unknownRaw) 'Unknown light scope rewrote the task'
         } finally { [IO.File]::WriteAllText($taskPath,$protected[$taskPath]) }
         [IO.File]::Delete((Join-Path $workspace 'src/CurrentRouter.java'))

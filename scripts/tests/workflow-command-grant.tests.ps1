@@ -975,48 +975,55 @@ try {
             $activeIndexJson |
                 Test-Json -SchemaFile $GrantSchema
         ) "Exact-intent active index fixture is schema-invalid."
-        [System.IO.File]::WriteAllText(
-            $activeIndexPath,
-            $activeIndexJson,
-            [System.Text.UTF8Encoding]::new($false)
+        # Wall-clock sampling is sensitive to scheduling/IO noise on the host.
+        # Rebuild the SAME active-expired index for every sample, so later
+        # samples cannot benefit from already-pruned state. Each must preserve
+        # all functional assertions; only the latency uses a median of three.
+        $findTimes=@()
+        foreach ($sample in 1..3) {
+            [System.IO.File]::WriteAllText(
+                $activeIndexPath,
+                $activeIndexJson,
+                [System.Text.UTF8Encoding]::new($false)
+            )
+            $stopwatch = [System.Diagnostics.Stopwatch]::StartNew()
+            $boundedFind = Find-Grant `
+                -Workspace $workspace `
+                -GrantOperation Claim `
+                -Feature $feature `
+                -Workflow SUPERPOWERS `
+                -Agent CURSOR `
+                -OwnerId "fixture-owner-0001" `
+                -AcceptedAt $t0.AddSeconds(2)
+            $stopwatch.Stop(); $findTimes += $stopwatch.ElapsedMilliseconds
+            Assert-Equal $boundedFind.Record.grantId $firstGrant.Record.grantId (
+                "Intent-indexed Find returned the wrong grant at $targetCount history."
+            )
+            $prunedIndexRaw = [System.IO.File]::ReadAllText($activeIndexPath)
+            Assert-True (
+                $prunedIndexRaw | Test-Json -SchemaFile $GrantSchema
+            ) "Pruned exact-intent active index is schema-invalid."
+            $prunedIndex = ConvertFrom-AiSopWorkflowJson `
+                -Json $prunedIndexRaw `
+                -AsHashtable
+            Assert-Equal @(
+                $prunedIndex.entries |
+                    Where-Object { $_.active }
+            ).Count 1 (
+                "Find did not prune $targetCount expired exact-intent entries in one write."
+            )
+            Assert-Equal @(
+                $prunedIndex.entries |
+                    Where-Object { $_.active }
+            )[0].grantId (
+                [string]$firstGrant.Record.grantId
+            ) "Find pruned the live exact-intent candidate."
+        }
+        $medianFindMs=@($findTimes | Sort-Object)[1]
+        Assert-True ($medianFindMs -lt 750) (
+            "Intent-indexed Find median exceeded 750ms at $targetCount exact-intent " +
+            "active-expired entries: median=$medianFindMs ms; samples=$($findTimes -join ',') ms."
         )
-        $stopwatch = [System.Diagnostics.Stopwatch]::StartNew()
-        $boundedFind = Find-Grant `
-            -Workspace $workspace `
-            -GrantOperation Claim `
-            -Feature $feature `
-            -Workflow SUPERPOWERS `
-            -Agent CURSOR `
-            -OwnerId "fixture-owner-0001" `
-            -AcceptedAt $t0.AddSeconds(2)
-        $stopwatch.Stop()
-        Assert-Equal $boundedFind.Record.grantId $firstGrant.Record.grantId (
-            "Intent-indexed Find returned the wrong grant at $targetCount history."
-        )
-        Assert-True ($stopwatch.ElapsedMilliseconds -lt 750) (
-            "Intent-indexed Find exceeded 750ms at $targetCount exact-intent " +
-            "active-expired entries: " +
-            "$($stopwatch.ElapsedMilliseconds)ms."
-        )
-        $prunedIndexRaw = [System.IO.File]::ReadAllText($activeIndexPath)
-        Assert-True (
-            $prunedIndexRaw | Test-Json -SchemaFile $GrantSchema
-        ) "Pruned exact-intent active index is schema-invalid."
-        $prunedIndex = ConvertFrom-AiSopWorkflowJson `
-            -Json $prunedIndexRaw `
-            -AsHashtable
-        Assert-Equal @(
-            $prunedIndex.entries |
-                Where-Object { $_.active }
-        ).Count 1 (
-            "Find did not prune $targetCount expired exact-intent entries in one write."
-        )
-        Assert-Equal @(
-            $prunedIndex.entries |
-                Where-Object { $_.active }
-        )[0].grantId (
-            [string]$firstGrant.Record.grantId
-        ) "Find pruned the live exact-intent candidate."
     }
 
     $validIndex = [System.IO.File]::ReadAllText($activeIndexPath)

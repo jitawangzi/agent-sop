@@ -810,6 +810,7 @@ function Invoke-OwnerValidate11 {
         ) {
             throw "WORKFLOW_OWNER_SESSION_MISMATCH"
         }
+        if ($ResolvedSpecDirectory) { Assert-AiSopNoOtherActiveTask $ResolvedSpecDirectory ([string]$lockedOwner.taskId) }
         $transactionId = "validate-$([guid]::NewGuid().ToString('N'))"
         $grantAfter = New-AiSopWorkflowCommandGrantAfterConsume `
             -Grant $lockedGrant `
@@ -1441,10 +1442,7 @@ switch ($Operation) {
         if (-not $skipVerify -and $Operation -eq "Complete") {
             $stateScript = Join-Path $PSScriptRoot "workflow-state.ps1"
             if (Test-Path -LiteralPath $stateScript -PathType Leaf) {
-                $workflowStatePath = Join-Path $ResolvedSpecDirectory "00_workflow_state.json"
-                if (-not (Test-Path -LiteralPath $workflowStatePath -PathType Leaf)) {
-                    $workflowStatePath = Join-Path $ResolvedSpecDirectory "workflow-state.json"
-                }
+                $workflowStatePath = Resolve-AiSopTaskWorkflowStatePath $ResolvedSpecDirectory
                 $verifyArgs = @{}
                 if ($TaskId) { $verifyArgs.TaskId = $TaskId }
                 $verifyOutput = & $stateScript -Operation VerifyCompletion -Path $workflowStatePath @verifyArgs 2>&1
@@ -1645,12 +1643,12 @@ $transactionOperation = switch ($Operation) {
 }
 if ($TaskId) { $WorkflowDeadlineUtc = [DateTimeOffset]::UtcNow.AddMilliseconds($ownerDeadlineMs) }
 if ($null -ne $DeadlineUtc -and $DeadlineUtc -lt $WorkflowDeadlineUtc) { $WorkflowDeadlineUtc = [DateTimeOffset]$DeadlineUtc }
-$claimLocks=$null
+$authorityLocks=$null
 try {
-    if ($Operation -eq 'Claim') {
+    if ($Operation -in @('Claim','BindSession','RebindSession','Transfer')) {
         Invoke-AiSopWorkflowTransactionRecovery -DeadlineUtc $WorkflowDeadlineUtc -WorkspacePath $ownerWs | Out-Null
-        $claimLocks=Enter-AiSopWorkflowTransactionLocks -SessionKeys $sessionKeys -OwnerPath $OwnerPath -Targets $targets -DeadlineUtc $WorkflowDeadlineUtc -WorkspacePath $ownerWs
-        Assert-AiSopNoOtherActiveTask $ResolvedSpecDirectory $TaskId
+        $authorityLocks=Enter-AiSopWorkflowTransactionLocks -SessionKeys $sessionKeys -OwnerPath $OwnerPath -Targets $targets -DeadlineUtc $WorkflowDeadlineUtc -WorkspacePath $ownerWs
+        if ($ResolvedSpecDirectory) { Assert-AiSopNoOtherActiveTask $ResolvedSpecDirectory ([string]$ownerAfter.taskId) }
     }
     Invoke-AiSopWorkflowTransaction `
         -Operation $transactionOperation `
@@ -1661,10 +1659,10 @@ try {
         -TransactionId $transactionId `
         -DeadlineUtc $WorkflowDeadlineUtc `
         -WorkspacePath $ownerWs `
-        -LocksAlreadyHeld:($null -ne $claimLocks) |
+        -LocksAlreadyHeld:($null -ne $authorityLocks) |
         Out-Null
 } finally {
-    if ($claimLocks) { Exit-AiSopWorkflowLocks $claimLocks.Locks }
+    if ($authorityLocks) { Exit-AiSopWorkflowLocks $authorityLocks.Locks }
 }
 
 if ($Operation -eq 'Cancel' -and $TaskId) { Write-AiSopCancelledFollowUpReminder $ResolvedSpecDirectory $TaskId }

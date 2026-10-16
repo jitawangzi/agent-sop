@@ -64,12 +64,18 @@ function Read-AiSopJUnitEvidence {
             if ($doc.DocumentElement.LocalName -notin @('testsuite','testsuites')) { throw 'expected testsuite or testsuites' }
         } catch { throw "JUNIT_REPORT_INVALID:${relative}:$($_.Exception.Message)" } finally { if ($reader) { $reader.Dispose() } }
         $failed=0; $skipped=0; $count=0
+        $summaries=@()
         foreach ($suite in $doc.SelectNodes("//*[local-name()='testsuite' or local-name()='testsuites']")) {
-            foreach ($key in @('failures','errors')) {
+            $declared=@{}
+            foreach ($key in @('tests','failures','errors','skipped')) {
+                if (-not $suite.HasAttribute($key)) { continue }
                 $number=$suite.GetAttribute($key)
-                if ($number -and $number -notmatch '^\d+$') { throw "JUNIT_REPORT_INVALID:${relative}:invalid $key" }
-                if ($number -and [long]$number -gt 0) { $anyFailed=$true }
+                $parsed=0L
+                if ($number -notmatch '^[0-9]+$' -or -not [long]::TryParse($number,[ref]$parsed)) { throw "JUNIT_REPORT_INVALID:${relative}:invalid $key" }
+                $declared[$key]=$parsed
+                if ($key -in @('failures','errors') -and $parsed -gt 0) { $anyFailed=$true }
             }
+            $summaries+=@{suite=$suite;declared=$declared}
         }
         foreach ($test in $doc.SelectNodes("//*[local-name()='testcase']")) {
             $count++
@@ -80,6 +86,23 @@ function Read-AiSopJUnitEvidence {
             $key=ConvertTo-AiSopWorkflowCanonicalJson @($test.GetAttribute('classname'),$test.GetAttribute('name'))
             $passed=-not $hasFailure -and -not $hasSkip
             if ($observed.ContainsKey($key)) { $observed[$key]=$observed[$key] -and $passed } else { $observed[$key]=$passed }
+        }
+        # Suite totals describe descendant cases, including nested suites. Never
+        # sum parent and child totals into report counts. Missing totals are OK;
+        # supplied totals must agree before a report can become PASSED evidence.
+        if (-not $anyFailed) {
+            foreach ($summary in $summaries) {
+                $cases=@($summary.suite.SelectNodes(".//*[local-name()='testcase']"))
+                $actual=@{tests=$cases.Count;failures=0;errors=0;skipped=0}
+                foreach ($case in $cases) {
+                    if ($null -ne $case.SelectSingleNode("*[local-name()='skipped']") -or $case.GetAttribute('status') -in @('disabled','skipped','notrun')) { $actual.skipped++ }
+                }
+                foreach ($key in $summary.declared.Keys) {
+                    if ($summary.declared[$key] -ne $actual[$key]) {
+                        throw "JUNIT_REPORT_INVALID:${relative}:summary $key=$($summary.declared[$key]) disagrees with testcase details ($($actual[$key]))"
+                    }
+                }
+            }
         }
         if ((Get-AiSopJUnitFileIdentity $path) -cne $identity) { throw "JUNIT_REPORT_CHANGED_DURING_READ:$relative" }
         $reports+=@{ path=$relative; sha256=$identity.Split(':')[0]; testCount=$count; failed=$failed; skipped=$skipped }

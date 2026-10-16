@@ -67,6 +67,19 @@ try {
     $stateEntry=Join-Path $scripts 'workflow-state.ps1'
     $risk=& $stateEntry -Operation AssessRisk -Path $spec -TaskId one | ConvertFrom-Json
     Assert ($risk.changeSetDigest -ceq $actualDigest -and $risk.baseline -ceq $task.baseline.revision) 'Risk assessment mixed task/feature digests'
+    $baselinePath=Join-Path $workspace ('.ai-workspace/specs/.artifacts/inputs/' + $task.baseline.inputsRef + '.json')
+    $baselineRaw=[IO.File]::ReadAllText($baselinePath)
+    $taskBeforeRisk=[IO.File]::ReadAllText((Get-AiSopTaskPath $spec one))
+    $ownerBeforeRisk=[IO.File]::ReadAllText((Join-Path $env:AI_SOP_OWNER_REGISTRY 'example.json'))
+    try {
+        foreach ($fault in @('MISSING','CORRUPT')) {
+            if ($fault -eq 'MISSING') { [IO.File]::Delete($baselinePath) } else { [IO.File]::WriteAllText($baselinePath,'{}') }
+            $diagnosis=& $stateEntry -Operation AssessRisk -Path $spec -TaskId one | ConvertFrom-Json
+            Assert ($LASTEXITCODE -eq 0 -and 'TASK_SCOPE_UNAVAILABLE' -in $diagnosis.triggersHit -and $diagnosis.hasHighRisk -and $diagnosis.minRequiredTier -eq 'T3') 'Unavailable task scope did not return structured conservative risk'
+            Assert ($null -eq $diagnosis.changeSetDigest -and ($diagnosis.details -join ';') -match "INPUT_MANIFEST_$fault") 'Risk diagnosis lost the actual baseline failure or invented a digest'
+        }
+    } finally { [IO.File]::WriteAllText($baselinePath,$baselineRaw) }
+    Assert ([IO.File]::ReadAllText((Get-AiSopTaskPath $spec one)) -ceq $taskBeforeRisk -and [IO.File]::ReadAllText((Join-Path $env:AI_SOP_OWNER_REGISTRY 'example.json')) -ceq $ownerBeforeRisk) 'Risk diagnosis mutated task or owner state'
     & $stateEntry -Operation ValidateChangeImpact -Path $impactPath -TaskId one | Out-Null
     Assert ($LASTEXITCODE -eq 0) 'Task impact rejected after content-stable commit'
     Assert ($reviewed.impactReview.hashAlgorithm -eq 'sha256-text-lf-v1') 'New review omitted its hash algorithm'
@@ -121,6 +134,19 @@ try {
     Assert ($LASTEXITCODE -eq 0) 'Unrelated planned case blocked task coverage'
     Assert ($coverageOutput -match 'mode=TASK checkedCases=1 totalCases=2') 'Coverage did not explain the selected task scope'
     Assert ((Read-AiSopTask $spec one).requiredCaseIds.Count -eq 1) 'Coverage validation widened task execution scope'
+    # Verify and Complete must select the same legacy approval file. Other T3
+    # review requirements may still fail; neither entry may claim it is absent.
+    $preferredState=Join-Path $spec '00_workflow_state.json'; $legacyState=Join-Path $spec 'workflow-state.json'
+    [IO.File]::Copy($preferredState,$legacyState)
+    Assert ((Resolve-AiSopTaskWorkflowStatePath $spec) -ceq (Resolve-PhysicalPathIdentity $preferredState)) 'Preferred approval file lost precedence'
+    [IO.File]::Delete($preferredState)
+    try {
+        foreach ($operation in @('Verify','Complete')) {
+            $diagnostic=& pwsh -NoProfile -File $entry -Operation $operation -WorkspacePath $workspace -Feature Example -TaskId one -Agent CODEX 2>&1 | Out-String
+            Assert ($diagnostic -notmatch 'workflow-state.json missing|T3 feature requires workflow-state') "$operation ignored existing legacy approval file: $diagnostic"
+            Assert ($diagnostic -match '07_design_review|08_review|design review|review') "$operation failed for an unexpected reason: $diagnostic"
+        }
+    } finally { [IO.File]::Move($legacyState,$preferredState) }
     & {
         $tokens=$null; $parseErrors=$null
         $ast=[Management.Automation.Language.Parser]::ParseFile($stateEntry,[ref]$tokens,[ref]$parseErrors)

@@ -33,7 +33,7 @@ T3 Start 固定任务的修改前内容清单，长期功能批准基线独立�
 
 T3 用 `SetCaseScope` 显式登记本任务 requiredCaseIds 和理由，包含影响分析声明的回归用例；规格变更后重新核对。必测用例的载体、断言和本任务执行证据必须有效，不强制执行整个功能的其他用例；整体规格批准及覆盖定义仍检查。覆盖辅助函数显式接收 TaskId，输出实际检查范围；T1/T2 空范围不能声称用例已检查，T3 空范围继续报 TASK_CASE_SCOPE_REQUIRED。独立新任务另取基线与范围；ChangeTier/SetBaseline 只复用当前任务 Start 已登记的引用，Run 清单或口述理由不能证明修改前来源。缺起点时拒绝升级并保留原档位。旧 T3 source=START 保持兼容，旧 ADOPTED 无来源证明则明确诊断，不能判为无差异；历史 DONE 不迁移。任务必须先 Start 再改动；该机制不防御同权限主体直接篡改引擎或任务记录。
 
-可选 JUnit XML 映射核对本次报告的 classname/name、成功状态及文件更新，CaseIds 从报告派生；缺失、陈旧、跳过或失败的映射不能通过。它不替代测试语义审查，也不对同权限恶意进程提供防伪保证。T1/T2 不新增此项必做流程。
+可选 JUnit XML 映射核对本次报告的 classname/name、成功状态及文件更新，CaseIds 从报告派生；缺失、陈旧、跳过或失败的映射不能通过。提供的 tests/failures/errors/skipped 汇总须为非负整数，成功证据的汇总须与 testcase 明细一致；嵌套 suite 按后代明细核对，报告计数不重复累加父子汇总。映射外的跳过用例不阻止已映射用例通过。它不替代测试语义审查，也不对同权限恶意进程提供防伪保证。T1/T2 不新增此项必做流程。
 
 T1/T2 的执行入口不计算规格摘要，轻量 Verify 的风险扫描失败仅提示，不让历史规格损坏间接升级成完成门禁。T3 测试仍读取并绑定需求、设计和测试定义。
 
@@ -47,7 +47,7 @@ T1/T2 的执行入口不计算规格摘要，轻量 Verify 的风险扫描失败
 
 暂停释放的是执行占用，不是验收义务；本次 T2 DONE 不能替原 T3 宣告功能整体完成。独立后续任务不继承旧测试欠账，实际依赖与代码重叠仍需先辨明。
 
-Claim（包括 Start 和 PAUSED Resume）在 Session → Owner → Grant 锁内检查同功能其他 ACTIVE task.json，随后以原两阶段事务提交，避免本地注册表丢失时误建第二个活动任务。PAUSED、DONE、CANCELLED 不挡新任务；恢复旧任务无需补完旧完成门禁。检查只针对本地已同步状态，不保证其他机器未同步的并行写入安全。
+Claim（包括 Start 和 PAUSED Resume）、BindSession、RebindSession、Transfer（包括旧 owner 收编）以及 Schema 1.1 Validate 在 Session → Owner → Grant 锁内检查同功能其他 ACTIVE task.json，随后以原两阶段事务提交，避免本地注册表丢失或旧 owner 收编时误建第二个活动任务。同会话 Resume 的 Validate 使用锁内读取的 owner.taskId 排除自身。PAUSED、DONE、CANCELLED 不挡新任务；Suspend、Cancel、Recover 不增加此项前置检查，恢复旧任务无需补完旧完成门禁。检查只针对本地已同步状态，不保证其他机器未同步的并行写入安全。
 
 ChangeTier 是人工调整交付要求的显式操作，需要原话和原因；不清除失败证据，不重置任务身份。Status 始终显示最新失败批次，包括 T1 不强制要求的测试，避免把“按 T1 完成”写成“全部测试通过”。
 

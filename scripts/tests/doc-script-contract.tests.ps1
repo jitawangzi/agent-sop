@@ -78,9 +78,18 @@ function Get-DocCommands {
 function Get-TaskDocCommands {
     param([string]$Content, [ValidateSet('Task','Inputs','Preflight')][string]$Action='Task')
     $directScript=@{Task='workflow-task';Inputs='inspect-inputs';Preflight='preflight'}[$Action]
-    foreach ($block in [regex]::Matches($Content, '(?ms)^[ \t]*```powershell[^\r\n]*\r?\n(.*?)^[ \t]*```[ \t]*$')) {
+    $snippets=[Collections.Generic.List[string]]::new()
+    $fences='(?ms)^[ \t]*```([^\r\n]*)\r?\n(.*?)^[ \t]*```[ \t]*$'
+    foreach ($block in [regex]::Matches($Content,$fences)) {
+        if ($block.Groups[1].Value.Trim() -eq 'powershell') { $snippets.Add($block.Groups[2].Value) }
+    }
+    # Remove fenced content before parsing inline spans: PowerShell continuation
+    # backticks are syntax inside a fence, not Markdown inline delimiters.
+    $inline=[regex]::Replace($Content,$fences,'')
+    foreach ($span in [regex]::Matches($inline,'(?<!`)(`+)(?!`)([^\r\n]*?)(?<!`)\1(?!`)')) { $snippets.Add($span.Groups[2].Value) }
+    foreach ($snippet in $snippets) {
         $tokens=$null; $errors=$null
-        $ast=[Management.Automation.Language.Parser]::ParseInput($block.Groups[1].Value,[ref]$tokens,[ref]$errors)
+        $ast=[Management.Automation.Language.Parser]::ParseInput($snippet,[ref]$tokens,[ref]$errors)
         foreach ($command in $ast.FindAll({param($node) $node -is [Management.Automation.Language.CommandAst]},$true)) {
             $elements=@($command.CommandElements)
             $script=@($elements | Where-Object { $_ -is [Management.Automation.Language.StringConstantExpressionAst] -and $_.Value -match "(^|[/\\])(ai-sop|$directScript)\.ps1$" } | Select-Object -First 1)
@@ -120,6 +129,19 @@ function Get-TaskDocProblems {
         $value=$Command.parameters[$name]
         if ($null -ne $value -and $value -notmatch '<[^>]+>' -and $TaskContract[$name].Count -and $value -notin $TaskContract[$name]) { "Invalid Task ${name}: $value" }
     }
+}
+
+function Get-TaskForwardingProblems {
+    param([string]$Entry, [hashtable]$Arguments)
+    # The isolated engine only echoes received parameters; no task is started.
+    $received=& $Entry Task @Arguments | ConvertFrom-Json -AsHashtable
+    if ($LASTEXITCODE -ne 0) { throw "Root forwarding probe failed: $LASTEXITCODE" }
+    $expected=@{WorkspacePath=(Split-Path -Parent $Entry)}
+    foreach ($key in $Arguments.Keys) { $expected[$key]=$Arguments[$key] }
+    foreach ($key in $expected.Keys) {
+        if (-not $received.ContainsKey($key) -or (ConvertTo-Json -InputObject $received[$key] -Compress) -cne (ConvertTo-Json -InputObject $expected[$key] -Compress)) { "Forwarding mismatch: $key" }
+    }
+    foreach ($key in $received.Keys) { if (-not $expected.ContainsKey($key)) { "Unexpected forwarded parameter: $key" } }
 }
 
 $failures = [System.Collections.Generic.List[string]]::new()
@@ -217,6 +239,55 @@ try {
     Assert-Contract 'Task example parser must find multiline calls' ($badExamples.Count -eq 1)
     $badProblems=@(Get-TaskDocProblems $badExamples[0] $taskContract $rootContract)
     Assert-Contract 'Task example validation must reject invalid operation and trailing parameter' ($badProblems.Count -eq 2)
+    $inlineExamples=@(Get-TaskDocCommands @'
+Use `./ai-sop.ps1 Task -Operation Imaginary -MissingSwitch value` or ``./.ai-sop/scripts/workflow-task.ps1 -Operation RetryEvidence -RunId run-1``.
+'@)
+    Assert-Contract 'Inline parser finds root and direct commands' ($inlineExamples.Count -eq 2)
+    Assert-Contract 'Inline invalid operation and parameter are rejected' (@(Get-TaskDocProblems $inlineExamples[0] $taskContract $rootContract).Count -eq 2)
+    Assert-Contract 'Inline valid command is accepted' (@(Get-TaskDocProblems $inlineExamples[1] $taskContract $rootContract).Count -eq 0)
+
+    $fixture=Join-Path ([IO.Path]::GetTempPath()) ('sop-contract-forwarding-' + [guid]::NewGuid().ToString('N'))
+    try {
+        $stubDirectory=Join-Path $fixture '.ai-sop/scripts'
+        [IO.Directory]::CreateDirectory($stubDirectory) | Out-Null
+        $rootSource=Join-Path $SopRoot 'distribution/templates/root/ai-sop.ps1'
+        $fixtureEntry=Join-Path $fixture 'ai-sop.ps1'
+        Copy-Item -LiteralPath $rootSource -Destination $fixtureEntry
+        $tokens=$null; $errors=$null
+        $rootAst=[Management.Automation.Language.Parser]::ParseFile($rootSource,[ref]$tokens,[ref]$errors)
+        $arguments=@{}; $declarations=@('[string]$WorkspacePath')
+        foreach ($parameter in $rootAst.ParamBlock.Parameters) {
+            $name=$parameter.Name.VariablePath.UserPath
+            if (-not $taskContract.ContainsKey($name)) { continue }
+            $declarations+='[{0}]${1}' -f $parameter.StaticType.FullName,$name
+            $arguments[$name]=if ($parameter.StaticType -eq [switch]) { $true }
+                elseif ($parameter.StaticType -eq [string[]]) { @('first value','quote";literal$token') }
+                elseif ($parameter.StaticType -eq [int]) { 37 }
+                elseif ($name -eq 'Operation') { 'RetryEvidence' }
+                elseif ($rootContract[$name].Count) { $rootContract[$name][0] }
+                else { 'value-' + $name }
+        }
+        $stub='param(' + ($declarations -join ',') + ')' + [Environment]::NewLine + @'
+$captured=@{}
+foreach ($key in $PSBoundParameters.Keys) {
+    $value=$PSBoundParameters[$key]
+    $captured[$key]=if ($value -is [switch]) { $value.IsPresent } else { $value }
+}
+$captured | ConvertTo-Json -Depth 5
+exit 0
+'@
+        [IO.File]::WriteAllText((Join-Path $stubDirectory 'workflow-task.ps1'),$stub)
+        $forwardingProblems=@(Get-TaskForwardingProblems $fixtureEntry $arguments)
+        Assert-Contract 'Root forwards every shared Task parameter with its actual value' ($forwardingProblems.Count -eq 0) ($forwardingProblems -join '; ')
+        $mutated=[IO.File]::ReadAllText($fixtureEntry).Replace("'ConfirmTakeover','RunId','Reason'","'ConfirmTakeover','Reason'")
+        [IO.File]::WriteAllText($fixtureEntry,$mutated)
+        $negative=@(Get-TaskForwardingProblems $fixtureEntry $arguments)
+        Assert-Contract 'Forwarding probe detects a missing RunId even with intact ParamBlocks' ($negative.Count -eq 1 -and $negative[0] -eq 'Forwarding mismatch: RunId')
+    } finally {
+        $resolved=[IO.Path]::GetFullPath($fixture)
+        $temp=[IO.Path]::GetFullPath([IO.Path]::GetTempPath()).TrimEnd('\','/')+[IO.Path]::DirectorySeparatorChar
+        if ($resolved.StartsWith($temp,[StringComparison]::OrdinalIgnoreCase) -and (Split-Path -Leaf $resolved) -like 'sop-contract-forwarding-*') { Remove-Item -LiteralPath $resolved -Recurse -Force -ErrorAction SilentlyContinue }
+    }
 
     foreach ($action in @('Inputs','Preflight')) {
         $scriptName=if ($action -eq 'Inputs') { 'inspect-inputs.ps1' } else { 'preflight.ps1' }

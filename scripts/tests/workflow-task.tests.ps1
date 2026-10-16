@@ -154,11 +154,47 @@ try {
     $legacySpec = Join-Path $workspace '.ai-workspace/specs/features/Legacy'
     [IO.Directory]::CreateDirectory($legacySpec) | Out-Null
     & (Join-Path $scripts 'workflow-owner.ps1') -Operation Claim -SpecDirectory $legacySpec -Feature Legacy -Agent CODEX -Workflow SUPERPOWERS -OwnerId legacy-owner -Tier T2 | Out-Null
+    # A synced task can arrive after local legacy ownership was established.
+    # Adoption must not create a second ACTIVE task or consume ownership.
+    $imported=Read-AiSopTask $spec 'fix-e'
+    $imported.feature='Legacy'; $imported.taskId='imported'; $imported.ownerId='task-imported'; $imported.status='ACTIVE'
+    $importedPath=Get-AiSopTaskPath $legacySpec 'imported'
+    [IO.Directory]::CreateDirectory((Split-Path -Parent $importedPath)) | Out-Null
+    [IO.File]::WriteAllText($importedPath,(ConvertTo-AiSopWorkflowCanonicalJson $imported))
+    $legacyOwnerPath=Join-Path $env:AI_SOP_OWNER_REGISTRY 'legacy.json'
+    $legacyBefore=[IO.File]::ReadAllText($legacyOwnerPath)
+    function Assert-LegacyResumeConflict {
+        param([switch]$ConfirmTakeover)
+        $failure=''
+        try { & $entry -Operation Resume -WorkspacePath $workspace -Feature Legacy -Agent CODEX -ConfirmTakeover:$ConfirmTakeover | Out-Null }
+        catch { $failure=$_.Exception.Message }
+        Assert ($failure -match 'TASK_ACTIVE_CONFLICT:imported') "Expected active sibling diagnostic; got $failure"
+    }
+    Assert-LegacyResumeConflict
+    Assert ([IO.File]::ReadAllText($legacyOwnerPath) -ceq $legacyBefore) 'Rejected adoption changed ownership'
+    Assert (@(Get-ChildItem -LiteralPath (Join-Path $legacySpec 'tasks') -Filter task.json -Recurse).Count -eq 1) 'Rejected adoption created a task'
+    $imported.status='PAUSED'
+    [IO.File]::WriteAllText($importedPath,(ConvertTo-AiSopWorkflowCanonicalJson $imported))
     & $entry -Operation Resume -WorkspacePath $workspace -Feature Legacy -Agent CODEX | Out-Null
     $legacyOwner = Get-Content -LiteralPath (Join-Path $env:AI_SOP_OWNER_REGISTRY 'legacy.json') -Raw | ConvertFrom-Json
     $adopted = Read-AiSopTask $legacySpec $legacyOwner.taskId
     Assert ($adopted.ownerId -eq 'legacy-owner' -and $adopted.tier -eq 'T2') 'Legacy adoption reset identity or tier'
+    $imported.status='ACTIVE'
+    [IO.File]::WriteAllText($importedPath,(ConvertTo-AiSopWorkflowCanonicalJson $imported))
+    Assert-LegacyResumeConflict # Same live session uses Validate.
+    $env:CODEX_SESSION_ID='conflicting-transfer-session'
+    Assert-LegacyResumeConflict -ConfirmTakeover
+    $env:CODEX_SESSION_ID='task-session-d'
+    $boundSessionPath=Join-Path $env:AI_SOP_SESSION_REGISTRY ($legacyOwner.sessionBinding.sessionKey + '.json')
+    $boundSessionRaw=[IO.File]::ReadAllText($boundSessionPath)
+    try {
+        $expiredSession=ConvertFrom-AiSopWorkflowJson $boundSessionRaw -AsHashtable
+        $expiredSession.expiresAt=[DateTimeOffset]::UtcNow.AddSeconds(-1).ToString('o')
+        [IO.File]::WriteAllText($boundSessionPath,(ConvertTo-AiSopWorkflowCanonicalJson $expiredSession))
+        Assert-LegacyResumeConflict # An expired same-session binding uses RebindSession.
+    } finally { [IO.File]::WriteAllText($boundSessionPath,$boundSessionRaw) }
     & $entry -Operation Suspend -WorkspacePath $workspace -Feature Legacy -Agent CODEX | Out-Null
+    Assert ((Read-AiSopTask $legacySpec $adopted.taskId).status -eq 'PAUSED') 'Conflict blocked cleanup by Suspend'
 
     # A partial PREPARED transaction restores both ownership and task state;
     # a durable COMMITTED journal finishes applying both, with the usual locks.

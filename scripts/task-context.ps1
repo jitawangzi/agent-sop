@@ -9,6 +9,16 @@
 . (Join-Path $PSScriptRoot 'junit-evidence.ps1')
 . (Join-Path $PSScriptRoot 'task-recovery.ps1')
 
+function Resolve-AiSopTaskWorkflowStatePath {
+    param([string]$SpecDirectory)
+    $root = Resolve-PhysicalPathIdentity $SpecDirectory
+    foreach ($name in @('00_workflow_state.json', 'workflow-state.json')) {
+        $path = Resolve-PhysicalPathIdentity (Join-Path $root $name)
+        if ([IO.File]::Exists($path)) { return $path }
+    }
+    return Join-Path $root '00_workflow_state.json'
+}
+
 function Get-AiSopTaskPath {
     param([string]$SpecDirectory, [string]$TaskId)
     if ($TaskId -notmatch '^[A-Za-z0-9][A-Za-z0-9_-]{0,79}$') { throw 'TASK_ID_INVALID' }

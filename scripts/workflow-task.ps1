@@ -182,7 +182,7 @@ if ($Operation -in @('Checkpoint','Suspend','Cancel','Complete')) {
     exit $LASTEXITCODE
 }
 if ($Operation -eq 'Verify') {
-    & (Join-Path $PSScriptRoot 'workflow-state.ps1') -Operation VerifyCompletion -Path (Join-Path $SpecDirectory '00_workflow_state.json') -TaskId $TaskId
+    & (Join-Path $PSScriptRoot 'workflow-state.ps1') -Operation VerifyCompletion -Path (Resolve-AiSopTaskWorkflowStatePath $SpecDirectory) -TaskId $TaskId
     exit $LASTEXITCODE
 }
 if ($Operation -eq 'RetryEvidence') {

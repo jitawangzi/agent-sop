@@ -277,27 +277,7 @@ Agent-SOP 自身拥有极其严苛的自动化测试套件，全面覆盖状态�
 pwsh -NoProfile -File ./scripts/run-all-tests.ps1
 ```
 
-```text
-Running 16 test suite(s) from ./scripts/tests (serial)
-ai-sop-installer.tests                     PASS
-doc-script-contract.tests                  PASS
-e2e-t2-smoke.tests                         PASS
-guard-production-edit.tests                PASS
-harness-capability.tests                   PASS
-harness-tool-matrix.tests                  PASS
-hidden-process.tests                       PASS
-hook-dedup.tests                           PASS
-hook-dispatcher.tests                      PASS
-hook-event-normalizer.tests                PASS
-run-all-tests.tests                        PASS
-workflow-command-grant.tests               PASS
-workflow-owner.tests                       PASS
-workflow-session.tests                     PASS
-workflow-state.tests                       PASS
-workflow-transaction.tests                 PASS
------------------------------------------------
-16/16 test suites passed (100% GREEN)
-```
+运行器自动发现 `scripts/tests/*.tests.ps1` 并逐套报告结果；以本次运行的全部套件 **100% PASS** 为准。新增测试会自动纳入，不以手工维护的固定套数或输出示例作为验收依据。
 
 ---
 

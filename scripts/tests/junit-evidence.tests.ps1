@@ -31,6 +31,26 @@ try {
     [IO.File]::WriteAllText($reportPath,$valid)
     $result=Read-AiSopJUnitEvidence $configuration $before $workspace
     Assert ($result.passedCaseIds[0] -ceq 'TC-ONE') 'JUnit passed case not mapped'
+    foreach ($xml in @(
+        '<testsuite tests="1" skipped="1"><testcase classname="example.Check" name="works"/></testsuite>',
+        '<testsuite tests="2"><testcase classname="example.Check" name="works"/></testsuite>',
+        '<testsuites skipped="0"><testsuite skipped="1"><testcase classname="example.Check" name="works"/><testcase name="unrelated"><skipped/></testcase></testsuite></testsuites>'
+    )) {
+        [IO.File]::WriteAllText($reportPath,$xml)
+        Fails { Read-AiSopJUnitEvidence $configuration $before $workspace } 'JUNIT_REPORT_INVALID:.*summary'
+    }
+    foreach ($attribute in @('tests','failures','errors','skipped')) {
+        foreach ($number in @('','-1','1.5','NaN','999999999999999999999')) {
+            [IO.File]::WriteAllText($reportPath,('<testsuite ' + $attribute + '="' + $number + '"><testcase classname="example.Check" name="works"/></testsuite>'))
+            Fails { Read-AiSopJUnitEvidence $configuration $before $workspace } "JUNIT_REPORT_INVALID:.*invalid $attribute"
+        }
+    }
+    # Parent totals include descendants; skipped unrelated cases do not erase
+    # an explicitly mapped pass, and nested totals never double report counts.
+    [IO.File]::WriteAllText($reportPath,'<testsuites tests="3" skipped="2" failures="0" errors="0"><testsuite tests="3" skipped="2"><testcase classname="example.Check" name="works"/><testsuite tests="2" skipped="2"><testcase name="unrelated"><skipped/></testcase><testcase name="disabled" status="disabled"/></testsuite></testsuite></testsuites>')
+    $nested=Read-AiSopJUnitEvidence $configuration $before $workspace
+    Assert ($nested.passedCaseIds[0] -ceq 'TC-ONE' -and $nested.reports[0].testCount -eq 3 -and $nested.reports[0].skipped -eq 2) 'Nested suite totals were double counted or unrelated skips blocked mapped success'
+    [IO.File]::WriteAllText($reportPath,$valid)
     Fails { Read-AiSopJUnitEvidence $configuration @{'build/result.xml'=(Get-AiSopJUnitFileIdentity $reportPath)} $workspace } 'JUNIT_REPORT_STALE'
     [IO.File]::WriteAllText($reportPath,'<testsuite><testcase classname="example.Check" name="works"><skipped/></testcase></testsuite>')
     Fails { Read-AiSopJUnitEvidence $configuration $before $workspace } 'JUNIT_CASE_NOT_PASSED'

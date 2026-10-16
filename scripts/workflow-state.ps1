@@ -5239,8 +5239,13 @@ switch ($Operation) {
         if ($TaskId) {
             $riskTask=Read-AiSopTask $specDir $TaskId
             if ($riskTask.tier -eq 'T3') {
-                $delta=Get-AiSopTaskChanges $riskTask $wsRoot $script:TaskValidationContext
-                $risk=Get-SemanticRiskAssessment -WorkspaceRoot $wsRoot -Baseline $riskTask.baseline.revision -DeclaredTier $riskTask.tier -SpecDir $specDir -TaskId $TaskId
+                $delta=$null
+                try {
+                    $delta=Get-AiSopTaskChanges $riskTask $wsRoot $script:TaskValidationContext
+                    $risk=Get-SemanticRiskAssessment -WorkspaceRoot $wsRoot -Baseline $riskTask.baseline.revision -DeclaredTier $riskTask.tier -SpecDir $specDir -TaskId $TaskId
+                } catch {
+                    $risk=@{ MinRequiredTier='T3'; HasHighRisk=$true; TriggersHit=@('TASK_SCOPE_UNAVAILABLE'); Details=@($_.Exception.Message) }
+                }
                 [pscustomobject]@{ workspaceRoot=$wsRoot; taskId=$TaskId; baseline=$riskTask.baseline.revision; changeSetDigest=$delta.changeSetDigest; declaredTier=$riskTask.tier; minRequiredTier=$risk.MinRequiredTier; hasHighRisk=$risk.HasHighRisk; triggersHit=@($risk.TriggersHit); details=@($risk.Details); evaluatedAt=[DateTimeOffset]::UtcNow.ToString('o') } | ConvertTo-Json -Depth 5 | Write-Output
                 break
             }

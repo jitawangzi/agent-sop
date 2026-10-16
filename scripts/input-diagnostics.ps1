@@ -50,7 +50,13 @@ function Write-AiSopInputInspection {
     if ($Json) { $Report | ConvertTo-Json -Depth 20; return }
     function Write-PathExplanation($Path, [string]$Indent) {
         $decision=if ($Path.decision -eq 'TRAVERSE_ONLY') { 'traversed only to reach explicitly included descendants' } else { $Path.decision }
-        $rule=if ($Path.rule) { " [$($Path.rule.kind):$($Path.rule.path)] $($Path.rule.reason)" } else { '' }
+        $rule=''
+        if ($Path.rule) {
+            $label=[string]$Path.rule.kind
+            if ($Path.rule.path) { $label+=':' + $Path.rule.path }
+            $rule=" [$label]"
+            if ($Path.rule.reason) { $rule+=' ' + $Path.rule.reason }
+        }
         Write-Output "$Indent$($Path.path): $decision$rule"
         if ($Path.inherited) { Write-Output "${Indent}  ancestor pruned at $($Path.evaluatedPath); no child contents read" }
     }

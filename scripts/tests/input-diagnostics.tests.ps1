@@ -41,6 +41,7 @@ try {
     Assert (($report.paths | Where-Object path -eq 'absent.txt').decision -eq 'NOT_FOUND') 'Absent input not reported'
     $human=Write-AiSopInputInspection $report | Out-String
     Assert ($human -match 'absent.txt: NOT_FOUND' -and $human -notmatch '\[:\]') 'Missing rule printed empty diagnostic brackets'
+    Assert ($human -match 'src/build/Main.txt: INCLUDED \[DEFAULT_INCLUDE\]' -and $human -notmatch '(?m)[ \t]+\r?$') 'Default rule printed an empty path or trailing whitespace'
     $caseTrace=@{entries=@(@{path='src/build/main.txt';decision='INCLUDED';rule=@{kind='DEFAULT';path='';reason='Input'};matchedRules=@()})}
     $caseProbe=Get-AiSopInputPathExplanation $root 'src/build/Main.txt' $caseTrace
     if ([OperatingSystem]::IsWindows()) { Assert ($caseProbe.decision -eq 'INCLUDED' -and -not $caseProbe.inherited) 'Windows case-only difference lost exact-path match' }

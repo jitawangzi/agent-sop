@@ -12,7 +12,9 @@ DONE/CANCELLED 默认显示 `HISTORICAL_NOT_RECHECKED`，保留已记录的终�
 
 正常切换 Agent 用 Resume。异常中断、本地 owner 丢失、或接收到没有本地 owner 的 ACTIVE 任务时，先 Status，再 `Task -Operation Recover`，恢复为 PAUSED 后 Resume。Recover 不把任务标成完成，不导入其他工作区的权限。若原会话仍标记 ACTIVE/IDLE，先确认旧 Agent 已停止，再显式使用 `-ForceRecovery -Notes "恢复原因"`；本机验证进程还在运行时，即使带该参数也会拒绝恢复。旧 ForceRelease 也会同步暂停任务、清除原会话绑定，使用同一事务。
 
-Start 和暂停后的 Resume 会在同功能归属锁内检查其他 ACTIVE 任务；即使本地 owner 注册表为空，也不能绕过同步来的未结束任务。`TASK_ACTIVE_CONFLICT:<taskId>` 指出需要继续或恢复的任务；独立新任务可在旧任务 Suspend/Recover 为 PAUSED 后启动，无需先通过旧任务完成门禁。该检查仅覆盖本工作区已同步的状态，不是跨机器实时分布式锁，不支持同功能并行写入。
+Start、Resume（含旧 owner 收编、同会话续接及跨会话转移）和会话绑定都会在同功能归属锁内检查其他 ACTIVE 任务；即使本地 owner 注册表为空，也不能绕过同步来的未结束任务。`TASK_ACTIVE_CONFLICT:<taskId>` 指出需要继续或恢复的任务；独立新任务可在旧任务 Suspend/Recover 为 PAUSED 后启动，无需先通过旧任务完成门禁。冲突检查不阻止 Suspend、Cancel 或 Recover 清理占用。该检查仅覆盖本工作区已同步的状态，不是跨机器实时分布式锁，不支持同功能并行写入。
+
+Task Verify 和 Complete 使用相同的批准文件定位规则：优先 `00_workflow_state.json`，不存在时兼容 `workflow-state.json`。带 TaskId 的 T3 AssessRisk 在任务基线缺失、损坏或无法读取时返回 JSON，包含 `TASK_SCOPE_UNAVAILABLE` 和实际原因；此时 `changeSetDigest` 为 null，不能解释为“无变化”。该诊断不改任务档位、归属或批准记录。
 
 跨会话 Resume 遇到仍为 ACTIVE/IDLE 的旧会话，需要 `-ConfirmTakeover`，记录有意交接。用户已明确要求切换且旧 Agent 已停止时直接使用，不重复询问；普通 Checkpoint 不会借用旧 owner 的会话身份。Task 写操作可从唯一的 CODEX_SESSION_ID / ANTIGRAVITY_SESSION_ID 推断 Agent，否则显式传 `-Agent`。没有原生会话环境变量的 CLI 应为同一次会话设置稳定的 `AI_SESSION_ID`，跨进程调用保持一致；不能用读取 owner 的方式冒充该会话。
 
@@ -99,6 +101,8 @@ ValidateTestCoverage 输出 `COVERAGE_SCOPE`，区分功能范围、本任务范
 ```
 
 Profile 可使用 `junitReports` 和 `caseMap` 同名字段。配置二者后不另传 CaseIds，成功用例从本次报告的精确 classname/name 映射生成。报告路径是宿主内的明确文件，不支持 glob；命令须生成或更新报告，旧文件、缺失、跳过、映射未命中、失败/错误均不能充当通过，进程退出 0 也不例外。重复同名测试必须全部通过。输出目录应按实际构建配置排除，不能为通过检查而排除源码。映射和报告路径绑定批次定义，调整需 Reason；原始 XML 可保留本地，持久执行记录保存报告摘要及通过的 CaseIds。此功能核对正常工具输出，不证明本地进程无法伪造 XML；T1/T2 不强制启用。
+
+报告提供的 `tests`、`failures`、`errors`、`skipped` 汇总须为非负整数，成功报告的汇总须与 testcase 明细一致。嵌套 suite 按其后代用例核对，报告总数不重复累加父子汇总；映射外的跳过用例不影响已映射用例通过。
 
 ## 损坏执行结果的恢复
 

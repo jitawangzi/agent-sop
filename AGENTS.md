@@ -20,7 +20,7 @@
 pwsh -NoProfile -File ./scripts/run-all-tests.ps1
 ```
 
-- **合格标准**：必须达到 **100% PASS**（所有 16 套测试全部绿灯）。
+- **合格标准**：必须达到 **100% PASS**（运行器自动发现的全部测试套件均通过，不以固定套数代替全量检查）。
 - **单模块调试**：
   - 门禁状态机：`pwsh -NoProfile -File ./scripts/tests/workflow-state.tests.ps1`
   - 归属与锁：`pwsh -NoProfile -File ./scripts/tests/workflow-owner.tests.ps1`

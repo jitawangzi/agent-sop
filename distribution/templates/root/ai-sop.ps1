@@ -220,7 +220,7 @@ Actions:
              Task -Operation Start -Feature X -TaskId fix-1 -Tier T2 -Objective "Fix existing behaviour" -Agent CODEX
              Task -Operation Resume -Feature X -TaskId fix-1 -Agent CODEX
              Task -Operation Run -Feature X -TaskId fix-1 -Agent CODEX -Kind compile -Executable pwsh -Arguments ...
-             Operations: Discover, Status, Start, Resume, Recover, InspectRecovery, Checkpoint, Suspend, Cancel, Run, RetryEvidence, ReviewImpact, Verify, Complete.
+             Core operations: Discover, Status, Start, Resume, Recover, InspectRecovery, Checkpoint, Suspend, Cancel, Run, RetryEvidence, ReviewImpact, Verify, Complete.
              Start -CaptureBaseline explicitly captures full inputs before edits (T3 always does).
              T3 scope: Changes, SetCaseScope -CaseIds ... -Reason ...; SetBaseline accepts only this task's recorded Start inputs.
              Optional test reports: Run -JUnitReports @(...) -CaseMap <mapping.json> (omit CaseIds).

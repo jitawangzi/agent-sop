@@ -5,8 +5,10 @@ function Get-AiSopInputPathExplanation {
     $physical=Resolve-AiSopWorkspaceChild $WorkspacePath $Path
     $relative=[IO.Path]::GetRelativePath($WorkspacePath,$physical).Replace('\','/')
     $match=@($Trace.entries | Where-Object { Test-AiSopInputPathWithin $relative $_.path } | Sort-Object { $_.path.Length } -Descending | Select-Object -First 1)
-    if ($match.Count -and ($match[0].path -ceq $relative -or $match[0].decision -eq 'EXCLUDED')) {
-        return @{path=$Path;exists=(Test-Path -LiteralPath $physical);decision=$match[0].decision;rule=$match[0].rule;matchedRules=$match[0].matchedRules;evaluatedPath=$match[0].path;inherited=($match[0].path -cne $relative)}
+    $comparison=if ([OperatingSystem]::IsWindows()) { [StringComparison]::OrdinalIgnoreCase } else { [StringComparison]::Ordinal }
+    $exact=$match.Count -and ([string]$match[0].path).Equals($relative,$comparison)
+    if ($match.Count -and ($exact -or $match[0].decision -eq 'EXCLUDED')) {
+        return @{path=$Path;exists=(Test-Path -LiteralPath $physical);decision=$match[0].decision;rule=$match[0].rule;matchedRules=$match[0].matchedRules;evaluatedPath=$match[0].path;inherited=(-not $exact)}
     }
     return @{path=$Path;exists=(Test-Path -LiteralPath $physical);decision='NOT_FOUND';rule=$null;matchedRules=@();evaluatedPath=$null;inherited=$false}
 }
@@ -46,11 +48,16 @@ function Get-AiSopInputInspection {
 function Write-AiSopInputInspection {
     param($Report, [switch]$Json)
     if ($Json) { $Report | ConvertTo-Json -Depth 20; return }
+    function Write-PathExplanation($Path, [string]$Indent) {
+        $decision=if ($Path.decision -eq 'TRAVERSE_ONLY') { 'traversed only to reach explicitly included descendants' } else { $Path.decision }
+        $rule=if ($Path.rule) { " [$($Path.rule.kind):$($Path.rule.path)] $($Path.rule.reason)" } else { '' }
+        Write-Output "$Indent$($Path.path): $decision$rule"
+        if ($Path.inherited) { Write-Output "${Indent}  ancestor pruned at $($Path.evaluatedPath); no child contents read" }
+    }
     Write-Output "Inputs (read-only) — $($Report.workspace)"
     Write-Output "  algorithm=$($Report.algorithm) files=$($Report.statistics.hashedFiles) readBytes=$($Report.statistics.readBytes) elapsedMs=$($Report.statistics.elapsedMilliseconds) scannedEntries=$($Report.statistics.scannedEntries)"
     foreach ($path in $Report.paths) {
-        Write-Output "  $($path.path): $($path.decision) [$($path.rule.kind):$($path.rule.path)] $($path.rule.reason)"
-        if ($path.inherited) { Write-Output "    ancestor pruned at $($path.evaluatedPath); no child contents read" }
+        Write-PathExplanation $path '  '
     }
     foreach ($file in $Report.largestFiles) { Write-Output "  large input: $($file.bytes) bytes $($file.path)" }
     if ($Report.candidate) {
@@ -59,7 +66,7 @@ function Write-AiSopInputInspection {
         foreach ($path in $candidate.added) { Write-Output "    + $path" }
         foreach ($path in $candidate.removed) { Write-Output "    - $path" }
         foreach ($path in $candidate.contentChangedDuringComparison) { Write-Output "    ! content changed between scans: $path; repeat while files are stable" }
-        foreach ($path in $candidate.paths) { Write-Output "    $($path.path): $($path.decision) [$($path.rule.kind):$($path.rule.path)] $($path.rule.reason)" }
+        foreach ($path in $candidate.paths) { Write-PathExplanation $path '    ' }
     }
     foreach ($note in $Report.notes) { Write-Output "  $note" }
 }

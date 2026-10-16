@@ -69,7 +69,26 @@ try {
     $pending=& $entry -Operation FollowUps -WorkspacePath $workspace | ConvertFrom-Json
     Assert ($pending.count -eq 0 -and -not $pending.blocking) 'Resolved follow-ups still pending'
     Assert ($source.updatedAt -ceq (Read-AiSopTask $spec sync).updatedAt) 'Source resolution and current task checkpoint have different transaction timestamps'
-    Task Cancel sync | Out-Null
+    $cancelled=Task Cancel sync | Out-String
+    Assert ($cancelled -match 'FOLLOW_UP_CANCEL_REVIEW' -and $cancelled -match 'field-doc' -and $cancelled -match 'field-test' -and $cancelled -match 'FOLLOW_UP_NON_BLOCKING') 'Cancel hid resolutions made by this task'
+    Assert ((Read-AiSopTask $spec sync).status -eq 'CANCELLED' -and (Read-AiSopTask $spec urgent).followUps[0].status -eq 'RESOLVED') 'Cancel blocked or automatically rolled back resolved work'
+    Task Start reopen @{Tier='T1';Objective='Reassess the cancelled synchronization'} | Out-Null
+    Fails { Task ReopenFollowUp reopen @{SourceTaskId='urgent';FollowUpId='field-doc'} } 'reason'
+    Fails { Task ReopenFollowUp reopen @{SourceTaskId='../escape';FollowUpId='field-doc';Reason='Invalid source'} } 'TASK_ID_INVALID'
+    Task ReopenFollowUp reopen @{SourceTaskId='urgent';FollowUpId='field-doc';Reason='Documentation edit was reverted after cancellation.'} | Out-Null
+    $reopened=Read-AiSopTask $spec urgent
+    $item=$reopened.followUps[0]
+    Assert ($reopened.status -eq 'DONE' -and $item.status -eq 'PENDING' -and -not $item.resolvedByTaskId -and $item.resolutionHistory[0].resolvedByTaskId -eq 'sync' -and $item.resolutionHistory[0].reopenedByTaskId -eq 'reopen') 'Reopen lost resolution audit or changed source task lifecycle'
+    Assert ($reopened.updatedAt -ceq (Read-AiSopTask $spec reopen).updatedAt) 'Reopen did not checkpoint both tasks atomically'
+    Task ReopenFollowUp reopen @{SourceTaskId='urgent';FollowUpId='field-doc';Reason='Retry reopening'} | Out-Null
+    Assert ((Read-AiSopTask $spec urgent).followUps[0].resolutionHistory.Count -eq 1) 'Retry duplicated reopen history'
+    $pending=& $entry -Operation FollowUps -WorkspacePath $workspace | ConvertFrom-Json
+    Assert ($pending.count -eq 1 -and -not $pending.blocking) 'Reopened follow-up not visible as non-blocking work'
+    Task CloseFollowUp reopen @{SourceTaskId='urgent';FollowUpId='field-doc';Resolution='Restored the documentation edit.'} | Out-Null
+    Task ReopenFollowUp reopen @{SourceTaskId='urgent';FollowUpId='field-test';Reason='The existing case omitted an affected behavior.'} | Out-Null
+    Assert ((Read-AiSopTask $spec urgent).followUps[1].resolutionHistory[0].userRequest -eq $source.followUps[1].userRequest) 'Reopen discarded NOT_NEEDED authorization'
+    Task CloseFollowUp reopen @{SourceTaskId='urgent';FollowUpId='field-test';Resolution='Added the missing regression.'} | Out-Null
+    Task Cancel reopen | Out-Null
 
     # Changing tiers requires explicit authorization text and keeps failed evidence.
     Task Start change @{ Objective='Task with a failing test' } | Out-Null

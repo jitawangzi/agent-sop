@@ -12,6 +12,8 @@ DONE/CANCELLED 默认显示 `HISTORICAL_NOT_RECHECKED`，保留已记录的终�
 
 正常切换 Agent 用 Resume。异常中断、本地 owner 丢失、或接收到没有本地 owner 的 ACTIVE 任务时，先 Status，再 `Task -Operation Recover`，恢复为 PAUSED 后 Resume。Recover 不把任务标成完成，不导入其他工作区的权限。若原会话仍标记 ACTIVE/IDLE，先确认旧 Agent 已停止，再显式使用 `-ForceRecovery -Notes "恢复原因"`；本机验证进程还在运行时，即使带该参数也会拒绝恢复。旧 ForceRelease 也会同步暂停任务、清除原会话绑定，使用同一事务。
 
+Start 和暂停后的 Resume 会在同功能归属锁内检查其他 ACTIVE 任务；即使本地 owner 注册表为空，也不能绕过同步来的未结束任务。`TASK_ACTIVE_CONFLICT:<taskId>` 指出需要继续或恢复的任务；独立新任务可在旧任务 Suspend/Recover 为 PAUSED 后启动，无需先通过旧任务完成门禁。该检查仅覆盖本工作区已同步的状态，不是跨机器实时分布式锁，不支持同功能并行写入。
+
 跨会话 Resume 遇到仍为 ACTIVE/IDLE 的旧会话，需要 `-ConfirmTakeover`，记录有意交接。用户已明确要求切换且旧 Agent 已停止时直接使用，不重复询问；普通 Checkpoint 不会借用旧 owner 的会话身份。Task 写操作可从唯一的 CODEX_SESSION_ID / ANTIGRAVITY_SESSION_ID 推断 Agent，否则显式传 `-Agent`。没有原生会话环境变量的 CLI 应为同一次会话设置稳定的 `AI_SESSION_ID`，跨进程调用保持一致；不能用读取 owner 的方式冒充该会话。
 
 宿主可在 `.ai-workspace/context/verification-commands.json` 配置常用命令（由项目上下文仓库管理）：
@@ -67,6 +69,8 @@ Start 成功后立即输出 `TASK_START_INPUTS`：CAPTURED 表示起点已保存
 T3 确需 04 影响分析时，在 `.ai-workspace/specs/features/<Feature>/04_change_impact.json` 填入当前 `taskId`、`baseline`（任务的 revision）、`baselineInputDigest`、`changedFiles`（完整差异路径）及 `changeSetDigest`，并实际更新行为分析。ReviewImpact 校验绑定并保存 `.ai-workspace/specs/.artifacts/changes/<sha256>.json`；后续 Verify 再检查文件、输入和差异清单。该清单与 inputs 清单一起在 specs 仓库同步。不要用旧功能基线计算出的 diff 哈希填入任务模式。语义扫描按任务差异文件筛选；同一文件在启动前已有改动时仍保守纳入 VCS diff，无法读取差异时要求影响分析，不静默跳过。
 
 新任务 Start 同时记录 `startImpact`：04 不存在、已保存摘要或读取失败。T3 校验允许忽略启动前已有且未修改的历史 04（包括没有 taskId 的旧文件）；本任务新增、修改的 04 必须关联当前 taskId，已记录或审核的 04 删除后也不能静默跳过。Resume、升档不重建这个起点。旧任务缺少 startImpact 时保留兼容并明确提示来源未核实，不声称已证明文件未变；已有 impactReview 的归属仍必须匹配。
+
+新建的 startImpact 和 ReviewImpact 使用标记 `hashAlgorithm=sha256-text-lf-v1`，仅把 04 文本中的 CRLF 转为 LF 后计算摘要；Git 换行转换不会让新记录失效，文字、空白或字段改动仍使摘要变化。没有算法标记的旧记录继续按原始字节校验，不自动迁移；旧审核可在核实内容后重新 ReviewImpact，旧启动快照则保持不变。源码输入、inputs/changes 内容寻址清单和 Profile 摘要的规则不受此变更影响。
 
 SetCaseScope 记录本任务必测用例和原因，保留变更历史。ID 必须存在于覆盖矩阵，且包含当前 04 声明的 requiredRegressionCases；需求、设计或测试定义修改后需重新核对登记。T3 验证这些用例的载体、断言及执行结果，不把功能内其他尚未开发用例强制加入本次执行；功能规格批准、哈希及整体覆盖定义仍检查。不能通过缩小范围掩盖已发生的失败批次。
 
@@ -175,7 +179,7 @@ T1 只需真实编译/基础检查；T2 还需相关测试和 RecordSync 记录�
 & ./ai-sop.ps1 Preflight -TargetEnginePath '../agent-sop-next' -Json
 ```
 
-`Preflight` 列出任务目标、检查点、非阻塞待办、需同步的 task.json、功能规格、inputs/changes 引用清单和项目验证配置；按实际所属 Git 仓库显示 TRACKED/UNTRACKED/IGNORED 及本地改动，适用于 `.ai-workspace` 与 `specs` 分别独立 Git 的布局。项目 context 和功能目录整体也列为同步范围，以覆盖自定义引用与附件。TRACKED 不代表已推送或目标机器已收到；代码、共享依赖和规格需对应同一实际版本。
+`Preflight` 列出任务目标、检查点、非阻塞待办、需同步的 task.json、功能规格、inputs/changes 引用清单和项目验证配置；按实际所属 Git 仓库显示 TRACKED/UNTRACKED/IGNORED 及本地改动，适用于 `.ai-workspace` 与 `specs` 分别独立 Git 的布局。项目 context 和功能目录整体也列为同步范围，以覆盖自定义引用与附件。有清单引用时，syncRoots 同时列出 `.ai-workspace/specs/.artifacts/`；可同步整个目录，也可按 artifacts 中逐条列出的引用文件同步，不能只复制功能目录。TRACKED 不代表已推送或目标机器已收到；代码、共享依赖和规格需对应同一实际版本。
 
 预检读取清单并校验哈希，同时检查本机归属/会话、未完成运行、损坏 pending 结果和未决事务。它不读取业务源码内容、不编译、不抢锁、不续期、不执行事务恢复，也不修改完成状态。运行中的命令或 pending 结果应先在原工作区处理；本机注册表、事务日志及 `.runtime` 不作为可移植归属复制，接收方仍通过 Resume/Recover 获取本机执行权。
 
@@ -296,6 +300,9 @@ ChangeTier 只改变活动任务的交付要求，保留原 taskId、ownerId、�
 & ./ai-sop.ps1 Task -Operation FollowUps -Feature Example
 & ./ai-sop.ps1 Task -Operation CloseFollowUp -Feature Example -TaskId sync-1 -Agent CODEX `
   -SourceTaskId fix-1 -FollowUpId response-doc -Disposition RESOLVED -Resolution '已在 06 响应字段节补充类型、空值及兼容行为'
+# 后续发现修改被回退或解决不完整时，由当前活动任务重新打开
+& ./ai-sop.ps1 Task -Operation ReopenFollowUp -Feature Example -TaskId check-1 -Agent CODEX `
+  -SourceTaskId fix-1 -FollowUpId response-doc -Reason '文档修改被回退，需要重新补充'
 ```
 
 - 仅实际延期才 AddFollowUp，稳定 ID 用于避免重试重复。documentation、test-cases、verification 分别表示待补文档、待补用例、待执行验证。
@@ -303,6 +310,7 @@ ChangeTier 只改变活动任务的交付要求，保留原 taskId、ownerId、�
 - Start/Resume 自动检查当前工作区；同功能显示详细事项，其他功能最多一行数量摘要。提醒后继续，不等待用户确认、不自行加入本次工作，不反复在执行中催办。
 - 新 T2 只负责本次相关同步，不自动承担历史待办；如触及相同行为应指出关联，范围内可一起完成，范围外不扩展任务。
 - CloseFollowUp 由当前活动任务执行；可关闭同功能历史任务的待办，保持原任务 DONE/PAUSED/CANCELLED 状态，以同一事务更新来源记录和当前任务。跨功能事项在对应功能的任务中处理。
+- 取消解决任务时会以 FOLLOW_UP_CANCEL_REVIEW 列出该任务关闭的事项，提醒核实实际修改是否保留；提醒不阻止 Cancel 或后续 Start，不自动回滚关闭状态。确需重新处理时使用 ReopenFollowUp 并给出 Reason，将事项改回 PENDING，原关闭依据及重新打开的任务、时间保存在 resolutionHistory。来源任务的完成状态保持不变。
 - 实际完成记 RESOLVED，Resolution 给出文件、用例或验证结果等具体依据；人工明确不需要处理记 NOT_NEEDED，并附 UserRequest。暂不处理仍保留 PENDING，不需要额外命令。
 - Discover/Status 显示来源任务的待办，FollowUps 可集中查询。提醒查询失败仅报诊断，不阻止新任务。仅有标记不阻塞任何档位；相关 T3 整体验收仍需消除实际规格或验证缺口。
 

@@ -1976,7 +1976,7 @@ function Validate-ChangeImpactState {
     }
     if ($TaskId) {
         $taskRecord = Read-AiSopTask $specDir $TaskId
-        $artifactHash = (Get-FileHash -LiteralPath $ImpactPath -Algorithm SHA256).Hash.ToLowerInvariant()
+        $artifactHash = Get-AiSopImpactArtifactHash $ImpactPath ([string]$taskRecord.impactReview.hashAlgorithm)
         if ($taskRecord.tier -eq 'T3') {
             Assert-AiSopTaskImpactBinding $taskRecord $impact $wsRoot $script:TaskValidationContext -CheckReview -ArtifactHash $artifactHash | Out-Null
             Assert-ExtensionImpactCompleteness -Impact $impact -WorkspaceRoot $wsRoot -Baseline $impact.baseline -SpecDir $specDir -TaskId $TaskId

@@ -254,6 +254,7 @@
         "reviewedAt"
       ],
       "properties": {
+        "hashAlgorithm": { "const": "sha256-text-lf-v1" },
         "artifactHash": {
           "type": "string",
           "pattern": "^[0-9a-f]{64}$"
@@ -539,6 +540,24 @@
             "type": "string",
             "pattern": "^[A-Za-z0-9][A-Za-z0-9_-]{0,79}$"
           },
+          "resolutionHistory": {
+            "type": "array",
+            "items": {
+              "type": "object", "additionalProperties": false,
+              "required": ["status", "resolution", "resolvedAt", "resolvedByTaskId", "reopenedAt", "reopenedByTaskId", "reason"],
+              "properties": {
+                "status": { "enum": ["RESOLVED", "NOT_NEEDED"] },
+                "resolution": { "type": "string", "pattern": "\\S" },
+                "resolvedAt": { "type": "string", "format": "date-time" },
+                "resolvedByTaskId": { "type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9_-]{0,79}$" },
+                "userRequest": { "type": "string", "pattern": "\\S" },
+                "reopenedAt": { "type": "string", "format": "date-time" },
+                "reopenedByTaskId": { "type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9_-]{0,79}$" },
+                "reason": { "type": "string", "pattern": "\\S" }
+              },
+              "allOf": [{"if": {"properties": {"status": {"const": "NOT_NEEDED"}}}, "then": {"required": ["userRequest"]}}]
+            }
+          },
           "userRequest": {
             "type": "string",
             "pattern": "\\S"
@@ -588,13 +607,14 @@
       "required": ["status"],
       "properties": {
         "status": { "enum": ["ABSENT", "CAPTURED", "UNAVAILABLE"] },
+        "hashAlgorithm": { "const": "sha256-text-lf-v1" },
         "artifactHash": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
         "reason": { "type": "string", "minLength": 1 }
       },
       "oneOf": [
-        { "properties": { "status": { "const": "ABSENT" } }, "not": { "anyOf": [{ "required": ["artifactHash"] }, { "required": ["reason"] }] } },
+        { "properties": { "status": { "const": "ABSENT" } }, "not": { "anyOf": [{ "required": ["artifactHash"] }, { "required": ["hashAlgorithm"] }, { "required": ["reason"] }] } },
         { "properties": { "status": { "const": "CAPTURED" } }, "required": ["artifactHash"], "not": { "required": ["reason"] } },
-        { "properties": { "status": { "const": "UNAVAILABLE" } }, "required": ["reason"], "not": { "required": ["artifactHash"] } }
+        { "properties": { "status": { "const": "UNAVAILABLE" } }, "required": ["reason"], "not": { "anyOf": [{ "required": ["artifactHash"] }, { "required": ["hashAlgorithm"] }] } }
       ]
     },
     "startInputs": {

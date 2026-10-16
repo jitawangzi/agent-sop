@@ -233,6 +233,7 @@ Actions:
              RecordSync -Documentation UPDATED|UNCHANGED -Tests UPDATED|UNCHANGED|NOT_APPLICABLE -Summary ...
              FollowUps lists non-blocking pending documentation/tests/verification work.
              AddFollowUp / CloseFollowUp record or resolve an item using the active task owner.
+             ReopenFollowUp -SourceTaskId ... -FollowUpId ... -Reason ... restores pending work and keeps its resolution history.
              SetApplicability checks the Start snapshot and predeclared nonExecutable inputs (T1/T2 only).
              Recover pauses orphaned tasks; -ForceRecovery confirms the old agent has stopped.
   Help       Show this help.

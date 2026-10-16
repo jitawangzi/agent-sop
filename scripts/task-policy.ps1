@@ -14,6 +14,7 @@ function Update-AiSopTaskPolicy {
         'SetApplicability' { @('operation','kind','status','reason') }
         'AddFollowUp' { @('operation','id','kind','summary','scope') }
         'CloseFollowUp' { @('operation','sourceTaskId','id','status','resolution','userRequest') }
+        'ReopenFollowUp' { @('operation','sourceTaskId','id','reason') }
         default { throw 'TASK_UPDATE_OPERATION_INVALID' }
     }
     foreach ($key in $Update.Keys) { if ($key -notin $allowed) { throw "TASK_UPDATE_FIELD_INVALID:$key" } }
@@ -84,11 +85,14 @@ function Update-AiSopTaskPolicy {
                 id=$Update.id; kind=$Update.kind; summary=$Update.summary; scope=@($Update.scope); status='PENDING'; createdAt=$At
             })
         }
-        'CloseFollowUp' {
+        { $_ -in @('CloseFollowUp','ReopenFollowUp') } {
             Require-Text $Update.id 'id'
-            Require-Text $Update.resolution 'resolution'
-            if ($Update.status -notin @('RESOLVED','NOT_NEEDED')) { throw 'FOLLOW_UP_DISPOSITION_INVALID' }
-            if ($Update.status -eq 'NOT_NEEDED') { Require-Text $Update.userRequest 'userRequest' }
+            if ($Update.operation -eq 'ReopenFollowUp') { Require-Text $Update.reason 'reason' }
+            else {
+                Require-Text $Update.resolution 'resolution'
+                if ($Update.status -notin @('RESOLVED','NOT_NEEDED')) { throw 'FOLLOW_UP_DISPOSITION_INVALID' }
+                if ($Update.status -eq 'NOT_NEEDED') { Require-Text $Update.userRequest 'userRequest' }
+            }
             $sourceId = if ($Update.sourceTaskId) { [string]$Update.sourceTaskId } else { [string]$Task.taskId }
             $sourceBefore = $null
             $source = $Task
@@ -100,18 +104,44 @@ function Update-AiSopTaskPolicy {
             $items = @($source.followUps | Where-Object { $_.id -ceq $Update.id })
             if ($items.Count -ne 1) { throw 'FOLLOW_UP_NOT_FOUND' }
             $item = $items[0]
-            if ($item.status -ne 'PENDING') {
-                if ($item.status -ceq $Update.status -and $item.resolution -ceq $Update.resolution) { return }
-                throw 'FOLLOW_UP_ALREADY_CLOSED'
+            if ($Update.operation -eq 'ReopenFollowUp') {
+                if ($item.status -eq 'PENDING') { return }
+                $history=@{status=$item.status;resolution=$item.resolution;resolvedAt=$item.resolvedAt;resolvedByTaskId=$item.resolvedByTaskId;reopenedAt=$At;reopenedByTaskId=$Task.taskId;reason=$Update.reason}
+                if ($item.userRequest) { $history.userRequest=$item.userRequest }
+                $item['resolutionHistory']=@($item.resolutionHistory | Where-Object { $null -ne $_ }) + @($history)
+                $item.status='PENDING'
+                foreach ($key in @('resolution','resolvedAt','resolvedByTaskId','userRequest')) { $item.Remove($key) }
+            } else {
+                if ($item.status -ne 'PENDING') {
+                    if ($item.status -ceq $Update.status -and $item.resolution -ceq $Update.resolution) { return }
+                    throw 'FOLLOW_UP_ALREADY_CLOSED'
+                }
+                $item.status=$Update.status; $item['resolution']=$Update.resolution; $item['resolvedAt']=$At; $item['resolvedByTaskId']=$Task.taskId
+                if ($Update.userRequest) { $item['userRequest']=$Update.userRequest }
             }
-            $item.status=$Update.status; $item['resolution']=$Update.resolution; $item['resolvedAt']=$At; $item['resolvedByTaskId']=$Task.taskId
-            if ($Update.userRequest) { $item['userRequest']=$Update.userRequest }
             $source.updatedAt=$At
             if ($sourceBefore) {
                 return @{ path=(Get-AiSopTaskPath $SpecDirectory $sourceId); before=$sourceBefore; after=$source }
             }
         }
     }
+}
+
+function Write-AiSopCancelledFollowUpReminder {
+    param([string]$SpecDirectory, [string]$TaskId)
+    # Cancellation releases ownership; it does not undo completed edits. This
+    # advisory runs only after commit and must never turn Cancel into a failure.
+    $count=0
+    foreach ($entry in @(Get-ChildItem -LiteralPath (Join-Path $SpecDirectory 'tasks') -Directory -ErrorAction SilentlyContinue)) {
+        try {
+            $source=Read-AiSopTask $SpecDirectory $entry.Name
+            foreach ($item in @($source.followUps | Where-Object { $_.status -in @('RESOLVED','NOT_NEEDED') -and $_.resolvedByTaskId -ceq $TaskId })) {
+                $count++
+                Write-Output ("FOLLOW_UP_CANCEL_REVIEW: " + (@{sourceTaskId=$source.taskId;id=$item.id;status=$item.status;resolution=$item.resolution;resolvedByTaskId=$TaskId} | ConvertTo-Json -Compress))
+            }
+        } catch { Write-Warning "FOLLOW_UP_SCAN_UNAVAILABLE:$($entry.Name):$($_.Exception.Message)" -WarningAction Continue }
+    }
+    if ($count) { Write-Output 'FOLLOW_UP_NON_BLOCKING: Cancel preserved these resolutions. If the work was undone or incomplete, use ReopenFollowUp from a subsequent active task with SourceTaskId, FollowUpId and Reason.' }
 }
 
 function Get-AiSopPendingFollowUps {

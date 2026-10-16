@@ -75,7 +75,26 @@ try {
     try {
         $env:AI_SOP_OWNER_REGISTRY=Join-Path $root 'receiver-owner'
         Fails { & $entry -Operation Resume -WorkspacePath $remoteWorkspace -Feature Example -TaskId recovery -Agent CODEX } 'TASK_NOT_RESUMABLE'
+        $before=[IO.File]::ReadAllText($remoteTaskPath)
+        Fails { & $entry -Operation Start -WorkspacePath $remoteWorkspace -Feature Example -TaskId independent -Tier T1 -Objective 'Independent work' -Agent CODEX } 'TASK_ACTIVE_CONFLICT:recovery'
+        Assert ($before -ceq [IO.File]::ReadAllText($remoteTaskPath) -and -not (Test-Path -LiteralPath (Get-AiSopTaskPath $remoteSpec 'independent'))) 'Rejected orphan conflict mutated tasks'
+        Assert (-not (Test-Path -LiteralPath (Join-Path $env:AI_SOP_OWNER_REGISTRY 'example.json'))) 'Rejected orphan conflict acquired ownership'
+        # Legacy Claim must not bypass task-level exclusivity either.
+        Fails { & (Join-Path $scripts 'workflow-owner.ps1') -Operation Claim -SpecDirectory $remoteSpec -Feature Example -OwnerId legacy -Agent CODEX } 'TASK_ACTIVE_CONFLICT:recovery'
         & $entry -Operation Recover -WorkspacePath $remoteWorkspace -Feature Example -TaskId recovery -Agent CODEX | Out-Null
+        & $entry -Operation Start -WorkspacePath $remoteWorkspace -Feature Example -TaskId independent -Tier T1 -Objective 'Independent work after recovery' -Agent CODEX | Out-Null
+        Assert ($LASTEXITCODE -eq 0) 'Paused orphan blocked independent work'
+        & $entry -Operation Cancel -WorkspacePath $remoteWorkspace -Feature Example -TaskId independent -Agent CODEX | Out-Null
+        # Resuming a paused task also checks synced ACTIVE siblings even when
+        # the local owner registry contains only an unrelated terminal owner.
+        $foreign=ConvertFrom-AiSopWorkflowJson $before -AsHashtable
+        $foreign.taskId='imported'; $foreign.ownerId='task-imported'
+        $foreign.Remove('startInputs'); $foreign.Remove('startImpact')
+        $foreignPath=Get-AiSopTaskPath $remoteSpec 'imported'
+        [IO.Directory]::CreateDirectory((Split-Path -Parent $foreignPath)) | Out-Null
+        [IO.File]::WriteAllText($foreignPath,(ConvertTo-AiSopWorkflowCanonicalJson $foreign))
+        Fails { & $entry -Operation Resume -WorkspacePath $remoteWorkspace -Feature Example -TaskId recovery -Agent CODEX } 'TASK_ACTIVE_CONFLICT:imported'
+        & $entry -Operation Recover -WorkspacePath $remoteWorkspace -Feature Example -TaskId imported -Agent CODEX | Out-Null
         & $entry -Operation Resume -WorkspacePath $remoteWorkspace -Feature Example -TaskId recovery -Agent CODEX | Out-Null
         $remoteOwner=Get-Content -LiteralPath (Join-Path $env:AI_SOP_OWNER_REGISTRY 'example.json') -Raw | ConvertFrom-Json
         Assert ($remoteOwner.workspacePath -ceq (Resolve-PhysicalPathIdentity $remoteWorkspace)) 'Receiver inherited sender authority'

@@ -69,6 +69,25 @@ try {
     Assert ($risk.changeSetDigest -ceq $actualDigest -and $risk.baseline -ceq $task.baseline.revision) 'Risk assessment mixed task/feature digests'
     & $stateEntry -Operation ValidateChangeImpact -Path $impactPath -TaskId one | Out-Null
     Assert ($LASTEXITCODE -eq 0) 'Task impact rejected after content-stable commit'
+    Assert ($reviewed.impactReview.hashAlgorithm -eq 'sha256-text-lf-v1') 'New review omitted its hash algorithm'
+    foreach ($eol in @("`r`n","`n")) {
+        [IO.File]::WriteAllText($impactPath,$reviewedRaw.Replace("`r`n","`n").Replace("`n",$eol))
+        & $stateEntry -Operation ValidateChangeImpact -Path $impactPath -TaskId one | Out-Null
+        Assert ($LASTEXITCODE -eq 0) 'Line-ending conversion invalidated task impact review'
+    }
+    # Unmarked legacy reviews retain their original byte-hash meaning.
+    $legacyReview=ConvertFrom-AiSopWorkflowJson (ConvertTo-AiSopWorkflowCanonicalJson $reviewed) -AsHashtable
+    $legacyReview.impactReview.Remove('hashAlgorithm')
+    $legacyReview.impactReview.artifactHash=(Get-AiSopImpactArtifactHash $impactPath '')
+    $reviewTaskPath=Get-AiSopTaskPath $spec one
+    $reviewTaskRaw=[IO.File]::ReadAllText($reviewTaskPath)
+    [IO.File]::WriteAllText($reviewTaskPath,(ConvertTo-AiSopWorkflowCanonicalJson $legacyReview))
+    & $stateEntry -Operation ValidateChangeImpact -Path $impactPath -TaskId one | Out-Null
+    Assert ($LASTEXITCODE -eq 0) 'Legacy review no longer validates its original bytes'
+    [IO.File]::WriteAllText($impactPath,$reviewedRaw.Replace("`r`n","`n").Replace("`n","`r`n"))
+    Fails { & $stateEntry -Operation ValidateChangeImpact -Path $impactPath -TaskId one } 'IMPACT_REVIEW_REQUIRED'
+    [IO.File]::WriteAllText($reviewTaskPath,$reviewTaskRaw)
+    [IO.File]::WriteAllText($impactPath,$reviewedRaw)
     $changePath=Join-Path $workspace ".ai-workspace/specs/.artifacts/changes/$actualDigest.json"
     $changeRaw=[IO.File]::ReadAllText($changePath); [IO.File]::WriteAllText($changePath,'{}')
     Fails { & $stateEntry -Operation ValidateChangeImpact -Path $impactPath -TaskId one } 'TASK_CHANGE_MANIFEST_CORRUPT'
@@ -133,6 +152,15 @@ try {
     Task Start two @{Tier='T3';Objective='Next independent task'} | Out-Null
     $second=Read-AiSopTask $spec two
     Assert ($second.startImpact.status -eq 'CAPTURED' -and (Get-AiSopTaskImpactDisposition $second $workspace) -eq 'HISTORICAL') 'Unchanged prior task impact burdened independent work'
+    $historicalRaw=[IO.File]::ReadAllText($impactPath)
+    [IO.File]::WriteAllText($impactPath,$historicalRaw.Replace("`r`n","`n").Replace("`n","`r`n"))
+    Assert ($second.startImpact.hashAlgorithm -eq 'sha256-text-lf-v1' -and (Get-AiSopTaskImpactDisposition $second $workspace) -eq 'HISTORICAL') 'Historical 04 EOL conversion was attributed to new work'
+    $legacyOrigin=ConvertFrom-AiSopWorkflowJson (ConvertTo-AiSopWorkflowCanonicalJson $second) -AsHashtable
+    $legacyOrigin.startImpact.Remove('hashAlgorithm'); $legacyOrigin.startImpact.artifactHash=Get-AiSopImpactArtifactHash $impactPath ''
+    Assert ((Get-AiSopTaskImpactDisposition $legacyOrigin $workspace) -eq 'HISTORICAL') 'Legacy Start hash was reinterpreted'
+    [IO.File]::WriteAllText($impactPath,$historicalRaw.Replace("`r`n","`n"))
+    Fails { Get-AiSopTaskImpactDisposition $legacyOrigin $workspace } 'TASK_IMPACT_IDENTITY_MISMATCH'
+    [IO.File]::WriteAllText($impactPath,$historicalRaw)
     Assert ($second.baseline.revision -cne $task.baseline.revision -and $second.baseline.inputsRef -cne $task.baseline.inputsRef) 'Independent task inherited old baseline'
     Assert ((Task Changes two | ConvertFrom-Json).manifest.changes.Count -eq 0) 'New task includes preceding task changes'
     $emptyRisk=& $stateEntry -Operation AssessRisk -Path $spec -TaskId two | ConvertFrom-Json

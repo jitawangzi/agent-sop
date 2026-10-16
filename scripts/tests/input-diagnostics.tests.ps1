@@ -39,15 +39,24 @@ try {
     Assert (($report.paths | Where-Object path -eq 'generated/noise.txt').inherited) 'Pruned subtree explanation missing'
     Assert (($report.paths | Where-Object path -eq '.git/HEAD').rule.kind -eq 'PROTECTED') 'VCS exclusion missing'
     Assert (($report.paths | Where-Object path -eq 'absent.txt').decision -eq 'NOT_FOUND') 'Absent input not reported'
+    $human=Write-AiSopInputInspection $report | Out-String
+    Assert ($human -match 'absent.txt: NOT_FOUND' -and $human -notmatch '\[:\]') 'Missing rule printed empty diagnostic brackets'
+    $caseTrace=@{entries=@(@{path='src/build/main.txt';decision='INCLUDED';rule=@{kind='DEFAULT';path='';reason='Input'};matchedRules=@()})}
+    $caseProbe=Get-AiSopInputPathExplanation $root 'src/build/Main.txt' $caseTrace
+    if ([OperatingSystem]::IsWindows()) { Assert ($caseProbe.decision -eq 'INCLUDED' -and -not $caseProbe.inherited) 'Windows case-only difference lost exact-path match' }
+    else { Assert ($caseProbe.decision -eq 'NOT_FOUND') 'POSIX case distinction lost' }
     Assert ($before -ceq (TreeHash)) 'Inspection wrote workspace files'
     $policy.exclude+=@{path='shared';reason='Candidate-only exclusion'}
     $policy.include+=@('build/noise.txt')
     Put '.ai-workspace/context/candidate-inputs.json' ($policy | ConvertTo-Json -Depth 8)
     $before=TreeHash
-    $preview=Get-AiSopInputInspection $root @('shared/base.txt','build/noise.txt') '.ai-workspace/context/candidate-inputs.json'
+    $preview=Get-AiSopInputInspection $root @('shared/base.txt','build/noise.txt','build') '.ai-workspace/context/candidate-inputs.json'
     Assert ($preview.candidate.added.Count -eq 1 -and $preview.candidate.added[0] -eq 'build/noise.txt') 'Candidate added input mismatch'
     Assert ($preview.candidate.removed.Count -eq 1 -and $preview.candidate.removed[0] -eq 'shared/base.txt') 'Candidate removed input mismatch'
     Assert ($preview.candidate.policyChanged -and -not $preview.candidate.contentChangedDuringComparison.Count) 'Candidate comparison was not stable'
+    Assert (($preview.candidate.paths | Where-Object path -eq 'build').decision -eq 'TRAVERSE_ONLY') 'Candidate no longer explains traversed output directory'
+    $human=Write-AiSopInputInspection $preview | Out-String
+    Assert ($human -match 'ancestor pruned at shared' -and $human -match 'traversed only to reach explicitly included descendants' -and $human -notmatch 'TRAVERSE_ONLY') 'Candidate human output hid pruning or exposed internal traversal enum'
     Assert ($before -ceq (TreeHash) -and (Get-AiSopInputSnapshot $root).digest -ceq $snapshot.digest) 'Candidate policy was installed or evidence persisted'
     $same=Get-AiSopInputInspection $root @() '.ai-workspace/context/verification-inputs.json'
     Assert (-not $same.candidate.policyChanged -and -not $same.candidate.added.Count -and -not $same.candidate.removed.Count) 'Identical policy reported a change'

@@ -1577,7 +1577,8 @@ if ($null -ne $taskAfter) {
             Save-AiSopTaskChangeManifest $taskChanges $ownerWs | Out-Null
         }
         $taskAfter['impactReview'] = @{
-            artifactHash=(Get-FileHash -LiteralPath $impactPath -Algorithm SHA256).Hash.ToLowerInvariant()
+            artifactHash=(Get-AiSopImpactArtifactHash $impactPath 'sha256-text-lf-v1')
+            hashAlgorithm='sha256-text-lf-v1'
             inputDigest=$(if ($taskChanges) { $taskChanges.inputDigest } else { (Get-AiSopInputSnapshot (Get-OwnerWorkspacePath)).digest })
             reviewedAt=$AcceptedAt.ToString('o')
         }
@@ -1644,16 +1645,29 @@ $transactionOperation = switch ($Operation) {
 }
 if ($TaskId) { $WorkflowDeadlineUtc = [DateTimeOffset]::UtcNow.AddMilliseconds($ownerDeadlineMs) }
 if ($null -ne $DeadlineUtc -and $DeadlineUtc -lt $WorkflowDeadlineUtc) { $WorkflowDeadlineUtc = [DateTimeOffset]$DeadlineUtc }
-Invoke-AiSopWorkflowTransaction `
-    -Operation $transactionOperation `
-    -Feature $Feature `
-    -OwnerPath $OwnerPath `
-    -SessionKeys $sessionKeys `
-    -Targets $targets `
-    -TransactionId $transactionId `
-    -DeadlineUtc $WorkflowDeadlineUtc `
-    -WorkspacePath $ownerWs |
-    Out-Null
+$claimLocks=$null
+try {
+    if ($Operation -eq 'Claim') {
+        Invoke-AiSopWorkflowTransactionRecovery -DeadlineUtc $WorkflowDeadlineUtc -WorkspacePath $ownerWs | Out-Null
+        $claimLocks=Enter-AiSopWorkflowTransactionLocks -SessionKeys $sessionKeys -OwnerPath $OwnerPath -Targets $targets -DeadlineUtc $WorkflowDeadlineUtc -WorkspacePath $ownerWs
+        Assert-AiSopNoOtherActiveTask $ResolvedSpecDirectory $TaskId
+    }
+    Invoke-AiSopWorkflowTransaction `
+        -Operation $transactionOperation `
+        -Feature $Feature `
+        -OwnerPath $OwnerPath `
+        -SessionKeys $sessionKeys `
+        -Targets $targets `
+        -TransactionId $transactionId `
+        -DeadlineUtc $WorkflowDeadlineUtc `
+        -WorkspacePath $ownerWs `
+        -LocksAlreadyHeld:($null -ne $claimLocks) |
+        Out-Null
+} finally {
+    if ($claimLocks) { Exit-AiSopWorkflowLocks $claimLocks.Locks }
+}
+
+if ($Operation -eq 'Cancel' -and $TaskId) { Write-AiSopCancelledFollowUpReminder $ResolvedSpecDirectory $TaskId }
 
 if (-not [string]::IsNullOrWhiteSpace($ResolvedSpecDirectory)) {
     $specLockPath = Join-Path $ResolvedSpecDirectory ".workflow-mutation.lock"

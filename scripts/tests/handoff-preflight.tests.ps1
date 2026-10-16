@@ -58,6 +58,7 @@ try {
     Assert ($report.status -eq 'NO_ISSUES_DETECTED' -and $report.tasks.Count -eq 2) 'Valid paused tasks were not inspectable'
     $manifest=@($report.artifacts | Where-Object kind -eq 'INPUT_MANIFEST')
     Assert ($manifest.Count -eq 1 -and $manifest[0].requiredBy.Count -eq 2) 'Shared manifest references were not deduplicated'
+    Assert ('.ai-workspace/specs/.artifacts/' -in $report.syncRoots) 'Sync roots omitted the shared immutable manifests'
     Assert ($manifest[0].repository.root -ceq (Resolve-PhysicalPathIdentity (Join-Path $workspace '.ai-workspace/specs')) -and $manifest[0].tracking -eq 'TRACKED') 'Nested specs repository ownership used the parent ignore rule'
     $config=$report.artifacts | Where-Object kind -eq 'PROJECT_CONTEXT'
     Assert ($config.repository.root -ceq (Resolve-PhysicalPathIdentity (Join-Path $workspace '.ai-workspace'))) 'Project context assigned to specs repository'
@@ -78,6 +79,7 @@ try {
     Put ".ai-workspace/specs/.artifacts/changes/$changeRef.json" $changeRaw
     $one.impactReview=@{artifactHash=('a'*64);inputDigest=$snapshot.digest;reviewedAt=[DateTimeOffset]::UtcNow.ToString('o');changeSetDigest=$changeRef}; SaveTask $one
     $changeBinding=Get-AiSopHandoffPreflight $workspace Example one
+    Assert ('.ai-workspace/specs/.artifacts/' -in $changeBinding.syncRoots) 'Change manifests omitted from directory sync plan'
     Assert (@($changeBinding.artifacts | Where-Object kind -eq 'CHANGE_MANIFEST')[0].status -eq 'VALID' -and ($changeBinding.tasks[0].diagnostics -join ' ') -match 'TASK_CHANGE_MANIFEST_BINDING_MISMATCH') 'Change baseline mismatch was missed or blamed on valid file content'
     $change.changes=@('not-a-change-object')
     $changeRaw=ConvertTo-AiSopWorkflowCanonicalJson $change; $changeRef=Get-AiSopWorkflowSha256 $changeRaw

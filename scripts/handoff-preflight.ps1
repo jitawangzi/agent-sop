@@ -242,7 +242,9 @@ function Get-AiSopHandoffPreflight {
         schemaVersion='1.0';readOnly=$true;workspace=$WorkspacePath;status=$(if ($issues.Count) { 'NEEDS_ATTENTION' } else { 'NO_ISSUES_DETECTED' })
         engine=@{inspector=$currentEngine;target=$target;repository=(Get-AiSopPreflightRepository (Join-Path $target 'config/runtime-compatibility.json') $repositories);capabilities=$capabilities;expectedInputAlgorithm=$targetAlgorithm}
         tasks=$tasks.ToArray();artifacts=@($artifacts.Values | Sort-Object path);issues=$issues.ToArray()
-        syncRoots=@('.ai-workspace/context/')+@($tasks | ForEach-Object { ".ai-workspace/specs/features/$($_.feature)/" } | Sort-Object -Unique)
+        syncRoots=@('.ai-workspace/context/')+@($tasks | ForEach-Object { ".ai-workspace/specs/features/$($_.feature)/" } | Sort-Object -Unique)+@(
+            if (@($artifacts.Values | Where-Object { $_.kind -in @('INPUT_MANIFEST','CHANGE_MANIFEST') }).Count) { '.ai-workspace/specs/.artifacts/' }
+        )
         notes=@('Advisory preflight, not a completion gate. No business-input hashes, tests, locks or transaction recovery were run. Recheck after stopping edits; this is not an atomic snapshot.',
             'Sync the feature specifications and task records, referenced specs/.artifacts manifests, project context and matching source revision. The repository column identifies nested Git owners; tracked files may still need commit/push/fetch. Remote reachability and target source equality are not checked.',
             'Local ownership, sessions, transaction journals and .ai-workspace/.runtime logs stay on their original machine/workspace. Resolve unfinished runs there, then Suspend or use deliberate Resume/Recover at the destination.',

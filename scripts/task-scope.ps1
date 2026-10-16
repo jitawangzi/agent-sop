@@ -44,18 +44,31 @@ function Initialize-AiSopTaskStart {
     }
 }
 
+function Get-AiSopImpactArtifactHash {
+    param([string]$Path, [string]$HashAlgorithm)
+    # Missing marker means the historical byte hash. Never reinterpret old
+    # approvals under a different algorithm or normalize executable inputs.
+    switch ($HashAlgorithm) {
+        '' { return (Get-FileHash -LiteralPath $Path -Algorithm SHA256 -ErrorAction Stop).Hash.ToLowerInvariant() }
+        'sha256-text-lf-v1' { return Get-AiSopWorkflowSha256 ([IO.File]::ReadAllText($Path).Replace("`r`n", "`n")) }
+        default { throw "IMPACT_HASH_ALGORITHM_UNSUPPORTED:$HashAlgorithm" }
+    }
+}
+
 function Get-AiSopTaskImpactSnapshot {
-    param($Task, [string]$WorkspacePath)
+    param($Task, [string]$WorkspacePath, [string]$HashAlgorithm='sha256-text-lf-v1')
     try {
         $path=Resolve-AiSopWorkspaceChild $WorkspacePath ".ai-workspace/specs/features/$($Task.feature)/04_change_impact.json"
         if (-not (Test-Path -LiteralPath $path)) { return @{status='ABSENT'} }
-        return @{status='CAPTURED';artifactHash=(Get-FileHash -LiteralPath $path -Algorithm SHA256 -ErrorAction Stop).Hash.ToLowerInvariant()}
+        $snapshot=@{status='CAPTURED';artifactHash=(Get-AiSopImpactArtifactHash $path $HashAlgorithm)}
+        if ($HashAlgorithm) { $snapshot.hashAlgorithm=$HashAlgorithm }
+        return $snapshot
     } catch { return @{status='UNAVAILABLE';reason=$_.Exception.Message} }
 }
 
 function Get-AiSopTaskImpactDisposition {
     param($Task, [string]$WorkspacePath)
-    $current=Get-AiSopTaskImpactSnapshot $Task $WorkspacePath
+    $current=Get-AiSopTaskImpactSnapshot $Task $WorkspacePath ([string]$Task.startImpact.hashAlgorithm)
     if ($current.status -eq 'UNAVAILABLE') { throw "TASK_IMPACT_UNAVAILABLE: $($current.reason)" }
     if ($current.status -eq 'ABSENT') {
         if ($Task.impactReview -or $Task.startImpact.status -eq 'CAPTURED') {

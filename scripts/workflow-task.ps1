@@ -1,7 +1,7 @@
 #requires -Version 7.0
 [CmdletBinding()]
 param(
-    [Parameter(Mandatory)][ValidateSet('Discover','Status','FollowUps','Recover','Start','Resume','Checkpoint','Suspend','Cancel','Run','RetryEvidence','ReviewImpact','Verify','Complete','ChangeTier','RecordSync','SetApplicability','AddFollowUp','CloseFollowUp','Changes','SetBaseline','SetCaseScope','InspectRecovery')][string]$Operation,
+    [Parameter(Mandatory)][ValidateSet('Discover','Status','FollowUps','Recover','Start','Resume','Checkpoint','Suspend','Cancel','Run','RetryEvidence','ReviewImpact','Verify','Complete','ChangeTier','RecordSync','SetApplicability','AddFollowUp','CloseFollowUp','ReopenFollowUp','Changes','SetBaseline','SetCaseScope','InspectRecovery')][string]$Operation,
     [string]$WorkspacePath = (Get-Location).Path,
     [string]$SpecDirectory,
     [string]$Feature,
@@ -154,7 +154,7 @@ if ($Operation -eq 'Resume') {
     Write-AiSopFollowUpReminder $WorkspacePath $Feature
     exit 0
 }
-if ($Operation -in @('ChangeTier','RecordSync','SetApplicability','AddFollowUp','CloseFollowUp','SetBaseline','SetCaseScope')) {
+if ($Operation -in @('ChangeTier','RecordSync','SetApplicability','AddFollowUp','CloseFollowUp','ReopenFollowUp','SetBaseline','SetCaseScope')) {
     $update = switch ($Operation) {
         'SetBaseline' { @{operation=$Operation;inputsRef=$BaselineInputsRef;reason=$Reason} }
         'SetCaseScope' { @{operation=$Operation;caseIds=@($CaseIds);reason=$Reason} }
@@ -166,6 +166,7 @@ if ($Operation -in @('ChangeTier','RecordSync','SetApplicability','AddFollowUp',
         'SetApplicability' { @{ operation=$Operation; kind=$Kind; status=$Applicability; reason=$Reason } }
         'AddFollowUp' { @{ operation=$Operation; id=$FollowUpId; kind=$FollowUpKind; summary=$Summary; scope=@($Scope) } }
         'CloseFollowUp' { @{ operation=$Operation; sourceTaskId=$SourceTaskId; id=$FollowUpId; status=$Disposition; resolution=$Resolution; userRequest=$UserRequest } }
+        'ReopenFollowUp' { @{ operation=$Operation; sourceTaskId=$SourceTaskId; id=$FollowUpId; reason=$Reason } }
     }
     & $ownerScript -Operation Checkpoint @ownerArgs -TaskUpdateJson (ConvertTo-Json -InputObject $update -Depth 8 -Compress)
     if ($LASTEXITCODE -ne 0) { throw 'TASK_POLICY_UPDATE_FAILED' }

@@ -38,6 +38,24 @@ function Get-AiSopChangedInputs {
     })
 }
 
+function Assert-AiSopNoOtherActiveTask {
+    param([string]$SpecDirectory, [string]$TaskId)
+    # Called with the feature owner lock held. Local registries are not synced,
+    # so an absent registry entry does not prove all synced tasks are inactive.
+    $root=Resolve-PhysicalPathIdentity $SpecDirectory
+    foreach ($entry in @(Get-ChildItem -LiteralPath (Join-Path $root 'tasks') -Directory -ErrorAction SilentlyContinue)) {
+        if ($entry.Name -ceq $TaskId) { continue }
+        try {
+            $path=Get-AiSopTaskPath $root $entry.Name
+            if (-not [IO.File]::Exists($path)) { continue }
+            $task=Read-AiSopTask $root $entry.Name
+        } catch { throw "TASK_INDEX_UNREADABLE:$($entry.Name):$($_.Exception.Message)" }
+        if ($task.status -eq 'ACTIVE') {
+            throw "TASK_ACTIVE_CONFLICT:$($task.taskId): Resume the existing task; if its local ownership is missing, Recover it first. For independent work, Suspend/Recover the old task before Start. No old completion gates are required."
+        }
+    }
+}
+
 function Get-AiSopTaskSpecDigest {
     param([string]$SpecDirectory, $ValidationContext)
     $SpecDirectory = Resolve-PhysicalPathIdentity $SpecDirectory

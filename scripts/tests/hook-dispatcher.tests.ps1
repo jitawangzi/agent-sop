@@ -337,6 +337,47 @@ try {
     . $DispatcherScript
     . $SessionScript
 
+    # Recovery instructions are part of the native deny contract. Rendering
+    # them must not mutate a journal or encourage bypassing task ownership.
+    $recoveryJournal = Join-Path $TestRoot 'journal with spaces.json'
+    [IO.File]::WriteAllText($recoveryJournal, '{"phase":"PREPARED"}', $Utf8NoBom)
+    $journalBefore = [IO.File]::ReadAllBytes($recoveryJournal)
+    $savedJournalPath = Get-AiSopLastIndeterminateJournalPath
+    try {
+        foreach ($journalPath in @($recoveryJournal, '', 'path/with "quotes"/journal.json')) {
+            Set-AiSopLastIndeterminateJournalPath -JournalPath $journalPath
+            foreach ($agent in @('CLAUDE_CODE','ANTIGRAVITY','CURSOR','COPILOT','CODEX','PI')) {
+                foreach ($code in @('OWNER_REQUIRED','WORKFLOW_TRANSACTION_INDETERMINATE','UNKNOWN_REASON')) {
+                    $envelope = ConvertTo-AiSopDispatcherEnvelope -Agent $agent -EventHint PRE_TOOL_USE -Decision DENY -ReasonCode $code | ConvertFrom-Json -AsHashtable
+                    $reason = switch ($agent) {
+                        'CLAUDE_CODE' { Assert-Equal $envelope.hookSpecificOutput.permissionDecision 'deny' "$agent decision"; $envelope.hookSpecificOutput.permissionDecisionReason }
+                        'COPILOT' { Assert-Equal $envelope.permissionDecision 'deny' "$agent decision"; $envelope.permissionDecisionReason }
+                        'CURSOR' { Assert-Equal $envelope.permission 'deny' "$agent decision"; $envelope.agent_message }
+                        default { Assert-Equal $envelope.decision 'deny' "$agent decision"; $envelope.reason }
+                    }
+                    Assert-True ($reason.StartsWith("AI_SOP_GUARD_${code}:")) "$agent must retain the reason code"
+                    Assert-True ($reason -notmatch 'then delete|must auto-Claim|auto Transfer/ForceRelease|takeover task') "$agent must not prescribe destructive shortcuts"
+                    if ($code -eq 'OWNER_REQUIRED') {
+                        Assert-True ($reason -match 'Task -Operation Discover' -and $reason -match 'Start' -and $reason -match 'Resume' -and $reason -match 'InspectRecovery' -and $reason -match 'old agent has stopped') "$agent must route through task discovery and checked recovery"
+                    } elseif ($code -eq 'WORKFLOW_TRANSACTION_INDETERMINATE') {
+                        Assert-True ($reason -match 'Preserve the journal and target files' -and $reason -match 'Preflight' -and $reason -match 'read-only' -and $reason -match 'do not delete') "$agent must retain transaction evidence and explain read-only diagnosis"
+                        if ($journalPath) { Assert-True ($reason.Contains($journalPath)) "$agent journal path must survive JSON escaping" }
+                        else { Assert-True ($reason -match 'location unavailable') "$agent must explain missing journal location" }
+                    } else {
+                        Assert-Equal $reason 'AI_SOP_GUARD_UNKNOWN_REASON: operation denied by policy' 'Other denials keep their generic reason'
+                    }
+                }
+                $allowed = ConvertTo-AiSopDispatcherEnvelope -Agent $agent -EventHint PRE_TOOL_USE -Decision ALLOW -ReasonCode WORKFLOW_TRANSACTION_INDETERMINATE
+                Assert-True ($allowed -match '"allow"' -and $allowed -notmatch 'reason|agent_message|permissionDecisionReason') "$agent ALLOW must not emit recovery guidance"
+                Assert-Equal (ConvertTo-AiSopDispatcherEnvelope -Agent $agent -EventHint STOP -Decision ALLOW) '{}' "$agent lifecycle ALLOW stays empty"
+            }
+        }
+        Assert-Equal (ConvertTo-AiSopDispatcherEnvelope -Agent ANTIGRAVITY -EventHint PRE_INVOCATION -Decision DENY -ReasonCode OWNER_REQUIRED) '{}' 'Antigravity lifecycle contract stays empty even for a denial'
+        Assert-True ([Linq.Enumerable]::SequenceEqual([byte[]]$journalBefore,[byte[]][IO.File]::ReadAllBytes($recoveryJournal))) 'Rendering recovery guidance must preserve the journal bytes'
+    } finally {
+        Set-AiSopLastIndeterminateJournalPath -JournalPath $savedJournalPath
+    }
+
     Assert-Equal (Get-AiSopDispatcherShellCommandText @{ command = "a" }) "a" (
         "command alias must be read."
     )

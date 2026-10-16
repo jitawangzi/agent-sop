@@ -270,9 +270,11 @@ AI 可在一次响应内同时呈递 `01_server_rules.md` 与 `06_design_contrac
 
 **AI 自动执行脚本（非打印给用户）**：本文件及手册中所有 `workflow-state.ps1`/`workflow-owner.ps1`/`feature-runtime.ps1`/`run-all-tests.ps1` 等命令，AI 在确认用户意图后应**直接在后台执行**（经终端工具/Bash），读取输出继续流程，而不是把命令打印出来让用户手动复制粘贴。仅当涉及人工决策（如批准需求/设计）时才暂停问用户；脚本执行本身是 AI 的职责。
 
-**Guard 拦截时 AI 自动 Claim**：当用户直接下达修改指令且当前无 Active Owner 时，AI 收到 Guard 拦截后**不得把报错抛给用户**，而应自动在后台生成临时 ownerId 并静默执行 Claim，然后重试编辑。仅在 Claim 失败或归属冲突时才提示用户。
+**Guard 拦截后的任务识别**：先 `ai-sop.ps1 Task -Operation Discover` 识别功能和任务。独立修改用 Start，继续原任务用 Resume；异常中断先 Status / InspectRecovery，再 Recover → Resume。不要生成临时 ownerId 直接 Claim 来绕过任务入口。已获授权且任务明确时自动继续；存在归属冲突则说明原因，确认旧 Agent 停止后才进行强制恢复，不要求固定接管口令。
 
-功能开始时自动 Claim 归属，生成不可变 owner ID 持久化到 Superpowers ledger。各 harness 统一 `SUPERPOWERS` 归属（`-Workflow SUPERPOWERS` 是归属身份标识，**不等于依赖 Superpowers 技能包**——T2/T1不依赖 Superpowers 技能，但仍用此归属身份），`agent` 字段区分实际工具：
+新任务由 Task Start 管理归属、基线与 taskId，Task Verify 通过后 Task Complete；中断用 Checkpoint / Suspend。已有功能继续使用原 FeatureName，独立修改创建新 taskId。同功能不并行运行多个主任务。
+
+**旧功能级命令兼容**：下方 Claim / Validate / Complete / Transfer 示例仅用于尚未迁移、没有 taskId 的存量归属；有 taskId 时使用任务入口，不混用完成语义。各 harness 统一 `SUPERPOWERS` 归属（它是身份标识，不代表 T1/T2 依赖完整 Superpowers 流程），`agent` 字段区分实际工具。
 
 **FeatureName 命名规则**：用 PascalCase 英文（`[A-Z][A-Za-z0-9]+`，如 `ShopExchangeBuyLimit`、`DailySignInReward`）。从用户话术提取并回显：“将以 `<FeatureName>` 认领，不对请立刻改名”。目录不存在则建。T2 小改也需 feature 名（热修用 `HotfixShopLimit20260821`，无连字符）。已有功能继续使用原 FeatureName，新建独立 taskId；历史 01/06 不改变任务档位。
 
@@ -284,7 +286,7 @@ pwsh -NoProfile -File .\.ai-sop\scripts\workflow-owner.ps1 -Operation Claim `
   -OwnerId "<superpowers-run-id>" `
   -Tier "<T2|T3>"
 ```
-*注：`-Tier` 可选 `T1`/`T2`/`T3`/`FAST_TRACK`（默认 `T2`；新功能/复杂变更走 T3 流程时须显式传 `-Tier T3`）。*
+*注：旧接口保留 `FAST_TRACK` 兼容值；新任务只选 T1/T2/T3，默认 T2，T1/T3 由人工指定。功能规模和历史档位不改变新任务默认值。*
 
 `agent` 值取自实际工具而非底层模型。若另一活动流程或 session 拥有该功能，**停止而不是编辑它**。任何修改规范功能产物或生产代码的操作都需要归属；只读审计豁免。验证与完成用同一 owner ID。恢复前、每个修改批次前用 `Validate`：
 
@@ -307,9 +309,9 @@ pwsh -NoProfile -File .\.ai-sop\scripts\workflow-owner.ps1 -Operation Complete `
   -OwnerId "<superpowers-run-id>"
 ```
 
-失败/阻塞保留归属以便恢复。
+旧流程失败时不得 Complete。任务模式遇到中断或环境阻塞应 Checkpoint / Suspend，保留进度并释放执行占用。
 
-**工具切换与归属接管（Transfer）**：用户中途换工具（如从 Claude Code 切 Cursor）继续同一功能时，新工具发现 owner agent 不同会停止。此时 AI 应从 Guard 拦截报错信息、Superpowers ledger 或功能目录下的 `.workflow-owner.json` 镜像中读取**原 ownerId**（不需问用户要——用户未必知道 ownerId）。有活 session 时用 Transfer：
+**旧归属的工具切换（Transfer）**：没有 taskId 的历史归属可从 ledger 或 `.workflow-owner.json` 获取原 ownerId，核对本地 Status 与会话状态。确认原 Agent 已停止且此次确为继续同一工作后，才用 Transfer；有 taskId 时使用 Resume / Recover，不把镜像视为本机执行权限。
 
 ```powershell
 pwsh -NoProfile -File ./.ai-sop/scripts/workflow-owner.ps1 -Operation Transfer `
@@ -317,7 +319,7 @@ pwsh -NoProfile -File ./.ai-sop/scripts/workflow-owner.ps1 -Operation Transfer `
   -Workflow SUPERPOWERS -Agent "<新工具>" -OwnerId "<原ownerId>" -ConfirmTakeover
 ```
 
-**凭证丢失路径（ForceRelease）**：若 ledger/session/镜像都拿不到原 ownerId（前工具异常退出未同步、或镜像丢失），不要卡死——询问用户“是否强制接管该功能归属？”用户**显式确认**后执行 `workflow-owner.ps1 -Operation ForceRelease -Feature <Name> -Workflow SUPERPOWERS -Agent <原工具> -OwnerId <任何能拿到的原id或占位>` 将归属释放（状态 RELEASED），之后重新 `Claim`。禁止静默接管。功能已 Complete 则无需 Transfer/ForceRelease，开新功能即可。
+**旧归属凭证丢失**：先用 Status / Preflight 检查可恢复的身份和本地状态；无法核实 ownerId 时报告缺口，不用占位值强制释放。已完成工作下的新修改沿用功能目录、创建独立 taskId，不为规避旧状态另开功能。
 
 ## 生产代码编辑 Guard
 
@@ -327,7 +329,7 @@ PreToolUse hook 在每次文件编辑前运行 `guard-production-edit.ps1`（各
 
 ## 跨工具交接状态（feature-state.json）
 
-换工具时不丢进度：每个功能目录下可维护 `feature-state.json`（轻量运行时进度，记录 tier/phase/完成项/下一动作/最近验证，不依赖聊天历史）。新工具接管后先查询：
+任务模式的进度以 `tasks/<taskId>/task.json` 为准，使用 Task Status / Checkpoint。下面的 `feature-state.json` 仅供旧流程恢复参考，不作为新任务身份或完成状态：
 
 ```powershell
 pwsh -NoProfile -File ./.ai-sop/scripts/feature-state.ps1 -Operation Get -Feature <FeatureName> -SpecDirectory ".ai-workspace/specs/features/<FeatureName>"
@@ -337,7 +339,7 @@ pwsh -NoProfile -File ./.ai-sop/scripts/feature-state.ps1 -Operation Get -Featur
 
 ## 完成验证
 
-交付前运行聚合测试与覆盖校验：
+新任务按下节档位要求使用 Task Run / Verify / Complete。以下覆盖校验示例用于 T3 或旧流程诊断（任务模式调用 ValidateTestCoverage 时加 `-TaskId`）；修改 SOP 脚本本身时另须运行聚合测试。普通宿主 T1/T2 不默认执行 SOP 全量套件或完整覆盖检查：
 
 ```powershell
 pwsh -NoProfile -File .\.ai-sop\scripts\run-all-tests.ps1 -IncludeCompile
@@ -349,7 +351,7 @@ pwsh -NoProfile -File .\.ai-sop\scripts\workflow-state.ps1 -Operation LintSpecs 
 
 `run-all-tests.ps1` 默认跑工作流脚本测试；`-IncludeCompile` 额外跑 `gradlew compileJava`。全过 exit 0。最后由 `verification-before-completion` 复查。
 
-**验证须匹配声明（硬约束）**：编译通过 ≠ 功能通过 ≠ 业务链路验证；JUnit 通过 ≠ 正式 Tomcat/JSP 业务验证（路径 A ≠ 路径 B）；"已修复"须附原始 bug 复现修复后 Passed 证据；"功能完成"须附覆盖契约校验通过证据。读 exit code 与实际输出，不假设成功。
+**验证须匹配声明（硬约束）**：编译通过不代表行为回归通过，单元测试也不代表完整业务链路验证。T1 可报告“代码修复并编译通过，行为回归待执行”，不因延期回归阻止按 T1 完成；T2 报告相关测试和同步结果；T3 附适用覆盖契约证据。任何档位都读取真实退出码与输出，不扩大验证结论。
 
 ## 完成定义
 
@@ -432,14 +434,16 @@ AI 每次回复末尾必带一行：`档位=T2 | 阶段=实现 | 下一步=编�
 
 ```
 [SOP 拦截] 工具 <工具名> 因 <缺失能力/拦截原因>，无法执行 <尝试的动作>。
-建议：<恢复建议，如切换 STRICT 工具 / Claim 归属 / 用户确认接管 等>
+建议：<恢复建议，如切换具备所需能力的工具 / Task Discover / 检查原任务状态 等>
 ```
 
-示例：`[SOP 拦截] 工具 Pi 因无 subagent（能力准入 BLOCKED），无法执行 T3 design-reviewer 独立审查。建议：降级 T2 或切换到 Claude Code / Antigravity / Cursor / Copilot 跑 T3。`
+示例：`[SOP 拦截] 工具 Pi 因无 subagent（能力准入 BLOCKED），无法执行 T3 design-reviewer 独立审查。建议：切换到具备独立审查能力的工具继续 T3；只有用户主动选择 T2 时才改档。`
 
 不得只报“我无法完成”而不给原因和恢复建议。
 
-**Owner 凭证丢失交互式接管**：当 Guard 检测到 Owner 不匹配时，不要冷拒，应在拦截信息中输出 AI 可识别的接管提示：`提示：当前目录被上一会话锁定，输入“接管任务”或“takeover task”即可由 AI 自动 Transfer/ForceRelease 转移所有权。` 用户输入任一口令后，AI 自动执行 Transfer（有活 session）或 ForceRelease（凭证丢失）流程。
+**接管提示**：说明哪个功能/任务持有归属、下一步检查什么。普通继续工作使用 Resume；异常中断用 InspectRecovery → Recover → Resume。用户表达接管意图后仍须核对任务身份、旧 Agent 与验证进程状态，不能把一句口令当成无条件抢占授权。
+
+**事务不确定状态**：遇到 `WORKFLOW_TRANSACTION_INDETERMINATE` 保留 journal 与目标文件，运行 `ai-sop.ps1 Preflight` 做只读诊断。它不会修复事务；无法确定目标状态时停止修改并报告诊断，不删除日志、不用 ForceRelease 绕过。恢复边界见 `.ai-sop/SUPERPOWERS_MANUAL.md`。
 
 ## 门禁状态诊断（Status）
 
@@ -451,9 +455,9 @@ pwsh -NoProfile -File ./.ai-sop/scripts/workflow-state.ps1 -Operation Status -Pa
 
 输出 `gate=<requirement|design> status=<APPROVED|DRAFT> sha256=... artifact=... hashMatch=<MATCH|DRIFT>`。`hashMatch=DRIFT` 表示已批准产物被改过——纯文本润色用 `UpdateHash`，实质改动用 `ResetApproval` + `Approve`。
 
-## 归属超时与强制释放（ForceRelease）
+## 旧归属的强制释放（ForceRelease，仅兼容）
 
-前 session 异常退出（崩溃/被杀）没 `Complete` 时，owner 永远 ACTIVE，新 session 无法 Claim。恢复：
+有 taskId 的异常退出使用 InspectRecovery / Recover / Resume。下面仅用于没有 taskId 的旧归属：核实真实 Feature、ownerId 和原 Agent，确认原会话停止，且已获强制释放授权后执行；缺失身份不可填占位值。
 
 ```powershell
 pwsh -NoProfile -File ./.ai-sop/scripts/workflow-owner.ps1 -Operation ForceRelease `
@@ -461,9 +465,9 @@ pwsh -NoProfile -File ./.ai-sop/scripts/workflow-owner.ps1 -Operation ForceRelea
   -Workflow SUPERPOWERS -Agent "<原工具>" -OwnerId "<原ownerId>"
 ```
 
-`ForceRelease` 把 owner 状态改为 `RELEASED`（不删记录，保留审计轨迹），之后可重新 `Claim`。需准确 `Feature` + `OwnerId`，防偷归属。优先用 `Transfer`（有活 session 时）；`ForceRelease` 仅在原 session 已丢失时用。
+`ForceRelease` 保留审计记录；若关联任务，会同步暂停任务，不代表验收通过。本机验证进程仍运行时不能接管。旧归属能够正常 Transfer 时无需强制释放；不得用它绕过未决事务。
 
-**换机交接**：换机器/换人时本机注册表（`%LOCALAPPDATA%`）没有原 owner，但功能目录下的 `.workflow-owner.json` 镜像随仓库走。AI 从镜像读原 `ownerId`/`agent`，执行 `ForceRelease`（本机注册表找不到也无妨——镜像 ownerId 用于校验），之后用新身份重新 `Claim`。不需要问用户 ownerId。
+**换机交接**：镜像只提供历史身份参考，不复制本机注册表、事务日志或 `.runtime` 权限。先 Preflight / Status；带 taskId 的任务按 Recover → Resume 获取本机归属，旧任务先按任务入口的显式采纳规则迁移。来源或身份不清时报告缺口，不自动 ForceRelease。
 
 ## 概念速查表
 

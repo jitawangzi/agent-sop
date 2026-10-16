@@ -50,6 +50,20 @@ Run 自动续期当前绑定会话，不重新激活已结束或已转移的会�
 
 T1/T2 的 Run 不读取历史需求设计和覆盖矩阵，历史损坏的覆盖 JSON 不会阻断轻量编译/测试。完整 T3 测试仍绑定规格摘要。未结束的运行会阻止 Complete、Suspend 和接管；失败/中断的必需测试批次需要同批次成功复跑，不能用旧成功记录覆盖。
 
+## Guard 拦截与事务不确定状态
+
+`OWNER_REQUIRED` 表示缺少有效执行归属。先 Discover 识别当前功能和任务：独立修改 Start，继续原任务 Resume；异常中断先 Status / InspectRecovery，再 Recover → Resume。不要创建临时 ownerId 直接 Claim。接管不依赖固定提示词；需要强制恢复时，先确认原 Agent 已停止，并检查验证进程状态。
+
+`WORKFLOW_TRANSACTION_INDETERMINATE` 表示事务恢复不能确定目标状态，不等于普通的遗留归属锁。保留报错中的 journal 路径与目标文件，在宿主根目录执行只读诊断：
+
+```powershell
+pwsh -NoProfile -File ./ai-sop.ps1 Preflight -Feature <FeatureName>
+```
+
+Preflight 列出本地未决事务等问题，不修复、不抢锁，也不表示门禁通过。只读检查 journal 的 phase、目标路径与前后快照及相关错误；路径未知时用预检定位，不猜测注册表目录或批量清理。排除已确认的 IO/环境原因后重试原操作，由事务协调器在锁内校验并回滚/重放。若目标既不匹配前像也不匹配后像、记录损坏或来源不明，停止写入并报告实际差异，需要针对该事务诊断修复；目前没有通用的强制修复命令。
+
+**禁止删除 journal、改写快照或 ForceRelease 来消除报错**；日志清理由协调器成功恢复并校验目标后完成。Task Recover 处理任务中断与归属，不是跳过事务一致性检查的入口。这样的暂停只针对真实的状态一致性故障，不给普通 T1/T2 增加新门禁。
+
 ## T3 的任务基线和必测范围
 
 新任务记录 `baseline`：VCS 类型和启动时版本用于追溯，功能 owner/feature-state 的长期基线不因此改变。`startInputs` 与任务创建一起通过事务保存，绑定 taskId、feature、创建时间和创建事务，引用原始内容清单。Resume、Run、Recover 均不重新采集这个起点。必须先 Start 再修改代码；启动前已有改动不自动归属于新任务。
@@ -318,7 +332,7 @@ ChangeTier 只改变活动任务的交付要求，保留原 taskId、ownerId、�
 - 实际完成记 RESOLVED，Resolution 给出文件、用例或验证结果等具体依据；人工明确不需要处理记 NOT_NEEDED，并附 UserRequest。暂不处理仍保留 PENDING，不需要额外命令。
 - Discover/Status 显示来源任务的待办，FollowUps 可集中查询。提醒查询失败仅报诊断，不阻止新任务。仅有标记不阻塞任何档位；相关 T3 整体验收仍需消除实际规格或验证缺口。
 
-## 人机交互约定
+## 人机交互约定（以下完整编排仅 T3）
 
 - 每轮最多 3 个关键问题，允许用户一句话给齐。
 - 对有意义的备选方案进行比较并推荐其一。
@@ -327,7 +341,7 @@ ChangeTier 只改变活动任务的交付要求，保留原 taskId、ownerId、�
 - 设计最终确认后，测试计划、审计、实现、验证、修复与回归自动连续完成，不再增设批准检查点。
 - 当任务可独立 review 时，默认采用 `subagent-driven-development`，不让用户选择执行策略。
 
-功能开始时自动 Claim 归属，并生成一个不可变 owner ID 持久化到 Superpowers ledger。三 harness 统一使用 `SUPERPOWERS` 归属，`agent` 字段区分实际工具。同一功能从开始到交付使用同一身份。
+新修改先 Discover，再 Start / Resume；归属与进度由任务入口管理，默认 T2，人工指定优先。独立修改沿用功能名、创建新 taskId；完成用 Task Verify / Complete，中断用 Checkpoint / Suspend。下面的直接 Claim / Validate / Complete 仅用于没有 taskId 的旧流程兼容，不能作为新任务入口。各 harness 统一使用 `SUPERPOWERS` 归属，`agent` 区分实际工具。
 
 ```powershell
 pwsh -NoProfile -File .\.ai-sop\scripts\workflow-owner.ps1 -Operation Claim `
@@ -338,9 +352,9 @@ pwsh -NoProfile -File .\.ai-sop\scripts\workflow-owner.ps1 -Operation Claim `
   -OwnerId "<superpowers-run-id>"
 ```
 
-`agent` 值取自实际工具，而非底层模型。Codex 使用 `CODEX`，直接 Claim 时从 `CODEX_SESSION_ID` 注册 session。注意 PI 因核心无 subagent，能力准入判定为 BLOCKED（支持 T1/T2，不能跑自动 T3 独立审查），其 Claim 经 `pi-adapter/bootstrap-pi-session.ps1` 注册 session。已有功能继续使用原 FeatureName，为每次独立修改创建 taskId；不要通过另开功能目录规避旧门禁。下面的直接 Claim 仅用于旧流程兼容，新任务使用 Task Start。
+`agent` 值取自实际工具，而非底层模型。Codex 使用 `CODEX`，旧接口直接 Claim 时从 `CODEX_SESSION_ID` 注册 session。PI 因核心无 subagent，支持 T1/T2，但无法运行要求独立审查的完整 T3；旧 Claim 经 `pi-adapter/bootstrap-pi-session.ps1` 注册 session。工具能力不会自动改变任务档位。
 
-恢复任务或开始新的修改批次前用同一身份执行 `Validate`；功能成功交付后执行 `Complete`。失败或阻塞时不要 Complete，以便原会话恢复：
+旧流程恢复或开始修改批次前用同一身份执行 Validate；成功交付后执行 Complete。失败不得宣称完成；任务模式使用 Suspend 保存未完成工作并释放执行占用：
 
 ```powershell
 pwsh -NoProfile -File .\.ai-sop\scripts\workflow-owner.ps1 -Operation Validate `
@@ -373,7 +387,7 @@ pwsh -NoProfile -File .\.ai-workspace\scripts\feature-runtime.ps1 `
 
 ## 使用模板
 
-以下模板可直接复制，替换 `<...>` 即可。Claude Code 会自动走 Superpowers，无需手动声明 Skill。
+以下模板可直接复制，替换 `<...>` 即可。完整流程模板明确选择 T3，其余修改默认 T2，人工指定优先；Agent 不因任务名称或功能规模自行升级。无需手动声明 Skill。
 
 只要任务涉及 `<FeatureName>`，提示词就应同时携带：
 
@@ -388,7 +402,7 @@ pwsh -NoProfile -File .\.ai-workspace\scripts\feature-runtime.ps1 `
 ### 1. 完整新功能开发
 
 ```text
-开发新功能 <FeatureName>。
+按 T3 开发新功能 <FeatureName>。
 需求资料位于 .ai-workspace/specs/features/<FeatureName>/。
 按完整流程执行；除需求和设计确认外，其余阶段自动连续完成。
 ```
@@ -398,7 +412,7 @@ Superpowers 会从 `brainstorming` 开始。用户只需在生成 `01_server_rul
 ### 2. 尚未整理规格资料的新功能
 
 ```text
-开发新功能 <FeatureName>。
+按 T3 开发新功能 <FeatureName>。
 规格目录：.ai-workspace/specs/features/<FeatureName>/。
 原始需求如下：
 <粘贴需求内容>
@@ -526,7 +540,7 @@ Bug 文件位于 <BUGS.md 路径>。
    Superpowers 流程（需求→设计→design-reviewer 审查→确认→实现→审计→验证）。
 ```
 
-拆分计划确认后，对每个子功能用模板 1（完整新功能开发）启动，规格目录用各子功能自己的目录。每个子功能独立 Claim 归属、独立交付，互不阻塞（可并行，遵循 `.ai-workspace/workflows/parallel-development.md`）。全部子功能完成后，可用模板 11（全功能审计）做跨子功能的全盘收尾审计。
+拆分计划确认后，对每个子功能用模板 1（T3 完整新功能开发）启动，规格目录用各子功能自己的目录。每个子功能用 Task Start 创建任务、独立交付；不同功能在独立工作区可并行（遵循 `.ai-workspace/workflows/parallel-development.md`），同功能不并行多个主任务。全部子功能完成后，可用模板 11 做跨子功能审计。
 
 ### 11. 全功能审计（手动，人工把关）
 
@@ -699,7 +713,7 @@ Superpowers 会校验当前文件、写入归属与确认状态，然后自动�
 
 任何编辑规范产物的专家调用都属于修改型工作，需要活动的 Superpowers owner ID；只读的咨询性 review 不需要。
 
-## 审计门禁（三层，职责不重叠）
+## 审计门禁（仅 T3，三层职责）
 
 | 层 | 何时 | 视角 | 执行 |
 |---|---|---|---|
@@ -785,13 +799,15 @@ pwsh -NoProfile -File .\.ai-sop\scripts\run-all-tests.ps1
 
 这是本地的硬门禁（替代 GitHub CI）：失败必须先修复，不得跳过。它保证改动不会回归既有工作流脚本。新增脚本应同时新增 `*.tests.ps1`，聚合器会自动发现；对新脚本自身的首次提交，门禁适用于其后的变更。
 
-最后由 Superpowers `verification-before-completion` 复查测试覆盖与所需项目测试。
+T3 最后由 Superpowers `verification-before-completion` 复查测试覆盖与所需项目测试；T1/T2 按本次任务档位收尾。
 
 ## 完成定义与交付闭环
 
 各档位完成条件与门禁硬指标统一以 [AGENTS.md「完成定义」](../AGENTS.md) 为操作清单；分层设计（机器 vs 自报、证据绑定）见 [QUALITY_GATES.md](docs/QUALITY_GATES.md)。
 
-### 交付闭环时序（硬时序约束）
+### 交付闭环时序
+
+新任务统一为 Task Run 留证 → Task Verify → Task Complete；T1/T2/T3 分别检查各自完成条件，T2 需要 RecordSync，T3 另需适用的批准与覆盖/影响绑定。中断或环境阻塞用 Checkpoint / Suspend。以下是无 taskId 的旧功能级 T3 与 SVN 交付示例，不要求新任务补写功能级执行证据：
 
 ```text
 阶段 1（验证）：AI 运行 VerifyCompletion（硬门禁：01/06 APPROVED+SHA、覆盖矩阵无占位、07_design_review PASS/PASS_WITH_WARNINGS 且审查对象 sha256 匹配当前 06、compile-evidence exitCode=0 且 workingTreeDigest 匹配当前工作区；仅类型/公共分发扩展或风险无法评估时要求 04；类型/公共分发扩展时再校验 8 切面与表征方法体。implementation-auditor/logic-auditor 仍为自报）
@@ -805,18 +821,18 @@ pwsh -NoProfile -File .\.ai-sop\scripts\run-all-tests.ps1
 
 > **注意**：`svn commit` 绝不由 AI 自动执行，始终由人工审核后手动提交。
 
-## 30 分钟从零完成一个功能（端到端实操演练）
+## T3 完整功能开发（端到端实操演练）
 
 以实现一个“商城限购”功能 `ShopBuyLimit` 为例，展示全流程交互：
 
 ### 第 1 步：下达开发指令
 **用户**：
 ```text
-开发新功能 ShopBuyLimit。
+按 T3 开发新功能 ShopBuyLimit。
 规格目录：.ai-workspace/specs/features/ShopBuyLimit/。
 需求：增加商城物品每日限购功能，每个商品配置 daily_limit，玩家每天最多购买 daily_limit 次，次日 0 点重置。
 ```
-**AI**：后台自动 Claim 归属，进入 `superpowers:brainstorming`，发起澄清提问（$\le 3$ 个聚焦问题）：
+**AI**：先 Discover，确认是独立新任务后 Start -Tier T3，在修改前记录任务起点；进入 `superpowers:brainstorming`，发起澄清提问（$\le 3$ 个聚焦问题）：
 1. 限购计数存储在 Redis 还是 MongoDB？（推荐：Redis 记录当天购买次数，每日 0 点自动失效；购买成功同步记日志）
 2. 超过限购时的错误码返回什么？（推荐：`SHOP_DAILY_BUY_LIMIT_EXCEEDED`）
 3. 是否支持周限购或总限购扩展？（推荐：本次先实现日限购，接口预留限购类型枚举）
@@ -840,7 +856,7 @@ pwsh -NoProfile -File .\.ai-sop\scripts\run-all-tests.ps1
 **AI**：自动执行 `writing-plans` $\rightarrow$ 生成 `05_test_plan.md` 并同步 `05_test_coverage.json` $\rightarrow$ **按 Task** 派发 `implementation-engine` 编写测试与实现并等待【编译证据】（`exitCode=0`）$\rightarrow$ 再派发 `implementation-auditor` 和（按风险）`logic-auditor` 双重内审 $\rightarrow$ 有修复则回派实现者再编译再审 $\rightarrow$ 运行 `ValidateTestCoverage` 校验 100% 覆盖。禁止实现未结束就并发派审，禁止编排会话自己改生产代码。
 
 ### 第 5 步：收尾、验证与 SVN 交付准备
-**AI**：调用 `requesting-code-review` 整体收尾 $\rightarrow$ 运行 `VerifyCompletion` 通过 $\rightarrow$ 调用 `workflow-owner.ps1 -Operation Complete` 释放锁 $\rightarrow$ 执行 `svn status`/`svn add`，输出变更总结并提示：
+**AI**：调用 `requesting-code-review` 整体收尾 $\rightarrow$ 用 Task Run 留存编译和本次必测用例结果，完成 ReviewImpact 等适用绑定 $\rightarrow$ Task Verify 通过后 Task Complete 释放归属 $\rightarrow$ 执行 `svn status`/`svn add`，输出变更总结并提示：
 ```text
 ✅ ShopBuyLimit 功能开发与全量验证已完成！
 请人工核对改动并执行提交：
@@ -854,8 +870,9 @@ svn commit -m "ShopBuyLimit: 实现商城物品每日限购与跨天重置"
 | 错误标识 | 常见触发场景 | 自愈操作 / 解决方案 |
 |---|---|---|
 | `COMMAND_GRANT_NOT_FOUND` | 旧版脚本或外部 Hook 丢失 | 现已内置智能自愈，直接重新执行命令即可自动注册 Session 并补签 Grant。 |
-| `WORKFLOW_OWNER_ALREADY_ACTIVE` | 前次未正常 Complete 或另一终端正持有锁 | 确认前次任务已结束，运行 `workflow-owner.ps1 -Operation ForceRelease -Feature <Name>` 释放遗留锁。 |
-| `SESSION_INACTIVE` / `SESSION_TIMEOUT` | 本地 Session 超过 30 分钟超时 | 运行 `workflow-owner.ps1 -Operation RebindSession ...` 自动换绑新 Session 并恢复任务。 |
+| `WORKFLOW_OWNER_ALREADY_ACTIVE` / `TASK_ACTIVE_CONFLICT` | 前任务尚未释放或另一会话仍在工作 | Discover / Status 识别任务。继续用 Resume；独立任务先让旧任务 Suspend，异常中断检查 InspectRecovery 后 Recover。强制恢复前确认旧 Agent 已停止，不直接抢占。 |
+| `SESSION_INACTIVE` / `SESSION_TIMEOUT` | 本地会话失效或到期 | 任务模式检查 Status / InspectRecovery 后 Recover → Resume；没有 taskId 的旧归属才按兼容会话流程处理。 |
+| `WORKFLOW_TRANSACTION_INDETERMINATE` | 未决事务的目标状态无法确定 | 保留 journal 与目标文件，Preflight 只读诊断；按本手册恢复边界处理，不删除日志或强制释放绕过。 |
 | `WORKFLOW_LOCK_TIMEOUT` | 并发文件锁竞争或磁盘 IO 延迟 | 检查是否有其他进程卡死，重新执行即可（脚本会自动进行指数退避重试）。 |
 | `GATE_NOT_APPROVED` / `HASH_DRIFT` | 需求/设计文档批准后被非受控修改 | 纯文本润色运行 `workflow-state.ps1 -Operation UpdateHash -Gate <requirement\|design>`；业务修改运行 `ResetApproval` 后重新确认。 |
 | `COVERAGE_UNCOVERED_CLAUSES` | 01/06 新增了 BR/DC 条款但 05 未覆盖 | 运行 `workflow-state.ps1 -Operation SyncCoverage` 同步用例，并在 05 中补齐条款 ID 关联。 |

@@ -98,6 +98,30 @@ function New-AiSopDispatcherResult {
     }
 }
 
+function Get-AiSopDispatcherDenyReason {
+    param([string]$ReasonCode)
+
+    $prefix = "AI_SOP_GUARD_${ReasonCode}:"
+    switch ($ReasonCode) {
+        "OWNER_REQUIRED" {
+            return "$prefix missing active Owner. Run ./ai-sop.ps1 Task -Operation Discover to identify the feature and task; use Start for an independent task or Resume to continue it. For interrupted ownership, inspect Status and InspectRecovery before Recover, then Resume. Confirm the old agent has stopped before any forced recovery; do not auto-Claim or force-release to bypass this guard."
+        }
+        "WORKFLOW_TRANSACTION_INDETERMINATE" {
+            $journalPath = ""
+            if (Get-Command Get-AiSopLastIndeterminateJournalPath -ErrorAction SilentlyContinue) {
+                $journalPath = Get-AiSopLastIndeterminateJournalPath
+            }
+            $location = if ([string]::IsNullOrWhiteSpace($journalPath)) {
+                "Transaction journal location unavailable."
+            } else {
+                "Transaction journal: $journalPath."
+            }
+            return "$prefix $location Preserve the journal and target files. Run ./ai-sop.ps1 Preflight for read-only diagnostics and inspect the journal/targets. After resolving the underlying cause, retry the original operation so transaction recovery can validate the journal. If it remains indeterminate, report the diagnosis and stop edits; do not delete the journal or force-release ownership to bypass this guard. See .ai-sop/SUPERPOWERS_MANUAL.md."
+        }
+        default { return "$prefix operation denied by policy" }
+    }
+}
+
 function ConvertTo-AiSopDispatcherEnvelope {
     param(
         [string]$Agent,
@@ -118,20 +142,7 @@ function ConvertTo-AiSopDispatcherEnvelope {
         $nativeDecision = $Decision.ToLowerInvariant()
         $result = [ordered]@{ decision = $nativeDecision }
         if ($Decision -eq "DENY") {
-            $reason = "AI_SOP_GUARD_${ReasonCode}: operation denied by policy"
-            if ($ReasonCode -eq "OWNER_REQUIRED") {
-                $reason = "AI_SOP_GUARD_OWNER_REQUIRED: missing active Owner. AI must auto-Claim before retrying edit, do not surface error to user. Hint: input 'takeover task' to auto Transfer/ForceRelease."
-            }
-            if ($ReasonCode -eq "WORKFLOW_TRANSACTION_INDETERMINATE") {
-                $journalPath = ""
-                if (Get-Command Get-AiSopLastIndeterminateJournalPath -ErrorAction SilentlyContinue) {
-                    $journalPath = Get-AiSopLastIndeterminateJournalPath
-                }
-                if (-not [string]::IsNullOrWhiteSpace($journalPath)) {
-                    $reason = "AI_SOP_GUARD_WORKFLOW_TRANSACTION_INDETERMINATE: stuck journal at $journalPath. Inspect targets, then delete that file to unblock hooks. Run doctor.ps1."
-                }
-            }
-            $result.reason = $reason
+            $result.reason = Get-AiSopDispatcherDenyReason -ReasonCode $ReasonCode
         }
         return ConvertTo-Json -Compress -InputObject $result
     }
@@ -141,19 +152,7 @@ function ConvertTo-AiSopDispatcherEnvelope {
     }
 
     $nativeDecision = $Decision.ToLowerInvariant()
-    $reason = "AI_SOP_GUARD_${ReasonCode}: operation denied by policy"
-    if ($ReasonCode -eq "OWNER_REQUIRED") {
-        $reason = "AI_SOP_GUARD_OWNER_REQUIRED: missing active Owner. AI must auto-Claim before retrying edit, do not surface error to user. Hint: input 'takeover task' to auto Transfer/ForceRelease."
-    }
-    if ($ReasonCode -eq "WORKFLOW_TRANSACTION_INDETERMINATE") {
-        $journalPath = ""
-        if (Get-Command Get-AiSopLastIndeterminateJournalPath -ErrorAction SilentlyContinue) {
-            $journalPath = Get-AiSopLastIndeterminateJournalPath
-        }
-        if (-not [string]::IsNullOrWhiteSpace($journalPath)) {
-            $reason = "AI_SOP_GUARD_WORKFLOW_TRANSACTION_INDETERMINATE: stuck journal at $journalPath. Inspect targets, then delete that file to unblock hooks. Run doctor.ps1."
-        }
-    }
+    $reason = if ($Decision -eq "DENY") { Get-AiSopDispatcherDenyReason -ReasonCode $ReasonCode }
     switch ($Agent) {
         "CLAUDE_CODE" {
             $specific = [ordered]@{

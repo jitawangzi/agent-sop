@@ -164,7 +164,7 @@ Agent-SOP 实现了一套**无中心依赖的文件级两阶段事务（2PC）�
 │  🔐 需求与设计 SHA-256 密码学不可变门禁 (防 AI 偷改断言)                │
 │  👥 领域专家智能体 (design-reviewer / logic-auditor / 实现引擎)        │
 │  🔒 跨 IDE 两阶段事务文件锁与崩溃自愈 (Schema 1.1)                     │
-│  🚦 T1 / T2 / T3 / FastTrack 动态成本调度 (避免 Token 浪费)            │
+│  🚦 T1 / T2 / T3 人工选择，默认 T2 (平衡速度与完整度)                │
 └────────────────────────────────────────────────────────────────────────┘
 ```
 
@@ -252,17 +252,17 @@ pwsh -NoProfile -File ./ai-sop.ps1 Doctor
 直接在任何 AI 工具（Claude Code / Antigravity / Cursor / Copilot）中输入：
 
 ```text
-快速修改：修复 ShopManager 中的空指针异常
+按 T2 修复导入模块中的空指针异常。
 ```
 
-> **执行效果**：AI 会在单次响应内自动串联 **【Claim 认领归属 → 修改代码 → 项目编译 → 定向测试验证 → 交付】**，无需人工进行繁琐的方案确认，3 分钟丝滑搞定！
+> **执行效果**：AI 先 Discover 识别功能，再 Start 独立任务或 Resume 原任务，修改代码并同步受影响的规格/用例，通过 Task Run 编译与运行相关测试，用 RecordSync 记录同步结果，最后 Verify / Complete。无需完整头脑风暴或独立代码审核；未指定档位时同样默认 T2。
 
 #### 路径 2：完整新功能开发（T3 模式，双门禁严密闭环 🛡️）
 
-当你需要开发新玩法、新协议或复杂模块时输入：
+当你希望按完整流程开发时，明确选择 T3：
 
 ```text
-实现新玩法活动：增加每日签到功能 DailySignIn
+按 T3 开发批量导入功能 BatchImport，包括需求、设计、实现和验证。
 ```
 
 > **执行效果**：Agent-SOP 将自动接管整个研发流程，展开需求头脑风暴（产出 `01_server_rules.md` 待你确认）→ 架构设计并经 `design-reviewer` 机器审查（产出 `06_design_contract.md` 待你确认）→ 拆分任务并派发子智能体进行 TDD 编码与双重内审 → 全自动交付！
@@ -285,10 +285,10 @@ pwsh -NoProfile -File ./scripts/run-all-tests.ps1
 
 | Harness / 工具 | 准入支持等级 | 推荐使用流程 | 拦截机制 |
 |---|:---:|:---:|---|
-| **Claude Code** | `STRICT` (全功能) | 完整 T3 流程 | 深度挂载 `PreToolUse` Hook |
-| **Antigravity** | `STRICT` (全功能) | 完整 T3 流程 | 跨 Subagent 治理与锁协同 |
-| **Cursor** | `STRICT` (全功能) | 完整 T3 流程 | Rules & Hooks 自动投影 |
-| **GitHub Copilot** | `STRICT` (全功能) | 完整 T3 流程 | Task/Subagent 桥接与门禁 |
+| **Claude Code** | `STRICT` (全功能) | 默认 T2，人工按需选 T1/T3 | 深度挂载 `PreToolUse` Hook |
+| **Antigravity** | `STRICT` (全功能) | 默认 T2，人工按需选 T1/T3 | 跨 Subagent 治理与锁协同 |
+| **Cursor** | `STRICT` (全功能) | 默认 T2，人工按需选 T1/T3 | Rules & Hooks 自动投影 |
+| **GitHub Copilot** | `STRICT` (全功能) | 默认 T2，人工按需选 T1/T3 | Task/Subagent 桥接与门禁 |
 | **Pi / 极简终端** | `BLOCKED` (轻量) | 默认 T2；T3 缺能力时提示，不静默降档 | 静态规则与编译保护 |
 
 ---
@@ -301,7 +301,7 @@ pwsh -NoProfile -File ./scripts/run-all-tests.ps1
 - **Deterministic Guardrails**: Uses OS-level `PreToolUse` hook scripts to physically intercept unauthorized file modifications, eliminating reliance on probabilistic prompt instructions.
 - **Cryptographic Gates**: Locks requirements (`01`) and design contracts (`06`) with SHA-256 signatures, preventing agents from secretly modifying acceptance criteria.
 - **Transactional Multi-Agent Locks**: Implements 2-Phase Commit (2PC) crash-safe journals and ordered file locks across multiple IDE sessions (Claude Code, Cursor, Antigravity, Copilot).
-- **T-Tier Cost Optimization**: Dynamically routes tasks into T3 (Full Architecture), T2 (Single-command fast patch), T1 (Rush), and FastTrack (Config/Doc zero-gate), avoiding token waste.
+- **Task Tiers**: Defaults to T2 (implementation, relevant documentation/tests and verification). Users can choose T1 (urgent implementation and compilation) or T3 (the full workflow); agents advise on risk without changing the selected tier. Deferred T1 work remains visible without blocking independent tasks.
 - **Hybrid VCS & Runtime Isolation**: First-class support for both enterprise SVN working copies and Git monorepos with isolated port/directory sandboxes.
 
 ---

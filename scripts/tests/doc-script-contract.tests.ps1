@@ -338,6 +338,12 @@ exit 0
         ($agentsText -match 'RecordSync' -and $agentsText -match 'T1/T2 无独立代码审核环节')
     Assert-Contract "Deferred work must remain visible without becoming a gate" `
         ($agentsText -match 'AddFollowUp' -and $agentsText -match 'CloseFollowUp' -and $agentsText -match '不因待办升档或阻止完成')
+    Assert-Contract "Guard ownership guidance must route through task discovery and inspected recovery" `
+        ($agentsText -match 'Guard 拦截后的任务识别' -and $agentsText -match 'InspectRecovery' -and $agentsText -match '旧功能级命令兼容')
+    Assert-Contract "Implementation delivery loop must be scoped to T3" `
+        ($engineText -match '### D\. T3 Delivery Loop \(仅 T3 完整交付闭环\)' -and $engineText -match 'T1 不强制增加测试阶段')
+    Assert-Contract "Adapter diagram must use task completion and explicitly select T3" `
+        ($adapterText -match 'Task Start -Tier T3' -and $adapterText -match 'Task Verify -> Task Complete')
 
     # --- Semantic drift guards: prevent known contradiction phrases from recurring ---
     # These were real drift bugs (single-point fix not propagated). Lock them out so the
@@ -358,7 +364,9 @@ exit 0
     }
     $rootSopMds = @(
         (Join-Path $workspaceRoot "AGENTS.md"),
-        (Join-Path $workspaceRoot "AI_SOP_使用指南.md")
+        (Join-Path $workspaceRoot "AI_SOP_使用指南.md"),
+        (Join-Path $SopRoot "README.md"),
+        (Join-Path $SopRoot "SUPERPOWERS_MANUAL.md")
     )
     $bannedPhrases = [ordered]@{
         '默认 T3'             = "default is T2; human selection takes priority"
@@ -367,6 +375,12 @@ exit 0
         '自动降级为 T2'       = "tier changes require the human request; capability failures do not change tier"
         '必须强制走 T3'       = "risk assessment advises scope and validation; it does not override the task tier"
         '自动走快通道'        = "new tasks have three tiers; use applicability for pure documentation"
+        '自动 Claim 归属'     = "discover the feature/task and use Start or Resume; direct Claim is legacy only"
+        'auto Transfer/ForceRelease' = "inspect identity and process state before takeover; no unconditional force-release hint"
+        '任何能拿到的原id或占位' = "recovery must use verified ownership, never placeholder credentials"
+        '不允许只编译后交付' = "T1 permits implementation plus compilation without full audit/test stages"
+        'T1 / T2 / T3 / FastTrack' = "new tasks support exactly three human-selected tiers"
+        'FastTrack（纯配置/文档' = "configuration/documentation work uses applicability within T1/T2"
         'ai-sop$1'            = "leftover `$1 path artifact; use '.ai-sop\scripts\' instead"
         '拆分为 2-5 分钟可完成的小任务' = "2-5 minutes are Steps inside a Task, not Task count; see adapter writing-plans Task 粒度"
     }

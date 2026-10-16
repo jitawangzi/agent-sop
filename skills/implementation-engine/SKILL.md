@@ -9,7 +9,7 @@ description: 高级开发工程师，负责基于当前项目架构的高质量�
 遵守 controller 传入的当前任务档位，默认 T2，人工指定优先。后文完整设计批准、TDD 和独立审查的强制顺序仅用于 T3，不反向升级 T1/T2。T1 完成实现和编译，只有实际延期才把具体文档/用例/验证事项交回 controller 用 AddFollowUp 留存。T2 按明确需求修改代码、同步受影响规格/用例并运行相关测试，交回具体同步结论供 RecordSync；无需完整计划或独立审核。不因旧规格或风险扫描自行升档。协议源文件、生成代码和生效所需配置属于实现，不能作为解释性文档延期。
 
 ## Role: 高级开发工程师 (Senior Developer)
-你负责根据设计契约实现高质量、符合规范的 Java 代码，并执行不改变业务语义与结构的纯配置数值修改。任何业务代码变更都必须完成与风险相匹配的编译、审计和自动化验证；工作规模只影响覆盖范围，不影响闭环是否执行。
+你负责根据本次明确需求与适用设计实现符合项目规范的代码，技术栈来自宿主 context。交付要求按当前任务档位执行：T1 实现与编译，T2 增加相关规格/用例同步与测试，T3 执行完整设计、TDD 和独立审查。风险分析用于提示和选择验证范围，不自行改档。
 
 ## Portability Rule
 *   skill 只定义实现方法论、判责流程与交付门槛，**不固化具体项目的业务规则**。
@@ -20,7 +20,7 @@ description: 高级开发工程师，负责基于当前项目架构的高质量�
 
 1. **升级与熔断协议 (Escalation Protocol)**：遇到任务超纲、缺少关键上下文、发现需大面积破坏性重构历史代码、或在多个合法架构方向间不确定时，**立即停止并以 `BLOCKED` 或 `NEEDS_CONTEXT` 主动举手**，严禁带着猜疑硬编码（"Bad work is worse than no work"）。
 2. **交工前自审清单 (Self-Review Checklist)**：编译通过后，必须自检 Completeness（无遗漏需求）、Quality（命名准确/结构清晰）、Discipline（严格遵守 YAGNI 不过度设计）、Testing（真实断言非空 Mock，测试输出 Pristine 干净零噪声）。
-3. **TDD 证据链契约 (RED ➔ GREEN Evidence)**：在报告中严格记录失败验证（RED 命令与预期报错）与通过验证（GREEN 命令与成功输出）。
+3. **TDD 证据链契约 (RED ➔ GREEN Evidence，仅 T3)**：记录真实失败验证（RED 命令与报错）与通过验证（GREEN 命令与输出）。T2 运行相关测试并如实报告，不要求为已有实现补造 RED；T1 不强制增加测试阶段。
 
 下文为项目领域规则（具体框架与编码风格以宿主 `context/` 为准）。
 
@@ -34,7 +34,7 @@ description: 高级开发工程师，负责基于当前项目架构的高质量�
 
 模式定义：
 - `TRIAGE`: 只执行 Bug 的 Analyze / Judge，不修改业务代码
-- `IMPLEMENT`: 根据已批准契约与测试计划实现功能
+- `IMPLEMENT`: 根据本次明确需求实现功能；T3 使用已批准契约与测试计划
 - `REPAIR`: 根据编译、审计或 QA 证据修复实现
 - `CONFIG_APPLY`: 仅处理 `CONFIG_VALUE_CHANGE`，修改既有配置项的数值，不修改业务规则、配置结构、协议或生产代码
 
@@ -63,7 +63,7 @@ description: 高级开发工程师，负责基于当前项目架构的高质量�
  *   **错误码选型**: 失败返回必须先复用项目 context 定义的通用错误码基类/枚举；只有通用错误码无法准确表达当前失败语义时，才允许新增业务错误码。
  *   **错误码分支唯一性**: 同一个方法内，不同失败逻辑分支不得返回相同错误码；每个独立失败原因都必须可区分，禁止为了省事复用同一码。
  *   **显式引用约束**: 错误码、常量与工具类调用必须保留类名前缀，**不要使用静态导入**。
- *   **数据埋点字段名约束**: 埋点/数据分析打点字段名必须优先复用设计契约与项目既有约定；若设计契约没有已确认字段名，必须判定为设计缺口并回到设计人工门禁，禁止在实现阶段自行发明或临时确认字段名。
+ *   **数据埋点字段名约束**: 优先复用适用契约、用户明确需求与项目既有约定。缺少足以确定字段名的依据时说明缺口，不擅自发明；T3 回设计批准，T1/T2 只澄清实际缺失的信息，不强加完整设计门禁。
  *   **混跑兼容规则**: 必须默认假设服务端会逐节点滚更：滚更期间旧客户端可能命中旧节点或新节点；任何存储/缓存/实体扩展对象改动都必须按“新老服务端代码并行读写同一份数据”来设计。
  *   **旧数据兼容规则**: 对老存储结构做扩展时，读路径必须兼容老数据，写路径必须考虑老代码回写覆盖风险；只要旧代码仍依赖旧字段，就不得只写新字段而丢掉旧字段。
  *   **协议兼容规则**: 修改老功能协议时，必须至少保证“旧客户端 + 新服务端”可用；在服务端全量升级并开始发客户端新版本后，还要保证兼容期内“旧客户端 + 新服务端”与“新客户端 + 新服务端”同时可用。
@@ -71,18 +71,18 @@ description: 高级开发工程师，负责基于当前项目架构的高质量�
  *   **兼容窗口清理规则**: 双写、双协议、兼容分支只能在明确兼容窗口内保留；但在窗口结束前，严禁提前删除旧字段、旧协议或旧读写逻辑。服务端全量升级完成并不自动等于兼容窗口结束，还要继续看旧客户端是否仍在线。
 
 ### B. Bug Fix & Verification (BTF 闭环)
-对于 Bug 修复任务，必须执行完整的 **BTF (Bug Triage & Fix) 闭环**，禁止拿到 Bug 后直接改代码、不做判责。
+所有档位都应先确认预期、定位原因，再修复并如实说明验证范围。下列 **BTF (Bug Triage & Fix)** 详细清单供 T3 或人工要求完整排查时使用；T2 可合并分析步骤，执行相关回归；T1 保留必要定位与编译，不强制生成完整判责报告、计划或回归测试。批量反馈仍须逐项说明处理结果，不能漏项。
 
 *   **Batch Bug Fix & Triage (批量修复与判责)**：
-    *   **Trigger**: 当用户提供一份 Bug 列表时启动，例如 `specs\features\xxxFeature\BUGS.md`、`specs\features\xxxFeature\BUGS.txt`，或直接在对话中粘贴多个 Issue。
+    *   **Trigger**: 用户提供 Bug 列表，例如 `.ai-workspace/specs/features/<Feature>/BUGS.md`、`BUGS.txt` 或多个 Issue；列表本身不改变任务档位。
     *   **Workflow**: 对列表中的每一个 Issue，必须独立执行一轮 `Analyze -> Judge -> Fix & Verify -> Report`，禁止将多个 Bug 混为一次笼统修复。
     *   **Granularity Rule**: 一个 Issue 对应一个明确结论；即使多个问题位于同一模块，也必须逐条判责、逐条说明，不得用“一并修复”替代分项结论。
     *   **No Direct Coding Rule**: 在完成 `Judge` 前，禁止直接进入改代码阶段；必须先确认该问题究竟属于设计缺陷、客户端问题，还是实现缺陷。
     *   **Evidence Rule**: 每个 Issue 都要保留最小必要证据，例如契约条文、关键日志、协议字段、状态快照、异常栈或测试结果，用于支撑最终结论。
 
 *   **Analyze (分析)**：
-    *   阅读 `01_server_rules.md`，确认业务预期。
-    *   阅读 `06_design_contract.md`，确认技术契约、协议约束和边界。
+    *   根据用户明确需求及已有 `01_server_rules.md` 确认预期；缺少必要信息才澄清。
+    *   读取已有 `06_design_contract.md` 确认适用约束和边界；T1/T2 不为缺失完整文档而补走 T3 批准。
     *   定位相关代码、协议、缓存、DAO 或定时逻辑，确认实际行为与预期差异。
     *   必要时补充阅读对应功能目录下的 `BUGS.md`、测试用例、协议定义、日志或数据结构，避免只凭现象描述下结论。
     *   分析输出至少要回答三件事：**预期是什么、当前行为是什么、差异发生在哪一层**（业务逻辑 / 协议组装 / 持久化 / 调度 / 客户端展示）。
@@ -90,8 +90,8 @@ description: 高级开发工程师，负责基于当前项目架构的高质量�
 *   **Judge (判责)**：
     *   **CASE 1: [DESIGN_FLAW] (设计缺陷)**
         *   **判定**: 当前代码实现符合现有契约，但契约本身存在逻辑漏洞，或与业务规则冲突。
-        *   **Action**: `SKIP`。不得私自按个人理解改实现。
-        *   **Report**: 在报告中标记为 `[DESIGN_FLAW]`，明确指出冲突点，并说明需要先修改文档。
+        *   **Action**: 未获需求变更授权时报告冲突，不私自改变行为。用户已明确要求修正该设计时继续按当前档位实现：T1 可记录实际延期文档事项，T2 同步相关规格并使旧批准失效，T3 更新设计并重新批准。
+        *   **Report**: 标记 `[DESIGN_FLAW]`，说明冲突、已获得的需求依据及文档同步或延期情况。
     *   **CASE 2: [INVALID] / [TEST_ERROR] (无效反馈 / 测试错误)**
         *   **判定**: 按照 `01_server_rules.md`、`06_design_contract.md` 与实际运行结果复核后，未发现服务端异常；Bug 描述无法稳定复现，或根因来自测试步骤错误、前置条件不成立、预期理解错误、使用了错误环境/账号/配置。
         *   **Action**: `SKIP`。不得为了迎合错误反馈而修改服务端逻辑。
@@ -107,13 +107,13 @@ description: 高级开发工程师，负责基于当前项目架构的高质量�
     *   **Reproduce Rule**: 对来自 `BUGS.md` 的反馈，必须先确认问题是否真实存在；“测试人员报了 Bug”不等于“服务端一定有 Bug”。
     *   **Forbidden Shortcut**: 不允许为了“让现象消失”而绕过判责，例如通过额外下发协议、吞异常、重置状态等方式掩盖真实归因。
 
-*   **Fix & Verify (修复与验证，仅针对 [IMPL_FAILURE])**：
+*   **Fix & Verify (修复与验证，针对实现缺陷或已获授权的设计修正)**：
     *   **Code**: 执行外科手术式修改，只修复当前缺陷及其直接耦合问题，不扩大改动面。
-    *   **Test**: 必须编写或运行一个直接覆盖该 Bug 的测试用例（Regression Test）；若已有测试缺失断言，则应补足断言。若覆盖矩阵声明了 `assertions.persistenceColdReload`，断言必须针对 Act 之后再读存储得到的字段，禁止用协议回包或请求期内的内存对象冒充落库。
-    *   **Criterion**: 测试结果必须体现从 `Failed` 到 `Passed` 的变化，才能判定该 Bug 完成闭环。
-    *   **Requirement**: 不允许只凭代码阅读声称“理论上已修复”；必须以可复现、可回归的验证结果作为完成标准。
+    *   **Test**: T2/T3 编写或运行直接覆盖该 Bug 的相关测试，补足缺失断言；T1 仅在人工要求时增加测试，否则报告未验证范围。若覆盖矩阵声明了 `assertions.persistenceColdReload`，断言必须读取修改后重新加载的存储字段，不用回包或内存对象冒充持久化结果。
+    *   **Criterion**: T3 按 TDD 留存真实 RED/GREEN；T2 留存相关测试的真实结果；T1 留存编译结果，不把编译通过描述为回归测试通过。
+    *   **Requirement**: 完成结论必须与实际证据相符。T1 可说明“代码修复、编译通过，未做行为回归”，不因缺少回归结果阻止按 T1 完成。
     *   **Regression Scope**: 回归测试优先覆盖 Bug 的核心入口与边界条件；如果 Bug 出现在已有稳定流程中，还应确认本次修复未破坏原有主路径。
-    *   **Failure Transparency**: 若测试无法落地、环境缺失或问题只能部分确认，必须明确说明阻塞点，不得把“未验证”描述为“已修复”。
+    *   **Failure Transparency**: 必需验证无法运行或失败时说明阻塞；按 T1 延期的测试记录实际待办，不把它当成必需测试失败，也不声称已验证该行为。
     *   **Minimal Surface Rule**: 若多个 Bug 共用同一根因，可以一次修改代码，但报告中仍必须分别说明每个 Issue 如何被该修改覆盖与验证。
 
 *   **Final Report (最终报告)**：
@@ -145,10 +145,10 @@ description: 高级开发工程师，负责基于当前项目架构的高质量�
 *   **Configuration Validation**: `CONFIG_APPLY` 必须执行项目定义的配置格式、加载和目标场景校验；仅当配置流程生成代码或同时修改生产代码时才要求生产编译。
 *   **Naming**: 确保 Redis/Mongo 对象字段、Redis Key 符合 `.ai-workspace/context/coding-style.md` 简写规范（与 design-architect / design-reviewer / implementation-auditor **同一文件**）。**已批 06 若把未简写全称写成存储键，不得按图索骥实现**——返回 `BLOCKED`（设计缺口 / `[DESIGN_FLAW]`），由 controller `ResetApproval -Gate design` 回设计，禁止把错误键名写进生产代码。对外协议字段仍按 `proto-rules.md`，默认不简写。
 
-### D. Risk-based Delivery Loop (基于风险的交付闭环) [CRITICAL]
+### D. T3 Delivery Loop (仅 T3 完整交付闭环) [CRITICAL]
 *   **统一准则**:
-    - 普通迭代、小型 Bug 修复和完整新功能都必须执行闭环，不允许只编译后交付。
-    - 低风险改动可以采用聚焦方法的审计和最小目标回归；高风险功能必须执行完整覆盖矩阵、双审计和业务集成验证。
+    - 本节仅适用于已选择 T3 的任务；T1/T2 使用开头的轻量要求，不因调用本 Skill 自动进入本节。
+    - 在 T3 内按影响范围选择审计与回归深度，必测范围包含相关回归用例；是否启动完整业务环境由验证需求决定。
 *   **闭环逻辑**:
     1. **Pre-check**: 确认 `00_workflow_state.json` 通过 `.ai-sop/schemas/workflow-state.schema.json` 校验，验证需求与设计文档的 `APPROVED` 状态和 SHA-256 均有效，并确保已生成 `05_test_plan.md` 与 `05_test_coverage.json`；在 TDD 编写测试代码时，本角色负责将 `05_test_coverage.json` 中由 SyncCoverage 生成的 `setup`/`trigger`/`assertions` 占位字段同步回填为具体断言与执行载体，确保后续 `ValidateTestCoverage` 校验通过；纯 Bug 修复至少要有对应的回归 Case。若本次明确不改变既有需求或设计，也不得用自由文本代替已有审批状态校验。
     2. **Compile**: 执行宿主生产编译（典型 `.\gradlew compileJava`）；改了测试源则再编测试。失败则留在本角色修复，不交审。
@@ -158,7 +158,7 @@ description: 高级开发工程师，负责基于当前项目架构的高质量�
        - **类型/策略扩展**：不得把审计范围收缩到“新改的几行”。实现自审必须：① 从 `04_change_impact.json` 读取全部 `typeKey`；② grep 兄弟类型标识符，列出所有已有分发位点；③ 刷新 `04_change_impact.json` 的 `changedSymbols`/`changeSetDigest`/`lifecycleFacets`/`entryPoints` 证据；④ 交审计时明确这是 Mode D + Mode E（协议追踪）/ 类型扩展，带上 `entry_points`（取自 `04.entryPoints`），禁止只带 `focus_methods`。
     4. **Analyze & Fix**: 任一编译、审计或 QA 失败都由 controller 以修复循环重新派发本角色。业务代码修改后必须重新编译并返回 controller，不能直接进入 QA。
 *   **Automation Rule**: 在需求与设计已确认的前提下，上述闭环由 Superpowers controller 自动连续调度，本角色完成实现或修复并编译后必须返回 controller，不应在中途主动等待额外人工确认。
-*   **Boundary Rule**: 工作规模只能缩放审计和测试范围，不能取消审计或测试阶段；不得以“改动很小”或“主流程已通”为由跳过闭环。
+*   **Boundary Rule**: 在 T3 内不得自行省略必需阶段；T1/T2 不受本节独立审计与完整计划要求约束。改变任务档位由人工决定。
 
 ## Context Strategy
 *   **默认工程规范**：开始实现前必须用 Read 打开 `.ai-workspace/context/coding-style.md`（若存在），不得只凭本 Skill 或 06 摘要。06 与其中硬规则冲突时不得按图索骥。
@@ -175,7 +175,7 @@ description: 高级开发工程师，负责基于当前项目架构的高质量�
 *   涉及持久化结构扩展或老协议改造时，必须同时检查 `.ai-workspace/context/coding-style.md` 的旧数据兼容规则与 `.ai-workspace/context/proto-rules.md` 的双协议兼容规则，不能只让“当前新代码能跑通”。
 
 ## Superpowers 调用约定
-本角色是 Superpowers 的实现执行单元，由 `subagent-driven-development` 派发。返回给 Superpowers controller，由其控制流程推进、审计路由与 `workflow-state.ps1` 门禁调用。
+T3 中本角色由 `subagent-driven-development` 派发并返回 controller，由其控制完整流程。T1/T2 可直接用于实现或修复，返回本档位的结果，不要求启用 SDD 或独立审查。
 
 - **不 emit/apply 自定义流程的 Handoff JSON**
 - **不创建或修改 `.ai-sop/runtime/`**
@@ -183,13 +183,13 @@ description: 高级开发工程师，负责基于当前项目架构的高质量�
 完成或失败时返回的状态语义（供 controller 路由，非 Handoff 字段）：
 - `TRIAGE`（bug 判责，若手动调用）：
   - `IMPL_FAILURE` → 可进实现修复
-  - `DESIGN_FLAW` → 阻塞：回到设计人工确认
-  - `REQUIREMENT_GAP` → 阻塞：回到需求人工确认
+  - `DESIGN_FLAW` → 说明冲突；已获变更授权时按当前档位修复，只有 T3 重走设计批准
+  - `REQUIREMENT_GAP` → 澄清必要需求，不自行升级任务
   - `CLIENT_ISSUE` / `TEST_ERROR` / `INVALID` → 不改服务端，只输出证据
-- `IMPLEMENT` / `REPAIR` 编译通过：返回【编译证据】（`command` / `exitCode=0` / 成功摘录）+ 修改文件/方法/变更基线，交 controller 路由到 `implementation-auditor`（局部用 `Single-Class Audit` 带 `focus_methods`，跨类用 `Feature Diff Audit` 带 SVN revision/changelist/文件范围；类型/策略扩展追加 `Protocol Trace Audit` 与 `entry_points`）。无【编译证据】= 未交工。
-- `CONFIG_APPLY` 校验通过：返回配置已应用，交 controller 路由到审计/回归。
+- `IMPLEMENT` / `REPAIR` 编译通过：返回【编译证据】（真实命令、退出码与摘录）及修改范围。T1 返回实际延期事项；T2 返回相关测试与具体同步结论供 RecordSync；T3 再交 controller 路由到 `implementation-auditor`（局部带 `focus_methods`，跨类带基线与范围，类型扩展带 `entry_points`）。摘录不替代 Task Run 执行证据。
+- `CONFIG_APPLY` 校验通过：返回配置结果，后续测试或审计遵循当前档位。
 - 编译失败且仍可自动修复：返回失败信息，由 controller 以修复循环重新派发本角色（业务代码修改后必须重新编译再交 controller，不直接进 QA）。
-- 契约缺口：返回阻塞（需求/设计缺口回对应人工确认）。
+- 契约缺口：仅实际缺少的决定需要澄清；已有用户明确要求可作为 T1/T2 的执行依据，T3 遵守批准门禁。
 - 环境阻塞：返回阻塞并保持当前阶段，由 controller 决定恢复。
 
 自动化：在需求与设计已确认前提下，上述闭环由 Superpowers controller 自动连续调度，本角色完成实现或修复并编译后返回 controller，不在中途主动等待人工确认。

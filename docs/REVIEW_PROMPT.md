@@ -25,7 +25,7 @@
   1. **OS 级 PreToolUse Hook 物理阻断**：拦截所有 `write_to_file`、`replace_file_content`、`Bash`（sed/patch）等写入意图，AST 解析规范化路径，未持合法 ACTIVE 租约直接 Exit 2 物理阻断。
   2. **密码学 SHA-256 防篡改门禁**：`01_server_rules.md`（需求）与 `06_design_contract.md`（设计）经人工批准后锁定 SHA-256，`05_test_coverage.json` 机器可读矩阵硬阻断未覆盖交付。
   3. **跨 IDE 两阶段事务文件锁（Schema 1.1）**：按 `Session -> Owner -> Grant` 严格顺序加锁，2PC 崩溃安全日志与 TTL 租约自愈。
-  4. **T 档成本分流**：T3（完整架构 6 步）、T2（缺陷修复单命令直达）、T1（急速抢修）、FastTrack（纯配置/文档秒级完成）。
+  4. **任务强度**：默认 T2（代码、相关规格/用例同步与验证），人工可选择 T1（极速实现与编译）或 T3（完整流程）。新修改走 Task Discover / Start / Resume；不自动按风险改档，不新增配置/文档第四档。历史 FAST_TRACK 只保留兼容读取。
   5. **10 个领域专家 Skill 矩阵**：`design-reviewer`（机器自审闭环）、`logic-auditor`（高风险语义漏洞审查）、`implementation-auditor`、`implementation-engine`（TDD 实现）等。
 
 ---

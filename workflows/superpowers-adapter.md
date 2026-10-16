@@ -17,15 +17,14 @@
 
 ## 归属
 
-**Superpowers 是本项目唯一的过程引擎，六个 harness（Claude Code / GitHub Copilot / Antigravity / Cursor / Codex / Pi）统一使用它**（STRICT 工具跑 T3，BLOCKED 工具 Pi 支持 T1/T2，见 `harness-capability.ps1`）。`workflow-orchestrator` 不再作为顶层调度器，而是**Superpowers 主流程之外的人工手动片段编排器**（当前=全功能审计，可扩展）；不使用状态机/runtime/Handoff，编排靠人工驱动。
+**Superpowers 是 T3 的完整过程引擎**。六个 harness 使用同一任务入口，默认 T2；STRICT 表示具备 T3 能力，不表示自动选择 T3。T1/T2 按各自轻量流程执行，不要求加载完整 Superpowers 编排。工具能力不足时说明缺口，不能自行改档（见 `harness-capability.ps1`）。`workflow-orchestrator` 是人工按需调用的独立审计编排器，不是新任务的默认入口。
 
 ## 流程
 
-主流程骨架为 Superpowers 原生节点；领域专家 Skill 作为**执行单元**（subagent 派发）与**门禁组件**（节点校验）被调用，不作为独立流程节点插入。
+先 Discover，再为独立工作 Start 或为原任务 Resume。默认 T2，人工指定优先：T1 实现与编译，T2 实现、相关规格/用例同步及编译/相关测试；两者无默认独立审查。下图仅展开人工选择的 **T3**：专家 Skill 作为执行单元与门禁组件调用。
 
 ```text
-claim feature ownership (SUPERPOWERS)
--> [执行强度判断] T2(默认快速) / T1(人工选择极速) / T3(人工选择完整流程)
+Task Discover -> Task Start -Tier T3（或 Resume 原 T3 任务）
 -> superpowers:brainstorming
      （一轮调用，两次独立呈递：需求探索 -> 人工确认 01_server_rules.md
        -> 续做设计 -> design-architect 产出 06_design_contract.md
@@ -39,7 +38,7 @@ claim feature ownership (SUPERPOWERS)
 -> ValidateTestCoverage（覆盖校验，实现后）
 -> superpowers:requesting-code-review（整体收尾审查）
 -> superpowers:verification-before-completion
--> complete feature ownership
+-> Task Verify -> Task Complete
 ```
 
 **流程关键点**：
@@ -49,7 +48,7 @@ claim feature ownership (SUPERPOWERS)
 - **LEGACY_EXTENSION 例外**：旧系统加类型/改分发时，抽 1–2 个共享同一分发的 `IDENTICAL_TO_LEGACY` 表征 Case，必须在改生产代码前写好，并能在当前基线上跑绿。锁的是已有行为，不是尚未实现的新类型，也不是每个旧类型一条 Case。表征 Case 必须声明 `assertions.persistenceColdReload` 并在载体方法体再读存储。
 - `implementation-auditor`/`logic-auditor` 是 subagent **内审执行单元**，不作实现后的独立流程节点（其全盘视角由可选的全功能审计覆盖，见下）。**Complete 不读这两份报告**（自报）；机器硬门禁分层见 `docs/QUALITY_GATES.md`。
 
-## writing-plans Task 粒度（项目叠加）
+## writing-plans Task 粒度（仅 T3，项目叠加）
 
 `writing-plans` 是 Superpowers 原生技能；本节省制切分，避免小需求被切成多次「实现→编译→内审」。不上机器门禁、不按 Task 个数计分。
 
@@ -68,7 +67,7 @@ claim feature ownership (SUPERPOWERS)
 
 SDD 按计划串行执行，不会在执行期合并 Task。切错了，贵的是多轮编译和内审，不是少写两行计划。
 
-## 编译准入再审查（SDD 硬约束）
+## 编译准入再审查（仅 T3，SDD 硬约束）
 
 每个 Task 的合法顺序只有一条：
 
@@ -84,7 +83,7 @@ implementation-engine（一次只做一个 Task）
 
 **编译命令**：生产代码改动后必须跑宿主生产编译（典型 `.\gradlew compileJava`）。本 Task 还改了测试源时，必须再编测试（`compileTestJava` 或会编译测试源的定向 test）。`build/` 目录存在不算编过。只有构建工具客观不可用才允许标环境阻塞，不得用「先审后编」代替。
 
-**【编译证据】最低字段**（写在实现者交工报告里，并由 controller **原样粘贴**进内审 prompt；不是新的 `compile-evidence.json` 机器门禁——Complete 仍用功能目录那份）：
+**【编译证据】最低字段**（写在实现者交工报告里，并由 controller **原样粘贴**进内审 prompt；任务模式的机器证据由 Task Run 记录，摘录不能替代它。只有无 taskId 的旧流程读取功能级 `compile-evidence.json`）：
 
 - `command`：实际执行的编译命令
 - `exitCode`：必须为 `0`
@@ -102,6 +101,8 @@ implementation-engine（一次只做一个 Task）
 **生产代码或测试源任何再改**（含纯补 import、改回签名、按审计意见改分支）：先前该 Task 的内审 PASS **作废**。顺序仍是：engine 修 → 再编译 → 再派内审（logic 按风险）。不得沿用旧 PASS。
 
 ## 人机交互
+
+以下需求、设计确认与 SDD 编排适用于 T3；T1/T2 只澄清影响当前实现的必要信息，不新增批准阶段。
 
 - 每轮最多 3 个聚焦问题，每个聚焦单一决策点，允许用户一句话给齐（统一口径见 AGENTS.md「人工 review 阶段」）。
 - 对有意义的备选方案进行比较并推荐其一。
@@ -253,7 +254,8 @@ PreToolUse hook 在每次文件编辑前运行 `guard-production-edit.ps1`（各
 
 ## 归属完成
 
-Superpowers ledger 存储生成的功能 owner ID。成功交付或成功的修改型独立工作以同一身份调用 `workflow-owner.ps1 -Operation Complete`。失败或阻塞的运行保留活动归属以便恢复。
-在恢复运行或任何修改规范产物/生产代码的批次前，以同一身份调用 `workflow-owner.ps1 -Operation Validate`。只读审计不 Claim 归属。
+任务模式使用 Task Run 留证，T2 另用 RecordSync 说明同步结果，Task Verify 通过后 Task Complete。中断用 Checkpoint / Suspend 保存下一动作并释放执行占用；异常中断用 Status / InspectRecovery 检查后 Recover → Resume。独立新修改沿用功能名、创建新 taskId。只读审计不创建任务或认领归属。
+
+仅没有 taskId 的旧归属使用 ledger 中的 owner ID 调用 `workflow-owner.ps1 -Operation Validate` / Complete；不得把旧命令用作新任务的捷径。事务不确定时保留 journal 与目标文件，Preflight 只做诊断，不通过删除日志或强制释放绕过。
 
 各 harness 统一 `SUPERPOWERS` 归属，`agent` 字段区分实际工具（CLAUDE_CODE/COPILOT/ANTIGRAVITY/CURSOR/CODEX/PI）。`CUSTOM_SKILLS`/`GEMINI` 作为兼容身份保留（供历史运行恢复等场景）。Codex 的直接 Claim 使用 `CODEX_SESSION_ID` 注册 session；PI 的 Claim 经 `pi-adapter/bootstrap-pi-session.ps1` 注册 session。

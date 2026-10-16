@@ -268,8 +268,16 @@ function Get-AiSopRecordedApprovals {
     } catch { return @{ requirement='UNAVAILABLE'; design='UNAVAILABLE' } }
 }
 
+function ConvertTo-AiSopProfilePath {
+    param([string]$WorkspacePath, [string]$Path)
+    $physical=Resolve-AiSopWorkspaceChild $WorkspacePath $Path
+    $relative=[IO.Path]::GetRelativePath((Resolve-PhysicalPathIdentity $WorkspacePath),$physical).Replace('\','/')
+    if ([OperatingSystem]::IsWindows()) { return $relative.ToLowerInvariant() }
+    return $relative
+}
+
 function Get-AiSopVerificationProfile {
-    param([string]$WorkspacePath, [string]$Name)
+    param([string]$WorkspacePath, [string]$Name, [ValidateSet('profile-command-v1','profile-command-v2')][string]$DigestAlgorithm='profile-command-v2')
     if ($Name -notmatch '^[A-Za-z0-9][A-Za-z0-9_-]{0,79}$') { throw 'PROFILE_NAME_INVALID' }
     $path = Resolve-PhysicalPathIdentity (Join-Path $WorkspacePath '.ai-workspace/context/verification-commands.json')
     $root = (Resolve-PhysicalPathIdentity $WorkspacePath).TrimEnd('\','/') + [IO.Path]::DirectorySeparatorChar
@@ -291,7 +299,13 @@ function Get-AiSopVerificationProfile {
         junitReports=@($command.junitReports | Where-Object { $_ } | Sort-Object -CaseSensitive)
         caseMap=[string]$command.caseMap
     }
-    return @{ command=$command; path=$path; digest=(Get-AiSopWorkflowSha256 (ConvertTo-AiSopWorkflowCanonicalJson $definition)); digestAlgorithm='profile-command-v1'; legacyDigest=(Get-AiSopWorkflowSha256 $raw) }
+    if ($DigestAlgorithm -eq 'profile-command-v2') {
+        # Only typed workspace path fields have path semantics. Executable and
+        # argument strings must retain their exact spelling and ordering.
+        $definition.junitReports=@($definition.junitReports | ForEach-Object { ConvertTo-AiSopProfilePath $WorkspacePath $_ } | Sort-Object -CaseSensitive)
+        if ($definition.caseMap) { $definition.caseMap=ConvertTo-AiSopProfilePath $WorkspacePath $definition.caseMap }
+    }
+    return @{ command=$command; path=$path; digest=(Get-AiSopWorkflowSha256 (ConvertTo-AiSopWorkflowCanonicalJson $definition)); digestAlgorithm=$DigestAlgorithm; legacyDigest=(Get-AiSopWorkflowSha256 $raw) }
 }
 
 function Get-AiSopRunDefinitionProblems {
@@ -299,10 +313,10 @@ function Get-AiSopRunDefinitionProblems {
     $scope="$($Record.kind):$($Record.batch)"
     if ($Record.context.profile) {
         try {
-            $current=Get-AiSopVerificationProfile $WorkspacePath $Record.context.profile
             $digest=switch ([string]$Record.context.profileDigestAlgorithm) {
-                'profile-command-v1' { $current.digest }
-                '' { $current.legacyDigest } # Old records bound the entire raw file.
+                'profile-command-v2' { (Get-AiSopVerificationProfile $WorkspacePath $Record.context.profile 'profile-command-v2').digest }
+                'profile-command-v1' { (Get-AiSopVerificationProfile $WorkspacePath $Record.context.profile 'profile-command-v1').digest }
+                '' { (Get-AiSopVerificationProfile $WorkspacePath $Record.context.profile 'profile-command-v1').legacyDigest }
                 default { throw 'PROFILE_DIGEST_ALGORITHM_UNSUPPORTED' }
             }
             if ($Record.context.profileDigest -cne $digest) { "STALE_PROFILE_EVIDENCE:${scope}:$($Record.context.profile); rerun the selected profile" }

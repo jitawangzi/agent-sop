@@ -720,6 +720,22 @@ function Resolve-AiSopWorkflowTransactionJournal {
         -DeadlineUtc $DeadlineUtc `
         -WorkspacePath $WorkspacePath
     try {
+        # The live writer does not take recovery.lock. It may finish while we
+        # wait for its state locks; never replay the snapshot read before them.
+        try { $lockedJournal = Read-AiSopWorkflowTransactionJournal $JournalPath }
+        catch {
+            $cause=$_.Exception.GetBaseException()
+            if ($cause -is [IO.FileNotFoundException] -and $cause.FileName -ceq $JournalPath) { return }
+            throw
+        }
+        $beforeIdentity=$journal.Clone(); $lockedIdentity=$lockedJournal.Clone()
+        foreach ($field in @('phase','committedAt')) { $beforeIdentity.Remove($field); $lockedIdentity.Remove($field) }
+        if ((ConvertTo-AiSopWorkflowCanonicalJson $beforeIdentity) -cne (ConvertTo-AiSopWorkflowCanonicalJson $lockedIdentity) -or
+            ($journal.phase -eq 'COMMITTED' -and $lockedJournal.phase -ne 'COMMITTED')) {
+            # In particular, do not touch targets whose locks we did not take.
+            throw 'WORKFLOW_TRANSACTION_CORRUPT'
+        }
+        $journal=$lockedJournal
         $rollForward = [string]$journal.phase -eq "COMMITTED"
         if ([string]$journal.phase -eq "PREPARED") {
             $currentStates = @()
@@ -825,10 +841,11 @@ function Invoke-AiSopWorkflowTransactionRecovery {
             -DeadlineUtc $DeadlineUtc
         try {
             if ([System.IO.File]::Exists($journalPath)) {
-                $results += Resolve-AiSopWorkflowTransactionJournal `
+                $resolved = Resolve-AiSopWorkflowTransactionJournal `
                     -JournalPath $journalPath `
                     -DeadlineUtc $DeadlineUtc `
                     -WorkspacePath $WorkspacePath
+                if ($null -ne $resolved) { $results += $resolved }
             }
         } catch {
             $cause=$_.Exception.GetBaseException()
@@ -1094,11 +1111,18 @@ function Get-AiSopWorkflowTransactionProof {
             Get-AiSopWorkflowTransactionRegistryRoot -WorkspacePath $WorkspacePath
         ) "$TransactionId.json"
         if ([System.IO.File]::Exists($journalPath)) {
-            $journal = Read-AiSopWorkflowTransactionJournal $journalPath
-            if ([string]$journal.phase -eq "COMMITTED") {
-                return "APPLIED"
+            $journal=$null
+            try { $journal = Read-AiSopWorkflowTransactionJournal $journalPath }
+            catch {
+                $cause=$_.Exception.GetBaseException()
+                if ($cause -isnot [IO.FileNotFoundException] -or $cause.FileName -cne $journalPath) { throw }
             }
-            return "INDETERMINATE"
+            if ($journal) {
+                if ([string]$journal.phase -eq "COMMITTED") { return "APPLIED" }
+                return "INDETERMINATE"
+            }
+            # Normal writer cleanup raced with the read. Continue to the
+            # durable registry proof; missing targets/other IO remain unknown.
         }
 
         $registries = @(

@@ -204,6 +204,9 @@ try {
     $caps.Remove('verificationDefinitionBindings'); [IO.File]::WriteAllText($capPath,($caps | ConvertTo-Json -Depth 6))
     $oldTarget=Get-AiSopHandoffPreflight $workspace Example one $candidate
     Assert (($oldTarget.tasks[0].diagnostics -join ' ') -match 'TARGET_DEFINITION_BINDING_UNSUPPORTED') 'Older target was reported capable of current definition checks'
+    $caps.verificationDefinitionBindings=@('profile-command-v1','junit-map-v1'); [IO.File]::WriteAllText($capPath,($caps | ConvertTo-Json -Depth 6))
+    $v1Target=Get-AiSopHandoffPreflight $workspace Example one $candidate
+    Assert (($v1Target.tasks[0].diagnostics -join ' ') -match 'TARGET_DEFINITION_BINDING_UNSUPPORTED') 'v1-only target was reported capable of v2 path semantics'
     Put '.ai-workspace/context/verification-commands.json' '{"schemaVersion":"1.0","commands":{"build":{"kind":"compile","executable":"pwsh","arguments":["-NoProfile","-Command","exit 2"]}}}'
     $drift=Get-AiSopHandoffPreflight $workspace Example one
     Assert (($drift.tasks[0].diagnostics -join ' ') -match 'STALE_PROFILE_EVIDENCE') 'Preflight missed selected definition drift'

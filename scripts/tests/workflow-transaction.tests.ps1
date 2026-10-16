@@ -585,6 +585,92 @@ try {
         } finally { $env:SERVER_NEW_WORKFLOW_TRANSACTION_REGISTRY=$registryBefore }
     }
 
+    # Deterministic interleavings at lock acquisition: a writer can finish
+    # (and another writer can commit) after recovery reads its first snapshot.
+    & {
+        $probeRoot=Join-Path $TestRoot 'locked-read-race'
+        [IO.Directory]::CreateDirectory($probeRoot) | Out-Null
+        $probe=Join-Path $probeRoot 'race.json'
+        function Get-AiSopWorkflowTransactionRegistryRoot { param($WorkspacePath) return $probeRoot }
+        function Read-AiSopWorkflowTransactionJournal {
+            param($JournalPath)
+            if (-not [IO.File]::Exists($JournalPath)) { throw [IO.FileNotFoundException]::new('WORKFLOW_REGISTRY_IO_ERROR',$JournalPath) }
+            if ($fixture.locked -and $fixture.mode -eq 'IO') { throw 'WORKFLOW_REGISTRY_IO_ERROR' }
+            if ($fixture.locked -and $fixture.mode -eq 'TARGET_MISSING') { throw [IO.FileNotFoundException]::new('WORKFLOW_REGISTRY_IO_ERROR','target.json') }
+            return ConvertFrom-AiSopWorkflowJson (ConvertTo-AiSopWorkflowCanonicalJson $fixture.journal) -AsHashtable
+        }
+        function Enter-AiSopWorkflowTransactionLocks {
+            param($SessionKeys,$OwnerPath,$Targets,$DeadlineUtc,$WorkspacePath)
+            $fixture.locked=$true
+            switch ($fixture.mode) {
+                'DELETE' { [IO.File]::Delete($probe); $fixture.value='newer' }
+                'ADVANCE' { $fixture.journal.phase='COMMITTED'; $fixture.journal.committedAt=$t0.ToString('o'); $fixture.value='after' }
+                'REPLACE' { $fixture.journal.targets[0].path='different-target.json' }
+                'REGRESS' { $fixture.journal.phase='PREPARED'; $fixture.journal.committedAt='' }
+            }
+            return @{Locks=@();SessionOrder=@()}
+        }
+        function Exit-AiSopWorkflowLocks { param($Locks) $fixture.released=$true }
+        function Get-AiSopWorkflowTargetSnapshot { param($Path,$SchemaId) return $fixture.value }
+        function Test-AiSopWorkflowSnapshotEqual { param($Left,$Right) return $Left -ceq $Right }
+        function Set-AiSopWorkflowTargetSnapshot { param($Target,$Snapshot) $fixture.writes++; $fixture.value=$Snapshot }
+        function Write-AiSopWorkflowTransactionJournal { param($JournalPath,$Journal) $fixture.rewrites++ }
+        foreach ($case in @(
+            @{phase='PREPARED';mode='DELETE'}, @{phase='COMMITTED';mode='DELETE'},
+            @{phase='PREPARED';mode='ADVANCE'}, @{phase='PREPARED';mode='REPLACE'},
+            @{phase='COMMITTED';mode='REGRESS'}, @{phase='PREPARED';mode='IO'},
+            @{phase='PREPARED';mode='TARGET_MISSING'}
+        )) {
+            $fixture=@{mode=$case.mode;locked=$false;released=$false;value='before';writes=0;rewrites=0;journal=@{
+                transactionId='race';phase=$case.phase;committedAt='';sessionKeys=@();ownerPath='owner.json'
+                targets=@(@{path='target.json';schemaId='OWNER';before='before';after='after'})
+            }}
+            [IO.File]::WriteAllText($probe,'reader fixture')
+            if ($case.mode -in @('REPLACE','REGRESS')) {
+                Assert-ThrowsCode { Invoke-AiSopWorkflowTransactionRecovery } 'WORKFLOW_TRANSACTION_CORRUPT' 'Changed journal identity/phase was replayed'
+            } elseif ($case.mode -in @('IO','TARGET_MISSING')) {
+                Assert-ThrowsCode { Invoke-AiSopWorkflowTransactionRecovery } 'WORKFLOW_REGISTRY_IO_ERROR' 'Non-journal read error was swallowed'
+            } else {
+                $recovered=@(Invoke-AiSopWorkflowTransactionRecovery)
+                if ($case.mode -eq 'DELETE') {
+                    Assert-Equal $recovered.Count 0 'Deleted journal was counted as recovered'
+                    Assert-Equal $fixture.value 'newer' 'Stale recovery overwrote a newer commit'
+                    Assert-Equal $fixture.rewrites 0 'Stale recovery resurrected a deleted journal'
+                } else {
+                    Assert-Equal $recovered.Count 1 'Current committed journal was not recovered'
+                    Assert-Equal $recovered[0].Result 'ROLLED_FORWARD' 'Recovery ignored current committed phase'
+                    Assert-Equal $fixture.value 'after' 'Committed state was rolled back'
+                }
+                Assert-True (-not [IO.File]::Exists($probe)) 'Resolved/deleted journal survived recovery'
+            }
+            if ($case.mode -ne 'ADVANCE') { Assert-Equal $fixture.writes 0 'Recovery wrote without a valid locked journal' }
+            Assert-True $fixture.released 'Recovery did not release its state locks'
+        }
+        [IO.File]::Delete($probe)
+    }
+    & {
+        $proofRoot=Join-Path $TestRoot 'proof-read-race'
+        $sessions=Join-Path $proofRoot 'sessions'
+        [IO.Directory]::CreateDirectory($sessions) | Out-Null
+        $probe=Join-Path $proofRoot 'proof-race.json'
+        [IO.File]::WriteAllText((Join-Path $sessions 'session.json'),'{"lastTransactionId":"proof-race"}')
+        function Get-AiSopWorkflowTransactionRegistryRoot { param($WorkspacePath) return $proofRoot }
+        function Get-AiSopWorkflowSessionRegistryRoot { param($WorkspacePath) return $sessions }
+        function Read-AiSopWorkflowCanonicalState { param($Path,$SchemaId) return [IO.File]::ReadAllText($Path) }
+        function Read-AiSopWorkflowTransactionJournal {
+            param($JournalPath)
+            [IO.File]::Delete($JournalPath)
+            if ($mode -eq 'IO') { throw 'WORKFLOW_REGISTRY_IO_ERROR' }
+            if ($mode -eq 'TARGET') { throw [IO.FileNotFoundException]::new('WORKFLOW_REGISTRY_IO_ERROR','target.json') }
+            throw [IO.FileNotFoundException]::new('WORKFLOW_REGISTRY_IO_ERROR',$JournalPath)
+        }
+        foreach ($mode in @('CLEANUP','IO','TARGET')) {
+            [IO.File]::WriteAllText($probe,'reader fixture')
+            $expected=if ($mode -eq 'CLEANUP') { 'APPLIED' } else { 'INDETERMINATE' }
+            Assert-Equal (Get-AiSopWorkflowTransactionProof -TransactionId proof-race) $expected "Incorrect proof after $mode read race"
+        }
+    }
+
     $workerPath = Join-Path $TestRoot "transaction-worker.ps1"
     $workerSource = @'
 param(

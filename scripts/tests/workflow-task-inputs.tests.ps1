@@ -88,8 +88,18 @@ try {
     $linked=$false
     try { New-Item -ItemType SymbolicLink -Path $link -Target $outside -ErrorAction Stop | Out-Null; $linked=$true } catch { Write-Output 'SKIP: symlink creation unavailable' }
     if ($linked) {
-        try { Fails { Resolve-AiSopWorkspaceChild $workspace 'linked/file' } 'WORKSPACE_PATH_ESCAPE' }
+        try {
+            Fails { Resolve-AiSopWorkspaceChild $workspace 'linked/file' } 'WORKSPACE_PATH_ESCAPE'
+            $nestedProbe=Join-Path $root 'nested-path-probe.ps1'
+            [IO.File]::WriteAllText($nestedProbe,"param([string]`$Workspace)`nResolve-AiSopWorkspaceChild `$Workspace 'linked/file'")
+            Fails { & $nestedProbe $workspace } 'WORKSPACE_PATH_ESCAPE'
+        }
         finally { [IO.Directory]::Delete($link) }
+    }
+    if ([OperatingSystem]::IsWindows()) {
+        $nestedProbe=Join-Path $root 'nested-case-probe.ps1'
+        [IO.File]::WriteAllText($nestedProbe,'param([string]$Path) Resolve-PhysicalPathIdentity $Path')
+        Assert ((& $nestedProbe $workspace.ToUpperInvariant()) -ceq (Resolve-PhysicalPathIdentity $workspace)) 'Nested script lost Windows physical case normalization'
     }
     # Instrument only the isolated copy: Status across two tasks must read source
     # content once; a later invocation must scan again and see a new change.

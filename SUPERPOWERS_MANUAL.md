@@ -48,7 +48,7 @@ Run 自动续期当前绑定会话，不重新激活已结束或已转移的会�
 
 同一 kind/batch 的重跑保持命令、Profile 和 CaseIds 范围一致。确需更换时在 Run 提供 `-Reason "调整验证命令/范围的具体原因"`，保留旧尝试及替换关联；不得改用无关成功命令掩盖失败。修复代码后用原命令重跑不需要额外参数。
 
-新 Profile 证据使用 `profile-command-v1`，只绑定所选命令的规范化定义（命令及参数顺序、kind/batch、CaseIds、默认超时和可选报告/映射配置）。JSON 排版、键顺序或其他 Profile 的有效改动不使它过期。Status/Verify 及 Run 结束时都会核对当前定义；所选命令删除、损坏或语义改变会指出具体批次。按新定义重跑同批次时带 Reason，不重填旧摘要。旧 Profile 记录仍按原整文件摘要核对，不重新解释为新语义；格式升级后的首次重跑也可能需要 Reason。
+新 Profile 证据使用 `profile-command-v2`，只绑定所选命令的规范化定义（命令及参数顺序、kind/batch、CaseIds、默认超时和可选报告/映射配置）。JSON 排版、键顺序或其他 Profile 的有效改动不使它过期。`caseMap`、`junitReports` 按工作区内的物理路径规范化，Windows 下等价的大小写、分隔符写法不使新证据过期；不改写 executable 或命令参数。Status/Verify 及 Run 结束时都会核对当前定义；所选命令删除、损坏或语义改变会指出具体批次。按新定义重跑同批次时带 Reason，不重填旧摘要。已有 `profile-command-v1` 继续按原命令定义摘要核对，更早无版本记录仍按原整文件摘要核对，不重解释或迁移旧证据；格式升级后的首次重跑也可能需要 Reason。Preflight 会提示目标引擎是否支持新摘要。
 
 可选 JUnit 映射另保存 `junit-map-v1` 与工作区内的来源路径，映射内容变更、删除或越界会使相关证据失效；单纯 JSON 排版、对象键序和 Case 排列变化不影响新绑定。Run 期间变更所用定义会保存失败结果，即使命令退出码为 0。旧映射记录若没有来源路径，会提示 `JUNIT_MAP_SOURCE_UNBOUND`，继续当前任务时重跑相关批次以建立绑定；不猜测文件来源、不改写历史 DONE。Profile 与报告映射继续可选，不给普通 T1/T2 新增必填配置。
 

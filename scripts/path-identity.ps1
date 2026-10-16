@@ -3,9 +3,7 @@
 # Cross-platform physical path normalization library (Agent-SOP).
 # Resolves symlinks, junction points, and Windows 8.3/case variations to canonical identities.
 
-$script:IsWindowsPlatform = [System.OperatingSystem]::IsWindows()
-
-if ($script:IsWindowsPlatform -and (-not ("AiSop.PhysicalPath" -as [type]))) {
+if ([System.OperatingSystem]::IsWindows() -and (-not ("AiSop.PhysicalPath" -as [type]))) {
     Add-Type -TypeDefinition @'
 using System;
 using System.ComponentModel;
@@ -100,7 +98,9 @@ function Resolve-PhysicalPathIdentity {
     $fullPath = [System.IO.Path]::GetFullPath($Path)
 
     # 1. POSIX (Linux / macOS) execution path: native System.IO resolution
-    if (-not $script:IsWindowsPlatform) {
+    # This function can be inherited by another script without dot-sourcing
+    # this file again. Platform selection must not depend on that script's scope.
+    if (-not [System.OperatingSystem]::IsWindows()) {
         $existingPath = $fullPath
         $missingSegments = [System.Collections.Generic.List[string]]::new()
         while (-not (Test-Path -LiteralPath $existingPath)) {

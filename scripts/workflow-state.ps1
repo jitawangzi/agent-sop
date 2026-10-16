@@ -574,7 +574,7 @@ function Get-ApprovalPath {
         [object]$Runtime
     )
 
-    return Join-Path $Runtime.specDirectory "00_workflow_state.json"
+    return Resolve-AiSopTaskWorkflowStatePath $Runtime.specDirectory
 }
 
 function Assert-RequiredApprovals {
@@ -1607,7 +1607,7 @@ function Get-AuthoritativeFeatureBaseline {
 
         # Check feature-state.json and 00_workflow_state.json
         $featStatePath = Join-Path $specDirFull "feature-state.json"
-        $wfStatePath = Join-Path $specDirFull "00_workflow_state.json"
+        $wfStatePath = Resolve-AiSopTaskWorkflowStatePath $specDirFull
         if (Test-Path -LiteralPath $featStatePath -PathType Leaf) {
             try {
                 $fs = Get-Content -LiteralPath $featStatePath -Raw | ConvertFrom-Json
@@ -1640,7 +1640,7 @@ function Get-AuthoritativeFeatureBaseline {
     # Check if spec state files exist (in-progress feature)
     $hasExistingState = (Test-Path -LiteralPath (Join-Path $specDirFull ".workflow-owner.json")) -or
                          (Test-Path -LiteralPath (Join-Path $specDirFull "feature-state.json")) -or
-                         (Test-Path -LiteralPath (Join-Path $specDirFull "00_workflow_state.json")) -or
+                         (Test-Path -LiteralPath (Resolve-AiSopTaskWorkflowStatePath $specDirFull)) -or
                          (Test-Path -LiteralPath (Join-Path $specDirFull "04_change_impact.json")) -or
                          (Test-Path -LiteralPath (Join-Path $specDirFull "05_test_plan.md"))
 
@@ -1656,7 +1656,7 @@ function Get-AuthoritativeFeatureBaseline {
     }
 
     $featStatePath = Join-Path $specDirFull "feature-state.json"
-    $wfStatePath = Join-Path $specDirFull "00_workflow_state.json"
+    $wfStatePath = Resolve-AiSopTaskWorkflowStatePath $specDirFull
     $impactPath = Join-Path $specDirFull "04_change_impact.json"
     $fsBaseline = $null
     $wfBaseline = $null
@@ -1768,7 +1768,7 @@ function Assert-FeatureBaselineIntegrity {
         }
     }
     
-    $wfPath = Join-Path $SpecDir "00_workflow_state.json"
+    $wfPath = Resolve-AiSopTaskWorkflowStatePath $SpecDir
     if (Test-Path -LiteralPath $wfPath -PathType Leaf) {
         try {
             $wf = Get-Content -LiteralPath $wfPath -Raw | ConvertFrom-Json
@@ -2661,10 +2661,8 @@ function Get-SemanticRiskAssessment {
     $taskDelta=$null
     if ($TaskId -and $SpecDir) {
         $scopeTask=Read-AiSopTask $SpecDir $TaskId
-        if ($scopeTask.tier -eq 'T3') {
-            try { $taskDelta=Get-AiSopTaskChanges $scopeTask $WorkspaceRoot $script:TaskValidationContext; $Baseline=$scopeTask.baseline.revision }
-            catch { return [pscustomobject]@{TriggersHit=@('TASK_SCOPE_UNAVAILABLE');Details=@($_.Exception.Message);MinRequiredTier='T3';HasHighRisk=$true;Baseline=$Baseline} }
-        }
+        try { $taskDelta=Get-AiSopTaskChanges $scopeTask $WorkspaceRoot $script:TaskValidationContext -FromStart:($scopeTask.tier -ne 'T3'); $Baseline=$scopeTask.baseline.revision }
+        catch { return [pscustomobject]@{TriggersHit=@('TASK_SCOPE_UNAVAILABLE');Details=@($_.Exception.Message);MinRequiredTier=$(if ($scopeTask.tier -eq 'T3') { 'T3' } else { $null });HasHighRisk=$(if ($scopeTask.tier -eq 'T3') { $true } else { $null });Baseline=$scopeTask.baseline.revision} }
     }
     # 1. Resolve baseline from authoritative state or VCS
     $effectiveBaseline = if (-not [string]::IsNullOrWhiteSpace($Baseline)) {
@@ -3043,7 +3041,7 @@ function Validate-TestCoverageState {
         throw "Coverage test plan artifact must be canonical: $expectedTestPlanPath"
     }
 
-    $approvalPath = Join-Path $coverageDirectory "00_workflow_state.json"
+    $approvalPath = Resolve-AiSopTaskWorkflowStatePath $coverageDirectory
     Assert-FeatureBaselineIntegrity -SpecDir $coverageDirectory
     $approval = Validate-ApprovalState -StatePath $approvalPath
     if ($approval.feature -ne $coverage.feature) {
@@ -4892,7 +4890,7 @@ switch ($Operation) {
         }
         $resolvedContractMode = if ($TaskType -eq "AUDIT_ONLY") {
             if ($ContractMode -eq "AUTO") {
-                if (Test-Path -LiteralPath (Join-Path $resolvedSpecDirectory "00_workflow_state.json") -PathType Leaf) {
+                if (Test-Path -LiteralPath (Resolve-AiSopTaskWorkflowStatePath $resolvedSpecDirectory) -PathType Leaf) {
                     "FEATURE"
                 } else {
                     "NONE"
@@ -5220,6 +5218,22 @@ switch ($Operation) {
             $PSScriptRoot
         }
         $wsRoot = Resolve-AiSopWorkspaceRoot -StartPath $specDir
+        # All task tiers are diagnostic here. Missing bounded T1/T2 Start
+        # inputs mean unknown scope, not a feature-wide scan or a tier change.
+        if ($TaskId) {
+            $riskTask=Read-AiSopTask $specDir $TaskId
+            $delta=$null
+            try {
+                if (-not $wsRoot) { throw 'WORKSPACE_UNRESOLVED' }
+                $delta=Get-AiSopTaskChanges $riskTask $wsRoot $script:TaskValidationContext -FromStart:($riskTask.tier -ne 'T3')
+                $risk=Get-SemanticRiskAssessment -WorkspaceRoot $wsRoot -Baseline $riskTask.baseline.revision -DeclaredTier $riskTask.tier -SpecDir $specDir -TaskId $TaskId
+            } catch {
+                $risk=@{ MinRequiredTier=$(if ($riskTask.tier -eq 'T3') { 'T3' } else { $null }); HasHighRisk=$(if ($riskTask.tier -eq 'T3') { $true } else { $null }); TriggersHit=@('TASK_SCOPE_UNAVAILABLE'); Details=@($_.Exception.Message) }
+            }
+            $scopeStatus=if (-not $delta -or 'TASK_SCOPE_UNAVAILABLE' -in $risk.TriggersHit) { 'UNAVAILABLE' } elseif (@($risk.TriggersHit | Where-Object { $_ -in @('TASK_DIFF_INCOMPLETE','VCS_ERROR','WORKSPACE_UNRESOLVED','HYBRID_PRODUCTION_VCS_UNSCANNED') }).Count) { 'PARTIAL' } else { 'AVAILABLE' }
+            [pscustomobject]@{ workspaceRoot=$wsRoot; taskId=$TaskId; baseline=$riskTask.baseline.revision; changeSetDigest=$delta.changeSetDigest; declaredTier=$riskTask.tier; scopeStatus=$scopeStatus; recommendationOnly=$true; minRequiredTier=$risk.MinRequiredTier; hasHighRisk=$risk.HasHighRisk; triggersHit=@($risk.TriggersHit); details=@($risk.Details); evaluatedAt=[DateTimeOffset]::UtcNow.ToString('o') } | ConvertTo-Json -Depth 5 | Write-Output
+            break
+        }
         if ([string]::IsNullOrWhiteSpace($wsRoot)) {
             return [pscustomobject]@{
                 workspaceRoot = $null
@@ -5234,22 +5248,6 @@ switch ($Operation) {
             } | ConvertTo-Json -Depth 5 | Write-Output
         }
         
-        # Task risk is diagnostic and uses the task baseline; do not persist a
-        # task-specific digest into the long-lived feature approval records.
-        if ($TaskId) {
-            $riskTask=Read-AiSopTask $specDir $TaskId
-            if ($riskTask.tier -eq 'T3') {
-                $delta=$null
-                try {
-                    $delta=Get-AiSopTaskChanges $riskTask $wsRoot $script:TaskValidationContext
-                    $risk=Get-SemanticRiskAssessment -WorkspaceRoot $wsRoot -Baseline $riskTask.baseline.revision -DeclaredTier $riskTask.tier -SpecDir $specDir -TaskId $TaskId
-                } catch {
-                    $risk=@{ MinRequiredTier='T3'; HasHighRisk=$true; TriggersHit=@('TASK_SCOPE_UNAVAILABLE'); Details=@($_.Exception.Message) }
-                }
-                [pscustomobject]@{ workspaceRoot=$wsRoot; taskId=$TaskId; baseline=$riskTask.baseline.revision; changeSetDigest=$delta.changeSetDigest; declaredTier=$riskTask.tier; minRequiredTier=$risk.MinRequiredTier; hasHighRisk=$risk.HasHighRisk; triggersHit=@($risk.TriggersHit); details=@($risk.Details); evaluatedAt=[DateTimeOffset]::UtcNow.ToString('o') } | ConvertTo-Json -Depth 5 | Write-Output
-                break
-            }
-        }
         # Verify baseline integrity & get authoritative baseline
         Assert-FeatureBaselineIntegrity -SpecDir $specDir -ProposedBaseline $Baseline
         $effectiveBaseline = if (-not [string]::IsNullOrWhiteSpace($Baseline)) {
@@ -5289,7 +5287,7 @@ switch ($Operation) {
         }
         
         # Atomically persist to feature-state.json & 00_workflow_state.json with two-phase commit & lock
-        $lockTarget = if (Test-Path -LiteralPath $featStatePath -PathType Leaf) { $featStatePath } else { (Join-Path $specDir "workflow-state.json") }
+        $lockTarget = if (Test-Path -LiteralPath $featStatePath -PathType Leaf) { $featStatePath } else { Resolve-AiSopTaskWorkflowStatePath $specDir }
         Invoke-WithFileLock -StatePath $lockTarget -Action {
             $isoNow = [DateTimeOffset]::UtcNow.ToString("yyyy-MM-ddTHH:mm:ssZ")
             $fsDict = $null
@@ -5323,7 +5321,7 @@ switch ($Operation) {
                 $fsDict["updatedAt"] = $isoNow
             }
 
-            $wfStatePath = Join-Path $specDir "00_workflow_state.json"
+            $wfStatePath = Resolve-AiSopTaskWorkflowStatePath $specDir
             $wfDict = $null
             $wfSchema = Join-Path $SchemaRoot "workflow-state.schema.json"
             if (Test-Path -LiteralPath $wfStatePath -PathType Leaf) {

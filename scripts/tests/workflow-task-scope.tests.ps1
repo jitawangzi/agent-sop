@@ -168,11 +168,27 @@ try {
     Assert ((Resolve-AiSopTaskWorkflowStatePath $spec) -ceq (Resolve-PhysicalPathIdentity $preferredState)) 'Preferred approval file lost precedence'
     [IO.File]::Delete($preferredState)
     try {
+        $legacyCoverage=& $stateEntry -Operation ValidateTestCoverage -Path (Join-Path $spec '05_test_coverage.json') -Phase VERIFY -TaskId one | Out-String
+        Assert ($LASTEXITCODE -eq 0 -and $legacyCoverage -match 'checkedCases=1 totalCases=2') "Nested coverage ignored legacy approval: $legacyCoverage"
         foreach ($operation in @('Verify','Complete')) {
             $diagnostic=& pwsh -NoProfile -File $entry -Operation $operation -WorkspacePath $workspace -Feature Example -TaskId one -Agent CODEX 2>&1 | Out-String
-            Assert ($diagnostic -notmatch 'workflow-state.json missing|T3 feature requires workflow-state') "$operation ignored existing legacy approval file: $diagnostic"
+            Assert ($diagnostic -notmatch 'workflow-state.json missing|T3 feature requires workflow-state|coverage validation threw|JSON file does not exist') "$operation ignored existing legacy approval file: $diagnostic"
             Assert ($diagnostic -match '07_design_review|08_review|design review|review') "$operation failed for an unexpected reason: $diagnostic"
         }
+        # A corrupt preferred file cannot fall back to a valid legacy approval.
+        [IO.File]::WriteAllText($preferredState,'{broken')
+        try {
+            $bad=& pwsh -NoProfile -File $stateEntry -Operation ValidateTestCoverage -Path (Join-Path $spec '05_test_coverage.json') -Phase VERIFY -TaskId one 2>&1 | Out-String
+            Assert ($LASTEXITCODE -ne 0) "Corrupt canonical approval fell back to legacy: $bad"
+        } finally { [IO.File]::Delete($preferredState) }
+        # Legacy baseline is still authoritative and cannot evade integrity checks.
+        $legacyRaw=[IO.File]::ReadAllText($legacyState)
+        $legacyApproval=ConvertFrom-AiSopWorkflowJson $legacyRaw -AsHashtable; $legacyApproval.baseline='1'
+        [IO.File]::WriteAllText($legacyState,(ConvertTo-AiSopWorkflowCanonicalJson $legacyApproval))
+        try {
+            $bad=& pwsh -NoProfile -File $stateEntry -Operation ValidateTestCoverage -Path (Join-Path $spec '05_test_coverage.json') -Phase VERIFY -TaskId one 2>&1 | Out-String
+            Assert ($LASTEXITCODE -ne 0 -and $bad -match 'BASELINE_MUTATION_DETECTED') "Legacy baseline mismatch was ignored: $bad"
+        } finally { [IO.File]::WriteAllText($legacyState,$legacyRaw) }
     } finally { [IO.File]::Move($legacyState,$preferredState) }
     & {
         $tokens=$null; $parseErrors=$null
@@ -251,6 +267,39 @@ try {
     [IO.File]::WriteAllText($impactPath,$oldImpactRaw)
     Assert (([IO.File]::ReadAllText($ownerPath) | ConvertFrom-Json).baseline -ceq $featureBaseline) 'Task start rewrote feature approval baseline'
     Task Cancel two | Out-Null
+    foreach ($tier in @('T1','T2')) {
+        $id='risk-'+$tier.ToLowerInvariant()
+        Task Start $id @{Tier=$tier;Objective='Read-only task risk'} | Out-Null
+        $lightTask=Read-AiSopTask $spec $id
+        $taskPath=Get-AiSopTaskPath $spec $id
+        $protected=@{}
+        foreach ($file in @($taskPath,$ownerPath,$preferredState,(Join-Path $spec 'feature-state.json'))) {
+            $protected[$file]=if ([IO.File]::Exists($file)) { [IO.File]::ReadAllText($file) } else { $null }
+        }
+        $empty=& $stateEntry -Operation AssessRisk -Path $spec -TaskId $id | ConvertFrom-Json
+        Assert ($empty.taskId -ceq $id -and $empty.declaredTier -ceq $tier -and $empty.scopeStatus -eq 'AVAILABLE' -and $empty.recommendationOnly) 'Light risk lost its task identity/tier/scope'
+        Assert ('TYPE_EXTENSION' -notin $empty.triggersHit) 'Light risk inherited an older task source change'
+        Put 'src/CurrentRouter.java' 'public class CurrentRouter { public int route(int type) { switch(type) { case 1: return 1; default: return 0; } } }'
+        $changed=& $stateEntry -Operation AssessRisk -Path $spec -TaskId $id | ConvertFrom-Json
+        Assert ($changed.hasHighRisk -and $changed.declaredTier -ceq $tier -and $changed.changeSetDigest -cne $empty.changeSetDigest) 'Current task risk was missed or changed the selected tier'
+        foreach ($file in $protected.Keys) {
+            $current=if ([IO.File]::Exists($file)) { [IO.File]::ReadAllText($file) } else { $null }
+            Assert ($current -ceq $protected[$file]) "AssessRisk mutated $file"
+        }
+        # Older/light Starts may have no complete snapshot: unknown stays a
+        # diagnostic and does not manufacture a baseline or force T3.
+        $lightTask.startInputs.status='UNAVAILABLE'; $lightTask.startInputs.Remove('inputsRef'); $lightTask.startInputs.Remove('inputDigest'); $lightTask.startInputs.reason='bounded capture fixture'
+        $unknownRaw=ConvertTo-AiSopWorkflowCanonicalJson $lightTask
+        [IO.File]::WriteAllText($taskPath,$unknownRaw)
+        try {
+            $unknown=& $stateEntry -Operation AssessRisk -Path $spec -TaskId $id | ConvertFrom-Json
+            Assert ($unknown.scopeStatus -eq 'UNAVAILABLE' -and $unknown.taskId -ceq $id -and $unknown.declaredTier -ceq $tier) 'Missing light Start lost diagnostic identity'
+            Assert ($null -eq $unknown.changeSetDigest -and $null -eq $unknown.minRequiredTier -and $null -eq $unknown.hasHighRisk -and 'TASK_SCOPE_UNAVAILABLE' -in $unknown.triggersHit) 'Unknown light scope invented a verdict or forced escalation'
+            Assert ([IO.File]::ReadAllText($taskPath) -ceq $unknownRaw) 'Unknown light scope rewrote the task'
+        } finally { [IO.File]::WriteAllText($taskPath,$protected[$taskPath]) }
+        [IO.File]::Delete((Join-Path $workspace 'src/CurrentRouter.java'))
+        Task Cancel $id | Out-Null
+    }
     $legacyImpact=ConvertFrom-AiSopWorkflowJson $oldImpactRaw -AsHashtable; $legacyImpact.Remove('taskId')
     [IO.File]::WriteAllText($impactPath,(ConvertTo-AiSopWorkflowCanonicalJson $legacyImpact))
     Task Start three @{Tier='T1';Objective='Quick task later explicitly upgraded'} | Out-Null

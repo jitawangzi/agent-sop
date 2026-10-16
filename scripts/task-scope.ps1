@@ -155,8 +155,10 @@ function Read-AiSopTaskBaselineInputs {
 }
 
 function Get-AiSopTaskChanges {
-    param($Task, [string]$WorkspacePath, $ValidationContext)
-    $before=Read-AiSopTaskBaselineInputs $Task $WorkspacePath $ValidationContext
+    param($Task, [string]$WorkspacePath, $ValidationContext, [switch]$FromStart)
+    # Lightweight diagnostics can use the bounded Start snapshot without
+    # adopting a T3 baseline or changing any task state.
+    $before=if ($FromStart) { Read-AiSopTaskStartInputs $Task $WorkspacePath $ValidationContext } else { Read-AiSopTaskBaselineInputs $Task $WorkspacePath $ValidationContext }
     $after=Get-AiSopValidationSnapshot $WorkspacePath $ValidationContext
     if ($before.algorithm -cne $after.algorithm -or [string]$before.policyDigest -cne [string]$after.policyDigest) {
         throw 'TASK_INPUT_POLICY_CHANGED: use the original input policy and matching engine algorithm; finish active tasks before upgrading input rules. Do not replace the task baseline to hide changed inputs'
@@ -168,7 +170,7 @@ function Get-AiSopTaskChanges {
         if ($old -ceq $new) { continue }
         @{ path=$path; before=$old; after=$new; status=$(if (-not $old) { 'ADDED' } elseif (-not $new) { 'DELETED' } else { 'MODIFIED' }) }
     })
-    $manifest=@{ schemaVersion='1.0'; taskId=$Task.taskId; feature=$Task.feature; baselineRef=$Task.baseline.inputsRef; baselineInputDigest=$before.digest; changes=$changes }
+    $manifest=@{ schemaVersion='1.0'; taskId=$Task.taskId; feature=$Task.feature; baselineRef=$(if ($FromStart) { $Task.startInputs.inputsRef } else { $Task.baseline.inputsRef }); baselineInputDigest=$before.digest; changes=$changes }
     $raw=ConvertTo-AiSopWorkflowCanonicalJson $manifest
     return @{ manifest=$manifest; changeSetDigest=(Get-AiSopWorkflowSha256 $raw); inputDigest=$after.digest; baseline=$Task.baseline.revision }
 }

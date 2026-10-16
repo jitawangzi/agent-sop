@@ -42,13 +42,33 @@ try {
     Task Run @{Profile='test'} | Out-Null
     Task Verify | Out-Null
     $records=(Read-AiSopTask $spec $taskId).verifications
-    Assert ($records[0].context.profileDigestAlgorithm -ceq 'profile-command-v1') 'Run omitted selected-profile binding version'
+    Assert ($records[0].context.profileDigestAlgorithm -ceq 'profile-command-v2') 'Run omitted current selected-profile binding version'
     $config.commands.unrelated.arguments=@('-NoProfile','-Command','exit 4')
     SaveConfig
     [IO.File]::WriteAllText($configPath,($config | ConvertTo-Json -Depth 10))
     $reordered=ConvertFrom-Json $map -AsHashtable; $reordered.cases=@($reordered.cases | Sort-Object id)
     [IO.File]::WriteAllText($mapPath,($reordered | ConvertTo-Json -Depth 8))
     Assert (@(Problems).Count -eq 0) 'Formatting, map case order or sibling profile invalidated evidence'
+    $oldProfile=Get-AiSopVerificationProfile $workspace test 'profile-command-v1'
+    $v1=@{kind='test';batch='test';context=@{profile='test';profileDigestAlgorithm='profile-command-v1';profileDigest=$oldProfile.digest}}
+    $v1Raw=ConvertTo-AiSopWorkflowCanonicalJson $v1
+    Assert (@(Get-AiSopRunDefinitionProblems $v1 $workspace).Count -eq 0) 'Unchanged v1 evidence was invalidated by the engine upgrade'
+    $config.commands.test.caseMap='./'+$mapRelative
+    $config.commands.test.junitReports=@('./build/results.xml')
+    if ([OperatingSystem]::IsWindows()) {
+        $config.commands.test.caseMap=$config.commands.test.caseMap.Replace('/','\').ToUpperInvariant()
+        $config.commands.test.junitReports=@('.\BUILD\RESULTS.XML')
+    }
+    SaveConfig
+    Assert (@(Problems).Count -eq 0) 'Equivalent workspace path spelling invalidated v2 evidence'
+    Assert ((Get-AiSopRunDefinitionProblems $v1 $workspace) -match 'STALE_PROFILE_EVIDENCE') 'v1 was silently reinterpreted using v2 path rules'
+    Task Run @{Profile='test'} | Out-Null # Same effective paths need no Reason.
+    Assert ((Read-AiSopTask $spec $taskId).verifications[-1].outcome -eq 'PASSED') 'Equivalent path run failed'
+    Assert ((ConvertTo-AiSopWorkflowCanonicalJson $v1) -ceq $v1Raw) 'Reading a legacy record rewrote it'
+    $config.commands.test.caseMap='../outside.json'; SaveConfig
+    Assert ((Problems) -match 'PROFILE_DEFINITION_UNAVAILABLE:.*WORKSPACE_PATH_ESCAPE') 'New path normalization accepted escape'
+    $config.commands.test.caseMap=$mapRelative; $config.commands.test.junitReports=@('build/results.xml'); SaveConfig
+    Assert (@(Get-AiSopRunDefinitionProblems $v1 $workspace).Count -eq 0) 'Restored original v1 definition stopped validating'
     Task Run @{Profile='build'} | Out-Null # Same batch needs no Reason.
     $config.commands.build.timeoutSeconds=12; SaveConfig
     Assert ((Problems) -match 'STALE_PROFILE_EVIDENCE:compile:build') 'Selected profile drift passed verification'

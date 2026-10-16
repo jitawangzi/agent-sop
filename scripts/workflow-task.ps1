@@ -238,22 +238,28 @@ if ($junit) {
     $context.junitBefore=ConvertTo-AiSopWorkflowCanonicalJson $junitBefore
 }
 if ($profileInfo) { $context.profile=$Profile; $context.profileDigest=$profileInfo.digest; $context.profileDigestAlgorithm=$profileInfo.digestAlgorithm }
+$git=@(Get-Command git -CommandType Application -ErrorAction SilentlyContinue)[0]
 foreach ($repo in @(@{name='code';path=$WorkspacePath}, @{name='context';path=(Join-Path $WorkspacePath '.ai-workspace')}, @{name='spec';path=$SpecDirectory})) {
-    if ((Get-Command git -CommandType Application -ErrorAction SilentlyContinue) -and (Test-Path -LiteralPath $repo.path -PathType Container)) {
-        $gitRoot = & git -C $repo.path rev-parse --show-toplevel 2>$null
-        if ($LASTEXITCODE -eq 0) {
-            $context[$repo.name + 'GitRoot'] = Resolve-PhysicalPathIdentity -Path ([string]$gitRoot)
-            $revision = & git -C $repo.path rev-parse HEAD 2>$null
-            if ($LASTEXITCODE -eq 0) { $context[$repo.name + 'GitRevision'] = [string]$revision }
+    if ($git -and (Test-Path -LiteralPath $repo.path -PathType Container)) {
+        $gitRoot=Invoke-AiSopMetadataProbe $git.Source @('-C',$repo.path,'rev-parse','--show-toplevel')
+        $probe=$gitRoot
+        if ($gitRoot.exitCode -eq 0) {
+            $context[$repo.name + 'GitRoot'] = Resolve-PhysicalPathIdentity -Path $gitRoot.output
+            $probe=Invoke-AiSopMetadataProbe $git.Source @('-C',$repo.path,'rev-parse','HEAD')
+            if ($probe.exitCode -eq 0) { $context[$repo.name + 'GitRevision'] = $probe.output }
+        }
+        if ($probe.diagnostic) {
+            $context[$repo.name + 'GitMetadata']='UNAVAILABLE'
+            Write-Warning "GIT_METADATA_UNAVAILABLE: $($repo.name); $($probe.diagnostic); verification will continue without a revision annotation"
         }
     }
 }
 if (Test-Path -LiteralPath (Join-Path $WorkspacePath '.svn')) {
-    $svn = Get-Command svn -CommandType Application -ErrorAction SilentlyContinue
+    $svn = @(Get-Command svn -CommandType Application -ErrorAction SilentlyContinue)[0]
     if ($svn) {
-        $revision = & $svn.Source info --non-interactive --show-item revision $WorkspacePath 2>$null
-        if ($LASTEXITCODE -eq 0) { $context.codeSvnRevision = [string]$revision }
-        else { $context.codeSvnMetadata='UNAVAILABLE'; Write-Warning 'SVN_METADATA_UNAVAILABLE: verification will continue without a revision annotation' }
+        $revision=Invoke-AiSopMetadataProbe $svn.Source @('info','--non-interactive','--show-item','revision',$WorkspacePath)
+        if ($revision.exitCode -eq 0) { $context.codeSvnRevision = $revision.output }
+        else { $context.codeSvnMetadata='UNAVAILABLE'; Write-Warning "SVN_METADATA_UNAVAILABLE: $($revision.diagnostic); verification will continue without a revision annotation" }
     } else { $context.codeSvnMetadata='CLI_MISSING'; Write-Warning 'SVN_CLI_MISSING: verification will continue without a revision annotation' }
 }
 $launchError = $null
@@ -345,6 +351,7 @@ $info.WorkingDirectory=$WorkspacePath; $info.UseShellExecute=$false; $info.Creat
 $info.RedirectStandardOutput=$true; $info.RedirectStandardError=$true
 foreach ($arg in $Arguments) { $info.ArgumentList.Add($arg) }
 $started=$false; $finished=$false; $stopwatch=[Diagnostics.Stopwatch]::StartNew()
+$exitObservedAt=$null; $nextHeartbeatAt=30
 try {
     if ($launchError) { throw $launchError }
     $info.FileName = $context.executable
@@ -364,7 +371,8 @@ try {
         }
         if ($TimeoutSeconds -gt 0 -and $stopwatch.Elapsed.TotalSeconds -ge $TimeoutSeconds) {
             $record.outcome='TIMED_OUT'; $record.exitCode=124
-            if (-not $process.HasExited) { $process.Kill($true) }
+            $record.diagnostic="VERIFICATION_TIMED_OUT: exceeded $($TimeoutSeconds)s; terminating child process tree"
+            $writer.WriteLine($record.diagnostic); Write-Host $record.diagnostic
             break
         }
         foreach ($pipe in $pipes) {
@@ -382,6 +390,15 @@ try {
             $record.outcome=if ($process.ExitCode -eq 0) { 'PASSED' } else { 'FAILED' }
             break
         }
+        if ($process.HasExited) {
+            if ($null -eq $exitObservedAt) { $exitObservedAt=$stopwatch.Elapsed.TotalSeconds }
+            if ($stopwatch.Elapsed.TotalSeconds - $exitObservedAt -ge 5) { throw 'OUTPUT_DRAIN_TIMED_OUT: child exited but inherited output pipes remained open; reparented descendant cleanup is unconfirmed' }
+        }
+        if ($stopwatch.Elapsed.TotalSeconds -ge $nextHeartbeatAt) {
+            $limit=if ($TimeoutSeconds) { "$($TimeoutSeconds)s" } else { 'unlimited (set -TimeoutSeconds to bound this command)' }
+            Write-Host "VERIFICATION_WAIT: $Feature/$TaskId $Kind/$Batch pid=$($process.Id) elapsed=$([int]$stopwatch.Elapsed.TotalSeconds)s limit=$limit log=$logPath"
+            $nextHeartbeatAt=$stopwatch.Elapsed.TotalSeconds + 30
+        }
         [Threading.Thread]::Sleep(50)
     }
     $finished=$true
@@ -393,7 +410,17 @@ try {
     $message=if ($controlInterrupted) { $record.diagnostic } else { 'VERIFICATION_FAILED: ' + $record.diagnostic }
     $writer.WriteLine($message); Write-Host $message
 } finally {
-    if ($started -and -not $process.HasExited) { $process.Kill($true); $process.WaitForExit(5000) | Out-Null }
+    try {
+        if ($started -and -not $process.HasExited) {
+            $process.Kill($true)
+            if (-not $process.WaitForExit(5000)) { throw 'child did not exit after tree termination' }
+        }
+    } catch {
+        $cleanup="PROCESS_CLEANUP_FAILED: $($_.Exception.Message)"
+        $record.diagnostic=(@($record.diagnostic,$cleanup) | Where-Object { $_ }) -join '; '
+        if ($record.outcome -eq 'PASSED') { $record.outcome='FAILED'; $record.exitCode=1 }
+        $writer.WriteLine($cleanup); Write-Host $cleanup
+    }
     $process.Dispose(); $writer.Dispose()
     if (-not $finished -and $record.outcome -eq 'RUNNING') { $record.outcome='INTERRUPTED'; $record.exitCode=-2 }
     try {

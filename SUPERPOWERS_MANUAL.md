@@ -793,7 +793,20 @@ pwsh -NoProfile -File .\.ai-sop\scripts\run-all-tests.ps1
 pwsh -NoProfile -File .\.ai-sop\scripts\run-all-tests.ps1 -IncludeCompile
 ```
 
-`run-all-tests.ps1` 默认只跑工作流脚本测试（快）；`-IncludeCompile` 额外跑 `gradlew compileJava`，用于完整交付门禁。全过 exit 0，否则非零。
+`run-all-tests.ps1` 默认串行跑工作流脚本测试；安装到宿主后还会发现 `.ai-workspace/scripts/tests` 的项目套件，因此总耗时取决于实际测试。`-IncludeCompile` 额外跑 `gradlew compileJava`。全过 exit 0，否则非零，超时不能作为通过。
+
+运行器默认给**每套测试 900 秒**，可选编译 1800 秒；长测试须显式设置 `-SuiteTimeoutSeconds` / `-CompileTimeoutSeconds`（1～86400 秒）。每 30 秒显示当前套件、PID、已耗时、时限和日志路径，可用 `-HeartbeatSeconds` 调整。`-Quiet` 隐藏常规进度，仍显示失败原因和日志位置。`-Parallel` 默认最多并发 4 套，`-MaxParallel` 可指定上限；每套都从自己的启动时刻计时。
+
+```powershell
+# 项目中确实需要较长时间的测试，可显式延长到 1 小时
+pwsh -NoProfile -File .\.ai-sop\scripts\run-all-tests.ps1 -SuiteTimeoutSeconds 3600
+```
+
+每次运行在系统临时目录的 `ai-sop-tests-<id>/` 保存独立的 stdout/stderr 日志及逐套更新的 `results.json`。超时记录为 `TIMED_OUT` / exitCode 124，运行器终止该套件进程树并继续其他套件，最后整体返回非零；日志保留供排查，可在不再需要时清理。运行器退出清理不再无限等待。父进程退出后，输出管道最多再等 5 秒，仍未关闭则报告 `OUTPUT_DRAIN_TIMED_OUT` 并判失败；已脱离父进程的后台进程不保证能由 .NET 进程树清理追溯，不能据此声称所有后台进程均已退出。
+
+`Task Run` 的 Git/SVN 版本注记和任务入口的 Git 诊断探测每条默认最多等 10 秒。探测超时会报告元信息不可用，并继续真正的编译/测试；这只影响可选版本注记，不产生成功验证证据，也不跳过门禁。业务命令本身的时限仍由 Profile 或 `-TimeoutSeconds` 指定，0 仍表示不限制业务运行时间；运行时每 30 秒报告进度，输出管道关闭也有 5 秒兜底。需要自动结束业务长任务时，应显式设定命令时限。
+
+这些保护对新启动的运行生效，更新脚本不能让已经卡住的旧进程自动获得超时。
 
 ### `.ai-sop` 脚本变更强制门禁
 

@@ -8,6 +8,7 @@
 . (Join-Path $PSScriptRoot 'task-scope.ps1')
 . (Join-Path $PSScriptRoot 'junit-evidence.ps1')
 . (Join-Path $PSScriptRoot 'task-recovery.ps1')
+. (Join-Path $PSScriptRoot 'hidden-process.ps1')
 
 function Resolve-AiSopTaskWorkflowStatePath {
     param([string]$SpecDirectory)
@@ -162,7 +163,8 @@ function Get-AiSopTaskProblems {
 # nested repository or worktree. A parent's ignore rule is normal in that layout.
 function Get-AiSopSpecSyncWarning {
     param([string]$WorkspacePath)
-    if (-not (Get-Command git -CommandType Application -ErrorAction SilentlyContinue)) { return }
+    $git=@(Get-Command git -CommandType Application -ErrorAction SilentlyContinue)[0]
+    if (-not $git) { return }
     $specRoot = Resolve-PhysicalPathIdentity -Path (Join-Path $WorkspacePath '.ai-workspace/specs')
     $existing = $specRoot
     while (-not (Test-Path -LiteralPath $existing -PathType Container)) {
@@ -170,13 +172,15 @@ function Get-AiSopSpecSyncWarning {
         if (-not $parent -or $parent -eq $existing) { return }
         $existing = $parent
     }
-    $repo = & git -C $existing rev-parse --show-toplevel 2>$null
-    if ($LASTEXITCODE -ne 0) { return }
-    $repo = Resolve-PhysicalPathIdentity -Path ([string]$repo)
+    $probeResult=Invoke-AiSopMetadataProbe $git.Source @('-C',$existing,'rev-parse','--show-toplevel')
+    if ($probeResult.diagnostic) { return "SPECS_SYNC_CHECK_UNAVAILABLE: $($probeResult.diagnostic)" }
+    if ($probeResult.exitCode -ne 0) { return }
+    $repo = Resolve-PhysicalPathIdentity -Path $probeResult.output
     foreach ($relative in @('features/__sop_sync_probe__/06_design_contract.md', '.artifacts/inputs/__sop_sync_probe__.json', '.artifacts/changes/__sop_sync_probe__.json')) {
         $probe = [IO.Path]::GetRelativePath($repo, (Join-Path $specRoot $relative)).Replace('\', '/')
-        $ignored = & git -C $repo check-ignore -- $probe 2>$null
-        if ($LASTEXITCODE -eq 0 -and $ignored) {
+        $ignored=Invoke-AiSopMetadataProbe $git.Source @('-C',$repo,'check-ignore','--',$probe)
+        if ($ignored.diagnostic) { return "SPECS_SYNC_CHECK_UNAVAILABLE: $($ignored.diagnostic)" }
+        if ($ignored.exitCode -eq 0 -and $ignored.output) {
             return "SPECS_IGNORED: $relative is ignored by its owning Git repository '$repo'; review feature and input-manifest tracking there before handoff. No ignore rules or tracked files were changed."
         }
     }

@@ -1,124 +1,63 @@
 #requires -Version 7.0
-
-# Aggregates and runs all workflow test suites under the tests directory.
-# Each suite runs in its own pwsh subprocess so per-suite environment overrides
-# cannot leak into siblings. Default is serial (timing-sensitive suites stay
-# stable). Pass -Parallel to run suites concurrently (faster, may flake).
-# Exit code is 0 only when every suite (and, when requested, gradlew
-# compileJava) passes; used as the pre-completion gate and the CI entry point.
-#
-# Usage:
-#   pwsh -NoProfile -File .\.ai-sop\scripts\run-all-tests.ps1
-#   pwsh -NoProfile -File .\.ai-sop\scripts\run-all-tests.ps1 -Parallel
-#   pwsh -NoProfile -File .\.ai-sop\scripts\run-all-tests.ps1 -Serial
-#   pwsh -NoProfile -File .\.ai-sop\scripts\run-all-tests.ps1 -Suite workflow-owner
-#   pwsh -NoProfile -File .\.ai-sop\scripts\run-all-tests.ps1 -IncludeCompile
-
+# Each suite has its own process, deadline and retained output. Serial by default.
 [CmdletBinding()]
 param(
-    [string]$TestsRoot = (Join-Path $PSScriptRoot "tests"),
-
-    [string]$Suite = "",
-
+    [string]$TestsRoot=(Join-Path $PSScriptRoot 'tests'),
+    [string]$Suite='',
     [switch]$IncludeCompile,
-
     [switch]$Quiet,
-
     [switch]$Serial,
-
     [switch]$Parallel,
-
-    [int]$MaxParallel = 0
+    [ValidateRange(0,64)][int]$MaxParallel=0,
+    [ValidateRange(1,86400)][int]$SuiteTimeoutSeconds=900,
+    [ValidateRange(1,86400)][int]$CompileTimeoutSeconds=1800,
+    [ValidateRange(1,3600)][int]$HeartbeatSeconds=30
 )
+$ErrorActionPreference='Stop'
+. (Join-Path $PSScriptRoot 'hidden-process.ps1')
+if ($Serial -and $Parallel) { throw 'Specify either -Serial or -Parallel, not both.' }
 
-$ErrorActionPreference = "Stop"
-
-. (Join-Path $PSScriptRoot "hidden-process.ps1")
-
-if ($Serial -and $Parallel) {
-    throw "Specify either -Serial or -Parallel, not both."
-}
-$script:UseParallel = [bool]$Parallel
-
-function Invoke-TestSuiteSerial {
-    param([string]$File)
-
-    $outFile = [System.IO.Path]::GetTempFileName()
-    $errFile = [System.IO.Path]::GetTempFileName()
+function Start-Suite {
+    param([string]$File, [string]$Name, [string[]]$ExtraArguments=@(), [int]$Limit=$SuiteTimeoutSeconds)
+    $index=$script:NextIndex; $script:NextIndex++
+    $outFile=Join-Path $script:LogRoot "$index.stdout.log"
+    $errFile=Join-Path $script:LogRoot "$index.stderr.log"
+    $job=[pscustomobject]@{name=$Name;file=$File;process=$null;outFile=$outFile;errFile=$errFile;diagnostic='';limit=$Limit}
     try {
-        $proc = Start-AiSopHiddenProcess `
-            -FilePath (Get-Process -Id $PID).Path `
-            -ArgumentList @("-NoProfile", "-File", $File) `
-            -RedirectStandardOutput $outFile `
-            -RedirectStandardError $errFile `
-            -PassThru
-        $proc.WaitForExit()
-        $stdout = @(Get-Content -LiteralPath $outFile -ErrorAction SilentlyContinue)
-        $stderr = @(Get-Content -LiteralPath $errFile -ErrorAction SilentlyContinue)
-        $output = @($stdout + $stderr)
-        return [pscustomobject]@{
-            Name     = [System.IO.Path]::GetFileNameWithoutExtension($File)
-            File     = $File
-            ExitCode = $proc.ExitCode
-            Passed   = ($proc.ExitCode -eq 0)
-            Output   = $output
+        $heartbeat=if ($Quiet) { 0 } else { $HeartbeatSeconds }
+        $job.process=Start-AiSopHiddenProcess -FilePath (Get-Process -Id $PID).Path -ArgumentList (@('-NoProfile','-File',$File)+$ExtraArguments) -RedirectStandardOutput $outFile -RedirectStandardError $errFile -TimeoutSeconds $Limit -HeartbeatSeconds $heartbeat -Label $Name -CloseStandardInput -PassThru
+        if (-not $Quiet) { Write-Host "START $Name pid=$($job.process.Id) limit=$($Limit)s" -ForegroundColor Cyan }
+    } catch { $job.diagnostic="PROCESS_START_FAILED: $($_.Exception.Message)" }
+    return $job
+}
+
+function Complete-Suite {
+    param($Job)
+    $code=-1; $duration=0; $diagnostic=$Job.diagnostic
+    if ($Job.process) {
+        $code=$Job.process.ExitCode; $duration=$Job.process.Clock.ElapsedMilliseconds
+        $diagnostic=$Job.process.Diagnostic
+    }
+    $outcome=if ($code -eq 0) { 'PASSED' } elseif ($code -eq 124 -and $diagnostic -like 'PROCESS_TIMED_OUT:*') { 'TIMED_OUT' } else { 'FAILED' }
+    $result=[pscustomobject]@{
+        Name=$Job.name; File=$Job.file; ExitCode=$code; Passed=($code -eq 0); Outcome=$outcome
+        DurationMs=$duration; TimeoutSeconds=$Job.limit; Diagnostic=$diagnostic; OutFile=$Job.outFile; ErrFile=$Job.errFile
+    }
+    if ($Job.process) { $Job.process.Dispose() }
+    $script:Results.Add($result)
+    # Incremental diagnostic report, not workflow evidence. Preserve on failure.
+    [IO.File]::WriteAllText((Join-Path $script:LogRoot 'results.json'), (ConvertTo-Json -InputObject @($script:Results.ToArray()) -Depth 5))
+    if (-not $Quiet -or -not $result.Passed) {
+        $color=if ($result.Passed) { 'Green' } else { 'Red' }
+        Write-Host ("{0,-42} {1}  {2} ms" -f $result.Name,$outcome,$duration) -ForegroundColor $color
+        if (-not $result.Passed) {
+            if ($diagnostic) { Write-Host $diagnostic -ForegroundColor Red }
+            foreach ($path in @($Job.outFile,$Job.errFile)) {
+                if (Test-Path -LiteralPath $path) { Get-Content -LiteralPath $path -Tail 10 | ForEach-Object { Write-Host "        $_" } }
+            }
+            Write-Host "Logs: stdout=$($Job.outFile) stderr=$($Job.errFile)"
         }
-    } finally {
-        Remove-Item -LiteralPath $outFile -Force -ErrorAction SilentlyContinue
-        Remove-Item -LiteralPath $errFile -Force -ErrorAction SilentlyContinue
     }
-}
-
-function Invoke-TestSuiteParallel {
-    # Launches one hidden pwsh subprocess per suite, writing combined output
-    # to a temp file; returns jobs to await. CreateNoWindow (not WindowStyle)
-    # is what actually suppresses the Windows console when stdout is redirected.
-    param(
-        [string]$File,
-        [string]$OutFile
-    )
-    $errFile = [System.IO.Path]::ChangeExtension($OutFile, ".err")
-    $p = Start-AiSopHiddenProcess `
-        -FilePath (Get-Process -Id $PID).Path `
-        -ArgumentList @("-NoProfile", "-File", $File) `
-        -RedirectStandardOutput $OutFile `
-        -RedirectStandardError $errFile `
-        -PassThru
-    return [pscustomobject]@{
-        Name    = [System.IO.Path]::GetFileNameWithoutExtension($File)
-        File    = $File
-        Process = $p
-        OutFile = $OutFile
-    }
-}
-
-function Invoke-Compile {
-    $sopParent = Split-Path -Parent $PSScriptRoot
-    $projectRoot = if (-not [string]::IsNullOrWhiteSpace($sopParent)) {
-        Split-Path -Parent $sopParent
-    } else {
-        ""
-    }
-    if ([string]::IsNullOrWhiteSpace($projectRoot)) {
-        $projectRoot = $sopParent
-    }
-    if ([string]::IsNullOrWhiteSpace($projectRoot)) {
-        Write-Host "gradlew not found; skipping compile." -ForegroundColor Yellow
-        return $true
-    }
-    $gradlew = Join-Path $projectRoot "gradlew.bat"
-    if (-not (Test-Path -LiteralPath $gradlew)) {
-        $gradlew = Join-Path $projectRoot "gradlew"
-    }
-    if (-not (Test-Path -LiteralPath $gradlew)) {
-        Write-Host "gradlew not found under $projectRoot; skipping compile." -ForegroundColor Yellow
-        return $true
-    }
-    & {
-        $ErrorActionPreference = 'Continue'
-        & $gradlew compileJava 2>&1
-    }
-    return ($LASTEXITCODE -eq 0)
 }
 
 # Discover test files. Auto-includes any future *.tests.ps1 with no list
@@ -154,109 +93,58 @@ if ($Suite) {
     })
 }
 
+
+$script:LogRoot=Join-Path ([IO.Path]::GetTempPath()) ('ai-sop-tests-' + [guid]::NewGuid().ToString('N'))
+[IO.Directory]::CreateDirectory($script:LogRoot) | Out-Null
+[IO.File]::WriteAllText((Join-Path $script:LogRoot 'results.json'), '[]')
+$script:NextIndex=0
+$script:Results=[Collections.Generic.List[object]]::new()
+$jobs=[Collections.Generic.List[object]]::new()
+$queue=[Collections.Generic.Queue[object]]::new()
+foreach ($file in $allFiles) { $queue.Enqueue($file) }
+$capacity=if (-not $Parallel) { 1 } elseif ($MaxParallel -gt 0) { $MaxParallel } else { 4 }
 if (-not $Quiet) {
-    $mode = if ($script:UseParallel) { "parallel" } else { "serial" }
-    Write-Host "Running $($allFiles.Count) test suite(s) from $TestsRoot ($mode)" -ForegroundColor Cyan
+    Write-Host "Running $($allFiles.Count) test suite(s), max concurrent=$capacity; per-suite limit=$($SuiteTimeoutSeconds)s" -ForegroundColor Cyan
+    Write-Host "Test logs: $script:LogRoot"
 }
-
-$results = @()
-
-if (-not $script:UseParallel) {
-    foreach ($file in $allFiles) {
-        $stopwatch = [System.Diagnostics.Stopwatch]::StartNew()
-        $result = Invoke-TestSuiteSerial -File $file.FullName
-        $stopwatch.Stop()
-        $result |
-            Add-Member -NotePropertyName DurationMs -NotePropertyValue $stopwatch.ElapsedMilliseconds
-        $results += $result
-        if (-not $Quiet) {
-            $status = if ($result.Passed) { "PASS" } else { "FAIL" }
-            $color = if ($result.Passed) { 'Green' } else { 'Red' }
-            Write-Host ("{0,-42} {1}  {2} ms" -f $result.Name, $status, $result.DurationMs) -ForegroundColor $color
-            if (-not $result.Passed -and $result.Output) {
-                $result.Output | Select-Object -Last 10 | ForEach-Object { Write-Host "        $_" -ForegroundColor DarkGray }
+try {
+    while ($queue.Count -or $jobs.Count) {
+        while ($queue.Count -and $jobs.Count -lt $capacity) {
+            $file=$queue.Dequeue()
+            $jobs.Add((Start-Suite -File $file.FullName -Name $file.BaseName))
+        }
+        # Poll every active suite, so parallel deadlines run from launch time,
+        # even when an earlier suite hangs.
+        foreach ($job in @($jobs.ToArray())) {
+            if (-not $job.process -or $job.process.Poll()) {
+                Complete-Suite $job
+                [void]$jobs.Remove($job)
             }
         }
-        [System.GC]::Collect()
-        [System.GC]::WaitForPendingFinalizers()
+        if ($jobs.Count) { [Threading.Thread]::Sleep(100) }
     }
-} else {
-    # Parallel: launch all, then await.
-    $jobs = @()
-    $tempDir = Join-Path ([System.IO.Path]::GetTempPath()) ("ai-sop-run-" + [guid]::NewGuid().ToString("N").Substring(0,8))
-    New-Item -ItemType Directory -Path $tempDir | Out-Null
-    try {
-        $idx = 0
-        foreach ($file in $allFiles) {
-            $outFile = Join-Path $tempDir ("suite-$idx.out")
-            $jobs += Invoke-TestSuiteParallel -File $file.FullName -OutFile $outFile
-            $idx++
-        }
-
-        # Await all processes.
-        foreach ($job in $jobs) {
-            $job.Process.WaitForExit()
-        }
-
-        # Collect results in discovery order.
-        $rIdx = 0
-        foreach ($job in $jobs) {
-            $tail = ""
-            $outFile = Join-Path $tempDir ("suite-$rIdx.out")
-            if (Test-Path -LiteralPath $outFile) {
-                $tail = ([string]((@(Get-Content -LiteralPath $outFile) | Select-Object -Last 1)))
-            }
-            $results += [pscustomobject]@{
-                Name       = $job.Name
-                File       = $job.File
-                ExitCode   = $job.Process.ExitCode
-                Passed     = ($job.Process.ExitCode -eq 0)
-                Tail       = $tail
-                DurationMs = 0
-                OutFile    = $outFile
-            }
-            $rIdx++
-        }
-
-        if (-not $Quiet) {
-            foreach ($r in $results) {
-                $status = if ($r.Passed) { "PASS" } else { "FAIL" }
-                $color = if ($r.Passed) { 'Green' } else { 'Red' }
-                Write-Host ("{0,-42} {1}" -f $r.Name, $status) -ForegroundColor $color
-                if (-not $r.Passed -and $r.OutFile -and (Test-Path -LiteralPath $r.OutFile)) {
-                    Get-Content -LiteralPath $r.OutFile -Tail 10 | ForEach-Object { Write-Host "        $_" -ForegroundColor DarkGray }
-                }
-            }
-        }
-    } finally {
-        Remove-Item -Recurse -Force -LiteralPath $tempDir -ErrorAction SilentlyContinue
+    if ($IncludeCompile) {
+        $projectRoot=Split-Path -Parent (Split-Path -Parent $PSScriptRoot)
+        $gradlew=Join-Path $projectRoot 'gradlew.bat'
+        if (-not (Test-Path -LiteralPath $gradlew)) { $gradlew=Join-Path $projectRoot 'gradlew' }
+        if (Test-Path -LiteralPath $gradlew) {
+            # Use a script with argument arrays, never interpolate a shell command.
+            $worker=Join-Path $script:LogRoot 'compile.ps1'
+            [IO.File]::WriteAllText($worker, 'param([string]$Wrapper,[string]$Root) $ErrorActionPreference="Stop"; Set-Location -LiteralPath $Root; & $Wrapper compileJava; exit $LASTEXITCODE')
+            $job=Start-Suite -File $worker -Name 'compileJava' -ExtraArguments @($gradlew,$projectRoot) -Limit $CompileTimeoutSeconds
+            $jobs.Add($job)
+            if ($job.process) { $job.process.WaitForExit() }
+            Complete-Suite $job
+            [void]$jobs.Remove($job)
+        } else { Write-Host "gradlew not found under $projectRoot; skipping compile." -ForegroundColor Yellow }
     }
+} finally {
+    # Also runs on interruption/runner error; Dispose never waits indefinitely.
+    foreach ($job in $jobs) { if ($job.process) { $job.process.Dispose() } }
 }
-
-$passedCount = @($results | Where-Object { $_.Passed }).Count
-$failedCount = @($results | Where-Object { -not $_.Passed }).Count
-
-$compilePassed = $true
-if ($IncludeCompile) {
-    if (-not $Quiet) { Write-Host "---- gradlew compileJava ----" -ForegroundColor Cyan }
-    $compilePassed = Invoke-Compile
-    if (-not $Quiet) {
-        $cStatus = if ($compilePassed) { "PASS" } else { "FAIL" }
-        $cColor = if ($compilePassed) { 'Green' } else { 'Red' }
-        Write-Host ("{0,-42} {1}" -f "compileJava", $cStatus) -ForegroundColor $cColor
-    }
+$failed=@($script:Results | Where-Object { -not $_.Passed }).Count
+$passed=$script:Results.Count - $failed
+if (-not $Quiet -or $failed) {
+    Write-Host "$passed/$($script:Results.Count) checks passed; results: $(Join-Path $script:LogRoot 'results.json')"
 }
-
-$overallOk = ($failedCount -eq 0) -and $compilePassed
-$compileNote = if (-not $compilePassed) { " (compile FAILED)" } else { "" }
-
-if (-not $Quiet) {
-    $summaryColor = if ($overallOk) { 'Green' } else { 'Red' }
-    Write-Host ("{0}/{1} test suites passed{2}" -f $passedCount, $results.Count, $compileNote) -ForegroundColor $summaryColor
-} else {
-    if (-not $overallOk) {
-        Write-Host ("{0}/{1} test suites passed{2}" -f $passedCount, $results.Count, $compileNote)
-    }
-}
-
-if ($overallOk) { exit 0 } else { exit 1 }
+if ($failed) { exit 1 } else { exit 0 }

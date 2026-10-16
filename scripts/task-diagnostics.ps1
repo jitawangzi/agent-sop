@@ -28,10 +28,13 @@ function Get-AiSopDeploymentWarnings {
     if ([IO.File]::Exists($lockPath) -and (Get-Command git -CommandType Application -ErrorAction SilentlyContinue)) {
         try {
             $lock = ConvertFrom-AiSopWorkflowJson ([IO.File]::ReadAllText($lockPath)) -AsHashtable
-            $gitRoot = & git -C $engine rev-parse --show-toplevel 2>$null
-            if ($LASTEXITCODE -eq 0 -and (Resolve-PhysicalPathIdentity ([string]$gitRoot)) -ceq $engine) {
-                $head = & git -C $engine rev-parse HEAD 2>$null
-                if ($LASTEXITCODE -eq 0 -and $lock.commit -and $lock.commit -cne [string]$head) { 'DEPLOYMENT_ENGINE_DRIFT: installed engine HEAD differs from the lock; run ai-sop.ps1 Verify and refresh the installation deliberately.' }
+            $git=(@(Get-Command git -CommandType Application)[0]).Source
+            $gitRoot=Invoke-AiSopMetadataProbe $git @('-C',$engine,'rev-parse','--show-toplevel')
+            if ($gitRoot.diagnostic) { "DEPLOYMENT_CHECK_UNAVAILABLE: $($gitRoot.diagnostic)"; return }
+            if ($gitRoot.exitCode -eq 0 -and (Resolve-PhysicalPathIdentity $gitRoot.output) -ceq $engine) {
+                $head=Invoke-AiSopMetadataProbe $git @('-C',$engine,'rev-parse','HEAD')
+                if ($head.diagnostic) { "DEPLOYMENT_CHECK_UNAVAILABLE: $($head.diagnostic)"; return }
+                if ($head.exitCode -eq 0 -and $lock.commit -and $lock.commit -cne $head.output) { 'DEPLOYMENT_ENGINE_DRIFT: installed engine HEAD differs from the lock; run ai-sop.ps1 Verify and refresh the installation deliberately.' }
             }
         } catch { "DEPLOYMENT_LOCK_INVALID: $lockPath; $($_.Exception.Message)" }
     }

@@ -145,7 +145,39 @@ try {
     Fails { Task Run @{ Profile='slow'; TimeoutSeconds=1; Reason='Exercise timeout instead of the normal regression command' } } 'Task Run failed'
     $last=(Read-AiSopTask $spec 'recovery').verifications[-1]
     Assert ($last.outcome -eq 'TIMED_OUT' -and $last.exitCode -eq 124) 'Timeout was not recorded'
+    Assert ($last.diagnostic -match 'VERIFICATION_TIMED_OUT' -and (Read-LiveLog (Get-AiSopRunLogPath $last $workspace $spec recovery)) -match 'VERIFICATION_TIMED_OUT') 'Timeout reason was lost from evidence/log'
     Fails { Task Verify } 'Task Verify failed'
+
+    # A successful launcher can leave a descendant holding its stdout pipe.
+    # Even TimeoutSeconds=0 must not hang after the launcher has exited, and
+    # that incomplete output must not become PASSED evidence.
+    $pipeWorker=Join-Path $root 'pipe-worker.ps1'
+    $pipeIdentity=Join-Path $root 'pipe-child.json'
+    [IO.File]::WriteAllText($pipeWorker, @'
+param([string]$IdentityFile)
+$info=[Diagnostics.ProcessStartInfo]::new((Get-Process -Id $PID).Path)
+$info.UseShellExecute=$false; $info.CreateNoWindow=$true
+foreach ($arg in @('-NoProfile','-Command','Write-Output "pipe-ready"; Start-Sleep 60')) { $info.ArgumentList.Add($arg) }
+$child=[Diagnostics.Process]::Start($info)
+@{id=$child.Id;startedTicks=$child.StartTime.ToUniversalTime().Ticks} | ConvertTo-Json | Set-Content -LiteralPath $IdentityFile
+exit 0
+'@)
+    try {
+        $clock=[Diagnostics.Stopwatch]::StartNew()
+        Fails { Task Run @{Kind='test';Batch='regression';Executable='pwsh';Arguments=@('-NoProfile','-File',$pipeWorker,$pipeIdentity);TimeoutSeconds=0;Reason='Exercise inherited output pipe deadline'} } 'Task Run failed'
+        $last=(Read-AiSopTask $spec recovery).verifications[-1]
+        Assert ($last.outcome -eq 'FAILED' -and $last.diagnostic -match 'OUTPUT_DRAIN_TIMED_OUT' -and $clock.Elapsed.TotalSeconds -lt 20) 'Inherited output pipe escaped deadline or passed verification'
+        Fails { Task Verify } 'Task Verify failed'
+    } finally {
+        if (Test-Path -LiteralPath $pipeIdentity) {
+            $identity=Get-Content -LiteralPath $pipeIdentity -Raw | ConvertFrom-Json
+            $descendant=Get-Process -Id $identity.id -ErrorAction SilentlyContinue
+            if ($descendant) {
+                try { if (-not $descendant.HasExited -and $descendant.StartTime.ToUniversalTime().Ticks -eq $identity.startedTicks) { $descendant.Kill($true); [void]$descendant.WaitForExit(3000) } }
+                finally { $descendant.Dispose() }
+            }
+        }
+    }
     Task Run @{Profile='check'; Reason='Restore normal regression after timeout'} | Out-Null
 
     # Launch an actual external runner and inspect its durable log while running.

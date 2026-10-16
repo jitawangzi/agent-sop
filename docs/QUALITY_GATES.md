@@ -196,6 +196,8 @@ T3 完成表第 4 项（`implementation-auditor` / `logic-auditor` PASS）是 **
 
 改 SOP 核心脚本后，本地硬门禁是 `pwsh -NoProfile -File ./scripts/run-all-tests.ps1` 全绿，不是 GitHub CI。
 
+聚合运行器为每套测试设置独立时限（默认 900 秒，可显式延长），超时以失败收尾并保留 stdout、stderr 与结果摘要；不通过重试或忽略失败冒充全绿。可选 Git/SVN 版本注记探测超时只产生“元信息不可用”诊断，编译、测试、输入绑定等原有通过条件不变。具体参数、日志和清理边界见 [操作手册「完成验证」](../SUPERPOWERS_MANUAL.md#完成验证)。
+
 ---
 
 ## 8. 后续验证方向

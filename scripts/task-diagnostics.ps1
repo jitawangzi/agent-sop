@@ -60,6 +60,18 @@ function Get-AiSopLegacyTaskSummary {
     return $result
 }
 
+function Write-AiSopTaskStartSummary {
+    param($Task)
+    $origin=$Task.startInputs
+    if ($origin.status -eq 'CAPTURED') {
+        Write-Output "TASK_START_INPUTS: CAPTURED mode=$($origin.mode); original inputs saved. T3 scope and applicability still require their policy checks."
+    } else {
+        $reason=if ($origin.reason) { [string]$origin.reason } else { 'No complete Start snapshot recorded' }
+        $reason=$reason | ConvertTo-Json -Compress
+        Write-Output "TASK_START_INPUTS: UNAVAILABLE reason=$reason; normal T1/T2 verification remains available. T3 upgrade and NOT_APPLICABLE require the original Start snapshot; a future task can use Start -CaptureBaseline before edits."
+    }
+}
+
 function Write-AiSopTaskStatus {
     param($Items, [string]$WorkspacePath, [string]$Operation, [string]$Format, [string[]]$Warnings)
     if ($Format -eq 'Json') {
@@ -74,6 +86,10 @@ function Write-AiSopTaskStatus {
         foreach ($item in $Items) {
             Write-Output "[$($item.status)] $($item.feature)/$($item.taskId) $($item.tier) — $($item.objective)"
             Write-Output "  owner=$($item.ownerStatus) session=$($item.sessionStatus) evidence=$($item.verification)"
+            if ($item.status -in @('DONE','CANCELLED')) {
+                if ($item.verificationScope -eq 'CURRENT_INPUTS') { Write-Output '  history: explicit current-input recheck; terminal task status is unchanged' }
+                else { Write-Output '  history: recorded terminal status retained; current inputs not rechecked; follow-ups remain non-blocking' }
+            }
             if ($item.startInputs.status -eq 'UNAVAILABLE') { Write-Output '  start inputs: UNAVAILABLE; normal tier verification remains available; no post-change baseline adoption' }
             if ($item.nextAction) { Write-Output "  checkpoint: $($item.nextAction)" }
             Write-Output "  next: $($item.suggestedAction)"

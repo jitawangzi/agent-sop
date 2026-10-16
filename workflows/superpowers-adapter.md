@@ -199,10 +199,10 @@ Superpowers 控制器派发 subagent 时，应按角色复杂度选档，平衡�
 
 默认 T2，人工指定优先；档位属于本次任务，接管保留，独立新任务不继承。Agent 负责影响分析与建议，不自动升降档。
 
-- **T1**：完成实现与编译。确需延期的文档、测试用例或验证用 AddFollowUp 记录；无影响就不创建待办。已选择 T1 不重复确认。
+- **T1**：先 Start 再实现，通过 Task Run 编译。确需延期的文档、测试用例或验证用 AddFollowUp 记录；无影响就不创建待办。已选择 T1 不重复确认。
 - **T2**：需求与验收点明确即可实施，同步受影响的需求、设计与用例，编译和相关测试通过；RecordSync 记录已更新或无需更新的具体依据。无需头脑风暴、正式计划、独立代码审核，也不默认启动完整业务环境。
 - **T3**：本适配器的完整 Superpowers 流程；已有成果仍适用于当前输入与范围时复用。T3 所需工具不可用时说明缺口，不自行降档。
-- **适用性**：纯文档等在 T1/T2 内通过 SetApplicability 记录不适用及理由；失败、缺测试、环境故障不是不适用。新任务没有第四档快通道。
+- **适用性**：T1/T2 的 SetApplicability 需要完整 startInputs，起点至当前改动仅限 Start 前声明的 nonExecutable 路径，且策略未变；理由本身不能豁免源码变化。Start 输出起点采集结果，需要完整起点时在修改前 Start -CaptureBaseline；UNAVAILABLE 不阻塞普通本档验证。失败、缺测试、环境故障不是不适用。新任务没有第四档快通道。
 - **变更与提醒**：ChangeTier 必须附人工原话和原因；保留失败证据。Start/Resume 自动提示当前工作区未解决 FollowUp，不等待确认、不自动扩展任务。具体命令见 SUPERPOWERS_MANUAL.md。
 
 T2 更新已批准规格语义需 ResetApproval，避免旧批准继续代表新版本，但无需当次重走 T3 批准；相关 T3 验收时再确认。T1 待同步项和旧任务的验收状态均不阻塞独立新任务。
@@ -227,7 +227,7 @@ pwsh -NoProfile -File .\.ai-sop\scripts\workflow-state.ps1 -Operation ValidateTe
 - 单任务内审（subagent 内）覆盖该 Task 的 spec 合规、代码质量与高风险逻辑，由 `implementation-auditor`/`logic-auditor` 作执行单元完成。**准入**：实现者已返回【编译证据】且 `exitCode=0`；否则不得派审。生产代码再改后必须再编译再审。
 - 整体收尾由 Superpowers `requesting-code-review` 完成，覆盖流程合规与整体一致性。
 - 跨任务全盘审计为可选的手动全功能审计（见上），按需触发。
-- QA 遵循 `client-test.md` 的项目手段，以及 `quality-assurance` 的路径决策表（表征/冷重载走路径 A；完整业务链路走路径 B）。覆盖 JSON 用 `SyncCoverage`，VERIFY 必须写 `executionEvidence`。
+- QA 遵循项目测试上下文与 `quality-assurance` 的路径决策表。覆盖定义用 SyncCoverage；执行通过 Task Run 保存证据，T3 使用 SetCaseScope 登记本次必测用例。未使用 taskId 的历史流程才按旧功能级兼容规则处理 executionEvidence，不给新任务补旧证据。
 - 完成校验会复查测试覆盖与所需的项目测试。
 
 ## SVN + 本地 Git

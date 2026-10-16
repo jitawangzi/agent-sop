@@ -11,13 +11,23 @@ description: 资深测试开发工程师（SDET），负责自动化测试与质
 - skill 只定义测试方法论、覆盖模型、断言深度与自动回归闭环，**不固化具体项目的业务规则**。
 - 具体业务预期、活动规则、任务规则、协议语义必须来自 `context/` 文档与功能规格文档，而不是 skill 本体中的固定描述。
 
-## 与机器门禁的分工
-本角色负责测试范围、覆盖矩阵、路径选择与自动化编排。`VerifyCompletion` 机检覆盖契约、表征方法体、冷重载、编译证据、`executionEvidence`——见 `docs/QUALITY_GATES.md`。本 skill **不替代**机检，也不得把「设计阶段提过要测哪些点」当成覆盖已充分。
+## 任务模式与执行强度
 
-QA 必须产出机检能读的东西，而不是口头「测过了」：
-- **禁止手写** `05_test_coverage.json`。在 `05_test_plan.md` 每个 `TC-*` 上写 `<!-- meta: { "id", "title", "covers", "priority", "carrier" } -->`，然后跑 `SyncCoverage` 生成 JSON，再按 `INFERRED:` / `MISSING:` 补全。唯一允许事后写入的字段是 VERIFY 阶段的 `executionEvidence`（必须来自真实跑测，禁止编造 exitCode）。
-- **VERIFY** 必须把真实跑测记录写入 `05_test_coverage.json` 的 `executionEvidence`（`command`、`exitCode=0`、`executedAt`、`sourceCommitSha`、`workingTreeDigest`、`testCount`/`passedCount`/`failedCount=0`）。`workingTreeDigest` 必须等于当前 `AssessRisk` 的 `changeSetDigest`。
-- **CHARACTERIZATION**（及任何声明了 `persistenceColdReload` 的 Case）的 `automationCarrier` **必须是路径 A 测试方法**（`src/test/...java#methodName` 或项目等价的 JVM 测试）。机检 grep 方法体，**JSP 不能当表征载体**。
+本角色遵守当前任务档位：默认 T2，人工指定优先，不因调用 QA 或发现风险自行升档。独立新修改先用 `ai-sop.ps1 Task -Operation Start`，继续未完成任务用 Resume；已有任务直接复用其 taskId，避免重复认领。所有档位都先 Start 再修改，起点不在接管或跑测时重建。
+
+- **T1**：默认仅编译，报告未验证范围；人工要求测试时执行相关测试。确有延期才记 AddFollowUp，不要求先补整套计划、批准或独立审核。
+- **T2**：同步受影响的规格和用例，编译与相关测试，并用 RecordSync 记录同步结论。可以直接选择已有单元测试，不要求完整测试计划、正式批准、独立审核或启动完整业务环境。
+- **T3**：下文完整 PLAN、覆盖契约与审计流程适用。通过 SetCaseScope 登记本任务必测 CaseIds，包含相关回归用例；整体覆盖定义与本次执行范围分别检查，不要求本任务执行功能内所有用例。
+
+明确要求的独立审计或完整业务测试按用户范围执行，不因此改变任务档位。NOT_APPLICABLE 只适用于起点完整、输入策略未变且改动仅在预先声明 nonExecutable 范围内的 T1/T2；缺环境、缺测试或失败不能当成不适用。详细命令见 `.ai-sop/SUPERPOWERS_MANUAL.md`。
+
+## 与机器门禁的分工
+本角色负责测试范围、断言和自动化编排；Task Verify 检查本任务的执行证据，T3 另检查适用的规格与覆盖契约。机器不替代测试语义判断，见 `.ai-sop/docs/QUALITY_GATES.md`。
+
+- **执行证据**：通过 Task Run 执行真实命令，由运行器保存 task.json 中的运行记录与引用清单；不得手写成功记录、替换旧结果哈希，或为任务模式另补功能级 `executionEvidence`。未入账的已完成结果通过 RetryEvidence / Recover 恢复。
+- **覆盖定义**：需要更新 `05_test_coverage.json` 时，在 `05_test_plan.md` 的 `TC-*` 上维护 meta，通过 SyncCoverage 生成并补全载体和断言。定义覆盖全部适用条款，T3 本次执行证明对应 SetCaseScope 的 CaseIds；测试总条数不能代替用例映射。
+- **表征载体**：T3 契约要求 CHARACTERIZATION 或 `persistenceColdReload` 时，按当前引擎支持的路径 A 方法绑定载体、入口与冷重载断言；具体语言和项目设施从 context 读取。
+- **历史兼容**：仅未使用 taskId 的存量流程读取功能级 `compile-evidence.json` / `05.executionEvidence`，按质量门禁文档的旧功能级兼容章节处理；新修改使用任务入口。
 
 ## 工具准备
 - **自动化调度脚本、协议模拟入口、GM 能力、超级账号能力、活动时间控制能力**: 统一以 `.ai-workspace/context/client-test.md` 为准。
@@ -26,10 +36,10 @@ QA 必须产出机检能读的东西，而不是口头「测过了」：
 ## Core Workflow: Targeted Feature Testing
 
 ### Invocation Mode [CRITICAL]
-- `PLAN`: 设计批准后产出**测试范围、覆盖矩阵与风险清单**（`05_test_plan.md` + 经 `SyncCoverage` 生成的 `05_test_coverage.json`），供 Superpowers `subagent-driven-development` 的 TDD 参考。
+- `PLAN`（T3，或人工明确要求计划）：设计依据就绪后产出**测试范围、覆盖矩阵与风险清单**；T3 要求设计批准。产物为 `05_test_plan.md` + 经 SyncCoverage 生成的 `05_test_coverage.json`，供实现参考。
   - **GREENFIELD**：不前置完整最终用例——具体新功能 TC 在 TDD 中随实现产出。PLAN 不得提前编写依赖尚未实现代码的验证结论。
   - **LEGACY_EXTENSION**（`04` 含类型/策略扩展或 AssessRisk 命中 TYPE_EXTENSION/PUBLIC_ROUTING）：必须在 PLAN 中写出 **至少 1 个**共享同一分发的 `IDENTICAL_TO_LEGACY` **CHARACTERIZATION** Case（正式协议 Act、冷重载、含 `bypassesPriorQuery`），**载体必须是路径 A 测试方法**，并在改生产代码前于当前基线跑绿。同质兄弟不必每个都有 Case；独立配置/独立分支的旧键再各抽 1 个。这些 Case 描述的是已有限购/重置/补偿，不依赖新类型代码。每个 `INTENTIONAL_DIFF` 新键必须有自己的 FUNCTIONAL Case（可在 TDD 中产出）。
-- `VERIFY`: 实现审计通过后按下方路径决策表选择一个或多个验证路径，执行自动化验证，并把 `executionEvidence` 写入覆盖契约。不得只报「测试过了」。
+- `VERIFY`：实现就绪后按当前档位与下方路径决策表选择验证路径，通过 Task Run 执行并保存证据。T3 按流程先完成实现审计；T1/T2 无此默认前置要求。不得只报「测试过了」。
 
 ### 路径决策表（硬规则）
 项目对路径 A/B 的**命令与页面**见 `client-test.md`。本表决定选哪条，避免和机检打架：
@@ -41,16 +51,16 @@ QA 必须产出机检能读的东西，而不是口头「测过了」：
 | T2 / bug 复现 | **先 A 后 B** | 先用 JVM 内快速确认问题存在；只有 A 复现不了才付路径 B 成本。 |
 | 纯逻辑 / 配置校验 / 单 Help | 路径 A | 不必起完整运行时。 |
 
-路径 B 环境暂不可用时，可先跑路径 A，但**不得**声明完整业务链路已验证，也不得把未跑的路径 B Case 算进 `executionEvidence.testCount`。
+路径 B 环境暂不可用时，可先跑路径 A，但不得声明完整业务链路已验证，也不得将未跑用例登记为通过。
 
 ### 测试深度按风险分级（风险自适应）
-测试深度按失败成本与影响范围选择，与 `design-architect` 的风险清单对齐，不一刀切：
+测试深度按失败成本与影响范围建议，与已有设计风险对齐；T1/T2 不因风险标签自动增加完整业务环境或独立审计，未验证风险如实报告：
 - **低风险**（文案/纯注释/单字段读取/配置值微调）：聚焦命令 + typecheck + lint + build + 直接行为核对即可，可不写新测试。
 - **中风险**（单模块业务逻辑/常规功能改动）：聚焦自动化测试 + 邻近回归覆盖；优先路径 A。
 - **高风险**（状态机、结算、并发、跨模块、兼容迁移、协议变更）：契约 + 路径 A 表征/冷重载 + 路径 B 端到端；有状态服务再按项目 `logic-audit-game-server.md` 查高风险项。
 报告重要测试缺口，不暗示已全覆盖。
 
-1.  **Produce Test Scope & Coverage Matrix (实现前, 供 TDD 参考)**
+1.  **Produce Test Scope & Coverage Matrix (T3 实现前, 供 TDD 参考)**
     - 确认 `00_workflow_state.json` 通过 `.ai-sop/schemas/workflow-state.schema.json` 校验，验证 `01_server_rules.md` 与 `06_design_contract.md` 均为有效 `APPROVED`。
     - 产出 `05_test_plan.md`（测试范围、场景清单、覆盖矩阵、风险点、断言层次要求）。每个 `TC-*` 必须带 HTML 注释 meta（`id`/`title`/`covers`/`priority`/`carrier`）。
     - **禁止手写** `05_test_coverage.json`。运行 `workflow-state.ps1 -Operation SyncCoverage -Path .../05_test_coverage.json`，按输出的 `INFERRED:` / `MISSING:` 补全；禁止把 `__TODO__` 骨架留到 VERIFY。
@@ -59,7 +69,7 @@ QA 必须产出机检能读的东西，而不是口头「测过了」：
     - 测试计划不构成第三个人工门禁。完成后返回 Superpowers controller 路由到 `test-plan-auditor`；审计通过后进入实现（TDD），不得等待额外人工确认。
     - 只有用户明确要求"本轮只输出测试计划"，或计划编制过程中发现需求/设计冲突时，才允许停止。
 
-2.  **Select/Generate Automated Test (开发且审计后执行)**
+2.  **Select/Generate Automated Test (实现就绪，T3 完成适用审计后执行)**
     - 从项目 context 读取可用测试路径、运行命令、测试载体和结果格式。
     - 按路径决策表选择：表征/冷重载金样走路径 A；完整业务链路走路径 B；二者需要时都跑，不能互相替代。
     - 不得机械固定某一种测试技术，也不得使用只适合人工观察、无法结构化判定的结果载体。
@@ -77,36 +87,34 @@ QA 必须产出机检能读的东西，而不是口头「测过了」：
     - 业务步骤必须细化到其他执行者能够直接复现的粒度。
 
 4.  **Execute Automation with Target**
-    - 使用项目 context 中定义的目标命令执行选定路径。
+    - 通过 Task Run 调用项目 context 中定义的目标命令或 Profile，例如：
+      ```powershell
+      & ./ai-sop.ps1 Task -Operation Run -Feature Example -TaskId fix-1 -Agent CODEX -Profile unit
+      ```
+      `unit` 是项目提供的 verification-commands.json 配置项；Agent 使用实际工具身份。
     - 多路径场景必须分别记录执行结果，不能用其中一条路径的成功替代另一条。
-    - 跑测通过后写入 `executionEvidence`（字段见 `.ai-sop/schemas/test-coverage.schema.json`）：
-      - `command`：实际执行的 Gradle/JSP 调度命令
-      - `exitCode`：必须为 0
-      - `executedAt`：RFC 3339 UTC
-      - `sourceCommitSha`：当前 SVN revision 或 Git HEAD
-      - `workingTreeDigest`：`AssessRisk` 返回的 `changeSetDigest`（64 位 hex）
-      - `testCount` / `passedCount` / `failedCount`：`testCount >= cases.length`，`failedCount=0`，且 `passedCount + failedCount = testCount`
-    - 改代码后必须重跑并重写 `executionEvidence`；digest 过期等于没测。
+    - 运行器记录真实命令、退出状态、输入清单与稳定性。T3 测试还绑定规格摘要和本次 CaseIds；可使用 JUnitReports + CaseMap 从本次报告派生通过用例。
+    - 输入变化后重跑相关验证，不给旧成功证据换哈希。失败批次用同批次真实成功复跑解决；终态保存失败先检查待入账结果，不盲目重跑。
 
 5.  **Analyze & Loop**
     - 优先读取结构化断言差异、测试运行输出和项目 context 指定的日志。
     - 判断是前置条件错误、测试编排错误、断言错误、业务逻辑错误还是外部环境错误。
     - 修改前必须先区分测试变更类型：
         - **隔离测试变更**：仅修改测试目录中的 JUnit、测试数据构造、Mock、断言或独立测试脚本，不改变正式入口和生产代码。由本角色修正后留在 `QA_VERIFY`，重新执行原验证路径。
-        - **业务测试入口变更**：修改会进入正式 Spring/Action/Help 上下文的 JSP、Servlet、Controller、GM 接口、协议模拟入口，或生产代码中的测试挂钩。修改完成后必须返回编排器并推荐 `IMPLEMENTATION_AUDIT`，审计通过后才能回到 `QA_VERIFY`。
-    - 业务代码错误必须返回编排器并推荐 `IMPLEMENTATION`，不得由 QA 绕过实现与审计门禁直接修改后复测。
+        - **业务测试入口变更**：修改正式运行入口或生产代码中的测试挂钩，返回实施者处理；T3 按流程重新审核修改范围，T1/T2 同步影响说明与相关验证。
+    - 业务代码错误返回实施者修复；复测与审核要求遵守任务档位，不借 QA 流程给 T1/T2 增加独立审计门禁。
     - 双路径场景必须重新执行受影响路径并完成最终业务验收。
     - 不允许通过删除断言、放宽预期、跳过步骤的方式伪造通过。
 
 ## Context Strategy
 *   必须加载 `.ai-workspace/context/client-test.md`。
-*   被调用时遵守 Superpowers 流程阶段约定（见 `.ai-sop/workflows/superpowers-adapter.md`）。
+*   T3 遵守 Superpowers 流程阶段约定；T1/T2 读取相关测试上下文即可（见 `.ai-sop/workflows/superpowers-adapter.md`）。
 
 ## AI 自动化业务测试要求
 
 ### 0. QA 是测试覆盖的主责任人
 - `design-architect` 只提供风险点、状态图、可测性约束与复用建议。
-- `implementation-auditor` 负责在 QA 前检查实现是否合规、是否有性能/契约风险。
+- T3 的 `implementation-auditor` 负责在 QA 前检查实现是否合规、是否有性能/契约风险；T1/T2 无默认独立审计要求。
 - **测试范围、覆盖矩阵、风险点、断言层次要求、自动化编排方案由 `quality-assurance` 负责**；具体 TC 在 `subagent-driven-development` 的 TDD 中随实现产出，`05_test_plan.md` 随之更新为完整用例。
 - 不允许把“设计阶段已经提过要测哪些点”当作“测试覆盖已经充分”的替代品。
 
@@ -122,7 +130,7 @@ QA 必须产出机检能读的东西，而不是口头「测过了」：
 - 不能只表示测试载体编译成功或运行环境已启动
 - 不能只证明“主流程能走通”，还要证明“关键边界不会走错”
 
-### 3. 先做覆盖矩阵，再写测试计划
+### 3. T3 完整计划的覆盖模型（T1/T2 按本次影响选择相关维度）
 在输出 `05_test_plan.md` 前，必须先构建覆盖矩阵，并逐项说明是否已覆盖。对活动、任务、排行、奖励、状态机类功能，至少检查以下维度：
 
 - **初始化与开启**: 功能开启、首次进入、首次登录、补初始化
@@ -230,38 +238,37 @@ QA 必须产出机检能读的东西，而不是口头「测过了」：
 - `detail`
 
 ### 7. 审核与完成定义
-默认流程分为两阶段：
+T3 的完整流程分为两阶段；T1/T2 按开头的任务强度约定执行相关部分：
 1. **测试计划编制阶段 (TDD 前置)**：在 `design-architect` 完成 `06_design_contract.md` 后立刻介入，生成详细测试计划与覆盖矩阵（`05_test_plan.md`），指导后续开发。
 2. **自动化验证阶段 (实现后回环)**：在实现完成且通过审计后介入，按风险选择一个或多个项目验证路径，并进入自动修复回归循环。
    - 若 `implementation-auditor` 路由到 `logic-auditor`，必须先完成逻辑专项审计再进入本阶段。
 
-只有在以下条件满足时，才能宣称测试完成：
+T3 只有在以下条件满足时，才能宣称本次选定测试完成：
 1. 覆盖矩阵已创建或已更新，且重要维度没有无说明缺失
 2. 详细测试计划已创建或已更新，且粒度足够复核和自动执行；覆盖 JSON 来自 SyncCoverage，无 `__TODO__`
 3. 已完成 `implementation-auditor` 的前置审计，且不存在阻塞项
 4. 已按路径决策表选择正确路径：表征/冷重载在路径 A，完整业务链路在路径 B（需要时）
-5. 所有选定验证路径均按项目成功标准通过，且 `executionEvidence` 已写入、`workingTreeDigest` 匹配当前工作区
-6. 未选择完整业务路径时，测试计划和结果中已明确说明原因；未跑的 Case 不得计入 `executionEvidence.testCount`
+5. 所有本次必测用例和选定路径均通过，Task Run 证据匹配当前输入、规格与 CaseIds
+6. 未选择完整业务路径时说明原因，未跑用例不得登记为已通过；本次通过不代表整个功能已验收
 7. 中途失败已基于日志、断言或审计结论自动修复并回归
 8. 若 QA 修改过业务测试入口或生产相邻测试挂钩，修改后的范围已重新通过 `implementation-auditor`
 
 ## 交付物
-- 覆盖矩阵 / 覆盖说明（优先并入规格目录下的 `05_test_plan.md`，TC 带 `<!-- meta -->`）。
-- 详细测试计划文档（优先为规格目录下的 `05_test_plan.md`）。
-- 机器可读覆盖契约（`SyncCoverage` 生成的 `05_test_coverage.json`；VERIFY 阶段含 `executionEvidence`）。
+- 按任务档位提供相关覆盖说明；T3 完整计划使用 `05_test_plan.md`，TC 带 meta。
+- T3 或本次修改涉及覆盖定义时提供 SyncCoverage 生成的 `05_test_coverage.json`；执行证据使用 Task Run 记录及其引用清单。
 - 与路径决策表匹配的自动化测试载体（表征 Case 必须是路径 A 方法）。
 - 必要时对现有上下文文档进行更新，使后续 AI 能重复执行相同闭环。
 
 ## Superpowers 调用约定
-本角色是 Superpowers 的测试执行单元（PLAN 产出测试计划/覆盖契约；VERIFY 执行自动化验证）。返回结果与路由建议给 Superpowers controller，由其控制流程推进与 `workflow-state.ps1` 门禁调用。
+在 T3 中，本角色是 Superpowers 的测试执行单元，返回结果与路由建议给 controller；T1/T2 可直接按本次任务调用相关验证，无需补完整 Superpowers 流程。
 
 - **不 emit/apply 自定义流程的 Handoff JSON**
 - **不创建或修改 `.ai-sop/runtime/`**
 
 返回的状态语义（供 controller 路由，非 Handoff 字段）：
 - `PLAN` 成功：返回测试计划就绪，交 controller 路由到测试计划审计；产物须含带 meta 的 `05_test_plan.md` 和 **SyncCoverage 生成的** `05_test_coverage.json`
-- `VERIFY` 成功：返回 QA 通过，交 controller 进入完成验证；产物须含匹配当前工作区的 `executionEvidence`
+- `VERIFY` 成功：返回本次相关测试通过及 Task Run 记录，交当前任务执行者进行 Task Verify / Complete
 - `VERIFY` 发现业务实现错误：返回 `FAIL`，路由回实现修复
-- `VERIFY` 修改业务测试入口或生产相邻测试挂钩：返回该情况，路由回实现审计（不直接进 QA）
-- 发现需求或设计冲突：返回阻塞，分别路由回需求/设计人工确认
-- 外部环境无法解除：返回阻塞并保持当前阶段
+- `VERIFY` 修改业务测试入口或生产相邻测试挂钩：返回影响范围，T3 重新审核，T1/T2 按档位同步和验证
+- 发现需求或设计冲突：说明冲突；T3 回到对应批准步骤，T1/T2 按人工明确的本次需求处理，不自行升档
+- 外部环境无法解除：报告阻塞；正常暂停先停止本次运行、处理待入账结果，再由归属持有者 Suspend 并保留检查点。异常中断按诊断 Recover，已经恢复为 PAUSED 时直接 Resume，不重复 Suspend

@@ -106,7 +106,9 @@ try {
     [IO.File]::WriteAllText($inputModule,$inputText)
     $template=Join-Path (Split-Path -Parent $scripts) 'distribution/templates/root/ai-sop.ps1'
     Copy-Item -LiteralPath $template -Destination (Join-Path $workspace 'ai-sop.ps1')
-    Task Start one @{Tier='T1';Objective='Input evidence and independent start'} | Out-Null
+    [IO.File]::WriteAllText($counter,'')
+    $started=Task Start one @{Tier='T1';Objective='Input evidence and independent start'} | Out-String
+    Assert ($started -match 'TASK_START_INPUTS: CAPTURED' -and [IO.File]::ReadAllText($counter) -ceq 'scan;') 'Start feedback missing or performed another snapshot'
     Task Run one @{Kind='compile';Executable='pwsh';Arguments=@('-NoProfile','-Command','exit 0')} | Out-Null
     Task Run one @{Kind='compile';Executable='pwsh';Arguments=@('-NoProfile','-Command','exit 0')} | Out-Null
     $task=Read-AiSopTask $spec one
@@ -158,7 +160,24 @@ try {
     Task AddFollowUp two @{FollowUpId='sync';FollowUpKind='documentation';Summary='Deferred description';Scope=@('contract')} | Out-Null
     Fails { Task SetApplicability two @{Kind='compile';Applicability='NOT_APPLICABLE';Reason='Only recording a deferred description'} } 'APPLICABILITY_INPUTS_CHANGED'
     Task Run two @{Kind='compile';Executable='pwsh';Arguments=@('-NoProfile','-Command','exit 0')} | Out-Null
+    Fails { Task Run two @{Kind='test';Executable='pwsh';Arguments=@('-NoProfile','-Command','exit 2')} } 'Task Run failed: 2'
     Task Complete two | Out-Null
+    Put 'src/main.txt' 'independent subsequent change'
+    $finishedPath=Get-AiSopTaskPath $spec two
+    $finishedRaw=[IO.File]::ReadAllText($finishedPath)
+    [IO.File]::WriteAllText($counter,'')
+    $past=& $entry -Operation Status -WorkspacePath $workspace -Feature Example -TaskId two -Json | ConvertFrom-Json
+    Assert ($past.tasks[0].verification -eq 'HISTORICAL_NOT_RECHECKED' -and $past.tasks[0].verificationScope -eq 'NOT_CHECKED' -and [IO.File]::ReadAllText($counter) -ceq '') 'Historical Status rechecked subsequent inputs'
+    Assert ($past.tasks[0].pendingFollowUps.Count -eq 1 -and $past.tasks[0].failedVerifications.Count -eq 1) 'Historical Status hid follow-ups or an optional failed test'
+    $pastHuman=& (Join-Path $workspace 'ai-sop.ps1') Status -Feature Example -TaskId two | Out-String
+    Assert ($pastHuman -match 'history: recorded terminal status retained' -and $pastHuman -notmatch 'STALE_EVIDENCE' -and $pastHuman -match 'failed verification: test/main') 'Historical human status is misleading'
+    $pastLine=& $entry -Operation Status -WorkspacePath $workspace -Feature Example -TaskId two -OutputFormat JsonLines | ConvertFrom-Json
+    Assert ($pastLine.verification -eq 'HISTORICAL_NOT_RECHECKED') 'JsonLines implicitly rechecked history'
+    $rechecked=& (Join-Path $workspace 'ai-sop.ps1') Status -Feature Example -TaskId two -RecheckHistory -Json | ConvertFrom-Json
+    Assert ($rechecked.tasks[0].status -eq 'DONE' -and $rechecked.tasks[0].verificationScope -eq 'CURRENT_INPUTS' -and $rechecked.tasks[0].diagnostics -match 'STALE_EVIDENCE' -and [IO.File]::ReadAllText($counter) -ceq 'scan;') 'Explicit history check did not report current-input changes'
+    Assert ([IO.File]::ReadAllText($finishedPath) -ceq $finishedRaw) 'Status or historical recheck mutated the terminal task'
+    Assert (Test-Json -Json ($rechecked | ConvertTo-Json -Depth 20) -SchemaFile (Join-Path (Split-Path -Parent $scripts) 'schemas/task-status.schema.json')) 'Historical recheck violates Status schema'
+    Fails { & $entry -Operation Discover -WorkspacePath $workspace -RecheckHistory } 'HISTORY_RECHECK_REQUIRES_STATUS'
     $discover=& $entry -Operation Discover -WorkspacePath $workspace -Feature Example -Json | ConvertFrom-Json
     Assert ($discover.tasks.Count -eq 2 -and ($discover.tasks | Where-Object taskId -eq two).pendingFollowUps.Count -eq 1) 'DONE task follow-up disappeared from discovery'
     Task Resume | Out-Null
@@ -168,6 +187,13 @@ try {
     Assert ($empty.tasks.Count -eq 0) 'Terminal history clutters default discovery'
     $history=& $entry -Operation Discover -WorkspacePath $workspace -Feature Example -IncludeHistory -Json | ConvertFrom-Json
     Assert ($history.tasks.Count -eq 2) 'IncludeHistory did not restore terminal tasks'
+    [IO.File]::WriteAllText($counter,'')
+    Put $config '{broken'
+    $history=& (Join-Path $workspace 'ai-sop.ps1') Task -Operation Status -Feature Example -IncludeHistory -Json | ConvertFrom-Json
+    Assert ($history.tasks.Count -eq 2 -and @($history.tasks | Where-Object verification -ne 'HISTORICAL_NOT_RECHECKED').Count -eq 0 -and [IO.File]::ReadAllText($counter) -ceq '') 'Terminal-only Status depended on current input policy'
+    $recheckAll=& (Join-Path $workspace 'ai-sop.ps1') Task -Operation Status -Feature Example -IncludeHistory -RecheckHistory -Json | ConvertFrom-Json
+    Assert (@($recheckAll.tasks | Where-Object { $_.diagnostics -match 'INPUT_POLICY_INVALID' }).Count -eq 2) 'Task entry failed to forward the explicit historical recheck'
+    Put $config ($policy | ConvertTo-Json -Depth 5)
     Task Start three @{Tier='T3';Objective='Malformed specification diagnostics'} | Out-Null
     Put '.ai-workspace/specs/features/Example/05_test_coverage.json' '{broken'
     $bad=& $entry -Operation Status -WorkspacePath $workspace -Feature Example -TaskId three -Json | ConvertFrom-Json

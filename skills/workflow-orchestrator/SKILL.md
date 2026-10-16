@@ -1,13 +1,13 @@
 ---
 name: workflow-orchestrator
-description: 人工手动片段编排器。在 Superpowers 主流程之外，手动触发片段操作（当前为全功能审计，可扩展），按序调专家 skill 执行，结果交人工把控、人工决定下一步。不依赖状态机/runtime。
+description: 编排人工请求的独立审计片段，默认只出报告；明确请求 AUTO_REPAIR 时完成授权范围内的修复与回归。修复复用任务生命周期，不创建独立编排状态机。
 ---
 
 # Workflow Orchestrator Skill
 
 ## Role: 人工手动片段编排器
 
-**完整功能从需求到交付走 Superpowers 主流程**（见 `.ai-sop/workflows/superpowers-adapter.md`）。本角色不是主流程引擎，而是**主流程之外的人工手动片段编排器**：当用户想手动触发某一段操作（而非走完整 Superpowers）、且需要按序编排多个专家 skill 时，用它。
+用户选择 T3 时，完整功能从需求到交付走 Superpowers 主流程（见 `.ai-sop/workflows/superpowers-adapter.md`）。本角色编排人工请求的审计等片段；修复任务默认 T2，人工指定优先，不因调用本角色自动升级为 T3。
 
 **与 Superpowers 的分工**：
 - Superpowers：完整功能，自动连贯，AI 推进。
@@ -21,12 +21,12 @@ description: 人工手动片段编排器。在 Superpowers 主流程之外，手
 
 - **不是顶层流程引擎**：不得作为完整功能从需求到交付的调度器。若被当完整功能顶层调度激活，**停止并提示用户**：完整功能走 Superpowers，本角色仅做手动片段。
 - **不替代专家角色**：只编排（按序调、汇总结果），不替专家做判断。
-- **不自动推进**：执行完一个阶段后**停止并出结果给人**，由人工决定下一步（再调下一专家 / 深挖 / 修复 / 结束）。**不靠状态机自动流转**。
+- **遵守已选范围**：REPORT_ONLY 出报告后停止；AUTO_REPAIR 已授权的修复、复审和回归连续完成，不为每一步重复请求确认。需求不明确或发现范围外工作时说明并交人工选择，不创建独立编排状态机。
 - **不写 `.ai-sop/runtime/`、不 emit Handoff JSON**：编排靠人工驱动，不靠机器状态机。专家 skill 也以普通调用方式执行（执行角色、返回结论），无 Handoff 交接。
 
 ## 当前能力：全功能审计
 
-对已交付功能手动触发跨任务全盘审计——单任务审计正确 ≠ 整个功能跨任务正确。查跨任务的契约一致性、高风险逻辑与整体游戏状态正确性。
+对已交付功能手动触发跨任务全盘审计，检查跨任务的契约一致性、高风险逻辑与整体系统状态正确性。
 
 ### 输入
 - `feature_name` + `spec_directory`（规格目录，提供业务规则与技术契约依据）
@@ -35,17 +35,17 @@ description: 人工手动片段编排器。在 Superpowers 主流程之外，手
 - `audit_fix_policy`：`REPORT_ONLY`（只出报告，**默认**）/ `AUTO_REPAIR`（自动修复并回归）
 
 ### 执行流程（人工驱动）
-1. 确认归属（若审计范围触及生产代码或功能规格，需 ACTIVE 归属；只读审计可豁免）。
+1. REPORT_ONLY 的只读审计无需认领。AUTO_REPAIR 在实际修改前按下方任务入口 Start / Resume，保持人工指定档位。
 2. 若规格目录存在 `04_change_impact.json` 且含 `behaviorVariants` / 类型扩展，**默认 Protocol Trace**：派 `implementation-auditor` Mode C 与 `logic-auditor` Mode E，输入 `entry_points`=`04.entryPoints`。禁止只按 class 或 revision diff 起审。
 3. 否则按序调专家 skill：
    - `implementation-auditor`（实现/契约合规 + 完整性）
    - `logic-auditor`（高风险分支/状态/语义，按风险）
 4. 汇总各专家结论为统一报告（按 `BLOCKER`/`MAJOR`/`MINOR`/`INFO` 分级，见各专家 skill 输出格式）。报告必须含协议追踪表（若走了 Protocol Trace）。
-5. **停止，把报告交人工**。人工总体审核应执行协议脚本（已有入口 × 代表旧 typeKey），而不是再读一遍新代码，也不是每个同质旧类型都点一遍。
+5. REPORT_ONLY 返回报告后停止；AUTO_REPAIR 继续下方已授权的修复与回归。报告给出可复核的实际入口和代表路径，供人工验收。
 
 ### 人工决定下一步
-- `REPORT_ONLY`：人看报告，决定哪些改、哪些是允许的例外（`[AUDIT-EXEMPT]`，见后）、哪些暂搁。需要修复时手动再走（Superpowers 实现流程或手动调 `implementation-engine`）。
-- `AUTO_REPAIR`：审计发现的实现缺陷，自动调 `implementation-engine` 修复 → 重新编译（必须带回【编译证据】）→ 重审 → 目标回归。需求/设计缺口仍回人工门禁。`AUTO_REPAIR` 修复生产代码后须重新走内审与验证。编排会话不得自己改生产代码。无编译证据不得派内审。
+- `REPORT_ONLY`：返回报告，由人决定修复、例外或暂搁；不为输出审计报告创建开发任务或宣告已有任务完成。
+- `AUTO_REPAIR`：在已授权范围内调 `implementation-engine` 修复，通过 Task Run 重新编译并执行目标回归；复审属于用户请求的审计修复范围，不使任务自动升为 T3。派审前须带回【编译证据】。需求/设计冲突先说明，T3 遵守批准步骤，T1/T2 按人工给出的需求同步；超出授权范围时交人工选择。编排会话不侵入专家实现职责。
 
 ## AUDIT-EXEMPT 例外声明
 
@@ -78,16 +78,19 @@ description: 人工手动片段编排器。在 Superpowers 主流程之外，手
 
 ## Agent & Feature Ownership
 
-触及生产代码或功能规格的片段需 ACTIVE 归属；只读审计（不关联功能规格的独立类/方法只读审计）可豁免。
+读取生产代码或功能规格做审计无需开发归属。实际修复使用 Task 入口：先 Discover 辨认功能与未完成任务；独立修复创建新 taskId，继续原修复用 Resume。先 Start 再修改，T1/T2/T3 都保留原始起点记录，Resume 不重新采集。继续同一活动修复时复用其授权执行流程，不重复创建归属。
 
 ```powershell
-pwsh -NoProfile -File .\.ai-sop\scripts\workflow-owner.ps1 -Operation Claim `
-  -SpecDirectory ".ai-workspace\specs\features\<FeatureName>" `
-  -Feature "<FeatureName>" -Workflow SUPERPOWERS `
-  -Agent "<CLAUDE_CODE|COPILOT|ANTIGRAVITY|CURSOR|CODEX|PI>" -OwnerId "<run-id>"
+& ./ai-sop.ps1 Task -Operation Discover -Feature Example
+& ./ai-sop.ps1 Task -Operation Start -Feature Example -TaskId audit-fix-1 `
+  -Tier T2 -Objective '修复本次审计确认的问题' -Agent CODEX
+# 继续同一未完成任务时使用 Resume，替代上面的 Start。
+& ./ai-sop.ps1 Task -Operation Resume -Feature Example -TaskId audit-fix-1 -Agent CODEX
 ```
 
-成功停止前用同一身份 `Complete`；失败或阻塞保留归属供恢复。验证与完成使用同一 owner ID。
+示例中的工具身份、目标和档位按当前请求填写。验证用 Task Run，按档位同步规格与用例（T2 使用 RecordSync），本次完成用 Task Verify / Complete。正常暂停先停止本次运行、处理待入账结果，再 Suspend 释放执行占用并保留 taskId 和检查点。异常中断先 Status / InspectRecovery，再按诊断 Recover；已恢复为 PAUSED 时直接 Resume，不重复 Suspend。正常交接用 Resume，不自动强制接管；暂停不代表验收完成。T1 的延期事项用 AddFollowUp 非阻断提醒。只读审计发现旧 DONE 有待办时，不因当前代码变化要求旧任务重新完成。
+
+旧 Owner Claim / Complete 仅用于已有无 taskId 流程的兼容恢复，参见 `.ai-sop/SUPERPOWERS_MANUAL.md`；新修复不进入该兼容路径。
 
 ## How to Use
 

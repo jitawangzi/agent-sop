@@ -14,7 +14,8 @@
         "properties": {
           "feature": { "type": "string" },
           "taskId": { "type": ["string", "null"] },
-          "status": { "enum": ["ACTIVE", "PAUSED", "DONE", "CANCELLED", "CORRUPT", "NOT_FOUND", "LEGACY"] }
+          "status": { "enum": ["ACTIVE", "PAUSED", "DONE", "CANCELLED", "CORRUPT", "NOT_FOUND", "LEGACY"] },
+          "verificationScope": { "enum": ["NOT_CHECKED", "CURRENT_INPUTS"] }
         }
       }
     }

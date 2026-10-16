@@ -6,6 +6,8 @@
 
 一次 Status/Verify 使用同一调用内的内容快照；后续调用及 Run 的前后快照重新读取。Status 是诊断视图，`-Json` 提供固定结构；部署投影漂移只提醒，损坏规格 JSON 则在实际依赖它的 T3 校验中明确失败。Start 不得复用旧 TaskId 恢复暂停任务，Resume 不得静默丢弃新传入的不同目标。
 
+Status 默认仅对未完成任务检查当前输入；DONE/CANCELLED 即使有待同步项也保留历史状态，标为 HISTORICAL_NOT_RECHECKED。显式 RecheckHistory 才复核所选历史证据，不改变任务终态或创建补跑义务。Start 反馈已登记的起点状态、不可用原因与能力边界，不重新扫描或增加门禁。
+
 当前默认入口是 `ai-sop.ps1 Task`（底层 `workflow-task.ps1`）。功能保存长期规格，每次独立修改有固定 taskId 和独立 T1/T2/T3（默认 T2，人工指定优先）；接管只更换执行会话，不改变任务身份或档位。本节描述任务模式；后续旧矩阵中的功能级证据要求仅用于未提供 taskId 的兼容路径。
 
 | 项目 | T1 任务 | T2 任务 | T3 任务 |
@@ -66,11 +68,11 @@ T1/T2 的 NOT_APPLICABLE 必须提供具体理由，同时绑定 startInputsRef 
 | **当场伪造** | 手写 `exitCode=0`、空 `@Test`、只断言回包 | 部分可挡（表征方法体、冷重载调用）；**挡不住**同一次会话编一份假 JSON |
 | **未编译就审 PASS** | engine 还在跑 / 缺 import 时 auditor 已 PASS；controller 自己补编译 | **流程约束**（adapter：无【编译证据】不派审；auditor 缺证据只能 `INDETERMINATE`）。兼容模式 Complete 查功能目录 `compile-evidence.json`；任务模式读取本任务 Run 记录，仍不证明独立审查实际发生 |
 
-第三类要 JUnit XML / subagent transcript 才接近防伪，成本高一个数量级。当前刻意不做到那一层。任务级「先编译再审」靠 controller 纪律 + auditor 拒 PASS，不加第四类机器门禁。
+任务模式已支持可选 JUnit XML 映射与运行器结果绑定，但不能防御同权限本地写入。T3 的「先编译再审」仍依赖 controller 与 auditor 的职责约束；T1/T2 不因这些审查说明增加独立审核。
 
 ---
 
-## 2. 分层（从外到内）
+## 2. 旧功能级兼容：分层（从外到内）
 
 质量保证不是单道 Complete 检查，而是几层职责不重叠的笼子。外层挡「不该写」，内层挡「写了但没证明」。
 
@@ -93,9 +95,9 @@ T1/T2 的 NOT_APPLICABLE 必须提供具体理由，同时绑定 startInputsRef 
 
 ---
 
-## 3. 机器硬门禁 vs AI 自报
+## 3. 旧功能级兼容：机器硬门禁 vs AI 自报
 
-`VerifyCompletion`（`Complete` 内嵌）只认磁盘上的契约与证据。下表是单一真源。
+下表仅说明未传 TaskId 的存量 VerifyCompletion / Complete。新任务按本文开头的任务模式矩阵执行，不能把下表用于 T1/T2 升档或要求新任务补旧证据。
 
 | 项 | T3 | T2 | 谁执行 |
 |---|---|---|---|
@@ -117,7 +119,7 @@ T1/T2 的 NOT_APPLICABLE 必须提供具体理由，同时绑定 startInputsRef 
 
 ---
 
-## 4. 证据怎么绑（防过期）
+## 4. 旧功能级兼容：证据怎么绑（防过期）
 
 | 证据 | 绑定 | 何时失效 |
 |---|---|---|
@@ -164,7 +166,9 @@ T3 完成表第 4 项（`implementation-auditor` / `logic-auditor` PASS）是 **
 
 ---
 
-## 7. 明确不做（现在）
+## 7. 旧版设计取舍（历史记录）
+
+本表记录旧功能级流程的取舍；任务模式的运行器证据和可选 JUnit 支持以开头说明为准，不将这里的旧 Task 用法当作当前 taskId 契约。
 
 | 不做 | 原因 |
 |---|---|
@@ -182,16 +186,13 @@ T3 完成表第 4 项（`implementation-auditor` / `logic-auditor` PASS）是 **
 
 ---
 
-## 8. 下一刀（收益序）
+## 8. 后续验证方向
 
-1. **流程，不是引擎**：用新 FeatureName 走完一次 T3 到 Complete（忽略已交付旧目录）。看 AI 会不会忘写 07 / compile-evidence、LintSpecs 卡在哪，用卡点反哺。
-2. **若 07 在真 T3 上稳定且内审常被跳过**：再给 implementation-auditor / logic-auditor 加与 07 同构的报告 + SHA 绑定。
-3. **若真撞到**：规格只写包名导致 `FEATURE_SCOPE_UNRESOLVED` 误要 04 → 再加宽定位。
-4. **不优先**：Hook AST 扩面、JUnit XML、transaction flake、真机认证。
+用实际项目布局验证独立任务、跨 Agent 接管与不同功能工作区的完整流程；优先根据真实诊断补足输入范围解释和交接引用检查。T1/T2 保持轻量，是否增加新的审查门禁需有实际问题依据。
 
 ---
 
-## 9. 命令
+## 9. 旧功能级兼容命令
 
 ```powershell
 # 中途：当前功能缺 00 / 条款 / 载体 / 07 / 编译证据

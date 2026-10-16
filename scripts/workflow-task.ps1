@@ -37,6 +37,7 @@ param(
     [switch]$Json,
     [ValidateSet('Human','JsonLines')][string]$OutputFormat = 'Human',
     [switch]$IncludeHistory,
+    [switch]$RecheckHistory,
     [string]$BaselineInputsRef,
     [switch]$CaptureBaseline,
     [string[]]$JUnitReports = @(),
@@ -47,6 +48,7 @@ $ErrorActionPreference = 'Stop'
 . (Join-Path $PSScriptRoot 'workflow-session.ps1')
 $WorkspacePath = Resolve-PhysicalPathIdentity -Path $WorkspacePath
 if ($CaptureBaseline -and $Operation -ne 'Start') { throw 'CAPTURE_BASELINE_REQUIRES_START: capture before editing; Resume cannot redefine the original inputs' }
+if ($RecheckHistory -and $Operation -ne 'Status') { throw 'HISTORY_RECHECK_REQUIRES_STATUS: use Status with a TaskId or IncludeHistory to select historical tasks' }
 $featuresRoot = Resolve-AiSopWorkspaceChild $WorkspacePath '.ai-workspace/specs/features'
 if (-not $Feature -and $SpecDirectory) { $Feature = Split-Path -Leaf $SpecDirectory }
 $Feature = Resolve-AiSopFeatureName $WorkspacePath $Feature
@@ -69,7 +71,7 @@ if ($Operation -in @('Discover','Status')) {
             try {
                 $task = Read-AiSopTask $canonicalDir $entry.Name
                 if (-not $IncludeHistory -and -not $TaskId -and $task.status -in @('DONE','CANCELLED') -and -not @($task.followUps | Where-Object { $_.status -eq 'PENDING' }).Count) { continue }
-                $items.Add((Get-AiSopTaskSummary $task $WorkspacePath $canonicalDir -CheckInputs:($Operation -eq 'Status') -ValidationContext $validationContext))
+                $items.Add((Get-AiSopTaskSummary $task $WorkspacePath $canonicalDir -CheckInputs:($Operation -eq 'Status') -ValidationContext $validationContext -RecheckHistory:$RecheckHistory))
             } catch { $items.Add(@{ feature=$dir.Name; taskId=$entry.Name; status='CORRUPT'; diagnostic=$_.Exception.Message; suggestedAction='Inspect the task record; do not recreate it or infer ownership from damaged state.' }) }
         }
         if (-not $records.Count) {
@@ -103,6 +105,8 @@ if ($Operation -eq 'Start') {
     & $ownerScript -Operation Claim -CreateTaskOnly @ownerArgs -TaskId $TaskId -OwnerId ('task-' + $TaskId) -Tier $Tier -Objective $Objective -CaptureBaseline:$CaptureBaseline
     if ($LASTEXITCODE -ne 0) { throw 'TASK_START_FAILED' }
     Write-Output "TASK_STARTED:$Feature/$TaskId tier=$Tier"
+    try { Write-AiSopTaskStartSummary (Read-AiSopTask $SpecDirectory $TaskId) }
+    catch { Write-Warning "TASK_START_FEEDBACK_UNAVAILABLE: task was started; use Status to inspect its origin. $($_.Exception.Message)" -WarningAction Continue }
     Write-AiSopFollowUpReminder $WorkspacePath $Feature
     exit 0
 }

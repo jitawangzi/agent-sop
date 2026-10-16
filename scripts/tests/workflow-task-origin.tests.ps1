@@ -98,7 +98,8 @@ try {
     $large=Join-Path $workspace 'large.bin'
     $stream=[IO.File]::Create($large)
     try { $stream.SetLength(9MB) } finally { $stream.Dispose() }
-    Task Start bounded @{Tier='T1';Objective='Quick change in a large workspace'} | Out-Null
+    $started=Task Start bounded @{Tier='T1';Objective='Quick change in a large workspace'} | Out-String
+    Assert ($started -match 'TASK_START_INPUTS: UNAVAILABLE' -and $started -match 'INPUT_CAPTURE_BUDGET_EXCEEDED' -and $started -match 'normal T1/T2 verification remains available') 'Start did not report missing origin and the available normal flow'
     $bounded=Read-AiSopTask $spec bounded
     Assert ($bounded.startInputs.status -eq 'UNAVAILABLE' -and -not $bounded.startInputs.inputsRef -and $bounded.startInputs.reason -match 'INPUT_CAPTURE_BUDGET_EXCEEDED') 'Light Start exceeded its budget or saved a partial origin'
     $status=& $entry -Operation Status -WorkspacePath $workspace -Feature Example -TaskId bounded -Json | ConvertFrom-Json
@@ -119,8 +120,9 @@ try {
     Copy-Item -LiteralPath (Join-Path (Split-Path -Parent $scripts) 'schemas') -Destination $engine -Recurse
     $hostEntry=Join-Path $workspace 'ai-sop.ps1'
     Copy-Item -LiteralPath (Join-Path (Split-Path -Parent $scripts) 'distribution/templates/root/ai-sop.ps1') -Destination $hostEntry
-    & $hostEntry Task -Operation Start -Feature Example -TaskId full -Tier T1 -CaptureBaseline -Objective 'Explicit pre-edit origin' -Agent CODEX | Out-Null
+    $fullStart=& $hostEntry Task -Operation Start -Feature Example -TaskId full -Tier T1 -CaptureBaseline -Objective 'Explicit pre-edit origin' -Agent CODEX | Out-String
     Assert ($LASTEXITCODE -eq 0) 'Host Start failed'
+    Assert ($fullStart -match 'TASK_START_INPUTS: CAPTURED mode=FULL') 'Host Start did not expose the captured origin'
     $full=Read-AiSopTask $spec full
     Assert ($full.tier -eq 'T1' -and $full.startInputs.mode -eq 'FULL' -and $full.startInputs.status -eq 'CAPTURED') 'Full capture switched tiers or was not forwarded'
     # Portable proof is carried by task.json plus its referenced manifest, not a

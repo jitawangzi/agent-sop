@@ -26,6 +26,8 @@ Recover 是显式恢复动作：任务转为 PAUSED，匹配的本地 owner 释�
 
 Status 与 Discover 共用摘要；Status 额外检查执行证据的当前输入，Discover 不做全工作区哈希扫描。历史批准按 recordedApprovals 展示，完整验收仍是 Verify。项目命令配置位于 `.ai-workspace/context/verification-commands.json`，遵守引擎 schemas/verification-commands.schema.json；配置选项包含命令参数数组、批次、超时和 CaseIds。
 
+DONE/CANCELLED 默认不参与 Status 的当前输入校验，标为 HISTORICAL_NOT_RECHECKED；任务终态、历史失败及 FollowUp 保留，不把后续任务的代码变动当成旧任务的新义务。Status -RecheckHistory 可显式复核选中的历史记录，verificationScope=CURRENT_INPUTS，仅表示当前证据适用性，不改变终态。Start 在事务成功后读取已有任务记录输出 TASK_START_INPUTS，反馈不会再次扫描、扩大预算或更改起点。
+
 任务执行记录中的 `inputs-v2` 是源码等验证输入的内容快照，不使用 Git status、暂存状态或基线 diff。配置 `.ai-workspace/context/verification-inputs.json` 后使用绑定配置摘要的 `inputs-v4`；include 补充输入、exclude 带理由排除生成文件/目录，更具体路径优先，仍覆盖未被排除的公共输入。可选 nonExecutable 只声明非执行输入，不排除其指纹。新记录用 `inputsRef` 引用 `.ai-workspace/specs/.artifacts/inputs/<sha256>.json` 的去重清单，可定位过期文件；清单与任务都须在 specs 仓库持久化及同步，缺失/损坏不降级为通过。旧内嵌 inputs 继续兼容，旧引擎读取新记录前需要升级。算法版本参与摘要，旧证据不能换哈希继续充当新证据。任务 baseline 与功能长期 baseline 分离：T3 Start 的 inputsRef/inputDigest 固定修改前内容，Changes 生成任务差异清单；ReviewImpact 保存到 `.ai-workspace/specs/.artifacts/changes/<sha256>.json`。inputs/changes 清单均须同步。T1/T2 Start 的默认内容采集受预算约束，只有完整结束才记录为起点。
 
 新日志使用本地 `.ai-workspace/.runtime/verification/<Feature>/<taskId>/<runId>.log`，目录带本地忽略规则；跨工作区不要求同步日志，旧任务日志仍支持读取。清单是不可变辅助产物，先原子写入再通过两阶段事务保存任务引用，失败可能留下无引用清单，但不出现假的已提交任务状态。暂不自动清理清单，避免删掉其他任务或未同步工作区仍使用的证据。

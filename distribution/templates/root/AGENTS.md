@@ -27,6 +27,8 @@
 
 **启动起点**：先 Start 再修改。startInputs 与任务创建事务一起记录，Resume/Run 不重新采集。T1/T2 默认尝试 500ms/8MiB 预算的内容采集，超限/失败记 UNAVAILABLE，不阻塞普通编译/相关测试；预期申请“不适用”或之后升 T3 时，可在修改前 Start -CaptureBaseline 完整采集，档位不变。起点和引用清单随规格同步。不要用修改后的快照补造起点。
 
+Start 会直接反馈 TASK_START_INPUTS 状态与不可用原因，不用再跑 Status 才知起点结果。Status/Discover 对 DONE/CANCELLED 默认显示 HISTORICAL_NOT_RECHECKED，终态和待同步项独立保留，不因后续改动要求旧任务重跑；显式 Status -RecheckHistory 才检查所选历史任务的证据是否适用于当前输入，检查不重开任务。
+
 **T3 任务范围**：Start 固定修改前内容基线，功能长期批准基线独立保留。用 `Task Changes` 读取本次新增/修改/删除范围；需要 04 时，taskId、baseline、baselineInputDigest、changedFiles、changeSetDigest 必须匹配该范围，ReviewImpact 保存的 `.ai-workspace/specs/.artifacts/changes/` 清单随 specs 同步。用 `SetCaseScope -CaseIds ... -Reason ...` 登记本次必测用例，包含 04 的 requiredRegressionCases；规格变化后重新核对。其他未开发用例不强制本次执行，整体规格覆盖定义仍检查。ChangeTier/SetBaseline 只接受本任务 Start 已记录的起点；缺起点拒绝升级并保留原档位，不能用后续 Run 清单或理由替代。旧 T3 source=START 基线兼容，旧手工 ADOPTED 无起点证明则诊断；历史 DONE 不迁移。T1/T2 不新增上述范围登记。可选 JUnitReports + CaseMap 从本次 JUnit XML 映射结果，不能用旧/跳过/失败报告充当通过。
 
 **损坏结果恢复**：InspectRecovery 只读定位 task/owner/session/待入账结果问题。待入账结果损坏且原执行已停止时，可显式 Recover -QuarantineInvalidEvidence -Reason，先保存原字节再以事务记中断，Resume 后重跑；本地备份在 `.ai-workspace/.runtime/quarantine/`。损坏权限记录不能删除后猜测重建，须可信备份或事务恢复。

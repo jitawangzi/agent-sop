@@ -51,6 +51,7 @@ param(
     [switch]$Json,
     [ValidateSet('Human','JsonLines')][string]$OutputFormat = 'Human',
     [switch]$IncludeHistory,
+    [switch]$RecheckHistory,
     [string]$BaselineInputsRef,
     [switch]$CaptureBaseline,
     [string[]]$JUnitReports = @(),
@@ -123,7 +124,7 @@ function Invoke-Doctor {
 # --- Status (feature gate + phase) ---
 function Invoke-Status {
     param([string]$FeatureName, [string]$SpecDir)
-    $statusArgs = @{ Operation='Status'; WorkspacePath=$WorkspaceRoot; Json=$Json; OutputFormat=$OutputFormat; IncludeHistory=$IncludeHistory }
+    $statusArgs = @{ Operation='Status'; WorkspacePath=$WorkspaceRoot; Json=$Json; OutputFormat=$OutputFormat; IncludeHistory=$IncludeHistory; RecheckHistory=$RecheckHistory }
     if ($FeatureName) { $statusArgs.Feature=$FeatureName }
     if ($SpecDir) { $statusArgs.SpecDirectory=$SpecDir }
     if ($TaskId) { $statusArgs.TaskId=$TaskId }
@@ -231,6 +232,7 @@ Options:
   -Json                   Status/Discover: one versioned JSON object with tasks[] and warnings[].
   -OutputFormat JsonLines Legacy status output, one JSON object per task.
   -IncludeHistory         Include completed/cancelled tasks without pending follow-ups.
+  -RecheckHistory         Status only: explicitly compare historical evidence with current inputs; never reopen tasks.
   -Feature <Name>         Feature name (for Status).
   -SpecDirectory <path>   Spec dir (default: .ai-workspace/specs/features/<Feature>).
 
@@ -245,7 +247,7 @@ if ($Action -in @('Task','Status') -and -not [IO.File]::Exists((Join-Path $Works
 switch ($Action) {
     "Task" {
         $taskArgs = @{ Operation=$Operation; WorkspacePath=$WorkspaceRoot }
-        foreach ($name in @('Feature','SpecDirectory','TaskId','Tier','Objective','Agent','NextAction','Notes','Kind','Batch','Executable','Arguments','CaseIds','Profile','TimeoutSeconds','ForceRecovery','ConfirmTakeover','RunId','Reason','UserRequest','Documentation','Tests','Summary','Applicability','FollowUpId','FollowUpKind','Scope','SourceTaskId','Disposition','Resolution','Json','OutputFormat','IncludeHistory','BaselineInputsRef','CaptureBaseline','JUnitReports','CaseMap','QuarantineInvalidEvidence')) {
+        foreach ($name in @('Feature','SpecDirectory','TaskId','Tier','Objective','Agent','NextAction','Notes','Kind','Batch','Executable','Arguments','CaseIds','Profile','TimeoutSeconds','ForceRecovery','ConfirmTakeover','RunId','Reason','UserRequest','Documentation','Tests','Summary','Applicability','FollowUpId','FollowUpKind','Scope','SourceTaskId','Disposition','Resolution','Json','OutputFormat','IncludeHistory','RecheckHistory','BaselineInputsRef','CaptureBaseline','JUnitReports','CaseMap','QuarantineInvalidEvidence')) {
             if ($PSBoundParameters.ContainsKey($name)) { $taskArgs[$name] = $PSBoundParameters[$name] }
         }
         & (Join-Path $WorkspaceRoot '.ai-sop/scripts/workflow-task.ps1') @taskArgs

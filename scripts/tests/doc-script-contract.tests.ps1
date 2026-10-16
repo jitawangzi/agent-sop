@@ -73,6 +73,54 @@ function Get-DocCommands {
     return $commands
 }
 
+# Check real Task examples against script parameter ASTs, including multiline
+# calls. Do not execute documentation or infer its meaning from keyword counts.
+function Get-TaskDocCommands {
+    param([string]$Content)
+    foreach ($block in [regex]::Matches($Content, '(?ms)^[ \t]*```powershell[^\r\n]*\r?\n(.*?)^[ \t]*```[ \t]*$')) {
+        $tokens=$null; $errors=$null
+        $ast=[Management.Automation.Language.Parser]::ParseInput($block.Groups[1].Value,[ref]$tokens,[ref]$errors)
+        foreach ($command in $ast.FindAll({param($node) $node -is [Management.Automation.Language.CommandAst]},$true)) {
+            $elements=@($command.CommandElements)
+            $script=@($elements | Where-Object { $_ -is [Management.Automation.Language.StringConstantExpressionAst] -and $_.Value -match '(^|[/\\])(ai-sop|workflow-task)\.ps1$' } | Select-Object -First 1)
+            if (-not $script.Count) { continue }
+            $isRoot=$script[0].Value -match '(^|[/\\])ai-sop\.ps1$'
+            if ($isRoot -and -not @($elements | Where-Object { $_ -is [Management.Automation.Language.StringConstantExpressionAst] -and $_.Value -eq 'Task' }).Count) { continue }
+            $parameters=@{}
+            for ($i=0; $i -lt $elements.Count; $i++) {
+                $element=$elements[$i]
+                if ($element -isnot [Management.Automation.Language.CommandParameterAst]) { continue }
+                if ($element.ParameterName -in @('File','NoProfile','Action')) { continue }
+                $argument=if ($element.Argument) { $element.Argument } elseif ($i+1 -lt $elements.Count) { $elements[$i+1] } else { $null }
+                $parameters[$element.ParameterName]=if ($argument -is [Management.Automation.Language.StringConstantExpressionAst]) { $argument.Value } else { $null }
+            }
+            @{isRoot=$isRoot;parameters=$parameters;raw=$command.Extent.Text}
+        }
+    }
+}
+
+function Get-TaskScriptContract {
+    param([string]$Path)
+    $tokens=$null; $errors=$null
+    $ast=[Management.Automation.Language.Parser]::ParseFile($Path,[ref]$tokens,[ref]$errors)
+    if ($errors.Count) { throw "Script parse failed: $Path" }
+    $contract=@{}
+    foreach ($parameter in $ast.ParamBlock.Parameters) {
+        $values=@($parameter.Attributes | Where-Object { $_.TypeName.FullName -eq 'ValidateSet' } | ForEach-Object { $_.PositionalArguments } | ForEach-Object { $_.SafeGetValue() })
+        $contract[$parameter.Name.VariablePath.UserPath]=$values
+    }
+    return $contract
+}
+
+function Get-TaskDocProblems {
+    param($Command, $TaskContract, $RootContract)
+    foreach ($name in $Command.parameters.Keys) {
+        if (-not $TaskContract.ContainsKey($name) -or ($Command.isRoot -and -not $RootContract.ContainsKey($name))) { "Unsupported Task parameter: $name"; continue }
+        $value=$Command.parameters[$name]
+        if ($null -ne $value -and $value -notmatch '<[^>]+>' -and $TaskContract[$name].Count -and $value -notin $TaskContract[$name]) { "Invalid Task ${name}: $value" }
+    }
+}
+
 $failures = [System.Collections.Generic.List[string]]::new()
 function Assert-Contract {
     param([string]$Description, [bool]$Condition, [string]$Detail = "")
@@ -144,6 +192,30 @@ try {
         Assert-Contract "Key Operation '$op' (workflow-owner) should be documented in AGENTS.md" `
             ($docOwnerOps.Contains($op)) "doc has: $($docOwnerOps -join ', ')"
     }
+
+    $taskContract=Get-TaskScriptContract (Join-Path $SopRoot 'scripts/workflow-task.ps1')
+    $rootContract=Get-TaskScriptContract (Join-Path $SopRoot 'distribution/templates/root/ai-sop.ps1')
+    $taskExampleCount=0
+    foreach ($relative in @('distribution/templates/root/AGENTS.md','SUPERPOWERS_MANUAL.md','workflows/superpowers-adapter.md','skills/quality-assurance/SKILL.md','skills/workflow-orchestrator/SKILL.md')) {
+        $examples=@(Get-TaskDocCommands ([IO.File]::ReadAllText((Join-Path $SopRoot $relative))))
+        if ($relative -in @('skills/quality-assurance/SKILL.md','skills/workflow-orchestrator/SKILL.md')) { Assert-Contract "$relative must provide a Task command example" ($examples.Count -gt 0) }
+        foreach ($example in $examples) {
+            $taskExampleCount++
+            $problems=@(Get-TaskDocProblems $example $taskContract $rootContract)
+            Assert-Contract "Task example in $relative must match both entrypoints" ($problems.Count -eq 0) "$($problems -join '; '): $($example.raw)"
+        }
+    }
+    # A negative fixture proves multiline parameters and invalid operations are
+    # actually inspected instead of silently finding zero examples.
+    $badExamples=@(Get-TaskDocCommands @'
+```powershell
+& ./ai-sop.ps1 Task -Operation Imaginary `
+  -MissingSwitch value
+```
+'@)
+    Assert-Contract 'Task example parser must find multiline calls' ($badExamples.Count -eq 1)
+    $badProblems=@(Get-TaskDocProblems $badExamples[0] $taskContract $rootContract)
+    Assert-Contract 'Task example validation must reject invalid operation and trailing parameter' ($badProblems.Count -eq 2)
 
     # --- Compile-before-audit (SDD): prevent racing auditor before javac ---
     $agentsText = Get-Content -LiteralPath $AgentsMd -Raw
@@ -240,7 +312,7 @@ try {
         foreach ($f in $failures) { Write-Host $f -ForegroundColor Red }
         throw "$($failures.Count) doc-script contract failure(s)."
     }
-    Write-Output "All doc-script contract tests passed ($($docCommands.Count) commands verified)."
+    Write-Output "All doc-script contract tests passed ($($docCommands.Count) legacy and $taskExampleCount Task commands verified)."
 } catch {
     Write-Host "ERROR: $_" -ForegroundColor Red
     exit 1

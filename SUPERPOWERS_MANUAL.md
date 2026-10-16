@@ -8,6 +8,8 @@
 
 Status/Discover 默认输出简明文本，列出未完成任务及仍有待同步项的历史任务。指定 `-TaskId` 始终显示该任务；`-IncludeHistory` 查看完整历史。自动化请使用 `-Json`：输出单个 JSON 文档，固定包含 `schemaVersion: "1.0"`、`operation`、`workspace`、`tasks[]`、`warnings[]`（空结果仍为数组），契约见 `schemas/task-status.schema.json`。原逐行 JSON 调用需加 `-OutputFormat JsonLines`；不要解析默认文本。Start 遇到已存在的 TaskId 会提示使用 Resume，不会恢复旧任务或忽略新目标；Resume 保留原目标，新目标使用新 TaskId。
 
+DONE/CANCELLED 默认显示 `HISTORICAL_NOT_RECHECKED`，保留已记录的终态、失败记录与待同步项，不用后续代码变化重新判旧任务“需要处理”。这不表示历史证据仍适用于当前代码。需要复核时使用 `Status -TaskId <任务> -RecheckHistory`，或 `Status -IncludeHistory -RecheckHistory`；JSON 的 `verificationScope=CURRENT_INPUTS` 表示本次显式核对，结果不改变任务状态。Discover 始终不扫描输入，不接受 RecheckHistory。
+
 正常切换 Agent 用 Resume。异常中断、本地 owner 丢失、或接收到没有本地 owner 的 ACTIVE 任务时，先 Status，再 `Task -Operation Recover`，恢复为 PAUSED 后 Resume。Recover 不把任务标成完成，不导入其他工作区的权限。若原会话仍标记 ACTIVE/IDLE，先确认旧 Agent 已停止，再显式使用 `-ForceRecovery -Notes "恢复原因"`；本机验证进程还在运行时，即使带该参数也会拒绝恢复。旧 ForceRelease 也会同步暂停任务、清除原会话绑定，使用同一事务。
 
 跨会话 Resume 遇到仍为 ACTIVE/IDLE 的旧会话，需要 `-ConfirmTakeover`，记录有意交接。用户已明确要求切换且旧 Agent 已停止时直接使用，不重复询问；普通 Checkpoint 不会借用旧 owner 的会话身份。Task 写操作可从唯一的 CODEX_SESSION_ID / ANTIGRAVITY_SESSION_ID 推断 Agent，否则显式传 `-Agent`。没有原生会话环境变量的 CLI 应为同一次会话设置稳定的 `AI_SESSION_ID`，跨进程调用保持一致；不能用读取 owner 的方式冒充该会话。
@@ -49,6 +51,8 @@ T1/T2 的 Run 不读取历史需求设计和覆盖矩阵，历史损坏的覆盖
 新任务记录 `baseline`：VCS 类型和启动时版本用于追溯，功能 owner/feature-state 的长期基线不因此改变。`startInputs` 与任务创建一起通过事务保存，绑定 taskId、feature、创建时间和创建事务，引用原始内容清单。Resume、Run、Recover 均不重新采集这个起点。必须先 Start 再修改代码；启动前已有改动不自动归属于新任务。
 
 T3 Start 总是完整采集。T1/T2 默认只尝试预算为 500ms、读取量最多 8MiB 的内容采集，完整结束才保存清单；超出预算或读取失败则记 UNAVAILABLE，不保存部分清单，不阻塞普通编译/测试或强制升档。这是扫描预算，不是整个 Start 或底层文件系统 IO 的硬超时。若预期申请“不适用”或之后升级 T3，可在修改前显式使用 `Task -Operation Start ... -CaptureBaseline`，完整采集而不改变任务强度。T1/T2 仍无需下面的 T3 范围登记。
+
+Start 成功后立即输出 `TASK_START_INPUTS`：CAPTURED 表示起点已保存，后续操作仍需满足各自规则；UNAVAILABLE 同时给出原因和限制，普通本档验证仍可继续。反馈读取已有任务记录，不额外扫描输入、不询问确认或自动扩大预算，也不允许修改后重建起点。
 
 在宿主根目录运行：
 
@@ -179,13 +183,14 @@ T1 只需真实编译/基础检查；T2 还需相关测试和 RecordSync 记录�
 flowchart TD
     A[用户输入指令] --> B{人工指定或默认 T2}
     
-    B -->|T1: 人工选择极速| C[实现 + 编译 + 必要延期记录]
-    C --> S
+    B -->|T1: 人工选择极速| C[Start 任务 + 非阻断待同步提醒]
+    C --> C1[实现 + Task Run 编译 + 必要延期记录]
+    C1 --> S
     
     B -->|T2: 默认快速| D[Start 任务 + 非阻断待同步提醒]
     D --> D1[修改代码 + 同步相关规格与用例 + 编译]
     D1 --> D2[定向单元测试验证]
-    D2 --> S[VerifyCompletion 硬门禁检验]
+    D2 --> S[Task Verify / Complete 按本次档位验收]
     
     B -->|T3: 人工选择完整流程| E[Start 任务]
     E --> F[Superpowers brainstorming 澄清与探索]

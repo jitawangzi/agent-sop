@@ -171,7 +171,7 @@ function Get-AiSopRunActivity {
 }
 
 function Get-AiSopTaskSummary {
-    param($Task, [string]$WorkspacePath, [string]$SpecDirectory, [switch]$CheckInputs, $ValidationContext)
+    param($Task, [string]$WorkspacePath, [string]$SpecDirectory, [switch]$CheckInputs, $ValidationContext, [switch]$RecheckHistory)
     $ownerPath = Join-Path (Get-AiSopWorkflowOwnerRegistryRoot -WorkspacePath $WorkspacePath) ($Task.feature.ToLowerInvariant() + '.json')
     $owner = $null; $sessionStatus = 'MISSING'; $ownerStatus = 'MISSING'; $diagnostics = @()
     if (Test-Path -LiteralPath $ownerPath) {
@@ -197,8 +197,10 @@ function Get-AiSopTaskSummary {
         elseif ($ownerStatus -ne 'ACTIVE' -or $sessionStatus -eq 'UNAVAILABLE') { 'Recover local ownership, then Resume' }
         elseif ($sessionStatus -in @('ACTIVE','IDLE')) { 'Existing session may still be active; Resume only for intentional handoff' }
         else { 'Resume' }
-    $verification = 'NOT_CHECKED'
-    if ($CheckInputs) {
+    $terminal = $Task.status -in @('DONE','CANCELLED')
+    $checkCurrentInputs = $CheckInputs -and (-not $terminal -or $RecheckHistory)
+    $verification = if ($terminal) { 'HISTORICAL_NOT_RECHECKED' } else { 'NOT_CHECKED' }
+    if ($checkCurrentInputs) {
         try {
             $problems = @(Get-AiSopTaskProblems $Task $WorkspacePath $SpecDirectory $ValidationContext)
             $verification = if ($problems.Count) { 'NEEDS_ATTENTION' }
@@ -210,6 +212,7 @@ function Get-AiSopTaskSummary {
     return [ordered]@{
         feature=$Task.feature; taskId=$Task.taskId; tier=$Task.tier; status=$Task.status; objective=$Task.objective
         ownerStatus=$ownerStatus; sessionStatus=$sessionStatus; verification=$verification
+        verificationScope=$(if ($checkCurrentInputs) { 'CURRENT_INPUTS' } else { 'NOT_CHECKED' })
         recordedApprovals=(Get-AiSopRecordedApprovals $SpecDirectory)
         nextAction=$Task.nextAction; suggestedAction=$action; notes=$Task.notes; runs=$runs
         baseline=$Task.baseline; startInputs=$Task.startInputs; caseScope=$Task.caseScope; requiredCaseIds=@($Task.requiredCaseIds)

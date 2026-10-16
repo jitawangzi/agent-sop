@@ -76,16 +76,17 @@ function Get-DocCommands {
 # Check real Task examples against script parameter ASTs, including multiline
 # calls. Do not execute documentation or infer its meaning from keyword counts.
 function Get-TaskDocCommands {
-    param([string]$Content)
+    param([string]$Content, [ValidateSet('Task','Inputs','Preflight')][string]$Action='Task')
+    $directScript=@{Task='workflow-task';Inputs='inspect-inputs';Preflight='preflight'}[$Action]
     foreach ($block in [regex]::Matches($Content, '(?ms)^[ \t]*```powershell[^\r\n]*\r?\n(.*?)^[ \t]*```[ \t]*$')) {
         $tokens=$null; $errors=$null
         $ast=[Management.Automation.Language.Parser]::ParseInput($block.Groups[1].Value,[ref]$tokens,[ref]$errors)
         foreach ($command in $ast.FindAll({param($node) $node -is [Management.Automation.Language.CommandAst]},$true)) {
             $elements=@($command.CommandElements)
-            $script=@($elements | Where-Object { $_ -is [Management.Automation.Language.StringConstantExpressionAst] -and $_.Value -match '(^|[/\\])(ai-sop|workflow-task)\.ps1$' } | Select-Object -First 1)
+            $script=@($elements | Where-Object { $_ -is [Management.Automation.Language.StringConstantExpressionAst] -and $_.Value -match "(^|[/\\])(ai-sop|$directScript)\.ps1$" } | Select-Object -First 1)
             if (-not $script.Count) { continue }
             $isRoot=$script[0].Value -match '(^|[/\\])ai-sop\.ps1$'
-            if ($isRoot -and -not @($elements | Where-Object { $_ -is [Management.Automation.Language.StringConstantExpressionAst] -and $_.Value -eq 'Task' }).Count) { continue }
+            if ($isRoot -and -not @($elements | Where-Object { $_ -is [Management.Automation.Language.StringConstantExpressionAst] -and $_.Value -eq $Action }).Count) { continue }
             $parameters=@{}
             for ($i=0; $i -lt $elements.Count; $i++) {
                 $element=$elements[$i]
@@ -216,6 +217,17 @@ try {
     Assert-Contract 'Task example parser must find multiline calls' ($badExamples.Count -eq 1)
     $badProblems=@(Get-TaskDocProblems $badExamples[0] $taskContract $rootContract)
     Assert-Contract 'Task example validation must reject invalid operation and trailing parameter' ($badProblems.Count -eq 2)
+
+    foreach ($action in @('Inputs','Preflight')) {
+        $scriptName=if ($action -eq 'Inputs') { 'inspect-inputs.ps1' } else { 'preflight.ps1' }
+        $contract=Get-TaskScriptContract (Join-Path $SopRoot "scripts/$scriptName")
+        $examples=@(Get-TaskDocCommands ([IO.File]::ReadAllText((Join-Path $SopRoot 'SUPERPOWERS_MANUAL.md'))) -Action $action)
+        Assert-Contract "$action has a real manual example and root action" ($examples.Count -gt 0 -and $action -in $rootContract.Action)
+        foreach ($example in $examples) {
+            $problems=@(Get-TaskDocProblems $example $contract $rootContract)
+            Assert-Contract "$action manual example matches both entrypoints" ($problems.Count -eq 0) ($problems -join '; ')
+        }
+    }
 
     # --- Compile-before-audit (SDD): prevent racing auditor before javac ---
     $agentsText = Get-Content -LiteralPath $AgentsMd -Raw

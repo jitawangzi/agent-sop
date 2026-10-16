@@ -30,6 +30,8 @@ DONE/CANCELLED 默认不参与 Status 的当前输入校验，标为 HISTORICAL_
 
 任务执行记录中的 `inputs-v2` 是源码等验证输入的内容快照，不使用 Git status、暂存状态或基线 diff。配置 `.ai-workspace/context/verification-inputs.json` 后使用绑定配置摘要的 `inputs-v4`；include 补充输入、exclude 带理由排除生成文件/目录，更具体路径优先，仍覆盖未被排除的公共输入。可选 nonExecutable 只声明非执行输入，不排除其指纹。新记录用 `inputsRef` 引用 `.ai-workspace/specs/.artifacts/inputs/<sha256>.json` 的去重清单，可定位过期文件；清单与任务都须在 specs 仓库持久化及同步，缺失/损坏不降级为通过。旧内嵌 inputs 继续兼容，旧引擎读取新记录前需要升级。算法版本参与摘要，旧证据不能换哈希继续充当新证据。任务 baseline 与功能长期 baseline 分离：T3 Start 的 inputsRef/inputDigest 固定修改前内容，Changes 生成任务差异清单；ReviewImpact 保存到 `.ai-workspace/specs/.artifacts/changes/<sha256>.json`。inputs/changes 清单均须同步。T1/T2 Start 的默认内容采集受预算约束，只有完整结束才记录为起点。
 
+`Inputs` 与 `Preflight` 是可选只读报告，不是持久证据。前者在真实扫描上附带路径规则、读取量和候选配置范围比较；后者读取任务及引用清单，按文件所属的嵌套 Git 提示同步，并依据目标引擎的 `config/runtime-compatibility.json`/任务 Schema 检查活动基线口径。兼容性声明与输入算法、可读格式或协议变化应一起维护；未提供声明的目标状态为未知。报告不证明目标工作区源码一致、远端已同步或全部门禁通过，不隐式恢复事务、转移归属或升级档位。
+
 新日志使用本地 `.ai-workspace/.runtime/verification/<Feature>/<taskId>/<runId>.log`，目录带本地忽略规则；跨工作区不要求同步日志，旧任务日志仍支持读取。清单是不可变辅助产物，先原子写入再通过两阶段事务保存任务引用，失败可能留下无引用清单，但不出现假的已提交任务状态。暂不自动清理清单，避免删掉其他任务或未同步工作区仍使用的证据。
 
 Status/Discover 默认文本显示未完成任务和有待同步项的历史任务；`-TaskId` 精确查询，`-IncludeHistory` 包含全部历史。机器接口用 `-Json`（schemas/task-status.schema.json，schemaVersion=1.0，tasks/warnings 始终为数组），`-OutputFormat JsonLines` 保留旧逐行接口。单次 Status/Verify 共用输入快照，调用之间以及 Run 前后不缓存。Start 拒绝已存在 TaskId；Resume 不修改旧目标。LEGACY 仅表示旧流程资料，不代表一个已经建立权限的任务。

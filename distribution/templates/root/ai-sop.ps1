@@ -14,7 +14,7 @@
 [CmdletBinding()]
 param(
     [Parameter(Position=0)]
-    [ValidateSet("Install", "Doctor", "Update", "Verify", "Status", "Task", "Help", "")]
+    [ValidateSet("Install", "Doctor", "Update", "Verify", "Status", "Task", "Inputs", "Preflight", "Help", "")]
     [string]$Action = "Help",
 
     [string]$Feature = "",
@@ -56,7 +56,10 @@ param(
     [switch]$CaptureBaseline,
     [string[]]$JUnitReports = @(),
     [string]$CaseMap,
-    [switch]$QuarantineInvalidEvidence
+    [switch]$QuarantineInvalidEvidence,
+    [string[]]$InputPath = @(),
+    [string]$CandidatePolicy,
+    [string]$TargetEnginePath
 )
 
 $ErrorActionPreference = "Stop"
@@ -206,6 +209,12 @@ Actions:
   Update     Re-generate projections (same as Install).
   Verify     Read-only verification of projections vs lock.
   Status     Show task, ownership, execution evidence and suggested next action.
+  Inputs     Read-only scan statistics, large inputs and inclusion/exclusion rules.
+             -InputPath <workspace-relative path> -CandidatePolicy <workspace-relative JSON> -Json
+             CandidatePolicy previews a configuration without installing it; Inputs performs a full scan.
+  Preflight  Advisory handoff/upgrade inventory; no source scan or state changes.
+             -Feature X -TaskId fix-1 -TargetEnginePath <local candidate engine> -Json
+             Without TargetEnginePath, checks the current engine only. Findings do not become task gates.
   Task       Task discovery, independent changes, handoff and verification.
              Task -Operation Discover
              Task -Operation Start -Feature X -TaskId fix-1 -Tier T2 -Objective "Fix existing behaviour" -Agent CODEX
@@ -245,6 +254,18 @@ if ($Action -in @('Task','Status') -and -not [IO.File]::Exists((Join-Path $Works
     throw 'TASK_ENGINE_MISSING: initialize/update .ai-sop, then run ai-sop.ps1 Install and Doctor before using Task or Status.'
 }
 switch ($Action) {
+    "Inputs" {
+        $script=Join-Path $WorkspaceRoot '.ai-sop/scripts/inspect-inputs.ps1'
+        if (-not [IO.File]::Exists($script)) { throw 'DIAGNOSTIC_ENGINE_MISSING: update the engine and entry projection together' }
+        & $script -WorkspacePath $WorkspaceRoot -InputPath $InputPath -CandidatePolicy $CandidatePolicy -Json:$Json
+        exit $LASTEXITCODE
+    }
+    "Preflight" {
+        $script=Join-Path $WorkspaceRoot '.ai-sop/scripts/preflight.ps1'
+        if (-not [IO.File]::Exists($script)) { throw 'DIAGNOSTIC_ENGINE_MISSING: use the candidate engine scripts/preflight.ps1 directly before updating an older installation' }
+        & $script -WorkspacePath $WorkspaceRoot -Feature $Feature -TaskId $TaskId -TargetEnginePath $TargetEnginePath -IncludeHistory:$IncludeHistory -Json:$Json
+        exit $LASTEXITCODE
+    }
     "Task" {
         $taskArgs = @{ Operation=$Operation; WorkspacePath=$WorkspaceRoot }
         foreach ($name in @('Feature','SpecDirectory','TaskId','Tier','Objective','Agent','NextAction','Notes','Kind','Batch','Executable','Arguments','CaseIds','Profile','TimeoutSeconds','ForceRecovery','ConfirmTakeover','RunId','Reason','UserRequest','Documentation','Tests','Summary','Applicability','FollowUpId','FollowUpKind','Scope','SourceTaskId','Disposition','Resolution','Json','OutputFormat','IncludeHistory','RecheckHistory','BaselineInputsRef','CaptureBaseline','JUnitReports','CaseMap','QuarantineInvalidEvidence')) {

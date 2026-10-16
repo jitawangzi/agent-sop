@@ -23,6 +23,8 @@
 
 **任务诊断与证据同步**：Start 只创建新 TaskId，已有任务用 Resume，独立新目标不要复用旧身份。Status/Discover 默认简明文本与未完成/有待同步项任务；`-IncludeHistory` 查看历史，自动化使用 `-Json` 的版本化 tasks/warnings 数组；兼容旧逐行输出用 `-OutputFormat JsonLines`。可在 `.ai-workspace/context/verification-inputs.json` 补充真实输入或带理由排除生成目录，不得随意排除共享源码来消除过期证据。新输入清单在 `.ai-workspace/specs/.artifacts/inputs/` 去重保存，必须随规格 Git 同步；本地 `.ai-workspace/.runtime/verification/` 日志无需同步。出现清单缺失/损坏先补同步或重跑，禁止改写成功摘要。投影/引擎部署版本提醒用安装器和 Doctor 处理，不自动升级任务档位。
 
+**可选只读排查**：`ai-sop.ps1 Inputs -InputPath <宿主相对路径>` 解释真实输入规则与扫描开销；`-CandidatePolicy <候选JSON相对路径>` 预览范围差异，不覆盖正式配置。`ai-sop.ps1 Preflight -Feature <Feature> -TaskId <taskId>` 检查交接记录、引用清单和本机执行状态，`-TargetEnginePath <候选引擎目录>` 比较升级兼容性；二者支持 `-Json`。Preflight 按嵌套 Git 实际归属提示同步，不运行源码扫描、事务恢复或归属写入。缺目标声明只报告 UNKNOWN；输出不是完成证据或发布认证。只在排查、交接或升级时按需使用，不增加 T1/T2 必经步骤。命令与边界见操作手册。
+
 **任务完成条件**：T1 真实编译/基础检查成功，报告未测试范围；T2 编译与相关测试成功，并用 RecordSync 记录受影响需求、设计与测试的同步结果；T3 完整规格和审查门禁加当前任务证据。T1/T2 无独立代码审核环节。测试环境失败可以暂停交接，不能写成通过。本次任务 DONE 不代表旧 T3 或整个功能已全面验收。
 
 **启动起点**：先 Start 再修改。startInputs 与任务创建事务一起记录，Resume/Run 不重新采集。T1/T2 默认尝试 500ms/8MiB 预算的内容采集，超限/失败记 UNAVAILABLE，不阻塞普通编译/相关测试；预期申请“不适用”或之后升 T3 时，可在修改前 Start -CaptureBaseline 完整采集，档位不变。起点和引用清单随规格同步。不要用修改后的快照补造起点。

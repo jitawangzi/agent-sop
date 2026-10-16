@@ -152,6 +152,33 @@ T1 只需真实编译/基础检查；T2 还需相关测试和 RecordSync 记录�
 
 单次 Status 和 Verify 的任务校验共用一次输入快照和规格摘要；下一次调用重新扫描。Run 前后始终分别扫描，不能缓存掉运行期间的输入变化。Status/Discover/Doctor 会提示宿主入口、AGENTS 投影或引擎锁版本不一致；这是部署提醒，不增加 T1/T2 完成门禁。缺少引擎时 Task/Status 明确提示初始化。旧功能会显示 LEGACY、档位、阶段及本地归属；T3 的损坏规格 JSON 会标出文件和错误，T1/T2 不因历史损坏规格而被迫补跑完整流程。
 
+### 按需解释输入范围
+
+```powershell
+& ./ai-sop.ps1 Inputs -InputPath @('src/example.txt', 'module/build/output.bin')
+& ./ai-sop.ps1 Inputs -InputPath 'module/build/output.bin' `
+  -CandidatePolicy '.ai-workspace/context/verification-inputs.candidate.json' -Json
+```
+
+`Inputs` 复用真实扫描规则，显示路径是否纳入、获胜规则、命中的 include/exclude、默认排除原因，以及扫描条目数、哈希文件数、实际读取的输入内容字节数、耗时和最大的 10 个输入文件。被剪枝目录的子文件按祖先规则解释，不为诊断额外读取其内容；统计不含目录元数据及配置读取开销，耗时仅代表这次诊断。
+
+`CandidatePolicy` 是宿主根下的候选 JSON 字面路径，结构与正式配置相同；建议放在上述 context 目录。预览报告列出新增/移除输入及策略摘要是否变化，不安装配置、不保存证据。命令完整扫描一次，候选比较再扫描一次，只在排查时使用，不自动加入 Start。比较期间继续改文件可能影响结果；报告会指出共同输入的内容变化，正式采用前应在文件稳定时复核。即使文件集合不变，配置摘要变化也可能使旧证据过期。
+
+### 按需检查交接和升级
+
+```powershell
+& ./ai-sop.ps1 Preflight -Feature Example -TaskId change-1
+& ./ai-sop.ps1 Preflight -TargetEnginePath '../agent-sop-next' -Json
+```
+
+`Preflight` 列出任务目标、检查点、非阻塞待办、需同步的 task.json、功能规格、inputs/changes 引用清单和项目验证配置；按实际所属 Git 仓库显示 TRACKED/UNTRACKED/IGNORED 及本地改动，适用于 `.ai-workspace` 与 `specs` 分别独立 Git 的布局。项目 context 和功能目录整体也列为同步范围，以覆盖自定义引用与附件。TRACKED 不代表已推送或目标机器已收到；代码、共享依赖和规格需对应同一实际版本。
+
+预检读取清单并校验哈希，同时检查本机归属/会话、未完成运行、损坏 pending 结果和未决事务。它不读取业务源码内容、不编译、不抢锁、不续期、不执行事务恢复，也不修改完成状态。运行中的命令或 pending 结果应先在原工作区处理；本机注册表、事务日志及 `.runtime` 不作为可移植归属复制，接收方仍通过 Resume/Recover 获取本机执行权。
+
+省略 `TargetEnginePath` 只检查运行此命令的引擎；提供候选引擎目录时，读取其 `config/runtime-compatibility.json` 和任务 Schema，不执行候选脚本。目标缺少兼容性声明显示 UNKNOWN，不能推断安全；声明及 Schema 通过也不是完整发布认证。活动 T3 的基线算法或配置口径不兼容时，会提示在原引擎收尾。T1/T2 起点不兼容时，提示后续升级/豁免的限制，正常档位验证仍可执行；历史 DONE/CANCELLED 不重新按当前输入判断完成与否。
+
+旧安装没有 Preflight 入口时，可直接运行候选引擎的 `scripts/preflight.ps1 -WorkspacePath <宿主根目录>`，先检查再决定升级。没有指定 Feature/TaskId 时检查未结束或有待同步项的任务；`-IncludeHistory` 纳入全部历史。`-Json` 输出 schemaVersion 1.0 的单个报告。发现问题时返回 NEEDS_ATTENTION，但报告成功生成仍退出 0；参数、路径或执行错误才失败。结果是非原子的即时观察，不代表目标代码相同或远端同步成功，也不是新门禁，不要求每个 T1/T2 任务先执行。
+
 
 本指南说明多个 harness（Claude Code / GitHub Copilot / Antigravity / Cursor / Codex / Pi）如何使用本项目的 AI SOP 完成游戏服务端开发。**T3 由 Superpowers 过程引擎编排；T2/T1用 AGENTS.md + 专家 Skills，不调用 Superpowers**。领域专家 Skill 被强制绑定调用；详见 `.ai-sop/workflows/superpowers-adapter.md`。各 harness 共享 `.ai-workspace/context/` 与规范化功能产物。各工具的能力差异（能跑 T3 还是支持 T1/T2）见 `.ai-sop/scripts/harness-capability.ps1` 的 STRICT/BLOCKED 判定。
 

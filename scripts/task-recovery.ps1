@@ -22,18 +22,40 @@ function Save-AiSopInvalidEvidence {
 
 function Get-AiSopTaskRecoveryDiagnostics {
     param([string]$SpecDirectory, [string]$TaskId, [string]$WorkspacePath, [string]$OwnerPath)
-    $items=@(); $task=$null; $owner=$null
+    $items=@(); $task=$null; $owner=$null; $ownerMatches=$false
+    $comparison=if ([OperatingSystem]::IsWindows()) { [StringComparison]::OrdinalIgnoreCase } else { [StringComparison]::Ordinal }
+    $workspace=Resolve-PhysicalPathIdentity $WorkspacePath
+    $spec=Resolve-PhysicalPathIdentity $SpecDirectory
     $taskPath=Get-AiSopTaskPath $SpecDirectory $TaskId
     try { $task=Read-AiSopTask $SpecDirectory $TaskId; $items+=@{kind='TASK';path=$taskPath;status='VALID'} }
     catch { $items+=@{kind='TASK';path=$taskPath;status='UNAVAILABLE';diagnostic=$_.Exception.Message} }
     try {
         $raw=[IO.File]::ReadAllText($OwnerPath); Assert-AiSopWorkflowJsonSchema -Json $raw -SchemaId OWNER
         $owner=ConvertFrom-AiSopWorkflowJson $raw -AsHashtable
-        $items+=@{kind='OWNER';path=$OwnerPath;status='VALID'}
+        $record=@{kind='OWNER';path=$OwnerPath;status='VALID';ownerTaskId=[string]$owner.taskId;ownerStatus=$owner.status}
+        if (-not $task) { $record.status='UNVERIFIED'; $record.diagnostic='TASK_IDENTITY_UNAVAILABLE: task must be readable before associating local authority' }
+        elseif ($owner.taskId -cne $TaskId -or $owner.ownerId -cne $task.ownerId -or $owner.feature -cne $task.feature) {
+            $record.status='OTHER_TASK'; $record.diagnostic='OWNER_TASK_MISMATCH: this feature registry record belongs to another task/owner'
+        } elseif (-not (Resolve-PhysicalPathIdentity $owner.workspacePath).Equals($workspace,$comparison) -or
+            -not (Resolve-PhysicalPathIdentity $owner.specDirectory).Equals($spec,$comparison)) {
+            $record.status='IDENTITY_MISMATCH'; $record.diagnostic='OWNER_WORKSPACE_MISMATCH'
+        } else { $ownerMatches=$true }
+        $items+=$record
     } catch { $items+=@{kind='OWNER';path=$OwnerPath;status='UNAVAILABLE';diagnostic=$_.Exception.Message} }
-    if ($owner.sessionBinding.sessionKey) {
+    if ($ownerMatches -and $owner.status -eq 'ACTIVE' -and $owner.sessionBinding.sessionKey) {
         $sessionPath=Resolve-AiSopWorkspaceChild (Get-AiSopWorkflowSessionRegistryRoot -WorkspacePath $WorkspacePath) ($owner.sessionBinding.sessionKey + '.json')
-        try { Read-AiSopWorkflowSessionRecord -SessionPath $sessionPath | Out-Null; $items+=@{kind='SESSION';path=$sessionPath;status='VALID'} }
+        try {
+            $session=Read-AiSopWorkflowSessionRecord -SessionPath $sessionPath -ExpectedSessionKey $owner.sessionBinding.sessionKey
+            $record=@{kind='SESSION';path=$sessionPath;status='VALID'}
+            if (-not (Resolve-PhysicalPathIdentity $session.workspacePath).Equals($workspace,$comparison) -or
+                $session.sessionEpochId -cne $owner.sessionBinding.sessionEpochId -or
+                $session.boundSessionEpochId -cne $owner.sessionBinding.sessionEpochId -or
+                $session.boundOwnerId -cne $task.ownerId -or $session.boundFeature -cne $task.feature -or
+                $session.boundWorkflow -cne $owner.workflow -or $session.agent -cne $owner.agent) {
+                $record.status='IDENTITY_MISMATCH'; $record.diagnostic='LOCAL_SESSION_IDENTITY_MISMATCH'
+            } else { $record.effectiveStatus=Get-AiSopWorkflowSessionEffectiveStatus $session ([DateTimeOffset]::UtcNow) }
+            $items+=$record
+        }
         catch { $items+=@{kind='SESSION';path=$sessionPath;status='UNAVAILABLE';diagnostic=$_.Exception.Message} }
     }
     if ($task) {

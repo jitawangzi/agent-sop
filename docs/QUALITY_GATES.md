@@ -29,7 +29,9 @@ Status 默认仅对未完成任务检查当前输入；DONE/CANCELLED 即使有�
 
 T3 Start 固定任务的修改前内容清单，长期功能批准基线独立保留。所有新任务的 startInputs 与任务创建事务绑定，T1/T2 默认尝试 500ms/8MiB 预算采集，超限或失败记 UNAVAILABLE，部分清单不保存；Start -CaptureBaseline 可显式完整采集而不改变档位。预算不保证底层 IO 或整个 Start 的硬耗时。普通 T1/T2 编译/相关测试不要求起点可用。`Changes` 返回相对任务基线的内容差异；`ReviewImpact` 将 04 的 taskId、baseline、baselineInputDigest、changedFiles、changeSetDigest 与实际差异核对，并保存可交接的 `.ai-workspace/specs/.artifacts/changes/` 清单。Verify 同时检查 04、完整输入和差异清单，不能仅通过重填 inputDigest 复用旧分析。这是显式确认分析的动作，不是自动修复分析。更改已批准需求设计语义应 ResetApproval，T3 重新批准；T2 记录变更依据并同步，不要求当次补完整批准。
 
-T3 用 `SetCaseScope` 显式登记本任务 requiredCaseIds 和理由，包含影响分析声明的回归用例；规格变更后重新核对。必测用例的载体、断言和本任务执行证据必须有效，不强制执行整个功能的其他用例；整体规格批准及覆盖定义仍检查。独立新任务另取基线与范围；ChangeTier/SetBaseline 只复用当前任务 Start 已登记的引用，Run 清单或口述理由不能证明修改前来源。缺起点时拒绝升级并保留原档位。旧 T3 source=START 保持兼容，旧 ADOPTED 无来源证明则明确诊断，不能判为无差异；历史 DONE 不迁移。任务必须先 Start 再改动；该机制不防御同权限主体直接篡改引擎或任务记录。
+新任务在创建事务中另存 startImpact，用于区分未修改的历史 04 与本任务修改的 04；它独立于源码采集预算，不改变 T1/T2 的完成要求。T3 不允许本任务新增/修改的 04 因缺少或保留旧 taskId 被跳过，已有审核绑定也不能靠删除文件或改归属消除。旧任务缺字段时明确报告来源未知，保持历史兼容，不在接管时补造起点。
+
+T3 用 `SetCaseScope` 显式登记本任务 requiredCaseIds 和理由，包含影响分析声明的回归用例；规格变更后重新核对。必测用例的载体、断言和本任务执行证据必须有效，不强制执行整个功能的其他用例；整体规格批准及覆盖定义仍检查。覆盖辅助函数显式接收 TaskId，输出实际检查范围；T1/T2 空范围不能声称用例已检查，T3 空范围继续报 TASK_CASE_SCOPE_REQUIRED。独立新任务另取基线与范围；ChangeTier/SetBaseline 只复用当前任务 Start 已登记的引用，Run 清单或口述理由不能证明修改前来源。缺起点时拒绝升级并保留原档位。旧 T3 source=START 保持兼容，旧 ADOPTED 无来源证明则明确诊断，不能判为无差异；历史 DONE 不迁移。任务必须先 Start 再改动；该机制不防御同权限主体直接篡改引擎或任务记录。
 
 可选 JUnit XML 映射核对本次报告的 classname/name、成功状态及文件更新，CaseIds 从报告派生；缺失、陈旧、跳过或失败的映射不能通过。它不替代测试语义审查，也不对同权限恶意进程提供防伪保证。T1/T2 不新增此项必做流程。
 

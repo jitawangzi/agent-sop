@@ -206,10 +206,9 @@ function Save-AiSopInputManifest {
     return $reference
 }
 
-function Read-AiSopVerificationInputs {
-    param($Record, [string]$WorkspacePath, $ValidationContext)
-    if (-not $Record.inputsRef) { return @{ files=$Record.inputs } } # Legacy inline records.
-    $ref = [string]$Record.inputsRef
+function Read-AiSopInputManifest {
+    param([string]$Reference, [string]$WorkspacePath, $ValidationContext)
+    $ref = $Reference
     $cacheKey = (Resolve-PhysicalPathIdentity $WorkspacePath) + "|" + $ref
     if ($ValidationContext -and $ValidationContext.manifests.ContainsKey($cacheKey)) { $snapshot = $ValidationContext.manifests[$cacheKey] }
     else {
@@ -224,6 +223,13 @@ function Read-AiSopVerificationInputs {
         } catch { throw "INPUT_MANIFEST_CORRUPT: $path; $($_.Exception.Message)" }
         if ($ValidationContext) { $ValidationContext.manifests[$cacheKey]=$snapshot }
     }
+    return $snapshot
+}
+
+function Read-AiSopVerificationInputs {
+    param($Record, [string]$WorkspacePath, $ValidationContext)
+    if (-not $Record.inputsRef) { return @{ files=$Record.inputs } } # Legacy inline records.
+    $snapshot=Read-AiSopInputManifest ([string]$Record.inputsRef) $WorkspacePath $ValidationContext
     if ($snapshot.digest -cne $Record.inputDigest) { throw 'INPUT_MANIFEST_DIGEST_MISMATCH' }
     return $snapshot
 }

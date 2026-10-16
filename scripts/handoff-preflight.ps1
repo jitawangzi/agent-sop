@@ -52,26 +52,22 @@ function Get-AiSopPreflightLocalState {
     $result=@{owner='MISSING';session='MISSING';runs=@();diagnostics=@()}
     $ownerRoot=Resolve-PhysicalPathIdentity (Get-AiSopWorkflowOwnerRegistryRoot -WorkspacePath $WorkspacePath)
     $ownerPath=Resolve-AiSopWorkspaceChild $ownerRoot ($Task.feature.ToLowerInvariant()+'.json')
+    $recovery=Get-AiSopTaskRecoveryDiagnostics $SpecDirectory $Task.taskId $WorkspacePath $ownerPath
     if ([IO.File]::Exists($ownerPath)) {
-        try {
-            $raw=[IO.File]::ReadAllText($ownerPath); Assert-AiSopWorkflowJsonSchema $raw OWNER
-            $owner=ConvertFrom-AiSopWorkflowJson $raw -AsHashtable
-            $result.owner=if ($owner.taskId -ceq $Task.taskId -and $owner.ownerId -ceq $Task.ownerId) { $owner.status } else { 'OTHER_TASK' }
-            if ($result.owner -eq 'ACTIVE' -and $owner.sessionBinding.sessionKey) {
-                $sessionRoot=Resolve-PhysicalPathIdentity (Get-AiSopWorkflowSessionRegistryRoot -WorkspacePath $WorkspacePath)
-                $sessionPath=Resolve-AiSopWorkspaceChild $sessionRoot ($owner.sessionBinding.sessionKey+'.json')
-                $session=Read-AiSopWorkflowSessionRecord $sessionPath -ExpectedSessionKey $owner.sessionBinding.sessionKey
-                if ($session.workspacePath -cne $WorkspacePath -or $session.sessionEpochId -cne $owner.sessionBinding.sessionEpochId -or $session.boundOwnerId -cne $Task.ownerId) { throw 'LOCAL_SESSION_IDENTITY_MISMATCH' }
-                $result.session=Get-AiSopWorkflowSessionEffectiveStatus $session ([DateTimeOffset]::UtcNow)
-            }
-        } catch { $result.diagnostics+=@($_.Exception.Message) }
+        $ownerRecord=@($recovery.records | Where-Object kind -eq 'OWNER')[0]
+        $result.owner=if ($ownerRecord.status -eq 'VALID') { $ownerRecord.ownerStatus } else { $ownerRecord.status }
+        if ($ownerRecord.diagnostic) { $result.diagnostics+=@($ownerRecord.diagnostic) }
+        $sessionRecord=@($recovery.records | Where-Object kind -eq 'SESSION')
+        if ($sessionRecord.Count) {
+            $result.session=if ($sessionRecord[0].status -eq 'VALID') { $sessionRecord[0].effectiveStatus } else { $sessionRecord[0].status }
+            if ($sessionRecord[0].diagnostic) { $result.diagnostics+=@($sessionRecord[0].diagnostic) }
+        }
     }
     foreach ($run in @($Task.verifications | Where-Object outcome -eq 'RUNNING')) {
         $pending=Get-AiSopRunEvidencePath $SpecDirectory $Task.taskId $run.runId
         $result.runs+=@{runId=$run.runId;activity=(Get-AiSopRunActivity $run $WorkspacePath);pendingResultExists=[IO.File]::Exists($pending);pendingResultPath=[IO.Path]::GetRelativePath($WorkspacePath,$pending).Replace('\','/')}
     }
     if ($result.runs.Count) {
-        $recovery=Get-AiSopTaskRecoveryDiagnostics $SpecDirectory $Task.taskId $WorkspacePath $ownerPath
         $result.pendingEvidence=@($recovery.records | Where-Object kind -eq 'PENDING')
         foreach ($pending in @($result.pendingEvidence | Where-Object status -eq 'INVALID')) { $result.diagnostics+=@("PENDING_EVIDENCE_INVALID: $($pending.path): $($pending.diagnostic)") }
     }
@@ -90,6 +86,8 @@ function Get-AiSopHandoffPreflight {
     $artifacts=[Collections.Generic.Dictionary[string,object]]::new([StringComparer]::Ordinal)
     $repositories=[Collections.Generic.Dictionary[string,object]]::new([StringComparer]::Ordinal)
     $context=New-AiSopValidationContext
+    # Cache file validity separately from each task record's binding to the file.
+    $inputChecks=@{}
     $capabilities=$null; $policy=$null; $targetAlgorithm=$null
     try {
         $capPath=Resolve-AiSopWorkspaceChild $target 'config/runtime-compatibility.json'
@@ -120,7 +118,7 @@ function Get-AiSopHandoffPreflight {
         $selected=$false
         foreach ($entry in $records) {
             $identity="$($dir.Name)/$($entry.Name)"; $task=$null
-            $item=@{feature=$dir.Name;taskId=$entry.Name;status='UNAVAILABLE';tier=$null;diagnostics=@();localState=$null}
+            $item=@{feature=$dir.Name;taskId=$entry.Name;status='UNAVAILABLE';tier=$null;diagnostics=@();localState=@{owner='NOT_CHECKED';session='NOT_CHECKED';runs=@()}}
             try {
                 $task=Read-AiSopTask $spec $entry.Name
                 if (-not $IncludeHistory -and -not $TaskId -and $task.status -in @('DONE','CANCELLED') -and -not @($task.followUps | Where-Object status -eq 'PENDING').Count) { continue }
@@ -133,30 +131,58 @@ function Get-AiSopHandoffPreflight {
             $taskArtifact=Add-AiSopPreflightArtifact $artifacts $WorkspacePath ".ai-workspace/specs/features/$($dir.Name)/tasks/$($entry.Name)/task.json" 'TASK' $identity $repositories
             if (-not $task) { $taskArtifact.status='INVALID'; $taskArtifact.diagnostics=$item.diagnostics; continue }
             $active=$task.status -in @('ACTIVE','PAUSED')
+            if (-not $active) { $item.localState=@{owner='NOT_APPLICABLE';session='NOT_APPLICABLE';runs=@()} }
             if ($capabilities) {
                 try {
                     if ($task.schemaVersion -cnotin $capabilities.taskSchemaVersions -or -not (Test-Json -Json (ConvertTo-AiSopWorkflowCanonicalJson $task) -SchemaFile $targetTaskSchema -ErrorAction Stop)) { throw 'task format unsupported' }
                 } catch { $item.diagnostics+=@("TARGET_TASK_INCOMPATIBLE: $($_.Exception.Message)") }
             }
-            foreach ($record in @($task.startInputs,$task.baseline)+@($task.verifications)) {
+            $references=@(@{label='startInputs';record=$task.startInputs},@{label='baseline';record=$task.baseline})
+            for ($index=0; $index -lt @($task.verifications).Count; $index++) {
+                $run=$task.verifications[$index]
+                $references+=@{label="verifications[$index] $($run.kind)/$($run.batch) run=$($run.runId)";record=$run}
+            }
+            foreach ($reference in $references) {
+                $record=$reference.record
                 if (-not $record.inputsRef) { continue }
                 $relative=".ai-workspace/specs/.artifacts/inputs/$($record.inputsRef).json"
                 $artifact=Add-AiSopPreflightArtifact $artifacts $WorkspacePath $relative 'INPUT_MANIFEST' $identity $repositories
-                try {
-                    $snapshot=Read-AiSopVerificationInputs $record $WorkspacePath $context
-                    if ($artifact.status -ne 'INVALID') { $artifact.status='VALID' }
-                    if ($capabilities -and $snapshot.algorithm -cnotin $capabilities.readableInputAlgorithms) { $item.diagnostics+=@("TARGET_INPUT_FORMAT_UNSUPPORTED: $($record.inputsRef) $($snapshot.algorithm)") }
-                } catch { $artifact.status=if ($artifact.status -eq 'MISSING') { 'MISSING' } else { 'INVALID' }; $artifact.diagnostics+=@($_.Exception.Message) }
+                if (-not $inputChecks.ContainsKey($record.inputsRef)) {
+                    try { $inputChecks[$record.inputsRef]=@{snapshot=(Read-AiSopInputManifest $record.inputsRef $WorkspacePath $context)} }
+                    catch { $inputChecks[$record.inputsRef]=@{error=$_.Exception.Message} }
+                }
+                $check=$inputChecks[$record.inputsRef]
+                if ($check.error) {
+                    $artifact.status=if ($artifact.status -eq 'MISSING') { 'MISSING' } else { 'INVALID' }
+                    $artifact.diagnostics=@($check.error)
+                    continue
+                }
+                $snapshot=$check.snapshot; $artifact.status='VALID'
+                if ($snapshot.digest -cne $record.inputDigest) {
+                    $item.diagnostics+=@("INPUT_MANIFEST_DIGEST_MISMATCH: $($reference.label) references $($record.inputsRef); file is valid, record inputDigest does not match")
+                }
+                if ($capabilities -and $snapshot.algorithm -cnotin $capabilities.readableInputAlgorithms) { $item.diagnostics+=@("TARGET_INPUT_FORMAT_UNSUPPORTED: $($record.inputsRef) $($snapshot.algorithm)") }
             }
             if ($task.impactReview.changeSetDigest) {
                 $ref=$task.impactReview.changeSetDigest
                 $artifact=Add-AiSopPreflightArtifact $artifacts $WorkspacePath ".ai-workspace/specs/.artifacts/changes/$ref.json" 'CHANGE_MANIFEST' $identity $repositories
+                $change=$null
                 try {
                     $raw=[IO.File]::ReadAllText((Resolve-AiSopWorkspaceChild $WorkspacePath $artifact.path))
-                    $change=ConvertFrom-AiSopWorkflowJson $raw -AsHashtable
-                    if ((Get-AiSopWorkflowSha256 $raw) -cne $ref -or $change.taskId -cne $task.taskId -or $change.feature -cne $task.feature -or $change.baselineRef -cne $task.baseline.inputsRef) { throw 'TASK_CHANGE_MANIFEST_CORRUPT' }
+                    if ((Get-AiSopWorkflowSha256 $raw) -cne $ref -or -not (Test-Json -Json $raw -SchemaFile (Join-Path $currentEngine 'schemas/task-change-manifest.schema.json') -ErrorAction Stop)) { throw 'TASK_CHANGE_MANIFEST_CORRUPT' }
+                    $parsed=ConvertFrom-AiSopWorkflowJson $raw -AsHashtable
+                    $paths=[Collections.Generic.HashSet[string]]::new([StringComparer]::Ordinal)
+                    foreach ($entryChange in $parsed.changes) {
+                        Resolve-AiSopWorkspaceChild $WorkspacePath $entryChange.path | Out-Null
+                        if (-not $paths.Add($entryChange.path) -or $entryChange.before -ceq $entryChange.after) { throw 'TASK_CHANGE_MANIFEST_CORRUPT: duplicate path or unchanged entry' }
+                    }
+                    $change=$parsed
                     $artifact.status='VALID'
-                } catch { $artifact.status=if ($artifact.status -eq 'MISSING') { 'MISSING' } else { 'INVALID' }; $artifact.diagnostics+=@($_.Exception.Message) }
+                } catch { $artifact.status=if ($artifact.status -eq 'MISSING') { 'MISSING' } else { 'INVALID' }; $artifact.diagnostics=@($_.Exception.Message) }
+                if ($change -and ($change.taskId -cne $task.taskId -or $change.feature -cne $task.feature -or
+                    $change.baselineRef -cne $task.baseline.inputsRef -or $change.baselineInputDigest -cne $task.baseline.inputDigest)) {
+                    $item.diagnostics+=@("TASK_CHANGE_MANIFEST_BINDING_MISMATCH: impactReview references $ref; file is valid, task/feature/baseline binding does not match")
+                }
             }
             if ($active) {
                 if ($task.startInputs.status -eq 'CAPTURED' -and $targetAlgorithm -and $task.tier -ne 'T3') {
@@ -176,7 +202,7 @@ function Get-AiSopHandoffPreflight {
                         try {
                             $snapshot=Read-AiSopVerificationInputs $record $WorkspacePath $context
                             if ($snapshot.algorithm -cne $targetAlgorithm -or [string]$snapshot.policyDigest -cne [string]$policy.digest) { $item.diagnostics+=@("EVIDENCE_POLICY_MISMATCH: $($record.kind)/$($record.batch) will require verification under the target engine/input policy") }
-                        } catch { } # The artifact above already records missing/corrupt manifests.
+                        } catch { } # File errors and per-record binding errors were reported above.
                     }
                 }
                 try {
@@ -204,7 +230,10 @@ function Get-AiSopHandoffPreflight {
     foreach ($journal in @(Get-ChildItem -LiteralPath $txRoot -Filter '*.json' -File -ErrorAction SilentlyContinue)) {
         $issues.Add(@{code='LOCAL_TRANSACTION_PENDING';detail="$($journal.FullName): resolve transaction recovery on the original workspace before handoff or upgrade"})
     }
-    foreach ($item in $tasks) { foreach ($diagnostic in $item.diagnostics) { $issues.Add(@{code='TASK_ATTENTION';detail="$($item.feature)/$($item.taskId): $diagnostic"}) } }
+    foreach ($item in $tasks) {
+        $item.diagnostics=@($item.diagnostics | Select-Object -Unique)
+        foreach ($diagnostic in $item.diagnostics) { $issues.Add(@{code='TASK_ATTENTION';detail="$($item.feature)/$($item.taskId): $diagnostic"}) }
+    }
     foreach ($artifact in $artifacts.Values) {
         if ($artifact.status -in @('MISSING','INVALID')) { $issues.Add(@{code='ARTIFACT_UNAVAILABLE';detail="$($artifact.path): $($artifact.status) $($artifact.diagnostics -join '; ')"}) }
         if ($artifact.tracking -ne 'TRACKED' -or $artifact.dirty) { $issues.Add(@{code='SYNC_REQUIRED';detail="$($artifact.path): $($artifact.tracking) dirty=$($artifact.dirty); sync using its owning repository or an explicit file transfer"}) }

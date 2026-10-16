@@ -581,6 +581,22 @@
         ]
       }
     },
+    "startImpact": {
+      "description": "Optional immutable 04 snapshot at Start. Absent on older tasks; never backfilled on Resume.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["status"],
+      "properties": {
+        "status": { "enum": ["ABSENT", "CAPTURED", "UNAVAILABLE"] },
+        "artifactHash": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+        "reason": { "type": "string", "minLength": 1 }
+      },
+      "oneOf": [
+        { "properties": { "status": { "const": "ABSENT" } }, "not": { "anyOf": [{ "required": ["artifactHash"] }, { "required": ["reason"] }] } },
+        { "properties": { "status": { "const": "CAPTURED" } }, "required": ["artifactHash"], "not": { "required": ["reason"] } },
+        { "properties": { "status": { "const": "UNAVAILABLE" } }, "required": ["reason"], "not": { "required": ["artifactHash"] } }
+      ]
+    },
     "startInputs": {
       "description": "Immutable origin recorded in the task creation transaction, never supplied by Run or SetBaseline.",
       "type": "object",

@@ -20,6 +20,9 @@ function Initialize-AiSopTaskStart {
     param($Task, [string]$WorkspacePath, [string]$TransactionId, [switch]$NewStart, [switch]$CaptureBaseline)
     $Task['baseline']=New-AiSopTaskBaseline $WorkspacePath
     if (-not $NewStart) { $Task.baseline.source='ADOPTED'; return }
+    # Capture only this small contract, independently of the source-scan budget.
+    # Resume/adoption must never manufacture a pre-edit contract snapshot.
+    $Task['startImpact']=Get-AiSopTaskImpactSnapshot $Task $WorkspacePath
     $full=$Task.tier -eq 'T3' -or $CaptureBaseline
     $origin=@{
         status='UNAVAILABLE'; taskId=$Task.taskId; feature=$Task.feature; createdAt=$Task.createdAt
@@ -39,6 +42,40 @@ function Initialize-AiSopTaskStart {
     if ($Task.tier -eq 'T3') {
         $Task.baseline.inputsRef=$origin.inputsRef; $Task.baseline.inputDigest=$origin.inputDigest
     }
+}
+
+function Get-AiSopTaskImpactSnapshot {
+    param($Task, [string]$WorkspacePath)
+    try {
+        $path=Resolve-AiSopWorkspaceChild $WorkspacePath ".ai-workspace/specs/features/$($Task.feature)/04_change_impact.json"
+        if (-not (Test-Path -LiteralPath $path)) { return @{status='ABSENT'} }
+        return @{status='CAPTURED';artifactHash=(Get-FileHash -LiteralPath $path -Algorithm SHA256 -ErrorAction Stop).Hash.ToLowerInvariant()}
+    } catch { return @{status='UNAVAILABLE';reason=$_.Exception.Message} }
+}
+
+function Get-AiSopTaskImpactDisposition {
+    param($Task, [string]$WorkspacePath)
+    $current=Get-AiSopTaskImpactSnapshot $Task $WorkspacePath
+    if ($current.status -eq 'UNAVAILABLE') { throw "TASK_IMPACT_UNAVAILABLE: $($current.reason)" }
+    if ($current.status -eq 'ABSENT') {
+        if ($Task.impactReview -or $Task.startImpact.status -eq 'CAPTURED') {
+            throw 'TASK_IMPACT_MISSING: a recorded or reviewed 04_change_impact.json was removed; restore and review the task analysis'
+        }
+        return 'ABSENT'
+    }
+    $path=Resolve-AiSopWorkspaceChild $WorkspacePath ".ai-workspace/specs/features/$($Task.feature)/04_change_impact.json"
+    $impact=ConvertFrom-AiSopWorkflowJson ([IO.File]::ReadAllText($path)) -AsHashtable
+    if ($impact -isnot [Collections.IDictionary]) { throw 'TASK_IMPACT_INVALID: expected an object' }
+    if ($impact.taskId -ceq $Task.taskId) { return 'CURRENT' }
+    if ($Task.impactReview) {
+        throw 'TASK_IMPACT_IDENTITY_MISMATCH: this task already reviewed 04; restore its taskId and run ReviewImpact after reviewing the changes'
+    }
+    if (-not $Task.startImpact) { return 'LEGACY_UNKNOWN' }
+    if ($Task.startImpact.status -eq 'UNAVAILABLE') {
+        throw 'TASK_IMPACT_ORIGIN_UNAVAILABLE: the Start contract could not be read; review and bind the current 04 to this task instead of assuming it is historical'
+    }
+    if ($Task.startImpact.status -eq 'CAPTURED' -and $Task.startImpact.artifactHash -ceq $current.artifactHash) { return 'HISTORICAL' }
+    throw 'TASK_IMPACT_IDENTITY_MISMATCH: 04 was added or modified after Start; set its taskId to the current task and review it with ReviewImpact'
 }
 
 function Read-AiSopTaskStartInputs {
@@ -176,6 +213,7 @@ function Get-AiSopTaskScopeProblems {
     $problems=[Collections.Generic.List[string]]::new()
     if ($Task.tier -ne 'T3') { return @() }
     try { Get-AiSopTaskChanges $Task $WorkspacePath $ValidationContext | Out-Null } catch { $problems.Add($_.Exception.Message) }
+    try { Get-AiSopTaskImpactDisposition $Task $WorkspacePath | Out-Null } catch { $problems.Add($_.Exception.Message) }
     if (-not $Task.caseScope -or -not @($Task.requiredCaseIds).Count) { $problems.Add('TASK_CASE_SCOPE_REQUIRED: SetCaseScope records the related cases and reason; no implicit whole-feature execution scope') }
     elseif ($SpecDirectory) {
         try {

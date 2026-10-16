@@ -1,0 +1,32 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schemaVersion", "taskId", "feature", "baselineRef", "baselineInputDigest", "changes"],
+  "properties": {
+    "schemaVersion": { "const": "1.0" },
+    "taskId": { "type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9_-]{0,79}$" },
+    "feature": { "type": "string", "minLength": 1 },
+    "baselineRef": { "$ref": "#/$defs/hash" },
+    "baselineInputDigest": { "$ref": "#/$defs/hash" },
+    "changes": {
+      "type": "array",
+      "items": {
+        "type": "object", "additionalProperties": false,
+        "required": ["path", "before", "after", "status"],
+        "properties": {
+          "path": { "type": "string", "minLength": 1 },
+          "before": { "anyOf": [{ "$ref": "#/$defs/hash" }, { "type": "null" }] },
+          "after": { "anyOf": [{ "$ref": "#/$defs/hash" }, { "type": "null" }] },
+          "status": { "enum": ["ADDED", "MODIFIED", "DELETED"] }
+        },
+        "oneOf": [
+          { "properties": { "status": { "const": "ADDED" }, "before": { "type": "null" }, "after": { "$ref": "#/$defs/hash" } } },
+          { "properties": { "status": { "const": "DELETED" }, "before": { "$ref": "#/$defs/hash" }, "after": { "type": "null" } } },
+          { "properties": { "status": { "const": "MODIFIED" }, "before": { "$ref": "#/$defs/hash" }, "after": { "$ref": "#/$defs/hash" } } }
+        ]
+      }
+    }
+  },
+  "$defs": { "hash": { "type": "string", "pattern": "^[0-9a-f]{64}$" } }
+}

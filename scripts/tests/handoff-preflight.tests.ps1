@@ -62,14 +62,40 @@ try {
     $config=$report.artifacts | Where-Object kind -eq 'PROJECT_CONTEXT'
     Assert ($config.repository.root -ceq (Resolve-PhysicalPathIdentity (Join-Path $workspace '.ai-workspace'))) 'Project context assigned to specs repository'
     Assert ($before -ceq (TreeHash)) 'Preflight wrote workspace, Git or registry files'
+    $one.verifications=@(@{kind='compile';batch='binding';command='fixture';exitCode=0;executedAt=[DateTimeOffset]::UtcNow.ToString('o');inputDigest=('f'*64);inputsRef=$ref;inputsStable=$true;caseIds=@();runId=('c'*32);outcome='PASSED';context=@{protocol='2'}})
+    SaveTask $one
+    $before=TreeHash
+    $binding=Get-AiSopHandoffPreflight $workspace
+    $shared=@($binding.artifacts | Where-Object kind -eq 'INPUT_MANIFEST')[0]
+    Assert ($shared.status -eq 'VALID' -and $shared.diagnostics.Count -eq 0 -and $shared.requiredBy.Count -eq 2) 'One bad reference contaminated a shared valid manifest'
+    Assert ((@($binding.tasks | Where-Object taskId -eq 'one')[0].diagnostics -join ' ') -match 'INPUT_MANIFEST_DIGEST_MISMATCH: verifications\[0\] compile/binding') 'Binding error did not identify the exact task record'
+    Assert (@($binding.tasks | Where-Object taskId -eq 'two')[0].diagnostics.Count -eq 0) 'Bad reference blamed another task'
+    Assert ($before -ceq (TreeHash)) 'Binding diagnostics mutated the task or manifest'
+    $one.verifications=@(); SaveTask $one
+    # The file can be valid while its baseline binding to this task is wrong.
+    $change=@{schemaVersion='1.0';taskId='one';feature='Example';baselineRef=$ref;baselineInputDigest=('f'*64);changes=@()}
+    $changeRaw=ConvertTo-AiSopWorkflowCanonicalJson $change; $changeRef=Get-AiSopWorkflowSha256 $changeRaw
+    Put ".ai-workspace/specs/.artifacts/changes/$changeRef.json" $changeRaw
+    $one.impactReview=@{artifactHash=('a'*64);inputDigest=$snapshot.digest;reviewedAt=[DateTimeOffset]::UtcNow.ToString('o');changeSetDigest=$changeRef}; SaveTask $one
+    $changeBinding=Get-AiSopHandoffPreflight $workspace Example one
+    Assert (@($changeBinding.artifacts | Where-Object kind -eq 'CHANGE_MANIFEST')[0].status -eq 'VALID' -and ($changeBinding.tasks[0].diagnostics -join ' ') -match 'TASK_CHANGE_MANIFEST_BINDING_MISMATCH') 'Change baseline mismatch was missed or blamed on valid file content'
+    $change.changes=@('not-a-change-object')
+    $changeRaw=ConvertTo-AiSopWorkflowCanonicalJson $change; $changeRef=Get-AiSopWorkflowSha256 $changeRaw
+    Put ".ai-workspace/specs/.artifacts/changes/$changeRef.json" $changeRaw
+    $one.impactReview.changeSetDigest=$changeRef; SaveTask $one
+    $badShape=Get-AiSopHandoffPreflight $workspace Example one
+    Assert (@($badShape.artifacts | Where-Object kind -eq 'CHANGE_MANIFEST')[0].status -eq 'INVALID') 'Valid content hash hid invalid change array structure'
+    $one.Remove('impactReview'); SaveTask $one
     $manifestPath=Get-AiSopInputManifestPath $workspace $ref
     $manifestRaw=[IO.File]::ReadAllText($manifestPath)
     [IO.File]::Delete($manifestPath)
     $missing=Get-AiSopHandoffPreflight $workspace Example one
     Assert (@($missing.artifacts | Where-Object status -eq 'MISSING').Count -eq 1 -and ($missing.issues.detail -join ' ') -match 'INPUT_MANIFEST_MISSING') 'Missing reference not inventoried'
+    Assert (@($missing.artifacts | Where-Object kind -eq 'INPUT_MANIFEST')[0].diagnostics.Count -eq 1) 'Shared start/baseline reference repeated the same missing-file error'
     [IO.File]::WriteAllText($manifestPath,'{}')
     $corrupt=Get-AiSopHandoffPreflight $workspace Example one
     Assert (@($corrupt.artifacts | Where-Object status -eq 'INVALID').Count -eq 1) 'Corrupt reference was accepted'
+    Assert (@($corrupt.artifacts | Where-Object kind -eq 'INPUT_MANIFEST')[0].diagnostics.Count -eq 1) 'Corrupt file diagnostic was repeated for every reference'
     [IO.File]::WriteAllText($manifestPath,$manifestRaw)
     $candidate=Join-Path $root 'candidate'
     [IO.Directory]::CreateDirectory($candidate) | Out-Null
@@ -82,6 +108,7 @@ try {
     Assert (($upgrade.issues.detail -join ' ') -match 'TARGET_BASELINE_INCOMPATIBLE') 'Target input-algorithm incompatibility missed'
     $history=Get-AiSopHandoffPreflight $workspace Example done $candidate
     Assert (-not (($history.issues.detail -join ' ') -match 'TARGET_BASELINE_INCOMPATIBLE')) 'Terminal task was revalidated against target current-input policy'
+    Assert ($history.tasks[0].localState.owner -eq 'NOT_APPLICABLE' -and $history.tasks[0].localState.session -eq 'NOT_APPLICABLE') 'Historical ownership printed as an unexplained empty field'
     $unknown=Get-AiSopHandoffPreflight $workspace Example one (Join-Path $root 'missing-engine')
     Assert (@($unknown.issues | Where-Object code -eq 'ENGINE_COMPATIBILITY_UNKNOWN').Count -eq 1) 'Unknown target engine presented as compatible'
     $old=ConvertFrom-AiSopWorkflowJson (ConvertTo-AiSopWorkflowCanonicalJson $one) -AsHashtable
@@ -110,6 +137,7 @@ try {
     Put '.ai-workspace/specs/features/Example/tasks/damaged/task.json' '{broken'
     $damaged=Get-AiSopHandoffPreflight $workspace Example
     Assert (@($damaged.tasks | Where-Object status -eq 'UNAVAILABLE').Count -eq 1 -and @($damaged.tasks | Where-Object taskId -eq 'one').Count -eq 1) 'Damaged task hid other tasks'
+    Assert (@($damaged.tasks | Where-Object taskId -eq 'damaged')[0].localState.owner -eq 'NOT_CHECKED') 'Unreadable task claimed local ownership was checked'
     Put '.ai-workspace/specs/.gitignore' '.artifacts/'
     & git -C (Join-Path $workspace '.ai-workspace/specs') rm --cached --quiet -- ".artifacts/inputs/$ref.json"
     $ignored=Get-AiSopHandoffPreflight $workspace Other two

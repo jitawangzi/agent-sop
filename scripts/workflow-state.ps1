@@ -3190,16 +3190,23 @@ function Get-CoveragePlaceholderWarnings {
     # and Errors (blocking, P0/P1 priority TCs with placeholders during VERIFY phase).
     param(
         [string]$CoveragePath,
-        [string]$Phase = "VERIFY"
+        [string]$Phase = "VERIFY",
+        [string]$TaskId = $null
     )
     $warnings = [System.Collections.Generic.List[string]]::new()
     $errors = [System.Collections.Generic.List[string]]::new()
     $coverageSchema = Join-Path $SchemaRoot "test-coverage.schema.json"
     $coverage = Read-JsonObject -FilePath $CoveragePath -SchemaPath $coverageSchema
     $isPlanPhase = ($Phase -ieq "PLAN")
+    $scope = @{ mode='FEATURE'; totalCases=@($coverage.cases).Count; checkedCases=@($coverage.cases).Count }
     if ($TaskId -and -not $isPlanPhase) {
         $scopeTask=Read-AiSopTask (Split-Path -Parent $CoveragePath) $TaskId
         $coverage.cases=@($coverage.cases | Where-Object { $_.id -cin $scopeTask.requiredCaseIds })
+        $scope.mode='TASK'; $scope.checkedCases=$coverage.cases.Count
+        if (-not @($scopeTask.requiredCaseIds).Count) {
+            $scope.mode='UNSELECTED'
+            $warnings.Add('COVERAGE_SCOPE_NOT_SELECTED: no task cases selected; contract validation does not establish placeholder/carrier readiness. T1/T2 do not require T3 case-scope registration.')
+        }
     }
 
     foreach ($case in $coverage.cases) {
@@ -3637,7 +3644,7 @@ function Get-CoveragePlaceholderWarnings {
             }
         }
     }
-    return [pscustomobject]@{ Warnings = $warnings; Errors = $errors }
+    return [pscustomobject]@{ Warnings = $warnings; Errors = $errors; Scope = $scope }
 }
 
 function Resolve-LintSpecDirectory {
@@ -3923,7 +3930,8 @@ function Test-CoverageSkeletonCase {
 function Invoke-SpecLint {
     param(
         [string]$SpecDir,
-        [string]$LintPhase = "PLAN"
+        [string]$LintPhase = "PLAN",
+        [string]$TaskId = $null
     )
     $failures = [System.Collections.Generic.List[string]]::new()
     $missing = [System.Collections.Generic.List[string]]::new()
@@ -3955,7 +3963,7 @@ function Invoke-SpecLint {
         } catch {
             [void]$failures.Add("coverage contract: $($_.Exception.Message)")
         }
-        $ph = Get-CoveragePlaceholderWarnings -CoveragePath $covPath -Phase $LintPhase
+        $ph = Get-CoveragePlaceholderWarnings -CoveragePath $covPath -Phase $LintPhase -TaskId $TaskId
         foreach ($e in @($ph.Errors)) { [void]$failures.Add([string]$e) }
         foreach ($w in @($ph.Warnings)) { [void]$warnings.Add([string]$w) }
         try {
@@ -5129,17 +5137,18 @@ switch ($Operation) {
             }
         }
         if ([string]::IsNullOrWhiteSpace($effectivePhase)) { $effectivePhase = "VERIFY" }
-        $placeholderResult = Get-CoveragePlaceholderWarnings -CoveragePath $Path -Phase $effectivePhase
+        $placeholderResult = Get-CoveragePlaceholderWarnings -CoveragePath $Path -Phase $effectivePhase -TaskId $TaskId
+        Write-Output "COVERAGE_SCOPE: mode=$($placeholderResult.Scope.mode) checkedCases=$($placeholderResult.Scope.checkedCases) totalCases=$($placeholderResult.Scope.totalCases)"
         if ($placeholderResult.Errors.Count -gt 0) {
             foreach ($e in $placeholderResult.Errors) { Write-Output $e }
-            Write-Output "INVALID_PLACEHOLDERS"
-            Write-Output "DIAGNOSTIC: traceability/hash/id-cross-check passed, but P0/P1 TCs above still carry SyncCoverage placeholder assertions (expected=placeholder/operator=N_A/target=see plan). High-priority cases must be refined with real assertions before delivery. Refine and re-run."
+            Write-Output "INVALID_COVERAGE"
+            Write-Output "DIAGNOSTIC: contract checks passed; resolve the reported task scope, execution evidence or placeholder/carrier errors before treating the selected cases as ready."
             throw "VALIDATE_TEST_COVERAGE_FAILED: $($placeholderResult.Errors -join '; ')"
         } else {
-            Write-Output "VALID"
+            Write-Output $(if ($placeholderResult.Scope.mode -eq 'UNSELECTED') { 'VALID_CONTRACT_ONLY' } else { 'VALID' })
             if ($placeholderResult.Warnings.Count -gt 0) {
                 foreach ($w in $placeholderResult.Warnings) { Write-Output $w }
-                Write-Output "DIAGNOSTIC: VALID means traceability/hash/id-cross-check passed; WARN above means some lower-priority assertions are still SyncCoverage placeholders and should be refined before delivery — T3 done-condition #2 is not truly met while placeholders remain."
+                Write-Output "DIAGNOSTIC: validation applies only to the reported scope and phase; read the warnings before interpreting coverage readiness."
             }
         }
     }
@@ -5522,7 +5531,7 @@ switch ($Operation) {
             exit 1
         }
         $lintPhase = if ([string]::IsNullOrWhiteSpace($Phase)) { "PLAN" } else { $Phase }
-        $lint = Invoke-SpecLint -SpecDir $specDir -LintPhase $lintPhase
+        $lint = Invoke-SpecLint -SpecDir $specDir -LintPhase $lintPhase -TaskId $TaskId
         Write-Output "spec=$specDir phase=$lintPhase"
         foreach ($f in @($lint.Failures)) { Write-Output "FAIL: $f" }
         foreach ($m in @($lint.Missing)) { Write-Output "MISSING: $m" }
@@ -5736,7 +5745,8 @@ switch ($Operation) {
             if ($covOk) {
                 try {
                     Validate-TestCoverageState -CoveragePath $covPath -Runtime $null | Out-Null
-                    $phResult = Get-CoveragePlaceholderWarnings -CoveragePath $covPath -Phase "VERIFY"
+                    $phResult = Get-CoveragePlaceholderWarnings -CoveragePath $covPath -Phase "VERIFY" -TaskId $TaskId
+                    $checks.Add("[i] Coverage scope=$($phResult.Scope.mode); checked=$($phResult.Scope.checkedCases)/$($phResult.Scope.totalCases)")
                     if ($phResult.Errors.Count -gt 0) {
                         $failures.Add("coverage has $($phResult.Errors.Count) placeholder/carrier error(s): $($phResult.Errors -join '; ')")
                         $checks.Add("[X] 覆盖校验无占位/carrier错误($($phResult.Errors.Count) error: $($phResult.Errors -join '; '))")
@@ -5753,18 +5763,23 @@ switch ($Operation) {
             # Change impact: required for TYPE_EXTENSION/PUBLIC_ROUTING, or when risk cannot be assessed.
             $impactPath = Join-Path $specDir "04_change_impact.json"
             $impactOk = Test-Path -LiteralPath $impactPath -PathType Leaf
-            if ($impactOk -and $currentTask) {
+            $impactProblem = $null
+            if ($currentTask) {
                 try {
-                    $existingImpact=ConvertFrom-AiSopWorkflowJson ([IO.File]::ReadAllText($impactPath)) -AsHashtable
-                    if ($existingImpact.taskId -cne $currentTask.taskId) {
+                    $disposition=Get-AiSopTaskImpactDisposition $currentTask $wsRoot
+                    if ($disposition -in @('HISTORICAL','LEGACY_UNKNOWN')) {
                         $impactOk=$false
-                        $checks.Add('[i] Historical impact analysis belongs to another task; current task risk determines whether a new analysis is required')
+                        $checks.Add('[i] Historical impact analysis belongs to another task or predates task identity; current task risk determines whether a new analysis is required')
+                        if ($disposition -eq 'LEGACY_UNKNOWN') { $checks.Add('[!] TASK_IMPACT_ORIGIN_UNKNOWN: legacy task has no Start snapshot for 04; historical provenance was not verified') }
                     }
-                } catch { } # Malformed current artifacts retain the normal diagnostic.
+                } catch { $impactProblem=$_.Exception.Message }
             }
             $extRisk = Get-SemanticRiskAssessment -WorkspaceRoot $wsRoot -SpecDir $specDir -TaskId $TaskId
             $impactRequired = Test-ChangeImpactRequired -TriggersHit $extRisk.TriggersHit
-            if (-not $impactOk) {
+            if ($impactProblem) {
+                $failures.Add($impactProblem)
+                $checks.Add("[X] 行为影响分析归属无法确认: $impactProblem")
+            } elseif (-not $impactOk) {
                 if ($impactRequired) {
                     $triggerList = (@($extRisk.TriggersHit) | Where-Object { -not [string]::IsNullOrWhiteSpace($_) }) -join ", "
                     if (Test-IsTypeExtensionRisk -TriggersHit $extRisk.TriggersHit) {
@@ -5789,6 +5804,7 @@ switch ($Operation) {
                     # Cross-validation with 05_test_coverage.json
                     if ($covOk) {
                         $covObj = Read-JsonObject -FilePath $covPath -SchemaPath (Join-Path $SchemaRoot "test-coverage.schema.json")
+                        $allCoverageCases=@($covObj.cases)
                         if ($currentTask) { $covObj.cases=@($covObj.cases | Where-Object { $_.id -cin $currentTask.requiredCaseIds }) }
                         $coveredInvariants = [System.Collections.Generic.HashSet[string]]::new([System.StringComparer]::OrdinalIgnoreCase)
                         $declaredCases = [System.Collections.Generic.HashSet[string]]::new([System.StringComparer]::OrdinalIgnoreCase)
@@ -5804,14 +5820,18 @@ switch ($Operation) {
                             foreach ($inv in $impact.invariants) {
                                 $invId = [string]$inv.invariantId
                                 if (-not $coveredInvariants.Contains($invId)) {
-                                    $failures.Add("Invariant '$invId' in 04_change_impact.json is not covered by any test case in 05_test_coverage.json")
+                                    if ($currentTask -and @($allCoverageCases | Where-Object { $invId -in $_.invariantIds }).Count) {
+                                        $failures.Add("Invariant '$invId' has cases in 05_test_coverage.json but none are in this task's SetCaseScope")
+                                    } else { $failures.Add("Invariant '$invId' in 04_change_impact.json is not covered by any test case in 05_test_coverage.json") }
                                 }
                             }
                         }
                         if ($impact.requiredRegressionCases) {
                             foreach ($rc in $impact.requiredRegressionCases) {
                                 if (-not $declaredCases.Contains([string]$rc)) {
-                                    $failures.Add("Required regression case '$rc' in 04_change_impact.json is missing from 05_test_coverage.json")
+                                    if ($currentTask -and $rc -in $allCoverageCases.id) {
+                                        $failures.Add("Required regression case '$rc' exists in 05_test_coverage.json but is missing from this task's SetCaseScope")
+                                    } else { $failures.Add("Required regression case '$rc' in 04_change_impact.json is missing from 05_test_coverage.json") }
                                 }
                             }
                         }

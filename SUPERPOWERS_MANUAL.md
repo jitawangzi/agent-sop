@@ -66,7 +66,11 @@ Start 成功后立即输出 `TASK_START_INPUTS`：CAPTURED 表示起点已保存
 
 T3 确需 04 影响分析时，在 `.ai-workspace/specs/features/<Feature>/04_change_impact.json` 填入当前 `taskId`、`baseline`（任务的 revision）、`baselineInputDigest`、`changedFiles`（完整差异路径）及 `changeSetDigest`，并实际更新行为分析。ReviewImpact 校验绑定并保存 `.ai-workspace/specs/.artifacts/changes/<sha256>.json`；后续 Verify 再检查文件、输入和差异清单。该清单与 inputs 清单一起在 specs 仓库同步。不要用旧功能基线计算出的 diff 哈希填入任务模式。语义扫描按任务差异文件筛选；同一文件在启动前已有改动时仍保守纳入 VCS diff，无法读取差异时要求影响分析，不静默跳过。
 
+新任务 Start 同时记录 `startImpact`：04 不存在、已保存摘要或读取失败。T3 校验允许忽略启动前已有且未修改的历史 04（包括没有 taskId 的旧文件）；本任务新增、修改的 04 必须关联当前 taskId，已记录或审核的 04 删除后也不能静默跳过。Resume、升档不重建这个起点。旧任务缺少 startImpact 时保留兼容并明确提示来源未核实，不声称已证明文件未变；已有 impactReview 的归属仍必须匹配。
+
 SetCaseScope 记录本任务必测用例和原因，保留变更历史。ID 必须存在于覆盖矩阵，且包含当前 04 声明的 requiredRegressionCases；需求、设计或测试定义修改后需重新核对登记。T3 验证这些用例的载体、断言及执行结果，不把功能内其他尚未开发用例强制加入本次执行；功能规格批准、哈希及整体覆盖定义仍检查。不能通过缩小范围掩盖已发生的失败批次。
+
+ValidateTestCoverage 输出 `COVERAGE_SCOPE`，区分功能范围、本任务范围和未选择范围。T1/T2 未登记用例范围时可以完成本档验证，但覆盖命令只输出 `VALID_CONTRACT_ONLY` 和未检查载体/断言的提示；T3 空范围仍失败。用例在矩阵中存在但不在本任务 SetCaseScope 中时，诊断会明确指出范围遗漏。
 
 显式 ChangeTier 升到 T3 时自动复用本任务的 startInputs，保留 T1/T2 阶段已有改动；没有可信起点则拒绝升级并保留原档位。`SetBaseline -BaselineInputsRef <sha256> -Reason ...` 也只接受本任务创建时登记的同一引用，不能凭理由导入任意 manifest，更不能采用修改后 Run 的清单。已设定的基线不可重置。
 
@@ -174,6 +178,8 @@ T1 只需真实编译/基础检查；T2 还需相关测试和 RecordSync 记录�
 `Preflight` 列出任务目标、检查点、非阻塞待办、需同步的 task.json、功能规格、inputs/changes 引用清单和项目验证配置；按实际所属 Git 仓库显示 TRACKED/UNTRACKED/IGNORED 及本地改动，适用于 `.ai-workspace` 与 `specs` 分别独立 Git 的布局。项目 context 和功能目录整体也列为同步范围，以覆盖自定义引用与附件。TRACKED 不代表已推送或目标机器已收到；代码、共享依赖和规格需对应同一实际版本。
 
 预检读取清单并校验哈希，同时检查本机归属/会话、未完成运行、损坏 pending 结果和未决事务。它不读取业务源码内容、不编译、不抢锁、不续期、不执行事务恢复，也不修改完成状态。运行中的命令或 pending 结果应先在原工作区处理；本机注册表、事务日志及 `.runtime` 不作为可移植归属复制，接收方仍通过 Resume/Recover 获取本机执行权。
+
+Preflight 将清单文件损坏与任务引用不匹配分开：文件有效但某条 inputDigest 或差异基线绑定不符时，诊断归属具体任务/记录，不把共享文件标为损坏。历史任务的本地归属显示 NOT_APPLICABLE，损坏任务显示 NOT_CHECKED。InspectRecovery 和 Preflight 都核对任务、Owner、工作区及会话绑定；OTHER_TASK 代表本地 Owner 属于其他任务，不读取它的会话作为当前任务的有效身份。
 
 省略 `TargetEnginePath` 只检查运行此命令的引擎；提供候选引擎目录时，读取其 `config/runtime-compatibility.json` 和任务 Schema，不执行候选脚本。目标缺少兼容性声明显示 UNKNOWN，不能推断安全；声明及 Schema 通过也不是完整发布认证。活动 T3 的基线算法或配置口径不兼容时，会提示在原引擎收尾。T1/T2 起点不兼容时，提示后续升级/豁免的限制，正常档位验证仍可执行；历史 DONE/CANCELLED 不重新按当前输入判断完成与否。
 

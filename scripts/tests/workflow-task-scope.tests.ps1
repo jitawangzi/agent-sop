@@ -37,6 +37,7 @@ try {
     Task Start one @{Tier='T3';Objective='Independent scoped change'} | Out-Null
     $task=Read-AiSopTask $spec one
     Assert ($task.baseline.revision -ceq $originalRevision -and $task.baseline.inputsRef) 'T3 start baseline missing'
+    Assert ($task.startImpact.status -eq 'ABSENT') 'Start did not record absence of an impact contract'
     Assert ((Task Changes one | ConvertFrom-Json).manifest.changes.Count -eq 0) 'Inherited dirt attributed to new task'
     Put 'src/current.txt' 'after'; Put 'shared/added.txt' 'new shared dependency'
     [IO.File]::Delete((Join-Path $workspace 'src/deleted.txt'))
@@ -56,6 +57,13 @@ try {
     Fails { Task ReviewImpact } 'TASK_IMPACT_FILES_MISMATCH'
     $impact.changedFiles=@($changes.manifest.changes.path); Impact
     Task ReviewImpact | Out-Null
+    $reviewed=Read-AiSopTask $spec one
+    $reviewedRaw=[IO.File]::ReadAllText($impactPath)
+    $impact.Remove('taskId'); Impact
+    Fails { Get-AiSopTaskImpactDisposition $reviewed $workspace } 'TASK_IMPACT_IDENTITY_MISMATCH'
+    [IO.File]::Delete($impactPath)
+    Fails { Get-AiSopTaskImpactDisposition $reviewed $workspace } 'TASK_IMPACT_MISSING'
+    [IO.File]::WriteAllText($impactPath,$reviewedRaw); $impact.taskId='one'
     $stateEntry=Join-Path $scripts 'workflow-state.ps1'
     $risk=& $stateEntry -Operation AssessRisk -Path $spec -TaskId one | ConvertFrom-Json
     Assert ($risk.changeSetDigest -ceq $actualDigest -and $risk.baseline -ceq $task.baseline.revision) 'Risk assessment mixed task/feature digests'
@@ -90,9 +98,30 @@ try {
     Task SetCaseScope one @{CaseIds=@('TC-CURRENT');Reason='This task only modifies current behavior'} | Out-Null
     Task Run one @{Kind='compile';Executable='pwsh';Arguments=@('-NoProfile','-Command','exit 0')} | Out-Null
     Task Run one @{Kind='test';Executable='pwsh';Arguments=@('-NoProfile','-File','tests/check.ps1');CaseIds=@('TC-CURRENT')} | Out-Null
-    & $stateEntry -Operation ValidateTestCoverage -Path (Join-Path $spec '05_test_coverage.json') -Phase VERIFY -TaskId one | Out-Null
+    $coverageOutput=& $stateEntry -Operation ValidateTestCoverage -Path (Join-Path $spec '05_test_coverage.json') -Phase VERIFY -TaskId one | Out-String
     Assert ($LASTEXITCODE -eq 0) 'Unrelated planned case blocked task coverage'
+    Assert ($coverageOutput -match 'mode=TASK checkedCases=1 totalCases=2') 'Coverage did not explain the selected task scope'
     Assert ((Read-AiSopTask $spec one).requiredCaseIds.Count -eq 1) 'Coverage validation widened task execution scope'
+    & {
+        $tokens=$null; $parseErrors=$null
+        $ast=[Management.Automation.Language.Parser]::ParseFile($stateEntry,[ref]$tokens,[ref]$parseErrors)
+        foreach ($definition in $ast.FindAll({param($node) $node -is [Management.Automation.Language.FunctionDefinitionAst]},$true)) { Invoke-Expression $definition.Extent.Text }
+        $SchemaRoot=Join-Path (Split-Path -Parent $scripts) 'schemas'
+        $coveragePath=Join-Path $spec '05_test_coverage.json'
+        $TaskId='missing-ambient-task'
+        $plan=Get-CoveragePlaceholderWarnings -CoveragePath $coveragePath -Phase PLAN
+        Assert ($plan.Scope.mode -eq 'FEATURE' -and $plan.Scope.checkedCases -eq 2) 'Coverage helper inherited an ambient TaskId'
+        $selected=Get-CoveragePlaceholderWarnings -CoveragePath $coveragePath -Phase VERIFY -TaskId one
+        Assert ($selected.Scope.checkedCases -eq 1 -and $selected.Errors.Count -eq 0) 'Explicit coverage scope was not used'
+        $probe=Read-AiSopTask $spec one
+        $probe.requiredCaseIds=@(); $probe.Remove('caseScope')
+        function Read-AiSopTask { param($SpecDirectory,$TaskId) return $probe }
+        $empty=Get-CoveragePlaceholderWarnings -CoveragePath $coveragePath -Phase VERIFY -TaskId one
+        Assert ($empty.Errors -match 'TASK_CASE_SCOPE_REQUIRED') 'Empty T3 scope passed coverage verification'
+        $probe.tier='T2'; $probe.syncReview=@{documentation='UNCHANGED';tests='UNCHANGED';summary='Fixture'}
+        $light=Get-CoveragePlaceholderWarnings -CoveragePath $coveragePath -Phase VERIFY -TaskId one
+        Assert ($light.Scope.mode -eq 'UNSELECTED' -and $light.Scope.checkedCases -eq 0 -and $light.Errors.Count -eq 0 -and $light.Warnings -match 'COVERAGE_SCOPE_NOT_SELECTED') 'Light task silently claimed full coverage or inherited T3 scope requirements'
+    }
     [IO.File]::AppendAllText((Join-Path $spec '05_test_plan.md'),"`nClarify the current case.")
     Assert ((Get-AiSopTaskScopeProblems (Read-AiSopTask $spec one) $workspace $spec) -match 'TASK_CASE_SCOPE_STALE') 'Spec changes did not stale scope'
     Fails { Task SetBaseline one @{BaselineInputsRef=$task.baseline.inputsRef;Reason='Cannot erase delta'} } 'TASK_BASELINE_IMMUTABLE'
@@ -103,6 +132,7 @@ try {
     [IO.File]::AppendAllText((Join-Path $spec '06_design_contract.md'),"`nImplementation: src/ExampleRouter.java")
     Task Start two @{Tier='T3';Objective='Next independent task'} | Out-Null
     $second=Read-AiSopTask $spec two
+    Assert ($second.startImpact.status -eq 'CAPTURED' -and (Get-AiSopTaskImpactDisposition $second $workspace) -eq 'HISTORICAL') 'Unchanged prior task impact burdened independent work'
     Assert ($second.baseline.revision -cne $task.baseline.revision -and $second.baseline.inputsRef -cne $task.baseline.inputsRef) 'Independent task inherited old baseline'
     Assert ((Task Changes two | ConvertFrom-Json).manifest.changes.Count -eq 0) 'New task includes preceding task changes'
     $emptyRisk=& $stateEntry -Operation AssessRisk -Path $spec -TaskId two | ConvertFrom-Json
@@ -125,15 +155,32 @@ try {
     $verifyOutput=[Collections.Generic.List[string]]::new()
     try { Task Verify two 2>&1 | ForEach-Object { $verifyOutput.Add([string]$_) } } catch { $verifyOutput.Add($_.Exception.Message) }
     Assert (($verifyOutput -join "`n") -match 'Historical impact analysis belongs to another task' -and ($verifyOutput -join "`n") -notmatch 'TASK_IMPACT_STALE|04_change_impact.json is mandatory') 'Independent task inherited prior impact obligation'
+    $oldImpactRaw=[IO.File]::ReadAllText($impactPath)
+    $impact.Remove('taskId'); $impact.changedSymbols=@('new edit during task two'); Impact
+    $editedOutput=[Collections.Generic.List[string]]::new()
+    try { Task Verify two 2>&1 | ForEach-Object { $editedOutput.Add([string]$_) } } catch { $editedOutput.Add($_.Exception.Message) }
+    Assert (($editedOutput -join "`n") -match 'TASK_IMPACT_IDENTITY_MISMATCH' -and ($editedOutput -join "`n") -notmatch 'Historical impact analysis') 'Edited unbound 04 was silently treated as historical'
+    $impact.taskId='another-task'; Impact
+    Fails { Get-AiSopTaskImpactDisposition $second $workspace } 'TASK_IMPACT_IDENTITY_MISMATCH'
+    $legacy=ConvertFrom-AiSopWorkflowJson (ConvertTo-AiSopWorkflowCanonicalJson $second) -AsHashtable
+    $legacy.Remove('startImpact')
+    Assert ((Get-AiSopTaskImpactDisposition $legacy $workspace) -eq 'LEGACY_UNKNOWN') 'Older task was migrated or falsely claimed a verified historical origin'
+    $legacy.startImpact=@{status='UNAVAILABLE';reason='fixture read error'}
+    Fails { Get-AiSopTaskImpactDisposition $legacy $workspace } 'TASK_IMPACT_ORIGIN_UNAVAILABLE'
+    [IO.File]::WriteAllText($impactPath,$oldImpactRaw)
     Assert (([IO.File]::ReadAllText($ownerPath) | ConvertFrom-Json).baseline -ceq $featureBaseline) 'Task start rewrote feature approval baseline'
     Task Cancel two | Out-Null
+    $legacyImpact=ConvertFrom-AiSopWorkflowJson $oldImpactRaw -AsHashtable; $legacyImpact.Remove('taskId')
+    [IO.File]::WriteAllText($impactPath,(ConvertTo-AiSopWorkflowCanonicalJson $legacyImpact))
     Task Start three @{Tier='T1';Objective='Quick task later explicitly upgraded'} | Out-Null
     $light=Read-AiSopTask $spec three
+    Assert ((Get-AiSopTaskImpactDisposition $light $workspace) -eq 'HISTORICAL') 'Unchanged legacy 04 without taskId blocked an independent task'
     Assert (-not $light.baseline.inputsRef -and $light.startInputs.mode -eq 'BOUNDED') 'T1 start requested unbounded full capture'
     Put 'src/current.txt' 'changed after light Start'
     $late=Get-AiSopInputSnapshot $workspace; $lateRef=Save-AiSopInputManifest $late $workspace
     Fails { Task SetBaseline three @{BaselineInputsRef=$lateRef;Reason='Post-change snapshot must not erase the delta'} } 'TASK_BASELINE_SOURCE_UNVERIFIED'
     Task ChangeTier three @{Tier='T3';Reason='User requests full scope';UserRequest='Use T3 now'} | Out-Null
+    Assert ((Read-AiSopTask $spec three).startImpact.artifactHash -ceq $light.startImpact.artifactHash) 'Tier change reset impact origin'
     Assert ((Read-AiSopTask $spec three).baseline.inputsRef -ceq $light.startInputs.inputsRef) 'Tier upgrade failed to reuse original Start snapshot'
     Assert ((Task Changes three | ConvertFrom-Json).manifest.changes.Count -eq 1) 'Tier upgrade erased changes made under T1'
     Fails { Task SetBaseline three @{BaselineInputsRef=$lateRef;Reason='Cannot replace original baseline'} } 'TASK_BASELINE_IMMUTABLE'

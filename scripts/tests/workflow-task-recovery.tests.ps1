@@ -36,6 +36,34 @@ try {
     $rootEntry=Join-Path $workspace 'ai-sop.ps1'
     Copy-Item -LiteralPath (Join-Path (Split-Path -Parent $scripts) 'distribution/templates/root/ai-sop.ps1') -Destination $rootEntry
     Task Start @{ Tier='T2'; Objective='Recovery and streaming integration' } | Out-Null
+    $ownerPath=Join-Path $env:AI_SOP_OWNER_REGISTRY 'example.json'
+    $ownerRaw=[IO.File]::ReadAllText($ownerPath)
+    $ownerRecord=ConvertFrom-AiSopWorkflowJson $ownerRaw -AsHashtable
+    $sessionPath=Join-Path $env:AI_SOP_SESSION_REGISTRY ($ownerRecord.sessionBinding.sessionKey+'.json')
+    $sessionRaw=[IO.File]::ReadAllText($sessionPath)
+    $inspection=Task InspectRecovery | ConvertFrom-Json
+    Assert (@($inspection.records | Where-Object { $_.kind -eq 'OWNER' -and $_.status -eq 'VALID' }).Count -eq 1 -and
+        @($inspection.records | Where-Object { $_.kind -eq 'SESSION' -and $_.status -eq 'VALID' }).Count -eq 1) 'Matching live authority was rejected'
+    try {
+        $ownerRecord.taskId='different-task'
+        [IO.File]::WriteAllText($ownerPath,(ConvertTo-AiSopWorkflowCanonicalJson $ownerRecord))
+        $before=[IO.File]::ReadAllText($ownerPath)
+        $inspection=Task InspectRecovery | ConvertFrom-Json
+        Assert (@($inspection.records | Where-Object { $_.kind -eq 'OWNER' -and $_.status -eq 'OTHER_TASK' }).Count -eq 1 -and
+            @($inspection.records | Where-Object kind -eq 'SESSION').Count -eq 0) 'Another task owner/session was attributed to the requested task'
+        Assert ($before -ceq [IO.File]::ReadAllText($ownerPath) -and $sessionRaw -ceq [IO.File]::ReadAllText($sessionPath)) 'Inspection changed mismatched authority'
+        [IO.File]::WriteAllText($ownerPath,$ownerRaw)
+        foreach ($field in @('boundOwnerId','boundFeature','sessionEpochId')) {
+            $sessionRecord=ConvertFrom-AiSopWorkflowJson $sessionRaw -AsHashtable
+            $sessionRecord[$field]='different-identity'
+            [IO.File]::WriteAllText($sessionPath,(ConvertTo-AiSopWorkflowCanonicalJson $sessionRecord))
+            $inspection=Task InspectRecovery | ConvertFrom-Json
+            Assert (@($inspection.records | Where-Object { $_.kind -eq 'SESSION' -and $_.status -in @('IDENTITY_MISMATCH','UNAVAILABLE') }).Count -eq 1) "Session $field mismatch was accepted"
+        }
+    } finally {
+        [IO.File]::WriteAllText($ownerPath,$ownerRaw)
+        [IO.File]::WriteAllText($sessionPath,$sessionRaw)
+    }
     Task RecordSync @{ Documentation='UNCHANGED'; Tests='UNCHANGED'; Summary='Recovery fixture uses existing command scenarios; no contract change.' } | Out-Null
     # A synchronized task record grants no execution ownership in another workspace.
     $remoteWorkspace=Join-Path $root 'receiver'

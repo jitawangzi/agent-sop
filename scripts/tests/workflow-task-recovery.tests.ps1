@@ -4,6 +4,7 @@ $scripts=Split-Path -Parent $PSScriptRoot
 $entry=Join-Path $scripts 'workflow-task.ps1'
 . (Join-Path $scripts 'task-context.ps1')
 . (Join-Path $scripts 'workflow-session.ps1')
+. (Join-Path $scripts 'handoff-preflight.ps1')
 $root=Join-Path ([IO.Path]::GetTempPath()) ('sop-task-recovery-' + [guid]::NewGuid().ToString('N'))
 $workspace=Join-Path $root 'workspace'
 $spec=Join-Path $workspace '.ai-workspace/specs/features/Example'
@@ -52,6 +53,20 @@ try {
         Assert (@($inspection.records | Where-Object { $_.kind -eq 'OWNER' -and $_.status -eq 'OTHER_TASK' }).Count -eq 1 -and
             @($inspection.records | Where-Object kind -eq 'SESSION').Count -eq 0) 'Another task owner/session was attributed to the requested task'
         Assert ($before -ceq [IO.File]::ReadAllText($ownerPath) -and $sessionRaw -ceq [IO.File]::ReadAllText($sessionPath)) 'Inspection changed mismatched authority'
+        # Inactive records are harmless history only within the same physical scope.
+        foreach ($field in @('workspacePath','specDirectory','feature')) {
+            $foreignOwner=ConvertFrom-AiSopWorkflowJson $ownerRaw -AsHashtable
+            $foreignOwner.taskId='different-task'; $foreignOwner.status='COMPLETE'
+            $foreignOwner[$field]=if ($field -eq 'feature') { 'Other' } else { $root }
+            [IO.File]::WriteAllText($ownerPath,(ConvertTo-AiSopWorkflowCanonicalJson $foreignOwner))
+            $inspection=Task InspectRecovery | ConvertFrom-Json
+            Assert ($inspection.ownerStatus -eq 'IDENTITY_MISMATCH' -and $inspection.guidanceSteps.code -contains 'INSPECT_AUTHORITY') "Inactive foreign $field was treated as local history"
+        }
+        $foreignOwner=ConvertFrom-AiSopWorkflowJson $ownerRaw -AsHashtable
+        $foreignOwner.ownerId='different-owner'; $foreignOwner.status='COMPLETE'
+        [IO.File]::WriteAllText($ownerPath,(ConvertTo-AiSopWorkflowCanonicalJson $foreignOwner))
+        $inspection=Task InspectRecovery | ConvertFrom-Json
+        Assert ($inspection.ownerStatus -eq 'IDENTITY_MISMATCH') 'Same-task owner identity mismatch was treated as history'
         [IO.File]::WriteAllText($ownerPath,$ownerRaw)
         foreach ($field in @('boundOwnerId','boundFeature','sessionEpochId')) {
             $sessionRecord=ConvertFrom-AiSopWorkflowJson $sessionRaw -AsHashtable
@@ -78,7 +93,12 @@ try {
         $status=Task Discover @{OutputFormat='JsonLines'} | ConvertFrom-Json
         Assert ($status.suggestedActionCode -ceq $inspection.suggestedActionCode) 'Discover and InspectRecovery disagree on missing baseline'
         Assert ($legacyRaw -ceq [IO.File]::ReadAllText($taskPath) -and $ownerRaw -ceq [IO.File]::ReadAllText($ownerPath) -and $sessionRaw -ceq [IO.File]::ReadAllText($sessionPath)) 'Recovery guidance changed authority'
-    } finally { [IO.File]::WriteAllText($taskPath,$taskRaw) }
+        $historyOwner=ConvertFrom-AiSopWorkflowJson $ownerRaw -AsHashtable
+        $historyOwner.taskId='completed-sibling'; $historyOwner.status='COMPLETE'
+        [IO.File]::WriteAllText($ownerPath,(ConvertTo-AiSopWorkflowCanonicalJson $historyOwner))
+        $inspection=Task InspectRecovery | ConvertFrom-Json
+        Assert ($inspection.ownerStatus -eq 'HISTORICAL_OTHER_TASK' -and $inspection.guidanceSteps.code -contains 'RESTORE_BASELINE' -and $inspection.guidanceSteps.code -notcontains 'OTHER_TASK_OWNER') 'Historical ownership hid the legacy baseline problem or became an active conflict'
+    } finally { [IO.File]::WriteAllText($taskPath,$taskRaw); [IO.File]::WriteAllText($ownerPath,$ownerRaw) }
     $steps=@(Get-AiSopRecoveryGuidance @{status='PAUSED'} @() RELEASED MISSING)
     Assert ($steps[0].code -eq 'RESUME_SESSION') 'Normal paused task unnecessarily requires Recover'
     Task RecordSync @{ Documentation='UNCHANGED'; Tests='UNCHANGED'; Summary='Recovery fixture uses existing command scenarios; no contract change.' } | Out-Null
@@ -130,6 +150,27 @@ try {
     Assert ($status.status -eq 'PAUSED' -and $discover.status -eq $status.status -and $status.ownerStatus -eq 'RELEASED') 'Discover/Status disagree'
     $rootStatus=& $rootEntry Status -Feature Example -TaskId recovery -OutputFormat JsonLines | ConvertFrom-Json
     Assert ($rootStatus.status -eq $status.status -and $rootStatus.ownerStatus -eq $status.ownerStatus) 'Root Status still shows legacy state'
+    # A paused task outlives independent siblings: active is a conflict; released
+    # and completed ownership is history and must not send the user to unlock it.
+    $sibling=@{WorkspacePath=$workspace;Feature='Example';TaskId='sibling';Agent='CODEX'}
+    & $entry -Operation Start @sibling -Tier T1 -Objective 'Independent source check' | Out-Null
+    $inspection=Task InspectRecovery | ConvertFrom-Json
+    Assert ($inspection.ownerStatus -eq 'OTHER_TASK' -and $inspection.guidanceSteps.code -contains 'OTHER_TASK_OWNER') 'Active sibling conflict was hidden'
+    & $entry -Operation Suspend @sibling | Out-Null
+    $inspection=Task InspectRecovery | ConvertFrom-Json
+    Assert ($inspection.ownerStatus -eq 'HISTORICAL_OTHER_TASK' -and $inspection.suggestedActionCode -eq 'RESUME_SESSION') 'Released sibling blocked paused task guidance'
+    & $entry -Operation Resume @sibling | Out-Null
+    & $entry -Operation Run @sibling -Kind compile -Executable pwsh -Arguments @('-NoProfile','-Command',"if ([IO.File]::ReadAllText('input.txt') -ne 'input') { exit 1 }") | Out-Null
+    & $entry -Operation Complete @sibling | Out-Null
+    Assert ((Read-AiSopTask $spec sibling).status -eq 'DONE') 'Sibling did not complete'
+    $historyRaw=[IO.File]::ReadAllText($ownerPath); $pausedRaw=[IO.File]::ReadAllText($taskPath)
+    $inspection=Task InspectRecovery | ConvertFrom-Json
+    $discover=Task Discover @{OutputFormat='JsonLines'} | ConvertFrom-Json
+    Assert ($inspection.ownerStatus -eq 'HISTORICAL_OTHER_TASK' -and $inspection.suggestedActionCode -eq 'RESUME_SESSION' -and $discover.suggestedActionCode -eq $inspection.suggestedActionCode) 'Completed sibling blocked recovery guidance'
+    $localState=Get-AiSopPreflightLocalState (Read-AiSopTask $spec recovery) $spec $workspace
+    Assert ($localState.owner -eq 'HISTORICAL_OTHER_TASK' -and $localState.diagnostics.Count -eq 0 -and $discover.diagnostics.Count -eq 0) 'Historical ownership became a Preflight/Discover attention issue'
+    Assert (@($inspection.records | Where-Object kind -eq 'SESSION').Count -eq 0) 'Historical sibling session was attributed to paused task'
+    Assert ($historyRaw -ceq [IO.File]::ReadAllText($ownerPath) -and $pausedRaw -ceq [IO.File]::ReadAllText($taskPath)) 'Historical owner diagnosis changed authority'
     Task Resume | Out-Null
     & (Join-Path $scripts 'workflow-owner.ps1') -Operation ForceRelease -Feature Example -SpecDirectory $spec -Workflow SUPERPOWERS -Agent CODEX -OwnerId 'task-recovery' | Out-Null
     Assert ((Read-AiSopTask $spec 'recovery').status -eq 'PAUSED') 'Legacy ForceRelease orphaned task state'

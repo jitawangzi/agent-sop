@@ -61,7 +61,7 @@ Preflight 的旧功能盘点会列出无 taskId 功能的根目录规格、批�
 
 损坏待入账结果默认阻断恢复；InspectRecovery 只读诊断。原进程停止后可显式 QuarantineInvalidEvidence，先保存原字节和哈希再以两阶段事务记为中断，必须重跑；损坏 task/owner/session 不自动猜测修复。日志路径先准备再登记 RUNNING，避免尚未启动就留下虚假运行状态。
 
-Status/Discover、InspectRecovery、Preflight 共用只读恢复建议：校验 pending 的身份与结果后才提示 RetryEvidence，RUNNING/远端未知/损坏记录分别提示等待、确认停止或诊断恢复。未完成 T3 的原始基线缺失/策略不兼容与会话失效分别呈现，Resume 不修复基线。运行时长、超时配置、日志更新时间和可选日志尾部仅为即时观察；尾部限 200 行、32 KiB，不改变任务/会话，不以日志静默判定进程死亡。旧记录没有超时字段时保持未知。
+Status/Discover、InspectRecovery、Preflight 共用只读恢复建议：校验 pending 的身份与结果后才提示 RetryEvidence，RUNNING/远端未知/损坏记录分别提示等待、确认停止或诊断恢复。另一任务的 ACTIVE 归属提示冲突；同一物理工作区、规格目录与功能下的 COMPLETE/RELEASED 归属标为 HISTORICAL_OTHER_TASK，不要求先释放历史占用，也不借用它的会话。身份不匹配仍须诊断。未完成 T3 的原始基线缺失/策略不兼容与会话失效分别呈现，Resume 不修复基线。运行时长、超时配置、日志更新时间和可选日志尾部仅为即时观察；尾部限 200 行、32 KiB，不改变任务/会话，不以日志静默判定进程死亡。旧记录没有超时字段时保持未知。
 
 暂停释放的是执行占用，不是验收义务；本次 T2 DONE 不能替原 T3 宣告功能整体完成。独立后续任务不继承旧测试欠账，实际依赖与代码重叠仍需先辨明。
 

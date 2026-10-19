@@ -61,11 +61,18 @@ function Get-AiSopTaskRecoveryDiagnostics {
         $owner=ConvertFrom-AiSopWorkflowJson $raw -AsHashtable
         $record=@{kind='OWNER';path=$OwnerPath;status='VALID';ownerTaskId=[string]$owner.taskId;ownerStatus=$owner.status}
         if (-not $task) { $record.status='UNVERIFIED'; $record.diagnostic='TASK_IDENTITY_UNAVAILABLE: task must be readable before associating local authority' }
-        elseif ($owner.taskId -cne $TaskId -or $owner.ownerId -cne $task.ownerId -or $owner.feature -cne $task.feature) {
-            $record.status='OTHER_TASK'; $record.diagnostic='OWNER_TASK_MISMATCH: this feature registry record belongs to another task/owner'
-        } elseif (-not (Resolve-PhysicalPathIdentity $owner.workspacePath).Equals($workspace,$comparison) -or
+        elseif ($owner.feature -cne $task.feature -or
+            -not (Resolve-PhysicalPathIdentity $owner.workspacePath).Equals($workspace,$comparison) -or
             -not (Resolve-PhysicalPathIdentity $owner.specDirectory).Equals($spec,$comparison)) {
             $record.status='IDENTITY_MISMATCH'; $record.diagnostic='OWNER_WORKSPACE_MISMATCH'
+        } elseif ($owner.taskId -cne $TaskId) {
+            if ($owner.status -in @('COMPLETE','RELEASED')) {
+                $record.status='HISTORICAL_OTHER_TASK'; $record.note='Historical ownership does not reserve this feature'
+            } else {
+                $record.status='OTHER_TASK'; $record.diagnostic='OWNER_TASK_MISMATCH: this feature is actively owned by another task'
+            }
+        } elseif ($owner.ownerId -cne $task.ownerId) {
+            $record.status='IDENTITY_MISMATCH'; $record.diagnostic='OWNER_ID_MISMATCH'
         } else { $ownerMatches=$true }
         $items+=$record
     } catch { $items+=@{kind='OWNER';path=$OwnerPath;status=$(if ([IO.File]::Exists($OwnerPath)) { 'UNAVAILABLE' } else { 'MISSING' });diagnostic=$_.Exception.Message} }

@@ -19,7 +19,7 @@ description: 高级开发工程师，负责基于当前项目架构的高质量�
 本角色**只遵守本 Skill 正文**。不要去读 Superpowers 插件目录，也不要读 `implementer-prompt.md` / `test-driven-development/SKILL.md` 等上游全文——那些是流程/派发材料，与本角色规则冲突或已内联于本节。T3 流程由 controller 显式调用 Superpowers 流程 skill，不由本角色加载。
 
 1. **升级与熔断协议 (Escalation Protocol)**：遇到任务超纲、缺少关键上下文、发现需大面积破坏性重构历史代码、或在多个合法架构方向间不确定时，**立即停止并以 `BLOCKED` 或 `NEEDS_CONTEXT` 主动举手**，严禁带着猜疑硬编码（"Bad work is worse than no work"）。
-2. **交工前自审清单 (Self-Review Checklist)**：编译通过后，必须自检 Completeness（无遗漏需求）、Quality（命名准确/结构清晰）、Discipline（严格遵守 YAGNI 不过度设计）、Testing（真实断言非空 Mock，测试输出 Pristine 干净零噪声）。
+2. **交工前自审清单 (Self-Review Checklist)**：编译通过后，必须自检 Completeness（无遗漏需求）、Quality（命名准确/结构清晰）、Discipline（严格遵守 YAGNI 不过度设计）、Testing（真实断言非空 Mock，核对输出中的非预期异常与警告）。主动触发异常路径时，按项目规范保留日志，并以有效断言验证处理结果；不得为追求“零噪声”删除、降级或屏蔽项目要求的日志，也不能仅凭退出码为零忽略真实异常。
 3. **TDD 证据链契约 (RED ➔ GREEN Evidence，仅 T3)**：记录真实失败验证（RED 命令与报错）与通过验证（GREEN 命令与输出）。T2 运行相关测试并如实报告，不要求为已有实现补造 RED；T1 不强制增加测试阶段。
 
 下文为项目领域规则（具体框架与编码风格以宿主 `context/` 为准）。

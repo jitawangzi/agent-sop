@@ -1205,9 +1205,16 @@ function Add-AiSopHarnessSessionContext {
     param($Result, [string]$RawPayload, [string]$EventHint)
     $payload=ConvertFrom-AiSopJson $RawPayload
     $sessionId=if ($payload.Contains('conversationId')) { $payload.conversationId } elseif ($payload.Contains('conversation_id')) { $payload.conversation_id } else { $payload.session_id }
+    if ($Result.Agent -ceq 'CLAUDE_CODE') { $sessionId=Get-AiSopClaudeExecutionSessionId -Payload $payload }
+    if ($Result.Agent -ceq 'CODEX' -and $payload.Contains('agent_id')) { $sessionId=$payload.agent_id }
     if ($sessionId -isnot [string] -or $sessionId -notmatch '^[A-Za-z0-9._:-]+$') { return $Result.Envelope }
     $message="AI SOP 当前会话：$sessionId。主会话执行修改前先 Task Start/Resume；实现子会话先 Task Join 回报自己的 nativeSessionId，等待父会话 Delegate，禁止用 Resume/ConfirmTakeover 抢占父任务；所有 Task 命令携带 -Agent $($Result.Agent) -NativeSessionId '$sessionId'，避免子进程另建会话。未指定档位默认 T2；成功后先回显登记档位和流程，再修改。纯讨论和只读审查不启动任务。只读子 Agent 不得调用 Start/Resume/Recover/ConfirmTakeover；读取被拒绝时报告路径或载荷原因，不接管父任务。"
     $envelope=ConvertFrom-AiSopJson $Result.Envelope
+    if ($Result.Agent -ceq 'CLAUDE_CODE' -and $Result.Decision -eq 'ALLOW' -and
+        $EventHint -eq 'PRE_TOOL_USE' -and $sessionId -like 'claude-child:*') {
+        # 子会话可能没有 SessionStart；首次只读工具也回显自己的身份，无需故意触发一次拒绝。
+        $envelope.hookSpecificOutput.additionalContext=$message
+    }
     if ($Result.Decision -eq 'ALLOW' -and $EventHint -in @('SESSION_START','PRE_INVOCATION')) {
         switch ($Result.Agent) {
             { $_ -in @('CLAUDE_CODE','CODEX') } { $envelope.hookSpecificOutput=@{hookEventName='SessionStart';additionalContext=$message} }

@@ -57,7 +57,7 @@ async function task(op, agent = 'CURSOR', nativeSession = session, extra = []) {
   const parts = args.slice(2).map(x => x.startsWith('-') ? x : quote(x));
   const argumentIndex = args.slice(2).indexOf('-Arguments');
   if (argumentIndex >= 0) parts.splice(argumentIndex, 4, '-Arguments', "@('-NoProfile','-Command','exit 0')");
-  const command = "$ErrorActionPreference='Stop'; [Console]::OutputEncoding=[Text.UTF8Encoding]::new($false); & " + parts.join(' ') + '; exit $LASTEXITCODE';
+  const command = "$ErrorActionPreference='Stop'; [Console]::OutputEncoding=[Text.UTF8Encoding]::new($false); try { & " + parts.join(' ') + '; exit $LASTEXITCODE } catch { [Console]::Error.WriteLine($_.ToString() + [Environment]::NewLine + $_.ScriptStackTrace); exit 1 }';
   const r = await run(['-NoProfile', '-Command', command]); assert.equal(r.code, 0, r.stdout + r.stderr);
 }
 // 只比较权限及任务的持久记录，关联/去重缓存不代表授权。
@@ -233,6 +233,39 @@ try {
   await task('Cancel');
   assert.equal((await hook('.cursor', 'PRE_TOOL_USE', cursor('Write', { file_path: file, content: '修改' }))).value.permission, 'deny');
   const piSession = 'pi-process-fixture';
+  // Claude 实际子 Agent 载荷共用 session_id，用 agent_id 区分执行者。
+  const claudeParent = 'claude-native-parent';
+  const claude = (name, input, agentId) => ({ session_id: claudeParent, cwd: workspace,
+    hook_event_name: 'PreToolUse', tool_name: name, tool_input: input, tool_use_id: `claude-${++counter}`,
+    ...(agentId ? {agent_id: agentId, agent_type: 'implementation-engine'} : {}) });
+  const chook = payload => hook('.claude', 'PRE_TOOL_USE', payload);
+  await hook('.claude', 'SESSION_START', {session_id: claudeParent, cwd: workspace, hook_event_name: 'SessionStart', source: 'startup'});
+  await task('Start', 'CLAUDE_CODE', claudeParent);
+  const cedit = id => claude('Edit', {file_path:file,old_string:'BEFORE',new_string:'CHILD_OK'}, id);
+  assert.equal((await chook(cedit())).value.hookSpecificOutput.permissionDecision, 'allow');
+  const childDeny = (await chook(cedit('agent-one'))).value.hookSpecificOutput;
+  assert.equal(childDeny.permissionDecision, 'deny');
+  const childIdentity = /-Agent CLAUDE_CODE -NativeSessionId '([^']+)'/.exec(childDeny.permissionDecisionReason)?.[1];
+  assert.match(childIdentity, /^claude-child:[a-f0-9]{64}$/);
+  assert.notEqual(childIdentity, claudeParent);
+  const forgedJoin = `pwsh -NoProfile -File ./.ai-sop/scripts/workflow-task.ps1 -WorkspacePath '${workspace.replaceAll("'", "''")}' -Operation Join -Feature Probe -TaskId claude_code-process-test -Agent CLAUDE_CODE -NativeSessionId '${claudeParent}'`;
+  assert.equal((await chook(claude('Bash', {command:forgedJoin}, 'agent-one'))).value.hookSpecificOutput.permissionDecision, 'deny');
+  const realJoin = forgedJoin.replace(claudeParent,childIdentity);
+  assert.equal((await chook(claude('Bash', {command:realJoin}, 'agent-one'))).value.hookSpecificOutput.permissionDecision, 'allow');
+  await task('Join', 'CLAUDE_CODE', childIdentity);
+  await task('Delegate', 'CLAUDE_CODE', claudeParent, ['-ChildNativeSessionId',childIdentity,'-Reason','真实 Claude 子身份']);
+  assert.equal((await chook(cedit('agent-one'))).value.hookSpecificOutput.permissionDecision, 'allow');
+  assert.equal((await chook(cedit('agent-two'))).value.hookSpecificOutput.permissionDecision, 'deny');
+  assert.equal((await chook(cedit())).value.hookSpecificOutput.permissionDecision, 'deny');
+  assert.equal((await chook(claude('SendMessage',{to:'agent-one',message:'continue'}))).value.hookSpecificOutput.permissionDecision, 'allow');
+  assert.equal((await chook(claude('SendMessage',{to:'agent-two',message:'continue'},'agent-one'))).value.hookSpecificOutput.permissionDecision, 'deny');
+  assert.equal((await chook(claude('Read',{file_path:file},'agent-one'))).value.hookSpecificOutput.permissionDecision, 'allow');
+  assert.equal((await chook(claude('Write',{file_path:join(root,'outside.txt'),content:'NO'},'agent-one'))).value.hookSpecificOutput.permissionDecision, 'deny');
+  await task('Run','CLAUDE_CODE',childIdentity,['-Kind','compile','-Executable','pwsh','-Arguments','-NoProfile','-Command','exit 0','-TimeoutSeconds','20']);
+  await task('RevokeDelegation','CLAUDE_CODE',claudeParent,['-Reason','结束']);
+  assert.equal((await chook(cedit('agent-one'))).value.hookSpecificOutput.permissionDecision, 'deny');
+  assert.equal((await chook(cedit())).value.hookSpecificOutput.permissionDecision, 'allow');
+  await task('Cancel','CLAUDE_CODE',claudeParent);
   await hook('.pi', 'SESSION_START', { session_id: piSession, cwd: workspace, hook_event_name: 'SessionStart', source: 'startup' }, false, 'PI');
   const piEdit = async input => hook('.pi', 'PRE_TOOL_USE', { session_id: piSession, cwd: workspace,
     hook_event_name: 'PreToolUse', tool_name: 'edit', tool_use_id: `pi-${++counter}`, tool_input: input }, false, 'PI');
@@ -283,6 +316,27 @@ try {
   const patch = () => codexPayload('apply_patch', { command: `*** Begin Patch\n*** Update File: ${file}\n@@\n-BEFORE\n+AFTER\n*** End Patch` });
   assert.equal((await codexHook(patch())).value.hookSpecificOutput.permissionDecision, 'deny');
   await task('Start', 'CODEX', codexSession);
+  for (const name of ['collaborationspawn_agent','collaborationsend_message','collaborationfollowup_task','collaborationwait_agent','collaborationlist_agents']) {
+    assert.equal((await codexHook(codexPayload(name,{message:'fixture'}))).value.hookSpecificOutput.permissionDecision, 'allow', name);
+  }
+  assert.equal((await codexHook(codexPayload('collaborationunknown_tool',{}))).value.hookSpecificOutput.permissionDecision,'deny');
+  const codexChild='codex-native-child';
+  const cxchild = (name,input,id=codexChild) => ({...codexPayload(name,input),agent_id:id,agent_type:'default'});
+  const cxdeny=(await codexHook({...patch(),agent_id:codexChild,agent_type:'default'})).value.hookSpecificOutput;
+  assert.equal(cxdeny.permissionDecision,'deny');
+  assert.match(cxdeny.permissionDecisionReason,new RegExp(`-Agent CODEX -NativeSessionId '${codexChild}'`));
+  const cxjoin=`pwsh -NoProfile -File ./.ai-sop/scripts/workflow-task.ps1 -WorkspacePath '${workspace.replaceAll("'", "''")}' -Operation Join -Feature Probe -TaskId codex-process-test -Agent CODEX -NativeSessionId '${codexChild}'`;
+  assert.equal((await codexHook(cxchild('Bash',{command:cxjoin}))).value.hookSpecificOutput.permissionDecision,'allow');
+  await task('Join','CODEX',codexChild);
+  await task('Delegate','CODEX',codexSession,['-ChildNativeSessionId',codexChild,'-Reason','原生 Codex 子线程']);
+  assert.equal((await codexHook({...patch(),agent_id:codexChild})).value.hookSpecificOutput.permissionDecision,'allow');
+  assert.equal((await codexHook({...patch(),agent_id:'another-child'})).value.hookSpecificOutput.permissionDecision,'deny');
+  assert.equal((await codexHook(patch())).value.hookSpecificOutput.permissionDecision,'deny');
+  assert.equal((await codexHook(cxchild('collaborationspawn_agent',{message:'no'}))).value.hookSpecificOutput.permissionDecision,'deny');
+  assert.equal((await codexHook(codexPayload('collaborationfollowup_task',{message:'continue'}))).value.hookSpecificOutput.permissionDecision,'allow');
+  await task('Run','CODEX',codexChild,['-Kind','compile','-Executable','pwsh','-Arguments','-NoProfile','-Command','exit 0','-TimeoutSeconds','20']);
+  await task('RevokeDelegation','CODEX',codexSession,['-Reason','结束']);
+  assert.equal((await codexHook({...patch(),agent_id:codexChild})).value.hookSpecificOutput.permissionDecision,'deny');
   assert.equal((await codexHook(patch())).value.hookSpecificOutput.permissionDecision, 'allow');
   await task('Suspend', 'CODEX', codexSession);
   assert.equal((await codexHook(patch())).value.hookSpecificOutput.permissionDecision, 'deny');

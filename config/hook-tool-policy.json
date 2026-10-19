@@ -941,6 +941,14 @@
       "targetExtractor": "NONE"
     },
     {
+      "match": { "kind": "EXACT", "value": "SendMessage" },
+      "nativeShapes": [ "CLAUDE_PRE_TOOL_USE" ],
+      "canonicalName": "SUBAGENT",
+      "toolClass": "OWNER_REQUIRED",
+      "argumentProfile": "ANY_OBJECT",
+      "targetExtractor": "NONE"
+    },
+    {
       "match": {
         "kind": "EXACT",
         "value": "generate_image"

@@ -1630,7 +1630,11 @@ if ($DelegationAction -or $invalidateDelegation) {
         $childPath=Get-AiSopWorkflowSessionPath -SessionKey $childKey -WorkspacePath $ownerWs
         $childBefore=Read-AiSopWorkflowSessionRecord -SessionPath $childPath -ExpectedSessionKey $childKey
         Assert-AiSopWorkflowSessionIdentity -Record $childBefore -SessionKey $childKey -Agent $Agent -NativeSessionIdSha256 (Get-AiSopWorkflowSha256 $ChildNativeSessionId) -WorkspacePath $ownerWs
-        if ((Get-AiSopWorkflowSessionEffectiveStatus $childBefore $AcceptedAt) -ne 'ACTIVE' -or $childBefore.boundFeature) { throw 'DELEGATION_CHILD_NOT_READY: child must Join and remain unbound' }
+        # Antigravity 子会话回报 Join 后正常进入 IDLE，仍可被父会话显式委派；到期/结束不能复活。
+        if ((Get-AiSopWorkflowSessionEffectiveStatus $childBefore $AcceptedAt) -notin @('ACTIVE','IDLE') -or
+            $childBefore.lifecycleProof -cne 'CONFIRMED' -or $childBefore.endedAt -or $childBefore.boundFeature) {
+            throw 'DELEGATION_CHILD_NOT_READY: child must Join and remain active or idle, unbound and unexpired'
+        }
         $childAfter=Copy-WorkflowRecord $childBefore
         Set-SessionBoundTuple -Session $childAfter -SessionEpochId $childAfter.sessionEpochId -TransactionId $transactionId
         $ownerAfter.executionDelegation=@{

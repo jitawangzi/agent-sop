@@ -33,3 +33,12 @@ pwsh -NoProfile -File ./ai-sop.ps1 Task -Operation RevokeDelegation -Feature Exa
 - 同步或升级仅更新 SOP 文件，不自动为当前任务建立委派，也不修改历史 task、owner 或规格。旧任务没有委派字段时继续按原规则工作。
 
 自动回归覆盖真实 Hook wrapper 进程及后台验证进程；它证明引擎协议行为，不等同于每个客户端版本的 UI 现场认证。
+
+## 客户端握手差异
+
+- Codex 的原生子线程事件也可能携带父 `session_id`；适配器优先使用原生 `agent_id` 作为执行线程身份，不能在协议翻译时丢弃。子线程使用 Hook 回显的自身 ID；带 `collaboration` 前缀的已知派发/恢复工具同样受归属和唯一执行者检查，未知名称仍拒绝。
+
+- Claude Code 的子 Agent 与父会话可能共用原生 `session_id`。SOP 根据原生 `session_id` 和 `agent_id` 生成稳定的 `claude-child:…` 执行身份，并在子会话只读工具/拒绝消息中回显。Join 和父会话 Delegate 必须完整使用该回显值，不能使用父 ID，也不能截短哈希。恢复子 Agent 的工具 ID 则继续使用客户端返回值；新版本可用父会话的 `SendMessage` 继续同一个子 Agent。
+- Antigravity 子会话回报后会进入 `IDLE`。未过期、生命周期已确认且未绑定任务的空闲子会话可以接受显式 Delegate，恢复调用时仍需经过原生 PreInvocation 激活。已结束/已过期记录不能通过 Delegate 复活。
+- Pi 必须实际装有子 Agent 扩展并提供独立会话身份及恢复能力。仅安装 SOP 的 Pi 扩展不会增加子 Agent 工具；没有这些能力时由父会话直接实现，不伪造身份，不循环 Join/Resume。
+- 命令失败先核对完整 ID 和 reasonCode。时间戳为 UTC 时应按时区比较，不按日期字符串判断是否过期；不要为解决输入错误扫描全部工作区注册表或手工改状态。

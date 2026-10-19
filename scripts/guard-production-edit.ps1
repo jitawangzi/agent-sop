@@ -552,8 +552,8 @@ function Get-AiSopExactOwnerDecision {
             if ($owner.sessionBinding.sessionKey -notin $keys) { throw 'DELEGATION_CHANGED_RETRY' }
             $parent=Read-AiSopWorkflowSessionRecord -SessionPath (Get-AiSopWorkflowSessionPath -SessionKey $owner.sessionBinding.sessionKey -WorkspacePath $workspace) -ExpectedSessionKey $owner.sessionBinding.sessionKey
             Assert-AiSopDelegationParent $owner $parent $AcceptedAt
-            if ($HookEvent.toolName -in @('Task','Agent','dispatch_agent','spawn_agent','invoke_subagent','InvokeSubagent','define_subagent','DefineSubagent','manage_subagents','ManageSubagents')) { throw 'DELEGATE_CONTROL_DENIED' }
-        } elseif ($owner.executionDelegation.status -ceq 'ACTIVE' -and $HookEvent.toolName -notin @('Task','Agent','dispatch_agent','spawn_agent','invoke_subagent','InvokeSubagent','define_subagent','DefineSubagent','manage_subagents','ManageSubagents')) { throw 'TASK_EXECUTION_DELEGATED' }
+            if ($HookEvent.toolName -in @('Task','Agent','SendMessage','dispatch_agent','spawn_agent','invoke_subagent','InvokeSubagent','define_subagent','DefineSubagent','manage_subagents','ManageSubagents')) { throw 'DELEGATE_CONTROL_DENIED' }
+        } elseif ($owner.executionDelegation.status -ceq 'ACTIVE' -and $HookEvent.toolName -notin @('Task','Agent','SendMessage','dispatch_agent','spawn_agent','invoke_subagent','InvokeSubagent','define_subagent','DefineSubagent','manage_subagents','ManageSubagents')) { throw 'TASK_EXECUTION_DELEGATED' }
         if (
             [string]$owner.agent -cne [string]$HookEvent.agent -or
             [string]$owner.ownerId -cne [string]$session.boundOwnerId -or

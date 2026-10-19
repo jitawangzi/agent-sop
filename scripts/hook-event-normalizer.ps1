@@ -2632,6 +2632,17 @@ function Get-AiSopCanonicalToolArguments {
     }
 }
 
+function Get-AiSopClaudeExecutionSessionId {
+    param([System.Collections.IDictionary]$Payload)
+    # Claude 子 Agent 共用父 session_id，必须同时绑定原生 agent_id；不能继承父任务写权限。
+    if ($Payload.Contains('agent_id') -and -not [string]::IsNullOrWhiteSpace([string]$Payload.agent_id)) {
+        if ($Payload.agent_id -isnot [string]) { Throw-AiSopHookError 'PAYLOAD_SHAPE_INVALID' }
+        $identity = ConvertTo-Json -InputObject @([string]$Payload.session_id, [string]$Payload.agent_id) -Compress
+        return 'claude-child:' + (Get-AiSopSha256Hex $identity)
+    }
+    return [string]$Payload.session_id
+}
+
 function Get-AiSopNativeSessionId {
     param(
         [System.Collections.IDictionary]$Payload,
@@ -3196,6 +3207,11 @@ function ConvertFrom-AiSopHarnessPayload {
     if (-not $nativeEvent -or $payload.hook_event_name -cne $nativeEvent) { Throw-AiSopHookError 'EVENT_HINT_MISMATCH' }
     # 只翻译已知客户端协议；后续仍执行原有路径、参数和工具策略检查。
     $out=[ordered]@{session_id=$payload.session_id;cwd=$payload.cwd;hook_event_name=$nativeEvent}
+    if ($Agent -eq 'CODEX' -and $payload.Contains('agent_id')) {
+        # Codex 子线程的载荷仍携带父 session_id；agent_id 才是实际执行线程 ID。
+        if (-not (Test-StringValue $payload.agent_id)) { Throw-AiSopHookError 'PAYLOAD_SHAPE_INVALID' }
+        $out.session_id=$payload.agent_id
+    }
     if ($EventHint -eq 'SESSION_START') { $out.source=if ($payload.source) { $payload.source } else { 'startup' } }
     elseif ($EventHint -eq 'SESSION_END') { $out.reason='other' }
     else {
@@ -3205,7 +3221,10 @@ function ConvertFrom-AiSopHarnessPayload {
         $args=$payload.tool_input
         if ($Agent -eq 'CODEX') {
             if ($name -cin @('update_plan','request_user_input','request_user_input_async','view_image','list_mcp_resources','list_mcp_resource_templates','read_mcp_resource','tool_search')) { $name='CodexReadOnly' }
-            elseif ($name -cin @('spawn_agent','send_message','resume_agent','close_agent','wait_agent')) { $name='Agent' }
+            elseif ($name -cin @('spawn_agent','send_message','resume_agent','close_agent','wait_agent',
+                'collaborationspawn_agent','collaborationsend_message','collaborationresume_agent',
+                'collaborationclose_agent','collaborationwait_agent','collaborationfollowup_task',
+                'collaborationinterrupt_agent','collaborationlist_agents')) { $name='Agent' }
         }
         if ($Agent -eq 'CODEX' -and $name -ceq 'apply_patch') {
             if (-not (Test-OnlyAllowedFields $args @('command','description')) -or
@@ -3293,6 +3312,9 @@ function ConvertTo-AiSopHookEvent {
         -TrustedWorkspaceRoot $TrustedWorkspaceRoot
     $nativeSessionId = Get-AiSopNativeSessionId `
         -Payload $payload -NativeShape $shape.NativeShape
+    if ($shape.Agent -ceq 'CLAUDE_CODE') {
+        $nativeSessionId = Get-AiSopClaudeExecutionSessionId -Payload $payload
+    }
     $generationId = if (Test-MapHasKey $payload "generation_id") {
         [string]$payload.generation_id
     } else {

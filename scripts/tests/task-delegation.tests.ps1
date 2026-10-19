@@ -8,9 +8,10 @@ $root=Join-Path ([IO.Path]::GetTempPath()) ('sop-delegation-'+[guid]::NewGuid().
 $workspace=Join-Path $root 'workspace'
 $spec=Join-Path $workspace '.ai-workspace/specs/features/Example'
 $saved=@{}
+$taskAgent='CURSOR'; $taskId='delegated'
 function Assert($ok,$message) { if (-not $ok) { throw $message } }
 function Task($op,$native='parent',$extra=@{}) {
-    & (Join-Path $scripts 'workflow-task.ps1') -Operation $op -WorkspacePath $workspace -Feature Example -TaskId delegated -Agent CURSOR -NativeSessionId $native @extra
+    & (Join-Path $scripts 'workflow-task.ps1') -Operation $op -WorkspacePath $workspace -Feature Example -TaskId $taskId -Agent $taskAgent -NativeSessionId $native @extra
     if ($LASTEXITCODE -ne 0) { throw "TASK_FAILED:$op" }
 }
 function Denied([scriptblock]$action,$code) {
@@ -20,7 +21,7 @@ function Denied([scriptblock]$action,$code) {
 }
 function Owner { Get-Content -LiteralPath (Join-Path $env:AI_SOP_OWNER_REGISTRY 'example.json') -Raw | ConvertFrom-Json -AsHashtable }
 function Guard($native,$name='Write') {
-    $event=@{agent='CURSOR';nativeSessionId=$native;workspacePath=$workspace;toolName=$name;toolClass=$(if($name -eq 'Write'){'FILE_EDIT'}else{'OWNER_REQUIRED'})}
+    $event=@{agent=$taskAgent;nativeSessionId=$native;workspacePath=$workspace;toolName=$name;toolClass=$(if($name -eq 'Write'){'FILE_EDIT'}else{'OWNER_REQUIRED'})}
     Get-AiSopExactOwnerDecision -HookEvent $event -AcceptedAt ([DateTimeOffset]::UtcNow) -DeadlineUtc ([DateTimeOffset]::UtcNow.AddSeconds(10))
 }
 try {
@@ -117,6 +118,25 @@ exit $LASTEXITCODE
     Task Delegate parent @{ChildNativeSessionId='child';Reason='取消验证'} | Out-Null
     Task Cancel parent | Out-Null
     Assert ((Owner).executionDelegation.status -eq 'REVOKED' -and (Guard child).Decision -eq 'DENY') '取消没有撤销'
+    # 真实 Antigravity 生命周期：子会话 Join 回报后进入 IDLE，父会话才能发起 Delegate。
+    $taskAgent='ANTIGRAVITY'; $taskId='idle-delegated'
+    Task Start parent @{Objective='空闲子会话握手'} | Out-Null
+    Task Join child | Out-Null
+    Invoke-AiSopWorkflowSession -Operation Idle -Agent ANTIGRAVITY -NativeSessionId child -WorkspacePath $workspace -AcceptedAt ([DateTimeOffset]::UtcNow) -FullyIdle $true | Out-Null
+    Task Delegate parent @{ChildNativeSessionId='child';Reason='回报后继续同一子会话'} | Out-Null
+    Assert ((Guard child).Decision -eq 'DENY') '尚未恢复的 IDLE 子会话不应执行'
+    Invoke-AiSopWorkflowSession -Operation Touch -Agent ANTIGRAVITY -NativeSessionId child -WorkspacePath $workspace -AcceptedAt ([DateTimeOffset]::UtcNow) -AllowIdleRecovery | Out-Null
+    Assert ((Guard child).Decision -eq 'ALLOW') '恢复同一空闲子会话后不能执行'
+    Task RevokeDelegation parent @{Reason='验证结束'} | Out-Null
+    $childPath=Get-AiSopWorkflowSessionPath -SessionKey (Get-AiSopWorkflowSessionKey -Agent ANTIGRAVITY -NativeSessionId child -WorkspacePath $workspace) -WorkspacePath $workspace
+    $idle=Read-AiSopWorkflowSessionRecord -SessionPath $childPath
+    $idle.status='IDLE'; $idle.expiresAt=[DateTimeOffset]::UtcNow.AddSeconds(-1).ToString('o')
+    Write-AiSopWorkflowTextAtomic $childPath (ConvertTo-AiSopWorkflowCanonicalJson $idle)
+    Denied { Task Delegate parent @{ChildNativeSessionId='child';Reason='禁止复活到期空闲会话'} } 'DELEGATION_CHILD_NOT_READY'
+    Task Join ended | Out-Null
+    Invoke-AiSopWorkflowSession -Operation End -Agent ANTIGRAVITY -NativeSessionId ended -WorkspacePath $workspace -AcceptedAt ([DateTimeOffset]::UtcNow) | Out-Null
+    Denied { Task Delegate parent @{ChildNativeSessionId='ended';Reason='禁止复活已结束会话'} } 'DELEGATION_CHILD_NOT_READY'
+    Task Cancel parent | Out-Null
     Write-Host 'PASS: 显式委派、唯一执行者、父归属、真实验证证据、撤销/暂停/取消'
 } finally {
     if ($runner) { $runner.Dispose() }

@@ -2288,6 +2288,12 @@ try {
         $pathOnlyStrReplace.toolClass "UNKNOWN" `
         "str_replace_editor create accepted a path-only edit."
 
+    $identityA=Get-AiSopClaudeExecutionSessionId @{session_id='parent-a';agent_id='child-one'}
+    Assert-Equal $identityA (Get-AiSopClaudeExecutionSessionId @{session_id='parent-a';agent_id='child-one'}) '恢复同一 Claude 子 Agent 必须保持身份'
+    if ($identityA -eq 'parent-a' -or
+        $identityA -eq (Get-AiSopClaudeExecutionSessionId @{session_id='parent-a';agent_id='child-two'}) -or
+        $identityA -eq (Get-AiSopClaudeExecutionSessionId @{session_id='parent-b';agent_id='child-one'})) { throw 'Claude 子身份碰撞或继承父身份' }
+    Assert-Equal (Get-AiSopClaudeExecutionSessionId @{session_id='parent-a';agent_type='custom'}) 'parent-a' '主会话仅指定 agent_type 不应被认作子 Agent'
     Write-Output "All hook event normalizer tests passed."
 } finally {
     if ($null -eq $PreviousDedupRegistry) {

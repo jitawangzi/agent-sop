@@ -1,6 +1,6 @@
 {
   "schemaVersion": "1.0",
-  "taskSchemaVersions": ["1.0"],
+  "taskSchemaVersions": ["1.0", "1.1"],
   "readableInputAlgorithms": ["inputs-v2", "inputs-v3", "inputs-v4"],
   "inputAlgorithms": { "unconfigured": "inputs-v2", "configured": "inputs-v4" },
   "verificationProtocols": ["2"],

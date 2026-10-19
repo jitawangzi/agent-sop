@@ -109,6 +109,10 @@ try {
     $remoteTaskPath=Get-AiSopTaskPath $remoteSpec 'recovery'
     [IO.Directory]::CreateDirectory((Split-Path -Parent $remoteTaskPath)) | Out-Null
     Copy-Item -LiteralPath (Get-AiSopTaskPath $spec 'recovery') -Destination $remoteTaskPath
+    # 旧任务无来源字段，仍须保守处理，不能被误认作可并行的外部任务。
+    $legacySynced=Get-Content -LiteralPath $remoteTaskPath -Raw | ConvertFrom-Json -AsHashtable
+    $legacySynced.schemaVersion='1.0'; $legacySynced.Remove('executionLocation')
+    [IO.File]::WriteAllText($remoteTaskPath,(ConvertTo-AiSopWorkflowCanonicalJson $legacySynced))
     $localOwnerRegistry=$env:AI_SOP_OWNER_REGISTRY
     try {
         $env:AI_SOP_OWNER_REGISTRY=Join-Path $root 'receiver-owner'

@@ -26,7 +26,7 @@ DONE/CANCELLED 默认显示 `HISTORICAL_NOT_RECHECKED`，保留已记录的终�
 
 正常切换 Agent 用 Resume。异常中断、本地 owner 丢失、或接收到没有本地 owner 的 ACTIVE 任务时，先 InspectRecovery，再按诊断 `Task -Operation Recover`，恢复为 PAUSED 后 Resume。Recover 不把任务标成完成，不导入其他工作区的权限。若原会话仍标记 ACTIVE/IDLE，先确认旧 Agent 已停止，再显式使用 `-ForceRecovery -Notes "恢复原因"`；本机验证进程还在运行时，即使带该参数也会拒绝恢复。旧 ForceRelease 也会同步暂停任务、清除原会话绑定，使用同一事务。
 
-Start、Resume（含旧 owner 收编、同会话续接及跨会话转移）和会话绑定都会在同功能归属锁内检查其他 ACTIVE 任务；即使本地 owner 注册表为空，也不能绕过同步来的未结束任务。`TASK_ACTIVE_CONFLICT:<taskId>` 指出需要继续或恢复的任务；独立新任务可在旧任务 Suspend/Recover 为 PAUSED 后启动，无需先通过旧任务完成门禁。冲突检查不阻止 Suspend、Cancel 或 Recover 清理占用。该检查仅覆盖本工作区已同步的状态，不是跨机器实时分布式锁，不支持同功能并行写入。
+Start、Resume（含旧 owner 收编、同会话续接及跨会话转移）、会话绑定和 ChangeTier 都会在同功能归属锁内检查其他 ACTIVE 任务。同工作区同功能仍串行；不同工作区允许同功能 T1/T2 互相并行、T3 与 T1/T2 并行，T3 + T3 暂不支持。新记录保存执行来源，外部 ACTIVE 只作同步观察；旧记录缺来源时仍保守拒绝。`TASK_ACTIVE_CONFLICT:<taskId>` 表示本地或来源不明的占用，`TASK_PARALLEL_T3_UNSUPPORTED:<taskId>` 表示已同步可见的 T3 冲突。冲突不阻止 Suspend、Cancel 或 Recover，无需补旧完成门禁。无跨机器实时锁，未同步冲突不能自动探测；操作、限制及误开双 T3 的恢复见 [有限并行](docs/PARALLEL_TASKS.md)。
 
 Task Verify 和 Complete 使用相同的批准文件定位规则：优先 `00_workflow_state.json`，不存在时兼容 `workflow-state.json`。带 TaskId 的 T3 AssessRisk 在任务基线缺失、损坏或无法读取时返回 JSON，包含 `TASK_SCOPE_UNAVAILABLE` 和实际原因；此时 `changeSetDigest` 为 null，不能解释为“无变化”。该诊断不改任务档位、归属或批准记录。
 
@@ -171,9 +171,9 @@ Status、Discover、InspectRecovery 和 Preflight 共用恢复建议，JSON 提�
 5. 长任务在重要阶段或准备交接时，用 `Task -Operation Checkpoint ... -NextAction "下一步" -Notes "已完成与未解决项"` 保存恢复线索；短 T1/T2 不为每次编辑写检查点。环境阻塞或离开时，直接 `Suspend -NextAction ... -Notes ...` 保存暂停并释放占用，无需紧邻再写 Checkpoint。取消用 Cancel，均不宣称完成。
 6. 证据与本档产物就绪后直接 `Task -Operation Complete ...`，内含完成校验；需要提前列出缺失/失败批次、变化文件和 T3 规格问题时，可选 `Verify`。T3 要求的影响分析必须经检查，再用 ReviewImpact 显式记录当前分析与代码绑定，禁止盲目刷新哈希。
 
-T1 只需真实编译/基础检查；T2 还需相关测试和 RecordSync 记录受影响规格/用例的同步结果，均不背负原功能历史 T3 收尾。涉及原契约语义变化要明确告知用户，不能把原批准当成新语义已批准。暂停任务与独立新任务可以顺序存在；同功能不同时推进两个独立主会话。
+T1 只需真实编译/基础检查；T2 还需相关测试和 RecordSync 记录受影响规格/用例的同步结果，均不背负原功能历史 T3 收尾。涉及原契约语义变化要明确告知用户，不能把原批准当成新语义已批准。暂停任务与独立新任务可以顺序存在；同一工作区同功能不同时推进两个独立主任务，跨工作区遵循有限并行范围。
 
-不同功能并行继续采用独立工作区和测试数据隔离；最终组合重新验收。跨工作区恢复先 Suspend、同步任务/规格与代码，接收端 Resume 取得本地会话。Discover/Doctor 若提示 SPECS_IGNORED，应检查提示中实际管理规格的 Git 仓库。若 `.ai-workspace` 和 `.ai-workspace/specs` 是两个独立仓库，应分别同步项目上下文和功能规格/任务记录，父仓库忽略 `specs/` 属正常隔离；工具不会擅自提交存量文档。
+不同功能并行采用独立工作区；同功能有限并行也各自保有代码、规格副本和不同 TaskId，最终组合重新验收。共享外部环境遵循宿主约定，不新增测试数据隔离服务。跨工作区接管同一任务先 Suspend、同步任务/规格与代码，接收端 Resume 取得本地会话。Discover/Doctor 若提示 SPECS_IGNORED，应检查提示中实际管理规格的 Git 仓库。若 `.ai-workspace` 和 `.ai-workspace/specs` 是两个独立仓库，应分别同步项目上下文和功能规格/任务记录，父仓库忽略 `specs/` 属正常隔离；工具不会擅自提交存量文档。
 
 任务内容指纹排除暂存状态、日志及常见构建输出，但保守包含公共输入。它不是完整的环境快照；服务、工具链或外部依赖变化时仍应按实际风险重新验证。详细约束见 `workflows/shared-artifacts.md`。
 
@@ -248,7 +248,7 @@ Preflight 将清单文件损坏与任务引用不匹配分开：文件有效但�
 | 原规则主题 | 现行位置 |
 |---|---|
 | 任务入口、T 档、证据、起点、待同步提醒 | [入口模板](distribution/templates/root/AGENTS.md)「执行强度」「开始、执行、完成」；命令细节见本手册开头的 Task 使用说明 |
-| 暂停、跨 Agent 接管、损坏恢复、不同功能并行 | 入口模板「暂停、接管与异常」；本手册的 Preflight 与事务恢复说明 |
+| 暂停、跨 Agent 接管、损坏恢复、有限并行 | 入口模板「暂停、接管与异常」；[并行范围与双 T3 恢复](docs/PARALLEL_TASKS.md)；本手册的 Preflight 与事务恢复说明 |
 | T3 工作流、影响与覆盖、独立审查、人工确认及例外 | [T3 执行参考](workflows/agent-t3.md)，编排顺序见 [适配器](workflows/superpowers-adapter.md) |
 | 全新功能与旧系统扩展、全功能审计、AUDIT-EXEMPT | T3 执行参考中的对应章节；全功能审计仍为人工按需触发 |
 | 共享项目知识、规范优先级、已批准文档修改 | 入口模板「项目知识与文档一致性」与本手册「项目上下文与能力诊断」 |
@@ -449,16 +449,11 @@ pwsh -NoProfile -File .\.ai-sop\scripts\workflow-owner.ps1 -Operation Complete `
 
 该检查仅覆盖实际接入 Hook 且成功识别的调用，不声称能识别任意 shell 写入；配置文件存在不等于工具执行了 Hook。Codex 已有原生 Hook 适配；须使用支持 Hook 的客户端并审核信任，才能执行写前检查。配置、安装校验与真实客户端认证是三个不同层次，详见 docs/HARNESS_ADAPTERS.md。人工原话和同步结论是可追溯自报，不证明业务语义正确或防御同权限篡改。
 
-## 多功能并行开发
+## 有限并行开发
 
-每个功能使用独立 Agent 会话和独立 SVN 工作副本（`svn checkout` 到独立目录）。不要在同一工作目录运行两个功能。
+不同功能可以并行；同功能在独立工作区允许 T1/T2 互相并行以及 T3 与 T1/T2 并行，同工作区同功能仍串行，T3 + T3 暂不支持。两个 SVN 工作副本可以检出同一分支，由人工最终合并；Git 分支不是隔离身份，实际物理目录才是。代码、`.ai-workspace`、`specs` 都要保有各自的可写副本，不能通过目录链接共用一份规格。
 
-```powershell
-pwsh -NoProfile -File .\.ai-workspace\scripts\feature-runtime.ps1 `
-  -Operation Allocate -Feature "<FeatureName>" -WorkspacePath $PWD
-```
-
-每个功能获得独立端口、发布目录、`CATALINA_BASE`、日志和 BaseUrl。当前 Redis/Mongo 仍共享，因此代码、编译和 JUnit 可并行，正式 Tomcat/JSP 业务验证由机器级锁串行执行。详见 `.ai-workspace/workflows/parallel-development.md`。
+不额外启动服务、建立测试数据隔离或跨工作区排队；每个任务完成自己的档位要求，合并后再验证受影响部分。宿主若有端口、运行环境或共享数据约定，读取对应 context。详细步骤及误开双 T3 的保全恢复见 [有限并行](docs/PARALLEL_TASKS.md)。
 
 ## 使用模板
 
@@ -617,7 +612,7 @@ Bug 文件位于 <BUGS.md 路径>。
    Superpowers 流程（需求→设计→design-reviewer 审查→确认→实现→审计→验证）。
 ```
 
-拆分计划确认后，对每个子功能用模板 1（T3 完整新功能开发）启动，规格目录用各子功能自己的目录。每个子功能用 Task Start 创建任务、独立交付；不同功能在独立工作区可并行（遵循 `.ai-workspace/workflows/parallel-development.md`），同功能不并行多个主任务。全部子功能完成后，可用模板 11 做跨子功能审计。
+拆分计划确认后，对每个子功能用模板 1（T3 完整新功能开发）启动，规格目录用各子功能自己的目录。每个子功能用 Task Start 创建任务、独立交付；不同功能在独立工作区可并行，同功能遵循 [有限并行范围](docs/PARALLEL_TASKS.md)，不并行两个 T3。全部子功能完成后，可用模板 11 做跨子功能审计。
 
 ### 11. 全功能审计（手动，人工把关）
 

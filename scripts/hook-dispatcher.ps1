@@ -38,6 +38,7 @@ foreach ($dependency in @(
     "workflow-command-grant.ps1",
     'task-entry-command.ps1',
     'read-only-shell.ps1',
+    'task-execution.ps1',
     "guard-production-edit.ps1"
 )) {
     $depPath = Join-Path $PSScriptRoot $dependency
@@ -71,6 +72,7 @@ foreach ($dependency in @(
     "workflow-command-grant.ps1",
     'task-entry-command.ps1',
     'read-only-shell.ps1',
+    'task-execution.ps1',
     "guard-production-edit.ps1"
 )) {
     . (Join-Path $PSScriptRoot $dependency)
@@ -112,6 +114,12 @@ function Get-AiSopDispatcherDenyReason {
 
     $prefix = "AI_SOP_GUARD_${ReasonCode}:"
     switch ($ReasonCode) {
+        'TASK_PARALLEL_T3_UNSUPPORTED' {
+            return "$prefix 已同步记录中存在同功能的另一项活动 T3。先保留两边现场，在原工作区暂停其中一项并同步其任务记录，再继续；不能改哈希或删除任务绕过。恢复步骤见 .ai-sop/docs/PARALLEL_TASKS.md。"
+        }
+        { $_ -in @('TASK_ACTIVE_CONFLICT','TASK_EXECUTION_LOCATION_MISMATCH','TASK_INDEX_UNREADABLE') } {
+            return "$prefix 本工作区任务归属冲突、来源不一致或任务索引损坏。先 Discover/InspectRecovery；本地任务串行，来源未知记录需正常恢复，不能仅因 owner 缺失就当作外部任务。"
+        }
         "OWNER_REQUIRED" {
             return "$prefix missing active Owner. Run ./ai-sop.ps1 Task -Operation Discover to identify the feature and task; use Start for an independent task or Resume to continue it. For interrupted ownership, inspect Status and InspectRecovery before Recover, then Resume. Confirm the old agent has stopped before any forced recovery; do not auto-Claim or force-release to bypass this guard."
         }

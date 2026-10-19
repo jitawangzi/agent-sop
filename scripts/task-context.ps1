@@ -9,6 +9,7 @@
 . (Join-Path $PSScriptRoot 'junit-evidence.ps1')
 . (Join-Path $PSScriptRoot 'task-recovery.ps1')
 . (Join-Path $PSScriptRoot 'hidden-process.ps1')
+. (Join-Path $PSScriptRoot 'task-execution.ps1')
 
 function Resolve-AiSopTaskWorkflowStatePath {
     param([string]$SpecDirectory)
@@ -20,28 +21,6 @@ function Resolve-AiSopTaskWorkflowStatePath {
     return Join-Path $root '00_workflow_state.json'
 }
 
-function Get-AiSopTaskPath {
-    param([string]$SpecDirectory, [string]$TaskId)
-    if ($TaskId -notmatch '^[A-Za-z0-9][A-Za-z0-9_-]{0,79}$') { throw 'TASK_ID_INVALID' }
-    $root = Resolve-PhysicalPathIdentity -Path $SpecDirectory
-    $path = Resolve-PhysicalPathIdentity -Path (Join-Path $root "tasks/$TaskId/task.json")
-    $prefix = $root.TrimEnd('\', '/') + [IO.Path]::DirectorySeparatorChar
-    $comparison = if ([OperatingSystem]::IsWindows()) { [StringComparison]::OrdinalIgnoreCase } else { [StringComparison]::Ordinal }
-    if (-not $path.StartsWith($prefix, $comparison)) { throw 'TASK_PATH_ESCAPE' }
-    return $path
-}
-
-function Read-AiSopTask {
-    param([string]$SpecDirectory, [string]$TaskId)
-    $path = Get-AiSopTaskPath $SpecDirectory $TaskId
-    if (-not [IO.File]::Exists($path)) { throw "TASK_NOT_FOUND: $TaskId" }
-    $raw = [IO.File]::ReadAllText($path)
-    Assert-AiSopWorkflowJsonSchema -Json $raw -SchemaId TASK
-    $task = ConvertFrom-AiSopWorkflowJson -Json $raw -AsHashtable
-    if ($task.taskId -cne $TaskId -or $task.feature -cne (Split-Path -Leaf $SpecDirectory)) { throw 'TASK_IDENTITY_MISMATCH' }
-    return $task
-}
-
 function Get-AiSopChangedInputs {
     param($Before, $After)
     return @(@($Before.files.Keys) + @($After.files.Keys) | Sort-Object -CaseSensitive -Unique | Where-Object {
@@ -50,21 +29,12 @@ function Get-AiSopChangedInputs {
 }
 
 function Assert-AiSopNoOtherActiveTask {
-    param([string]$SpecDirectory, [string]$TaskId)
-    # Called with the feature owner lock held. Local registries are not synced,
-    # so an absent registry entry does not prove all synced tasks are inactive.
-    $root=Resolve-PhysicalPathIdentity $SpecDirectory
-    foreach ($entry in @(Get-ChildItem -LiteralPath (Join-Path $root 'tasks') -Directory -ErrorAction SilentlyContinue)) {
-        if ($entry.Name -ceq $TaskId) { continue }
-        try {
-            $path=Get-AiSopTaskPath $root $entry.Name
-            if (-not [IO.File]::Exists($path)) { continue }
-            $task=Read-AiSopTask $root $entry.Name
-        } catch { throw "TASK_INDEX_UNREADABLE:$($entry.Name):$($_.Exception.Message)" }
-        if ($task.status -eq 'ACTIVE') {
-            throw "TASK_ACTIVE_CONFLICT:$($task.taskId): Resume the existing task; if its local ownership is missing, Recover it first. For independent work, Suspend/Recover the old task before Start. No old completion gates are required."
-        }
-    }
+    param([string]$SpecDirectory, [string]$TaskId, [string]$WorkspacePath, [string]$Tier)
+    # 调用方持有功能归属锁；旧记录缺少来源时不能推断为外部任务。
+    if (-not $WorkspacePath) { $WorkspacePath=Resolve-AiSopWorkspaceRoot -StartPath $SpecDirectory }
+    if (-not $Tier -and $TaskId) { $Tier=(Read-AiSopTask $SpecDirectory $TaskId).tier }
+    $problems=@(Get-AiSopTaskParallelProblems $SpecDirectory $TaskId $WorkspacePath $Tier)
+    if ($problems.Count) { throw ($problems -join "`n") }
 }
 
 function Get-AiSopTaskSpecDigest {
@@ -102,6 +72,9 @@ function Get-AiSopTaskProblems {
     param($Task, [string]$WorkspacePath, [string]$SpecDirectory = '', $ValidationContext)
     $problems = [Collections.Generic.List[string]]::new()
     if (-not $ValidationContext) { $ValidationContext=New-AiSopValidationContext }
+    if ($SpecDirectory -and $Task.status -notin @('DONE','CANCELLED')) {
+        foreach ($problem in @(Get-AiSopTaskParallelProblems $SpecDirectory $Task.taskId $WorkspacePath $Task.tier)) { $problems.Add($problem) }
+    }
     try { $snapshot = Get-AiSopValidationSnapshot $WorkspacePath $ValidationContext }
     catch { return @($_.Exception.Message) }
     $specDigest = $null
@@ -209,6 +182,7 @@ function Get-AiSopTaskSummary {
     $inspection=Get-AiSopTaskRecoveryDiagnostics $SpecDirectory $Task.taskId $WorkspacePath $ownerPath -LogTailLines $LogTailLines
     $ownerStatus=$inspection.ownerStatus; $sessionStatus=$inspection.sessionStatus
     $diagnostics=@($inspection.records | Where-Object { $_.diagnostic -and $_.status -ne 'MISSING' } | ForEach-Object { $_.diagnostic })
+    $diagnostics+=@($inspection.parallelProblems)
     $runs=@(foreach ($record in @($Task.verifications | Where-Object outcome -eq 'RUNNING')) {
         $pending=@($inspection.records | Where-Object { $_.kind -eq 'PENDING' -and $_.runId -ceq $record.runId })[0]
         $run=@{runId=$record.runId;kind=$record.kind;batch=$record.batch;activity=$pending.activity;pendingStatus=$pending.status;pendingOutcome=$pending.outcome;pendingResult=$(if ($pending.status -ne 'MISSING') { $pending.path } else { $null })}
@@ -217,7 +191,8 @@ function Get-AiSopTaskSummary {
     })
     $action=$inspection.guidance
     $terminal = $Task.status -in @('DONE','CANCELLED')
-    $checkCurrentInputs = $CheckInputs -and (-not $terminal -or $RecheckHistory)
+    $locality=Get-AiSopTaskExecutionLocality $Task $WorkspacePath
+    $checkCurrentInputs = $CheckInputs -and ($locality -ne 'EXTERNAL' -or $RecheckHistory) -and (-not $terminal -or $RecheckHistory)
     $verification = if ($terminal) { 'HISTORICAL_NOT_RECHECKED' } else { 'NOT_CHECKED' }
     if ($checkCurrentInputs) {
         try {
@@ -230,6 +205,7 @@ function Get-AiSopTaskSummary {
     }
     return [ordered]@{
         feature=$Task.feature; taskId=$Task.taskId; tier=$Task.tier; status=$Task.status; objective=$Task.objective
+        executionLocality=$locality; executionLocation=$Task.executionLocation
         ownerStatus=$ownerStatus; sessionStatus=$sessionStatus; verification=$verification
         verificationScope=$(if ($checkCurrentInputs) { 'CURRENT_INPUTS' } else { 'NOT_CHECKED' })
         recordedApprovals=(Get-AiSopRecordedApprovals $SpecDirectory)

@@ -343,6 +343,10 @@ try {
     $escapedTaskDeny = Assert-DenyDecision -HookEvent $productionEvent -Message '任务目录的链接不能逃逸当前功能。'
     Assert-Equal $escapedTaskDeny.ReasonCode 'TASK_PATH_ESCAPE' '逃逸的任务目录应在读取前拒绝。'
     Write-Owner -Feature 'GuardFeature' -Record $baselineOwner
+    $escapedSiblingDeny = Assert-DenyDecision -HookEvent $productionEvent -Message '并行索引里的逃逸目录也必须拒绝。'
+    Assert-Equal $escapedSiblingDeny.ReasonCode 'TASK_INDEX_UNREADABLE' '不能忽略无法验证的兄弟任务。'
+    # 仅移除刚创建的链接本身，保留目标目录；后续用例恢复正常索引。
+    Remove-Item -LiteralPath $escapedTaskLink -Force
 
     $allowed = Assert-AllowDecision `
         -HookEvent $productionEvent `

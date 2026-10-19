@@ -24,6 +24,7 @@ if (-not (Get-Command Get-AiSopWorkflowSha256 -ErrorAction SilentlyContinue)) {
 if (-not (Get-Command Get-AiSopWorkflowSessionKey -ErrorAction SilentlyContinue)) {
     . $script:GuardSessionScript
 }
+. (Join-Path $PSScriptRoot 'task-execution.ps1')
 
 function Get-AiSopGuardRoot {
     if (-not [string]::IsNullOrWhiteSpace($env:AI_SOP_GUARD_ROOT)) {
@@ -344,6 +345,9 @@ function Read-AiSopGuardTask {
     }
     if ($task.status -cne 'ACTIVE') { throw 'TASK_INACTIVE' }
     if ($task.tier -cnotin @('T1', 'T2', 'T3')) { throw 'TASK_TIER_INVALID' }
+    if ((Get-AiSopTaskExecutionLocality $task $Owner.workspacePath) -eq 'EXTERNAL') { throw 'TASK_EXECUTION_LOCATION_MISMATCH' }
+    $conflicts=@(Get-AiSopTaskParallelProblems $SpecDirectory $taskId $Owner.workspacePath $task.tier)
+    if ($conflicts.Count) { throw ($conflicts[0].Split(':')[0]) }
     return $task
 }
 
@@ -542,13 +546,13 @@ function Get-AiSopExactOwnerDecision {
             ) -or
             [string]$owner.sessionBinding.sessionKey -cne $sessionKey -or
             [string]$owner.sessionBinding.sessionEpochId -cne
-                [string]$session.sessionEpochId -or
-            [string]$session.lastTransactionId -cne
-                [string]$owner.lastTransactionId
+                [string]$session.sessionEpochId
         ) {
             throw "OWNER_IDENTITY_MISMATCH"
         }
 
+        # 会话的 lastTransactionId 会被单独发放 Grant 推进，不能拿它等同归属事务号。
+        # 未决事务已在上方检查；权限仍依赖锁内匹配的完整会话绑定和任务身份。
         # 在既有 Session -> Owner 锁内校验同一份任务，避免检查期间被暂停或换档。
         $task = Read-AiSopGuardTask -Owner $owner -SpecDirectory $expectedSpec
         $snapshotHash = Get-AiSopGuardAuthorizationSnapshot `

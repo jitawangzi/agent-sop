@@ -13,7 +13,7 @@
 - 检查 04 分析后使用 `Task ReviewImpact` 记录当前绑定；证据就绪后直接 `Task Complete`，内含完成校验，只完成本次修改。`Task Verify` 仅作可选的提前诊断。
 - 日常任务和进度查询用 Task Discover；需要核对当前代码的证据适用性时用根 Status 或 Task Status。异常中断或归属丢失先 InspectRecovery，再按诊断 Recover → Resume。发现 RUNNING 先检查实际进程和日志，不能覆盖旧运行记录。常用验证命令可由宿主 context/verification-commands.json 提供，用 Run -Profile 调用。
 - 长任务重要节点按需 Checkpoint；中断或环境阻塞时直接 Suspend 保存未完成项并释放执行占用。独立后续任务另建身份，接管 Resume 保留原身份和档位。
-- 不同功能在独立工作区并行；同功能多个独立主会话并行不支持。合并后的输入需要重新验证。
+- 不同功能可在独立工作区并行；同功能在不同工作区允许 T1/T2 互相并行以及 T3 与 T1/T2 并行，同工作区仍串行，T3 + T3 暂不支持。合并后的输入需要重新验证，详见 [并行与恢复](../docs/PARALLEL_TASKS.md)。
 
 下方旧 Claim/Complete 与功能级 evidence 命令用于未迁移任务的兼容路径；新任务以本节及 `shared-artifacts.md` 为准。
 
@@ -236,7 +236,7 @@ pwsh -NoProfile -File .\.ai-sop\scripts\workflow-state.ps1 -Operation ValidateTe
 
 ## 宿主版本控制与并行
 
-先读取宿主 context 的版本控制与并行约定，确认代码、`.ai-workspace`、`specs` 各自所属仓库；它们可能使用不同 VCS。公共规则见宿主 `AGENTS.md`「项目知识与文档一致性」及「暂停、接管与异常」。不同功能使用独立工作区和测试数据，合并后重新验证；同功能不并行运行多个独立主任务。
+先读取宿主 context 的版本控制与并行约定，确认代码、`.ai-workspace`、`specs` 各自所属仓库；它们可能使用不同 VCS。公共规则见宿主 `AGENTS.md`「项目知识与文档一致性」及「暂停、接管与异常」。同功能有限并行使用独立工作副本和 TaskId，允许 T1/T2 互相并行以及 T3 与 T1/T2 并行，合并后重新验证；不增加测试数据隔离服务或跨工作区串行队列。共享外部环境的使用遵循宿主已有约定。
 
 以下仅适用于明确采用 **SVN + 本地 Git 检查点** 的宿主：SVN 是团队源码真源与代码隔离手段，本地 Git 仅作 SDD 的 commit 检查点 / review diff / 回滚。项目如提供运行时隔离工具，按项目 context 使用，通用流程不假定存在 Tomcat 或特定脚本。
 

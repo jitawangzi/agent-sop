@@ -56,6 +56,7 @@ function Get-AiSopTaskRecoveryDiagnostics {
     $taskPath=Get-AiSopTaskPath $SpecDirectory $TaskId
     try { $task=Read-AiSopTask $SpecDirectory $TaskId; $items+=@{kind='TASK';path=$taskPath;status='VALID'} }
     catch { $items+=@{kind='TASK';path=$taskPath;status='UNAVAILABLE';diagnostic=$_.Exception.Message} }
+    $locality=if ($task) { Get-AiSopTaskExecutionLocality $task $WorkspacePath } else { 'UNKNOWN' }
     try {
         $raw=[IO.File]::ReadAllText($OwnerPath); Assert-AiSopWorkflowJsonSchema -Json $raw -SchemaId OWNER
         $owner=ConvertFrom-AiSopWorkflowJson $raw -AsHashtable
@@ -65,6 +66,9 @@ function Get-AiSopTaskRecoveryDiagnostics {
             -not (Resolve-PhysicalPathIdentity $owner.workspacePath).Equals($workspace,$comparison) -or
             -not (Resolve-PhysicalPathIdentity $owner.specDirectory).Equals($spec,$comparison)) {
             $record.status='IDENTITY_MISMATCH'; $record.diagnostic='OWNER_WORKSPACE_MISMATCH'
+        } elseif ($locality -eq 'EXTERNAL') {
+            if ($owner.taskId -ceq $TaskId) { $record.status='IDENTITY_MISMATCH'; $record.diagnostic='TASK_EXECUTION_LOCATION_MISMATCH' }
+            else { $record.status='EXTERNAL_OBSERVATION'; $record.note='Local ownership does not describe a synchronized task running elsewhere' }
         } elseif ($owner.taskId -cne $TaskId) {
             if ($owner.status -in @('COMPLETE','RELEASED')) {
                 $record.status='HISTORICAL_OTHER_TASK'; $record.note='Historical ownership does not reserve this feature'
@@ -92,7 +96,7 @@ function Get-AiSopTaskRecoveryDiagnostics {
         }
         catch { $items+=@{kind='SESSION';path=$sessionPath;status='UNAVAILABLE';diagnostic=$_.Exception.Message} }
     }
-    if ($task) {
+    if ($task -and $locality -ne 'EXTERNAL') {
         if ($task.tier -eq 'T3' -and $task.status -notin @('DONE','CANCELLED')) {
             $baselineRecord=@{kind='BASELINE';status='VALID'}
             try {
@@ -126,5 +130,15 @@ function Get-AiSopTaskRecoveryDiagnostics {
     $sessionRecord=@($items | Where-Object kind -eq 'SESSION')[0]
     $sessionStatus=if (-not $sessionRecord) { 'MISSING' } elseif ($sessionRecord.status -eq 'VALID') { $sessionRecord.effectiveStatus } else { $sessionRecord.status }
     $steps=@(Get-AiSopRecoveryGuidance $task $items $ownerStatus $sessionStatus)
-    return @{schemaVersion='1.0';taskId=$TaskId;records=$items;readOnly=$true;ownerStatus=$ownerStatus;sessionStatus=$sessionStatus;guidanceSteps=$steps;suggestedActionCode=$steps[0].code;guidance=($steps.message -join ' ')}
+    $parallel=@()
+    if ($task -and $task.status -notin @('DONE','CANCELLED')) {
+        if ($locality -ne 'EXTERNAL') { $parallel=@(Get-AiSopTaskParallelProblems $SpecDirectory $TaskId $WorkspacePath $task.tier) }
+        if ($locality -eq 'EXTERNAL' -and $task.status -eq 'ACTIVE' -and -not $ownerMatches) {
+            $steps=@(@{code='EXTERNAL_TASK';message='This is a synchronized ACTIVE record from another workspace, not a local orphan. Start a distinct TaskId for independent work. For handoff, Suspend at its origin and sync before Resume; if origin is unavailable, confirm it stopped before ForceRecovery. Do not recover this record just to unlock parallel work.'})
+        }
+        if ($parallel -match '^TASK_PARALLEL_T3_UNSUPPORTED:') {
+            $steps=@(@{code='RESOLVE_PARALLEL_T3';message='Preserve both workspaces and pause one T3 at its origin; sync its PAUSED record before continuing. Suspend/Cancel/Recover remain available. Reconcile code/specs and rerun affected validation; never merge approvals or rewrite evidence hashes. See .ai-sop/docs/PARALLEL_TASKS.md.'})+$steps
+        }
+    }
+    return @{schemaVersion='1.0';taskId=$TaskId;records=$items;readOnly=$true;ownerStatus=$ownerStatus;sessionStatus=$sessionStatus;executionLocality=$locality;parallelProblems=$parallel;guidanceSteps=$steps;suggestedActionCode=$steps[0].code;guidance=($steps.message -join ' ')}
 }

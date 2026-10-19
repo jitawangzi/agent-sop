@@ -37,7 +37,7 @@ T3 完整开发任务从 Superpowers `brainstorming` 开始，按 `.ai-sop/workf
 - `superpowers:receiving-code-review` — 接收审查结果
 
 **不适用本项目**（黑名单，禁用原因见注释）：
-- `superpowers:dispatching-parallel-agents` — 不同功能的隔离与并行遵循宿主 context 和 SOP 任务规则，不另起并行编排。
+- `superpowers:dispatching-parallel-agents` — 隔离与并行遵循宿主 context 和 SOP 任务规则，不另起并行编排。同功能 T3 可以与其他工作区的 T1/T2 并行，同工作区同功能仍串行，T3 + T3 暂不支持；详见 [有限并行](../docs/PARALLEL_TASKS.md)。
 - `superpowers:using-git-worktrees` — 工作区隔离与版本控制遵循宿主 context 和用户约定；不自动创建 worktree，不用文件复制覆盖代替合并。Owner 绑定实际开发目录的物理路径。
 - `superpowers:executing-plans` — 触发 `using-git-worktrees`（冲突）；有 subagent 时统一用 `subagent-driven-development`
 - `superpowers:finishing-a-development-branch` — 收尾与提交遵循宿主版本控制约定和 Task Complete，不额外引入另一套分支交付流程。

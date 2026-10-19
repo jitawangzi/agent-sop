@@ -15,7 +15,8 @@
 - Resume 保持 taskId/ownerId/tier。ACTIVE 任务用 Transfer；PAUSED 任务重新 Claim。旧 ACTIVE owner 可显式 Resume 收编为任务，保留批准但重新采集执行证据。
 - Checkpoint 在长任务重要节点记录下一步与说明；Suspend 可直接保存 NextAction / Notes、置 PAUSED 并释放本地归属，无需紧邻重复 Checkpoint；Cancel 保存 CANCELLED。证据就绪后直接 Complete，内含本任务完成校验，通过才保存 DONE；Verify 仅作可选的提前诊断。
 - 任务、owner、session、grant 在同一两阶段事务中变化；TASK 记录受功能 Owner Lock 保护，锁顺序仍是 Session → Owner → Grant。
-- 一个功能在一个工作区只有一个执行 owner。同功能多独立会话并行不支持；不同功能用独立工作区。没有跨机器分布式锁，远端未同步活动不能自动探测。
+- 一个功能在一个工作区只有一个执行 owner。不同工作区可并行同功能 T1/T2 与 T1/T2、T3 与 T1/T2；T3 + T3 暂不支持。每个任务用不同 TaskId，代码及规格各有独立工作副本。没有跨机器分布式锁，远端未同步活动不能自动探测。操作与恢复见 [有限并行](../docs/PARALLEL_TASKS.md)。
+- 新任务及重新取得归属的任务写入 Schema 1.1 的 `executionLocation`（机器、物理工作区、绑定时间），与归属在同一事务保存。Schema 1.0 仍可读，缺来源的 ACTIVE 保守视为冲突，不能猜成外部任务。此字段仅区分同步来源，不是授权凭证；本地 owner/session 仍必须完整匹配。外部记录的 Status 不用本地输入或基线判断其执行结果。
 - `task.json` 和必要规格应纳入宿主选定的持久化策略；日志按需保留。Session/Grant/Owner 权限记录留本机。Discover/Doctor 根据 specs 实际所属仓库检查忽略规则，独立 specs 仓库不受父仓库忽略规则的误报影响，不自动修改宿主忽略规则或提交历史文件。
 - 跨工作区迁移：先在原工作区 Suspend，持久保存任务和相同代码，再在新工作区 Resume；新工作区重新取得本地会话，证据必须在当地重新校验。缺本地 owner 的 ACTIVE 记录仅供诊断，禁止静默继承权限。
 - 功能整体验收与轻量任务 DONE 不同。T1/T2 不替旧 T3 收尾；共享代码修改和合并后仍需重新验证集成结果。
@@ -75,7 +76,7 @@ FollowUp 存在来源任务内，PENDING 不参与 Verify/Complete。Start/Resum
 
 Superpowers 在 `docs/superpowers/` 下的 plan/ledger 是执行记录，不替代规范产物。主流程不使用 `.ai-sop/runtime/`（仅手动全功能审计的 `AUDIT_ONLY` 场景按需使用，不进主流程必经链）。
 
-权威 owner 注册表是机器本地的，所有 worktree 共享。归属身份统一为 `SUPERPOWERS` workflow + Agent 字段（`CLAUDE_CODE`/`COPILOT`/`ANTIGRAVITY`/`CURSOR`/`CODEX`/`PI`）+ 不可变的功能运行 `ownerId`。
+权威 owner 注册表留在机器本地，默认按物理工作区路径的 SHA-256 Scope 隔离；不要用同一个注册表环境变量覆盖不同工作区。归属身份统一为 `SUPERPOWERS` workflow + Agent 字段（`CLAUDE_CODE`/`COPILOT`/`ANTIGRAVITY`/`CURSOR`/`CODEX`/`PI`）+ 不可变的功能运行 `ownerId`。
 
 ## 人工把关阶段
 

@@ -811,7 +811,10 @@ function Invoke-OwnerValidate11 {
         ) {
             throw "WORKFLOW_OWNER_SESSION_MISMATCH"
         }
-        if ($ResolvedSpecDirectory) { Assert-AiSopNoOtherActiveTask $ResolvedSpecDirectory ([string]$lockedOwner.taskId) }
+        if ($ResolvedSpecDirectory) {
+            if ($lockedOwner.taskId -and (Get-AiSopTaskExecutionLocality (Read-AiSopTask $ResolvedSpecDirectory $lockedOwner.taskId) $ownerWs) -eq 'EXTERNAL') { throw 'TASK_EXECUTION_LOCATION_MISMATCH' }
+            Assert-AiSopNoOtherActiveTask $ResolvedSpecDirectory ([string]$lockedOwner.taskId) $ownerWs
+        }
         $transactionId = "validate-$([guid]::NewGuid().ToString('N'))"
         $grantAfter = New-AiSopWorkflowCommandGrantAfterConsume `
             -Grant $lockedGrant `
@@ -926,6 +929,9 @@ if ($Operation -in @('ForceRelease','Recover')) {
         $recoveryTaskPath = Get-AiSopTaskPath $ResolvedSpecDirectory $TaskId
         $recoveryTask = Read-AiSopTask $ResolvedSpecDirectory $TaskId
         if ($recoveryTask.ownerId -cne $OwnerId -or $recoveryTask.status -notin @('ACTIVE','PAUSED')) { throw 'TASK_NOT_RECOVERABLE' }
+        if ($recoveryTask.status -eq 'ACTIVE' -and (Get-AiSopTaskExecutionLocality $recoveryTask $ownerWs) -eq 'EXTERNAL' -and -not $forced) {
+            throw 'EXTERNAL_TASK_CONFIRM_STOPPED: recover at the original workspace; if unavailable, confirm its execution stopped before ForceRecovery. A synced ACTIVE record is not local permission.'
+        }
         $recoveredTask = Copy-WorkflowRecord $recoveryTask
         foreach ($run in @($recoveredTask.verifications | Where-Object { $_.outcome -eq 'RUNNING' })) {
             $activity = Get-AiSopRunActivity $run $ownerWs
@@ -1029,6 +1035,7 @@ if ($TaskId) {
         if ($taskBefore.ownerId -cne $OwnerId) { throw 'TASK_OWNER_MISMATCH' }
         if ($Operation -eq 'Claim' -and $taskBefore.status -ne 'PAUSED') { throw 'TASK_NOT_RESUMABLE' }
         if ($Operation -ne 'Claim' -and $taskBefore.status -ne 'ACTIVE') { throw 'TASK_NOT_ACTIVE' }
+        if ($taskBefore.status -eq 'ACTIVE' -and (Get-AiSopTaskExecutionLocality $taskBefore $ownerWs) -eq 'EXTERNAL') { throw 'TASK_EXECUTION_LOCATION_MISMATCH: recover after confirming the original execution stopped; do not rebind a synchronized active task' }
         $taskAfter = Copy-WorkflowRecord $taskBefore
         if ($PSBoundParameters.ContainsKey('Tier') -and $Tier -cne $taskBefore.tier) { throw 'TASK_TIER_CHANGE_REQUIRES_EXPLICIT_OPERATION: use Task ChangeTier with the human request' }
         $Tier = [string]$taskBefore.tier
@@ -1562,6 +1569,11 @@ switch ($Operation) {
 if ($null -ne $taskAfter) {
     $taskAfter.status = switch ($Operation) { 'Complete' { 'DONE' } 'Suspend' { 'PAUSED' } 'Cancel' { 'CANCELLED' } default { 'ACTIVE' } }
     $taskAfter.updatedAt = $AcceptedAt.ToString('o')
+    if ($Operation -in @('Claim','Transfer','BindSession','RebindSession')) {
+        Set-AiSopTaskExecutionLocation $taskAfter $ownerWs $AcceptedAt.ToString('o')
+    } elseif ((Get-AiSopTaskExecutionLocality $taskAfter $ownerWs) -eq 'EXTERNAL') {
+        throw 'TASK_EXECUTION_LOCATION_MISMATCH: synced task location disagrees with local ownership; inspect recovery before modifying it'
+    }
     if ($PSBoundParameters.ContainsKey('NextAction')) { $taskAfter.nextAction = $NextAction }
     if ($PSBoundParameters.ContainsKey('Notes')) { $taskAfter.notes = $Notes }
     if ($Operation -eq 'Transfer' -and $ConfirmTakeover) {
@@ -1660,10 +1672,10 @@ if ($TaskId) { $WorkflowDeadlineUtc = [DateTimeOffset]::UtcNow.AddMilliseconds($
 if ($null -ne $DeadlineUtc -and $DeadlineUtc -lt $WorkflowDeadlineUtc) { $WorkflowDeadlineUtc = [DateTimeOffset]$DeadlineUtc }
 $authorityLocks=$null
 try {
-    if ($Operation -in @('Claim','BindSession','RebindSession','Transfer')) {
+    if ($Operation -in @('Claim','BindSession','RebindSession','Transfer') -or ($TaskUpdateJson -and $policyUpdate.operation -eq 'ChangeTier')) {
         Invoke-AiSopWorkflowTransactionRecovery -DeadlineUtc $WorkflowDeadlineUtc -WorkspacePath $ownerWs | Out-Null
         $authorityLocks=Enter-AiSopWorkflowTransactionLocks -SessionKeys $sessionKeys -OwnerPath $OwnerPath -Targets $targets -DeadlineUtc $WorkflowDeadlineUtc -WorkspacePath $ownerWs
-        if ($ResolvedSpecDirectory) { Assert-AiSopNoOtherActiveTask $ResolvedSpecDirectory ([string]$ownerAfter.taskId) }
+        if ($ResolvedSpecDirectory) { Assert-AiSopNoOtherActiveTask $ResolvedSpecDirectory ([string]$ownerAfter.taskId) $ownerWs $taskAfter.tier }
     }
     Invoke-AiSopWorkflowTransaction `
         -Operation $transactionOperation `

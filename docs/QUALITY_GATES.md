@@ -71,7 +71,11 @@ Status/Discover、InspectRecovery、Preflight 共用只读恢复建议：校验 
 
 暂停释放的是执行占用，不是验收义务；本次 T2 DONE 不能替原 T3 宣告功能整体完成。独立后续任务不继承旧测试欠账，实际依赖与代码重叠仍需先辨明。
 
-Claim（包括 Start 和 PAUSED Resume）、BindSession、RebindSession、Transfer（包括旧 owner 收编）以及 Schema 1.1 Validate 在 Session → Owner → Grant 锁内检查同功能其他 ACTIVE task.json，随后以原两阶段事务提交，避免本地注册表丢失或旧 owner 收编时误建第二个活动任务。同会话 Resume 的 Validate 使用锁内读取的 owner.taskId 排除自身。PAUSED、DONE、CANCELLED 不挡新任务；Suspend、Cancel、Recover 不增加此项前置检查，恢复旧任务无需补完旧完成门禁。检查只针对本地已同步状态，不保证其他机器未同步的并行写入安全。
+Claim（包括 Start 和 PAUSED Resume）、BindSession、RebindSession、Transfer（包括旧 owner 收编）、ChangeTier 及 Schema 1.1 Validate 在 Session → Owner → Grant 锁内检查同功能其他 ACTIVE task.json，随后以原两阶段事务提交。同工作区或来源 UNKNOWN 的 ACTIVE 均冲突；Schema 1.1 的 executionLocation 明确属于外部工作区时，仅 T3 + T3 冲突，允许 T1/T2 互相并行及 T3 与 T1/T2 并行。新来源在取得归属的同一事务中记录，不作为独立授权。Validate、写前防护拒绝自身记录的外部来源与本地归属矛盾，不能通过 Rebind/Transfer 静默覆盖。
+
+同会话 Resume 的 Validate 使用锁内 owner.taskId 排除自身；写前防护和完成检查也拒绝已同步可见的 T3 + T3。PAUSED、DONE、CANCELLED 不挡新任务；Suspend、Cancel、Recover 不增加并行冲突前置检查，恢复无需补旧完成门禁。外部 ACTIVE 的 Recover 必须确认原执行停止并显式 ForceRecovery。检查只覆盖已同步状态，不是跨机器锁，未同步的两个 T3 仍可能分别启动；保全、语义合并与证据重验见 [恢复说明](PARALLEL_TASKS.md)。
+
+Guard 在锁内核对 owner/session 的完整绑定、epoch 与任务身份，并拒绝未决事务。Session.lastTransactionId 会被单独的 Grant 发放推进，因此不要求它等于 owner.lastTransactionId；两个值仍进入授权快照。正常 Resume 的 Validate 或被拒绝的命令不能因此让原有写权限失效。
 
 ChangeTier 是人工调整交付要求的显式操作，需要原话和原因；不清除失败证据，不重置任务身份。Status 始终显示最新失败批次，包括 T1 不强制要求的测试，避免把“按 T1 完成”写成“全部测试通过”。
 

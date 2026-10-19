@@ -228,7 +228,7 @@ try {
     $taskContract=Get-TaskScriptContract (Join-Path $SopRoot 'scripts/workflow-task.ps1')
     $rootContract=Get-TaskScriptContract (Join-Path $SopRoot 'distribution/templates/root/ai-sop.ps1')
     $taskExampleCount=0
-    foreach ($relative in @('distribution/templates/root/AGENTS.md','workflows/agent-t3.md','workflows/agent-legacy.md','SUPERPOWERS_MANUAL.md','workflows/superpowers-adapter.md','skills/quality-assurance/SKILL.md','skills/workflow-orchestrator/SKILL.md')) {
+    foreach ($relative in @('distribution/templates/root/AGENTS.md','workflows/agent-t3.md','workflows/agent-legacy.md','SUPERPOWERS_MANUAL.md','docs/PARALLEL_TASKS.md','workflows/superpowers-adapter.md','skills/quality-assurance/SKILL.md','skills/workflow-orchestrator/SKILL.md')) {
         $examples=@(Get-TaskDocCommands ([IO.File]::ReadAllText((Join-Path $SopRoot $relative))))
         if ($relative -in @('skills/quality-assurance/SKILL.md','skills/workflow-orchestrator/SKILL.md')) { Assert-Contract "$relative must provide a Task command example" ($examples.Count -gt 0) }
         foreach ($example in $examples) {

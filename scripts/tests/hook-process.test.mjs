@@ -31,12 +31,12 @@ function run(args, input = Buffer.alloc(0)) {
     p.stdin.end(input);
   });
 }
-async function hook(adapter, event, payload, bom = false) {
+async function hook(adapter, event, payload, bom = false, hint = '') {
   const input = typeof payload === 'string' ? payload : JSON.stringify(payload);
   const bytes = Buffer.from((bom ? '\ufeff' : '') + input, 'utf8');
   // 模拟 Windows 客户端继承本地代码页；wrapper 必须自行恢复协议编码。
   const wrapper = join(workspace, adapter, 'hook-wrapper.ps1').replaceAll("'", "''");
-  const command = `[Console]::InputEncoding=[Text.Encoding]::GetEncoding(936); [Console]::OutputEncoding=[Text.Encoding]::GetEncoding(936); & '${wrapper}' -EventHint ${event}; exit $LASTEXITCODE`;
+  const command = `[Console]::InputEncoding=[Text.Encoding]::GetEncoding(936); [Console]::OutputEncoding=[Text.Encoding]::GetEncoding(936); & '${wrapper}' -EventHint ${event} ${hint ? '-AgentHint ' + hint : ''}; exit $LASTEXITCODE`;
   const r = await run(['-NoProfile', '-Command', command], bytes);
   const value = JSON.parse(r.stdout);
   assert(!r.stdout.includes('\ufffd'), r.stdout);
@@ -47,9 +47,9 @@ let counter = 0;
 const cursor = (name, input, extra = {}) => ({ conversation_id: session, session_id: session,
   generation_id: 'generation-1', tool_use_id: `tool-${++counter}\npart`, hook_event_name: 'preToolUse',
   cursor_version: '3.15.19', workspace_roots: roots, tool_name: name, tool_input: input, ...extra });
-async function task(op) {
+async function task(op, agent = 'CURSOR', nativeSession = session) {
   const args = ['-NoProfile', '-File', join(workspace, '.ai-sop/scripts/workflow-task.ps1'), '-Operation', op,
-    '-WorkspacePath', workspace, '-Feature', 'Probe', '-TaskId', 'process-test', '-Agent', 'CURSOR', '-NativeSessionId', session];
+    '-WorkspacePath', workspace, '-Feature', 'Probe', '-TaskId', agent === 'PI' ? 'pi-process-test' : 'process-test', '-Agent', agent, '-NativeSessionId', nativeSession];
   if (op === 'Start') args.push('-Objective', '真实进程验收');
   const command = "[Console]::OutputEncoding=[Text.UTF8Encoding]::new($false); & " + args.slice(2).map(x => x.startsWith('-') ? x : "'" + x.replaceAll("'", "''") + "'").join(' ') + '; exit $LASTEXITCODE';
   const r = await run(['-NoProfile', '-Command', command]); assert.equal(r.code, 0, r.stdout + r.stderr);
@@ -57,7 +57,7 @@ async function task(op) {
 try {
   await mkdir(workspace);
   for (const dir of ['scripts', 'schemas', 'config']) await cp(join(source, dir), join(workspace, '.ai-sop', dir), { recursive: true });
-  for (const adapter of ['.cursor', '.agents', '.claude']) {
+  for (const adapter of ['.cursor', '.agents', '.claude', '.pi']) {
     await mkdir(join(workspace, adapter));
     await copyFile(join(source, 'distribution/templates/hooks/hook-wrapper.ps1'), join(workspace, adapter, 'hook-wrapper.ps1'));
   }
@@ -123,6 +123,29 @@ try {
   assert.equal((await hook('.cursor', 'PRE_TOOL_USE', cursor('Write', { file_path: file, content: '修改' }))).value.permission, 'allow');
   await task('Cancel');
   assert.equal((await hook('.cursor', 'PRE_TOOL_USE', cursor('Write', { file_path: file, content: '修改' }))).value.permission, 'deny');
+  const piSession = 'pi-process-fixture';
+  await hook('.pi', 'SESSION_START', { session_id: piSession, cwd: workspace, hook_event_name: 'SessionStart', source: 'startup' }, false, 'PI');
+  const piEdit = async input => hook('.pi', 'PRE_TOOL_USE', { session_id: piSession, cwd: workspace,
+    hook_event_name: 'PreToolUse', tool_name: 'edit', tool_use_id: `pi-${++counter}`, tool_input: input }, false, 'PI');
+  const batch = { path: file, edits: [{ oldText: 'BEFORE', newText: '中间' }, { oldText: '中间', newText: 'AFTER' }] };
+  const noTask = await piEdit(batch);
+  assert.equal(noTask.value.block, true); assert.match(noTask.value.reason, /SESSION_BINDING_INVALID/);
+  await task('Start', 'PI', piSession);
+  assert.equal((await piEdit(batch)).value.block, false);
+  assert.equal((await piEdit({ path: file, oldText: 'BEFORE', newText: 'AFTER' })).value.block, false);
+  for (const input of [
+    { path: file, edits: [] },
+    { path: file, edits: batch.edits, oldText: 'BEFORE', newText: 'AFTER' },
+    { path: file, edits: [{ oldText: 'BEFORE', newText: null }] },
+    { path: file, edits: [{ path: root, oldText: 'BEFORE', newText: 'AFTER' }] },
+    { path: join(root, 'outside.txt'), edits: batch.edits }
+  ]) assert.equal((await piEdit(input)).value.block, true);
+  await task('Suspend', 'PI', piSession);
+  assert.equal((await piEdit(batch)).value.block, true);
+  await task('Resume', 'PI', piSession);
+  assert.equal((await piEdit(batch)).value.block, false);
+  await task('Cancel', 'PI', piSession);
+  assert.equal((await piEdit(batch)).value.block, true);
   assert.equal(await readFile(file, 'utf8'), 'BEFORE');
   console.log('PASS: real wrapper processes, UTF-8/BOM/Chinese, native Cursor metadata, duplicate imported hook, malformed input and task lifecycle');
 } finally {

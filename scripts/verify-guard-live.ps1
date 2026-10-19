@@ -75,7 +75,7 @@ function New-LiveCursorPayload {
             $ToolName='apply_patch'; $ToolInput=@{command="*** Begin Patch`n*** Update File: $($ToolInput.file_path)`n@@`n-before`n+after`n*** End Patch"}
         }
         if ($Agent -eq 'PI') {
-            if ($ToolName -eq 'Edit') { $ToolInput=@{path=$ToolInput.file_path;oldText='before';newText='after'} }
+            if ($ToolName -eq 'Edit') { $ToolInput=@{path=$ToolInput.file_path;edits=@(@{oldText='before';newText='after'})} }
             if ($ToolName -eq 'Read') { $ToolInput=@{path=$ToolInput.file_path} }
             $ToolName=$ToolName.ToLowerInvariant()
         }

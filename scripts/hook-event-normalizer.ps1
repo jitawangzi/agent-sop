@@ -3217,9 +3217,21 @@ function ConvertFrom-AiSopHarnessPayload {
                 'find' { $name='PiFind' }
                 'ls' { $name='PiLs' }
                 'edit' {
-                    if (-not (Test-OnlyAllowedFields $args @('path','oldText','newText')) -or
-                        $args.oldText -isnot [string] -or $args.newText -isnot [string]) { Throw-AiSopHookError 'TOOL_ARGS_INVALID' }
-                    $name='Edit'; $args=@{path=$args.path;old_string=$args.oldText;new_string=$args.newText}
+                    if (Test-MapHasKey $args 'edits') {
+                        # 新版 Pi 使用有序编辑数组，保留顺序并限制到同一个目标文件。
+                        if (-not (Test-OnlyAllowedFields $args @('path','edits')) -or
+                            -not (Test-ArrayValue $args.edits) -or @($args.edits).Count -eq 0) { Throw-AiSopHookError 'TOOL_ARGS_INVALID' }
+                        foreach ($edit in $args.edits) {
+                            if ($edit -isnot [System.Collections.IDictionary] -or
+                                -not (Test-OnlyAllowedFields $edit @('oldText','newText')) -or
+                                $edit.oldText -isnot [string] -or $edit.newText -isnot [string]) { Throw-AiSopHookError 'TOOL_ARGS_INVALID' }
+                        }
+                        $name='MultiEdit'
+                    } else {
+                        if (-not (Test-OnlyAllowedFields $args @('path','oldText','newText')) -or
+                            $args.oldText -isnot [string] -or $args.newText -isnot [string]) { Throw-AiSopHookError 'TOOL_ARGS_INVALID' }
+                        $name='Edit'; $args=@{path=$args.path;old_string=$args.oldText;new_string=$args.newText}
+                    }
                 }
             }
         }

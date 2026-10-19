@@ -18,6 +18,8 @@ Hook 注入当前会话说明。Agent 在 Task 命令中携带说明中的 `-Age
 
 Cursor 的拒绝结果在 user_message 和 agent_message 两个通道同时提供原因及当前会话参数；即使客户端未展示 SessionStart 上下文，也可按拒绝说明正常 Start/Resume，无需停用防护或猜测会话 ID。原生 Grep 的 file_path 映射为统一搜索路径，继续执行工作区路径检查；同时传入 path 和 file_path 时拒绝。空正则是合法的只读搜索，不因此要求启动任务。
 
+Pi 的 edit 同时兼容旧版 `path/oldText/newText` 和新版 `path/edits[]`。编辑数组保留原顺序，只允许修改顶层 path 指定的文件；空数组、混用两种格式或在数组项中指定另一个路径均拒绝。
+
 先 Start/Resume，成功后回显实际档位与执行要求，再修改。未指定默认 T2；新 T1/T3 仍须 UserRequest。讨论与原生只读工具不需要任务。Shell 仍按已有保守策略处理，不能因为名字叫“测试”或“读取”便自动放行任意命令。无法识别的工具拒绝并保留诊断，不猜测它是只读。
 
 ## 验证
@@ -31,6 +33,10 @@ pwsh -NoProfile -File .ai-sop/scripts/verify-guard-live.ps1 -Agent CODEX
 Agent 可换为 ANTIGRAVITY、CURSOR、PI、CLAUDE_CODE。此命令不改业务目录，输出明确标记 `clientHookCertified=false`。
 
 实际客户端验收需在临时测试工程中检查：Hook 日志确实出现、无任务的写入被客户端阻止、登记任务后写入成功、暂停后再次阻止。记录客户端版本和载荷；不能以 in-process 探测代替此项，也不要在业务任务中故意制造非法写入。
+
+Codex 的“项目受信任”和“Hook 已信任”是两项独立状态。验收前通过原生 `/hooks` 审核本工程的三个 SOP 事件，确认 Active，而非只看到 Installed；新目录需要单独检查。未信任的 Hook 会被客户端跳过，不能将此时的写入成功误诊为 dispatcher 放行。自动验收也应先完成正常信任，不用绕过 Hook 信任的开关代替。
+
+只有 Shell 读取工具的客户端（例如部分 Codex 会话），无活动任务时的 Get-Content 等命令仍受保守 Shell 策略限制。自动验收可由外部只读测试器提供初始配置并核对拒绝后的文件状态，客户端负责实际编辑和正常 Task 命令；报告需说明由谁完成读取，不应为通过验收放宽任意 Shell 或把读取被拒算作写入防护失败。
 
 真实进程回归由 `scripts/tests/hook-process.test.mjs` 覆盖：经项目 wrapper 启动 PowerShell，在本地代码页环境下发送 UTF-8/BOM 与中文路径，严格解码返回字节，检查原生拒绝协议及任务生命周期。Cursor 真实载荷允许相同的 conversation_id/session_id、缺省或空 cwd，以及 Windows `/D:/...` 工作区表示；身份不一致和越界路径仍拒绝。Cursor 自动导入 Claude Hook 时，两份有效载荷识别为同一个 Cursor 会话，由已有去重逻辑处理，不停用用户的其他 Hook。自动化通过仍不代表客户端现场认证通过。
 

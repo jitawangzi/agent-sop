@@ -36,7 +36,9 @@ Agent 可换为 ANTIGRAVITY、CURSOR、PI、CLAUDE_CODE。此命令不改业务�
 
 Codex 的“项目受信任”和“Hook 已信任”是两项独立状态。验收前通过原生 `/hooks` 审核本工程的三个 SOP 事件，确认 Active，而非只看到 Installed；新目录需要单独检查。未信任的 Hook 会被客户端跳过，不能将此时的写入成功误诊为 dispatcher 放行。自动验收也应先完成正常信任，不用绕过 Hook 信任的开关代替。
 
-只有 Shell 读取工具的客户端（例如部分 Codex 会话），无活动任务时的 Get-Content 等命令仍受保守 Shell 策略限制。自动验收可由外部只读测试器提供初始配置并核对拒绝后的文件状态，客户端负责实际编辑和正常 Task 命令；报告需说明由谁完成读取，不应为通过验收放宽任意 Shell 或把读取被拒算作写入防护失败。
+Codex 的常用 Shell 只读命令无需活动任务，暂停或取消任务后也可继续讨论、查看代码：例如 `Get-Content -LiteralPath 'src/example.txt'`、`Get-ChildItem src -File`、`rg -n pattern src`、`git status --short`、`git diff`、`git log --oneline -n 5`。支持固定只读管道（例如 `Get-Content ... | Select-Object -First 20`）及多个已识别的读取语句；POSIX Shell 支持字面路径的 cat/head/tail 和 sed 行范围读取。路径须在工作区内，未知参数、变量、脚本块、重定向以及混合写入不会获此豁免；遇到复杂只读表达式被拒，可拆成简单读取命令，无需为讨论创建任务。
+
+放行时通过 Codex 原生 `updatedInput.command` 返回重新构造的命令：Git 禁用 pager、可选锁、fsmonitor、签名校验及外部 diff/textconv，rg 禁用配置文件，PowerShell 使用模块限定的只读 cmdlet。去重重放仍重验路径并返回安全化命令。任意 Shell、脚本执行和文件写入继续执行任务防护；此豁免不改变其他客户端的 Shell 策略。
 
 真实进程回归由 `scripts/tests/hook-process.test.mjs` 覆盖：经项目 wrapper 启动 PowerShell，在本地代码页环境下发送 UTF-8/BOM 与中文路径，严格解码返回字节，检查原生拒绝协议及任务生命周期。Cursor 真实载荷允许相同的 conversation_id/session_id、缺省或空 cwd，以及 Windows `/D:/...` 工作区表示；身份不一致和越界路径仍拒绝。Cursor 自动导入 Claude Hook 时，两份有效载荷识别为同一个 Cursor 会话，由已有去重逻辑处理，不停用用户的其他 Hook。自动化通过仍不代表客户端现场认证通过。
 

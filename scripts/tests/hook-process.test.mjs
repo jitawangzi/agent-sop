@@ -49,7 +49,7 @@ const cursor = (name, input, extra = {}) => ({ conversation_id: session, session
   cursor_version: '3.15.19', workspace_roots: roots, tool_name: name, tool_input: input, ...extra });
 async function task(op, agent = 'CURSOR', nativeSession = session) {
   const args = ['-NoProfile', '-File', join(workspace, '.ai-sop/scripts/workflow-task.ps1'), '-Operation', op,
-    '-WorkspacePath', workspace, '-Feature', 'Probe', '-TaskId', agent === 'PI' ? 'pi-process-test' : 'process-test', '-Agent', agent, '-NativeSessionId', nativeSession];
+    '-WorkspacePath', workspace, '-Feature', 'Probe', '-TaskId', `${agent.toLowerCase()}-process-test`, '-Agent', agent, '-NativeSessionId', nativeSession];
   if (op === 'Start') args.push('-Objective', '真实进程验收');
   const command = "[Console]::OutputEncoding=[Text.UTF8Encoding]::new($false); & " + args.slice(2).map(x => x.startsWith('-') ? x : "'" + x.replaceAll("'", "''") + "'").join(' ') + '; exit $LASTEXITCODE';
   const r = await run(['-NoProfile', '-Command', command]); assert.equal(r.code, 0, r.stdout + r.stderr);
@@ -57,7 +57,7 @@ async function task(op, agent = 'CURSOR', nativeSession = session) {
 try {
   await mkdir(workspace);
   for (const dir of ['scripts', 'schemas', 'config']) await cp(join(source, dir), join(workspace, '.ai-sop', dir), { recursive: true });
-  for (const adapter of ['.cursor', '.agents', '.claude', '.pi']) {
+  for (const adapter of ['.cursor', '.agents', '.claude', '.pi', '.codex']) {
     await mkdir(join(workspace, adapter));
     await copyFile(join(source, 'distribution/templates/hooks/hook-wrapper.ps1'), join(workspace, adapter, 'hook-wrapper.ps1'));
   }
@@ -146,8 +146,45 @@ try {
   assert.equal((await piEdit(batch)).value.block, false);
   await task('Cancel', 'PI', piSession);
   assert.equal((await piEdit(batch)).value.block, true);
+  // Codex 原生协议经真实 wrapper 进程验证，去重重放也必须带安全化命令。
+  const codexSession = 'codex-read-process';
+  await hook('.codex', 'SESSION_START', { session_id: codexSession, cwd: workspace,
+    hook_event_name: 'SessionStart', source: 'startup' }, false, 'CODEX');
+  const codexPayload = (name, input) => ({ session_id: codexSession, cwd: workspace,
+    hook_event_name: 'PreToolUse', tool_name: name, tool_use_id: `codex-${++counter}`, tool_input: input });
+  const codexHook = payload => hook('.codex', 'PRE_TOOL_USE', payload, false, 'CODEX');
+  const readPayload = codexPayload('Bash', { command: "Get-Content -LiteralPath 'src/中文.txt'", shell: 'pwsh', timeout_ms: 10000 });
+  for (let replay = 0; replay < 2; replay++) {
+    const result = await codexHook(readPayload);
+    const output = result.value.hookSpecificOutput;
+    assert.equal(output.permissionDecision, 'allow', JSON.stringify(result));
+    assert.match(output.updatedInput.command, /Microsoft.PowerShell.Management\\Get-Content/);
+    const execution = await run(['-NoProfile', '-Command', output.updatedInput.command]);
+    assert.equal(execution.code, 0, execution.stderr); assert.match(execution.stdout, /BEFORE/);
+  }
+  for (const command of ['git status --short', 'git diff', 'rg -n BEFORE src']) {
+    const output = (await codexHook(codexPayload('Bash', { command }))).value.hookSpecificOutput;
+    assert.equal(output.permissionDecision, 'allow');
+    assert.match(output.updatedInput.command, command.startsWith('git') ? /--no-pager --no-optional-locks/ : /--no-config/);
+  }
+  const writeCommand = "Set-Content -LiteralPath 'src/中文.txt' -Value 'BAD'";
+  for (const command of [writeCommand, `Get-Content 'src/中文.txt'; ${writeCommand}`, "Get-Content 'src/中文.txt' > src/out.txt", 'git diff --output=src/out.txt']) {
+    assert.equal((await codexHook(codexPayload('Bash', { command }))).value.hookSpecificOutput.permissionDecision, 'deny');
+  }
+  const patch = () => codexPayload('apply_patch', { command: `*** Begin Patch\n*** Update File: ${file}\n@@\n-BEFORE\n+AFTER\n*** End Patch` });
+  assert.equal((await codexHook(patch())).value.hookSpecificOutput.permissionDecision, 'deny');
+  await task('Start', 'CODEX', codexSession);
+  assert.equal((await codexHook(patch())).value.hookSpecificOutput.permissionDecision, 'allow');
+  await task('Suspend', 'CODEX', codexSession);
+  assert.equal((await codexHook(patch())).value.hookSpecificOutput.permissionDecision, 'deny');
+  assert.equal((await codexHook(readPayload)).value.hookSpecificOutput.permissionDecision, 'allow');
+  await task('Resume', 'CODEX', codexSession);
+  assert.equal((await codexHook(patch())).value.hookSpecificOutput.permissionDecision, 'allow');
+  await task('Cancel', 'CODEX', codexSession);
+  assert.equal((await codexHook(readPayload)).value.hookSpecificOutput.permissionDecision, 'allow');
+  assert.equal((await codexHook(codexPayload('Bash', { command: writeCommand }))).value.hookSpecificOutput.permissionDecision, 'deny');
   assert.equal(await readFile(file, 'utf8'), 'BEFORE');
-  console.log('PASS: real wrapper processes, UTF-8/BOM/Chinese, native Cursor metadata, duplicate imported hook, malformed input and task lifecycle');
+  console.log('PASS: real wrapper processes, UTF-8/BOM/Chinese, Cursor/Pi/Codex task lifecycle, safe readonly command replay and write rejection');
 } finally {
   const physical = await realpath(root);
   assert.equal(dirname(physical), await realpath(tmpdir()));

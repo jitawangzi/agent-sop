@@ -155,6 +155,8 @@ try {
     $read = Invoke-LiveDispatch (New-LiveCursorPayload -ToolName Read -ToolInput @{file_path=(Join-Path $WorkspaceRoot 'docs/probe.md')})
     Assert-LiveProbe ($read.Decision -eq 'ALLOW') '只读查询不应要求修改任务。'
     if ($Agent -eq 'CODEX') {
+        $shellRead=Invoke-LiveDispatch (New-LiveCursorPayload -ToolName Shell -ToolInput @{command='Get-Content src/probe.txt';shell='pwsh'})
+        Assert-LiveProbe ($shellRead.Decision -eq 'ALLOW' -and $shellRead.ReasonCode -eq 'READ_ONLY_SHELL_COMMAND') 'Codex 字面 Shell 读取不应要求任务。'
         $view=Invoke-LiveDispatch (New-LiveCursorPayload -ToolName view_image -ToolInput @{path=(Join-Path $WorkspaceRoot 'docs/probe.md')})
         Assert-LiveProbe ($view.Decision -eq 'ALLOW') 'Codex 原生只读工具不应要求任务。'
         $spawn=Invoke-LiveDispatch (New-LiveCursorPayload -ToolName spawn_agent -ToolInput @{message='执行修改'})
@@ -177,7 +179,8 @@ try {
             "合法活动任务未能授权编辑：$relativePath / $($edit.ReasonCode)"
         )
     }
-    $shell = Invoke-LiveDispatch (New-LiveCursorPayload -ToolName Shell -ToolInput @{command='Get-Location'})
+    # 此处验证需任务授权的 Shell；只读命令已走独立豁免，不能用它断言归属分支。
+    $shell = Invoke-LiveDispatch (New-LiveCursorPayload -ToolName Shell -ToolInput @{command='Set-Content src/probe.txt after'})
     Assert-LiveProbe ($shell.Decision -eq 'ALLOW' -and $shell.ReasonCode -eq 'EXACT_OWNER_AUTHORIZED') '合法活动任务未能授权普通 Shell。'
 
     Invoke-LiveTask Suspend

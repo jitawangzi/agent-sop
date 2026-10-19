@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
-import { mkdtemp, mkdir, cp, copyFile, writeFile, readFile, rm, realpath } from 'node:fs/promises';
+import { mkdtemp, mkdir, cp, copyFile, writeFile, readFile, readdir, rm, realpath } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -51,8 +51,26 @@ async function task(op, agent = 'CURSOR', nativeSession = session) {
   const args = ['-NoProfile', '-File', join(workspace, '.ai-sop/scripts/workflow-task.ps1'), '-Operation', op,
     '-WorkspacePath', workspace, '-Feature', 'Probe', '-TaskId', `${agent.toLowerCase()}-process-test`, '-Agent', agent, '-NativeSessionId', nativeSession];
   if (op === 'Start') args.push('-Objective', '真实进程验收');
+  if (op === 'Start' && agent === 'CURSOR') args.push('-Tier', 'T3', '-UserRequest', '父任务按 T3 验证子会话只读隔离');
   const command = "[Console]::OutputEncoding=[Text.UTF8Encoding]::new($false); & " + args.slice(2).map(x => x.startsWith('-') ? x : "'" + x.replaceAll("'", "''") + "'").join(' ') + '; exit $LASTEXITCODE';
   const r = await run(['-NoProfile', '-Command', command]); assert.equal(r.code, 0, r.stdout + r.stderr);
+}
+// 只比较权限及任务的持久记录，关联/去重缓存不代表授权。
+async function authoritySnapshot() {
+  const records = {};
+  async function visit(dir) {
+    let entries;
+    try { entries = await readdir(dir, { withFileTypes: true }); }
+    catch (e) { if (e.code === 'ENOENT') return; throw e; }
+    for (const entry of entries) {
+      const path = join(dir, entry.name);
+      if (entry.isDirectory()) await visit(path);
+      else records[path] = (await readFile(path)).toString('base64');
+    }
+  }
+  for (const kind of ['OWNER', 'SESSION', 'COMMAND_GRANT', 'TRANSACTION']) await visit(env[`AI_SOP_${kind}_REGISTRY`]);
+  await visit(join(workspace, '.ai-workspace/specs'));
+  return records;
 }
 try {
   await mkdir(workspace);
@@ -126,7 +144,45 @@ try {
     assert.equal(invalid.value.permission, 'deny', JSON.stringify(invalid));
     assert.match(invalid.value.agent_message, /PAYLOAD_SHAPE_INVALID/);
   }
+  // 真实子会话没有 sessionStart：读取不能登记、接管、续租或改动父 T3。
+  const childId = 'review-child-without-lifecycle';
+  const child = (name, input, extra = {}) => cursor(name, input, { conversation_id: childId, session_id: childId, ...extra });
+  const contract = join(workspace, '.ai-workspace/specs/features/Probe/06_design_contract.md');
+  await writeFile(contract, '审查夹具');
+  const parentBefore = await authoritySnapshot();
+  for (const adapter of ['.cursor', '.claude']) {
+    for (const [name, input] of [
+      ['Read', { file_path: contract }],
+      ['Grep', { pattern: '审查', file_path: contract }],
+      ['Glob', { glob_pattern: '**/*.md', target_directory: workspace }]
+    ]) {
+      const result = await hook(adapter, 'PRE_TOOL_USE', child(name, input));
+      assert.equal(result.value.permission, 'allow', JSON.stringify(result));
+    }
+    for (const [name, input, extra] of [
+      ['Read', { file_path: join(root, 'outside.txt') }],
+      ['Read', { file_path: join(workspace, '..', 'outside.txt') }],
+      ['Read', { file_path: contract }, { session_id: 'mismatched-child' }]
+    ]) assert.equal((await hook(adapter, 'PRE_TOOL_USE', child(name, input, extra))).value.permission, 'deny');
+  }
+  assert.deepEqual(await authoritySnapshot(), parentBefore, '子会话读取或路径拒绝不应改动权限和父任务');
+  for (const [name, input] of [
+    ['Read', { file_path: contract, command: 'unrecognized' }],
+    ['Write', { file_path: file, content: 'UNAUTHORIZED' }],
+    ['Shell', { command: "Set-Content 'src/中文.txt' 'UNAUTHORIZED'" }],
+    ['Task', reviewInput]
+  ]) assert.equal((await hook('.cursor', 'PRE_TOOL_USE', child(name, input))).value.permission, 'deny');
+  const pendingBefore = await authoritySnapshot();
+  for (const [path, bytes] of Object.entries(parentBefore)) assert.equal(pendingBefore[path], bytes, `子会话拒绝写入不得改动父记录: ${path}`);
+  assert(Object.keys(pendingBefore).length > Object.keys(parentBefore).length, '写入拒绝应建立子会话 PENDING，供只读兼容测试');
+  assert.equal((await hook('.cursor', 'PRE_TOOL_USE', child('Read', { file_path: contract }))).value.permission, 'allow');
+  assert.deepEqual(await authoritySnapshot(), pendingBefore, 'PENDING 子会话读取不得变更权限');
+  // 父任务暂停后仍可审查，但不得恢复父任务或获得写权限。
   await task('Suspend');
+  const suspendedBefore = await authoritySnapshot();
+  assert.equal((await hook('.cursor', 'PRE_TOOL_USE', child('Read', { file_path: contract }))).value.permission, 'allow');
+  assert.deepEqual(await authoritySnapshot(), suspendedBefore);
+  assert.equal((await hook('.cursor', 'PRE_TOOL_USE', child('Write', { file_path: file, content: 'UNAUTHORIZED' }))).value.permission, 'deny');
   for (const adapter of ['.cursor', '.claude']) {
     const review = await hook(adapter, 'PRE_TOOL_USE', cursor('Task', reviewInput, { model: '' }));
     assert.equal(review.value.permission, 'deny', JSON.stringify(review));
@@ -198,7 +254,7 @@ try {
   assert.equal((await codexHook(readPayload)).value.hookSpecificOutput.permissionDecision, 'allow');
   assert.equal((await codexHook(codexPayload('Bash', { command: writeCommand }))).value.hookSpecificOutput.permissionDecision, 'deny');
   assert.equal(await readFile(file, 'utf8'), 'BEFORE');
-  console.log('PASS: real wrapper processes, UTF-8/BOM/Chinese, Cursor/Pi/Codex task lifecycle, safe readonly command replay and write rejection');
+  console.log('PASS: real wrapper processes, UTF-8/BOM/Chinese, Cursor T3 parent/child readonly isolation and path rejection, Pi/Codex task lifecycle, safe readonly command replay and write rejection');
 } finally {
   const physical = await realpath(root);
   assert.equal(dirname(physical), await realpath(tmpdir()));

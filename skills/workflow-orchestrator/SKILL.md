@@ -35,7 +35,7 @@ description: 编排人工请求的独立审计片段，默认只出报告；明�
 - `audit_fix_policy`：`REPORT_ONLY`（只出报告，**默认**）/ `AUTO_REPAIR`（自动修复并回归）
 
 ### 执行流程（人工驱动）
-1. REPORT_ONLY 的只读审计无需选择档位、Discover 或认领。AUTO_REPAIR 的初查可先按只读方式收集发现，在实际修改前按下方任务入口 Start / Resume。独立修复人工指定优先、未指定为 T2，续做继承原档位；成功后按登记结果向用户说明档位来源与本档义务。派发专家时附 taskId、档位、执行授权、本次用途（初查只出报告或修复后复审）、明确需求及已有编译证据；专家继承，不另建任务或自行改档，不要求用户另填字段。
+1. REPORT_ONLY 的只读审计无需选择档位、Discover 或认领。AUTO_REPAIR 的初查可先按只读方式收集发现，在实际修改前按下方任务入口 Start / Resume。独立修复人工指定优先、未指定为 T2，续做继承原档位；成功后按登记结果向用户说明档位来源与本档义务。派发专家时附 taskId、档位、写入责任归属、本次用途（初查只出报告或修复后复审）、明确需求及已有编译证据；专家沿用任务上下文，不另建任务或自行改档，不自动继承会话写权限。只读审查不调用 Start/Resume/Recover/ConfirmTakeover，由 controller 保存结果；读取被拒绝时报告路径或载荷原因，不接管父任务。不要求用户另填字段。
 2. 若规格目录存在 `04_change_impact.json` 且含 `behaviorVariants` / 类型扩展，**默认 Protocol Trace**：派 `implementation-auditor` Mode C 与 `logic-auditor` Mode E，输入 `entry_points`=`04.entryPoints`。禁止只按 class 或 revision diff 起审。
 3. 否则按序调专家 skill：
    - `implementation-auditor`（实现/契约合规 + 完整性）

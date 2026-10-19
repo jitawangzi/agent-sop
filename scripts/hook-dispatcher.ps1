@@ -1030,6 +1030,22 @@ function Invoke-AiSopHookDispatcher {
         if ($AgentHint -and $agent -cne $AgentHint) { $agent=$AgentHint; throw 'PAYLOAD_AGENT_MISMATCH' }
         if ($AgentHint) { $hookEvent.rawPayloadSha256=Get-AiSopSha256Hex $originalRawPayload }
 
+        # 只有具备完整参数和物理路径校验的读取工具免会话，不扩展 ANY_OBJECT 工具权限。
+        $statelessRead = $false
+        if ($EventHint -ceq 'PRE_TOOL_USE' -and $hookEvent.toolClass -ceq 'SAFE_NON_EDIT') {
+            $readPayload = Get-AiSopToolPayload -Payload (ConvertFrom-AiSopJson $RawPayload) -NativeShape $hookEvent.nativeShape
+            $readPolicy = Resolve-AiSopToolPolicy -Policy (Get-AiSopToolPolicy -PolicyPath $script:HookToolPolicyPath) `
+                -NativeShape $hookEvent.nativeShape -ToolName $hookEvent.toolName -Arguments $readPayload.Arguments
+            $statelessRead = $readPolicy.ToolClass -ceq 'SAFE_NON_EDIT' -and $readPolicy.ArgumentProfile -cin @('READ','GLOB','SEARCH')
+        }
+        # 子会话可直接审查；不登记会话、不续租父任务，也不触发权限事务恢复。
+        if ($statelessRead) {
+            $watch.Stop()
+            return New-AiSopDispatcherResult -Agent $agent -Decision ALLOW -ReasonCode SAFE_NON_EDIT `
+                -Envelope (ConvertTo-AiSopDispatcherEnvelope -Agent $agent -EventHint $EventHint -Decision ALLOW -ReasonCode SAFE_NON_EDIT) `
+                -ExitCode 0 -DurationMs $watch.ElapsedMilliseconds
+        }
+
         if (Test-AiSopGuardEscapeEnabled) {
             [Console]::Error.WriteLine('[WARN] GUARD_DISABLED: 人工维护已停用写前防护，本次放行不代表按 T1/T2/T3 正常执行。')
             $watch.Stop()
@@ -1190,7 +1206,7 @@ function Add-AiSopHarnessSessionContext {
     $payload=ConvertFrom-AiSopJson $RawPayload
     $sessionId=if ($payload.Contains('conversationId')) { $payload.conversationId } elseif ($payload.Contains('conversation_id')) { $payload.conversation_id } else { $payload.session_id }
     if ($sessionId -isnot [string] -or $sessionId -notmatch '^[A-Za-z0-9._:-]+$') { return $Result.Envelope }
-    $message="AI SOP 当前会话：$sessionId。执行修改前先 Task Start/Resume；所有 Task 命令携带 -Agent $($Result.Agent) -NativeSessionId '$sessionId'，避免子进程另建会话。未指定档位默认 T2；成功后先回显登记档位和流程，再修改。纯讨论不启动任务。"
+    $message="AI SOP 当前会话：$sessionId。执行修改前先 Task Start/Resume；所有 Task 命令携带 -Agent $($Result.Agent) -NativeSessionId '$sessionId'，避免子进程另建会话。未指定档位默认 T2；成功后先回显登记档位和流程，再修改。纯讨论和只读审查不启动任务。只读子 Agent 不得调用 Start/Resume/Recover/ConfirmTakeover；读取被拒绝时报告路径或载荷原因，不接管父任务。"
     $envelope=ConvertFrom-AiSopJson $Result.Envelope
     if ($Result.Decision -eq 'ALLOW' -and $EventHint -in @('SESSION_START','PRE_INVOCATION')) {
         switch ($Result.Agent) {

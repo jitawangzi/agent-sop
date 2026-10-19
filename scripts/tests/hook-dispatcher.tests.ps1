@@ -345,6 +345,36 @@ try {
     . $SessionScript
     $now = [DateTimeOffset]::UtcNow
 
+    # 只读子会话无需生命周期；损坏的权限日志也不应被读取工具恢复或改写。
+    $readOnlyId = 'cursor-readonly-child'
+    $readOnlyPath = Join-Path $Workspace 'ai-sop.ps1'
+    $readOnlyKey = Get-AiSopWorkflowSessionKey -Agent CURSOR -NativeSessionId $readOnlyId -WorkspacePath $Workspace
+    $readOnlySessionPath = Get-AiSopWorkflowSessionPath -SessionKey $readOnlyKey -WorkspacePath $Workspace
+    $txRoot = Get-AiSopWorkflowTransactionRegistryRoot -WorkspacePath $Workspace
+    [IO.Directory]::CreateDirectory($txRoot) | Out-Null
+    $readOnlyJournal = Join-Path $txRoot 'readonly-unresolved.json'
+    [IO.File]::WriteAllText($readOnlyJournal, '{unresolved', $Utf8NoBom)
+    try {
+        $readOnlyResult = Invoke-Dispatch -RawPayload (New-CursorPayload -Event PRE_TOOL_USE -SessionId $readOnlyId -ToolName Read -ToolInput @{file_path=$readOnlyPath} -Occurrence 'readonly-unregistered') -EventHint PRE_TOOL_USE -AcceptedAt $now
+        Assert-Equal $readOnlyResult.Decision 'ALLOW' '只读子会话不应被未登记或未决事务拦截。'
+        Assert-Equal $readOnlyResult.ReasonCode 'SAFE_NON_EDIT' '只读通道须明确原因。'
+        Assert-True (-not [IO.File]::Exists($readOnlySessionPath)) '只读调用不得登记子会话。'
+        Assert-Equal ([IO.File]::ReadAllText($readOnlyJournal)) '{unresolved' '只读调用不得改动权限日志。'
+    } finally {
+        [IO.File]::Delete($readOnlyJournal)
+    }
+    Invoke-Dispatch -RawPayload (New-CursorPayload -Event SESSION_START -SessionId $readOnlyId) -EventHint SESSION_START -AcceptedAt $now | Out-Null
+    Invoke-Dispatch -RawPayload (New-CursorPayload -Event SESSION_END -SessionId $readOnlyId) -EventHint SESSION_END -AcceptedAt $now.AddMilliseconds(1) | Out-Null
+    $endedBefore = [IO.File]::ReadAllText($readOnlySessionPath)
+    $endedRead = Invoke-Dispatch -RawPayload (New-CursorPayload -Event PRE_TOOL_USE -SessionId $readOnlyId -ToolName Read -ToolInput @{file_path=$readOnlyPath} -Occurrence 'readonly-ended') -EventHint PRE_TOOL_USE -AcceptedAt $now.AddMilliseconds(2)
+    Assert-Equal $endedRead.Decision 'ALLOW' '结束会话仍可读取，不得为读取而恢复任务。'
+    Assert-Equal ([IO.File]::ReadAllText($readOnlySessionPath)) $endedBefore '读取不得复活或续租已结束会话。'
+    $endedWrite = Invoke-Dispatch -RawPayload (New-CursorPayload -Event PRE_TOOL_USE -SessionId $readOnlyId -ToolName Write -ToolInput @{file_path=$readOnlyPath;content='BAD'} -Occurrence 'write-ended') -EventHint PRE_TOOL_USE -AcceptedAt $now.AddMilliseconds(3)
+    Assert-Equal $endedWrite.Decision 'DENY' '结束会话不能因为可读取而获得写权限。'
+    # SAFE_NON_EDIT 还包含兼容工具；不能把宽泛 ANY_OBJECT 策略当成已校验读取。
+    $unboundAgentCall = Invoke-Dispatch -RawPayload (New-AntigravityPayload -Event PRE_TOOL_USE -SessionId 'unbound-general-tool' -ToolName invoke_subagent -ToolInput @{prompt='review'}) -EventHint PRE_TOOL_USE -AcceptedAt $now
+    Assert-Equal $unboundAgentCall.Decision 'DENY' '宽泛工具不能通过只读入口绕过原有会话检查。'
+
     # 没有任务或活动会话时仍能进入受限的 Start/Resume，不开放任意 Shell。
     $entryStart = "pwsh -NoProfile -File './ai-sop.ps1' Task -Operation Start -Feature Bootstrap -TaskId bootstrap -Agent CLAUDE_CODE -Objective '验证引导'"
     $entryPayload = New-ClaudePayload -Event PRE_TOOL_USE -SessionId 'entry-without-session' -ToolName Bash -ToolInput @{ command=$entryStart } -Occurrence 'entry-start'

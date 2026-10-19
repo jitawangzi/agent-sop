@@ -323,6 +323,10 @@ exit 0
     $agentsText = Get-Content -LiteralPath $AgentsMd -Raw
     $t3Text = Get-Content -LiteralPath (Join-Path $SopRoot 'workflows/agent-t3.md') -Raw
     $legacyText = Get-Content -LiteralPath (Join-Path $SopRoot 'workflows/agent-legacy.md') -Raw
+    $reviewAgent = Get-Content -LiteralPath (Join-Path $SopRoot 'agents/design-reviewer.md') -Raw
+    $reviewTools = [regex]::Match($reviewAgent, '(?m)^tools:\s*([^\r\n]+)').Groups[1].Value -split ',\s*'
+    Assert-Contract 'Design reviewer declares only readonly tools' `
+        ($reviewTools.Count -eq 3 -and @($reviewTools | Where-Object { $_ -notin @('Read','Glob','Grep') }).Count -eq 0)
     Assert-Contract 'Default entry remains compact and routes optional detail' `
         (($agentsText -split "`n").Count -le 160 -and $agentsText.Length -lt 10000 -and
          $agentsText -match '必须先读' -and $agentsText -match '\.ai-sop/workflows/agent-t3\.md' -and

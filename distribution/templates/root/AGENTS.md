@@ -24,9 +24,11 @@
 
 ## 开始、执行、完成
 
+**只读子 Agent**：审查只读取工作区文件并返回报告，由 controller 保持任务归属和记录门禁。子会话不调用 Start、Resume、Recover 或 ConfirmTakeover，不修改规格、代码及权限记录。读取失败时报告具体路径/载荷错误，不以接管父任务绕过；子会话 ID 不等于写入授权。需要修改时由 controller 执行，或使用已验证的显式委派/串行交接机制，不假定子 Agent 自动继承权限。
+
 1. 准备执行修改时，新任务、切换功能/工作区或跨 Agent 接管先 `pwsh -NoProfile -File ./ai-sop.ps1 Task -Operation Discover`，区分独立修改、原任务续做、补收尾。多个候选才询问一次，无需固定接管口令。同会话任务已明确时沿用 taskId，不按文件或回复重复 Discover/Resume。
 2. 独立修改用 Start，继续原修改用 Resume；**操作成功后才能写入**。新 Start 未指定档位为 T2；选择 T1/T3 必须带 `-UserRequest` 保存已有人工原话，不编造或为已明确选择重复确认。沿用现有 FeatureName，独立小任务使用新的 taskId；新功能名使用 PascalCase（`[A-Z][A-Za-z0-9]+`，无连字符）并向用户回显，不为躲避旧任务状态改功能名。
-   首次修改前，依据登记结果向用户简短说明“本次按 **T2（默认）** 执行：修改实现、同步受影响文档和用例，完成编译及相关测试”；人工选择或续做则注明来源及实际档位义务。同一任务不重复播报；接管、新任务或改档时再说明。子 Agent 继承 controller 的 taskId、档位和执行授权，不自行默认成 T2 或另建任务。
+   首次修改前，依据登记结果向用户简短说明“本次按 **T2（默认）** 执行：修改实现、同步受影响文档和用例，完成编译及相关测试”；人工选择或续做则注明来源及实际档位义务。同一任务不重复播报；接管、新任务或改档时再说明。子 Agent 沿用 controller 的 taskId、档位与工作范围，不自行默认成 T2 或另建任务；这些上下文不自动授予子会话写权限。
 3. 编译/测试用 Task Run 记录真实执行。满足本档条件后直接 Complete；它内含完成校验，成功才标记 DONE 并释放归属。Verify 仅用于提前诊断，不固定串行 Verify → Status → Complete；失败后修复具体缺项，条件未变不反复重试。
 
 ```powershell
@@ -51,7 +53,7 @@ pwsh -NoProfile -File ./ai-sop.ps1 Task -Operation Complete -Feature <Feature> -
 
 **写前检查**：实际接入 Hook 的编辑路径会核对当前活动任务、合法档位及 owner/session 身份；只有旧 owner 没有 taskId 时须 Resume 收编。正常 T1 也必须登记和验证；人工紧急停用 Guard 是独立维护操作，不代表 T1 合规或完成，Agent 不得自行启用。客户端未加载或未信任 Hook、或写入路径不触发 Hook 时，不能承诺机器阻断；开场说明和 Complete 仍须遵守。
 
-**Guard 拦截后的任务识别**：Discover 确认 Feature/taskId；普通续做 Resume，异常中断先 InspectRecovery，按诊断 Recover → Resume。不得直接 Claim、手写权限或启用绕过开关规避任务入口。确认旧 Agent 已停止且验证进程不再运行，才进行强制恢复；已明确授权的接管不重复询问。跨 ACTIVE/IDLE 会话的正常接管按提示使用 ConfirmTakeover。
+**写入 Guard 拦截后的任务识别**：Discover 确认 Feature/taskId；普通续做 Resume，异常中断先 InspectRecovery，按诊断 Recover → Resume。不得直接 Claim、手写权限或启用绕过开关规避任务入口。确认旧 Agent 已停止且验证进程不再运行，才进行强制恢复；已明确授权的接管不重复询问。跨 ACTIVE/IDLE 会话的正常接管按提示使用 ConfirmTakeover。
 
 **损坏与未决状态**：保留原始记录和日志；InspectRecovery 只读定位问题。待入账证据损坏且进程已停止时，显式 Recover -QuarantineInvalidEvidence -Reason 保存原字节并记中断，再恢复执行。权限记录损坏依靠可信备份/事务恢复，不能删除后猜测重建。WORKFLOW_TRANSACTION_INDETERMINATE 先 Preflight；无法确定状态时停止修改并报告，不用 ForceRelease 绕过。
 

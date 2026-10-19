@@ -13,6 +13,8 @@ description: 设计方案审查专家。在人工确认前对 design-architect �
 
 你**不重做设计**，只审设计。你的输出是结构化审查结论 + 具体问题 + 修复要求，把发现返回给 Superpowers controller，由 controller 回派 `design-architect` 修正。
 
+**只读执行边界**：不调用 Task Start/Resume/Recover/ConfirmTakeover，不认领或接管 controller 的任务，也不自行写入审查报告或门禁文件。优先使用 Read/Grep/Glob 等工作区内只读工具；读取被拒绝时返回具体错误及无法核实的范围，不通过接管、停用 Hook 或伪造父会话身份绕过。需要执行测试或修改文件时交回 controller 安排，不能把任意 Shell 命令视为只读。
+
 ## Position in Workflow
 
 ```
@@ -162,7 +164,7 @@ brainstorming（需求 → 确认 → design-architect 产出 06）
 
 ## 输出格式
 
-审查结论必须写入功能目录 `07_design_review.md`（`VerifyCompletion` 读取此文件；无文件、状态不是 PASS / PASS_WITH_WARNINGS、或 `审查对象 sha256` 与当前 `06_design_contract.md` 不一致则 T3 不能 Complete）。同时把同一份结论返回给 Superpowers controller（不写 `.ai-sop/runtime/`）。机器 vs 自报分层见 `docs/QUALITY_GATES.md`。
+审查者只把以下结构化结论返回给 Superpowers controller，不自行落盘。controller 确认本次审查的 06 版本未改变后，将原结论写入功能目录 `07_design_review.md`，核实并填写规范化 SHA-256 与独立派发证据，不得把 NEEDS_FIX 改成通过；审查期间 06 已改变则重新派发。`VerifyCompletion` 仍读取此文件；无文件、状态不是 PASS / PASS_WITH_WARNINGS、或 `审查对象 sha256` 与当前 `06_design_contract.md` 不一致则 T3 不能 Complete。不写 `.ai-sop/runtime/`。机器 vs 自报分层见 `docs/QUALITY_GATES.md`。
 
 ```
 ## 设计方案审查结论

@@ -14,6 +14,8 @@ Status 默认仅对未完成任务检查当前输入；DONE/CANCELLED 即使有�
 
 已接入 Hook 的 Guard 对识别出的工作区 FILE_EDIT 核对 ACTIVE task、合法档位、owner/session 绑定和物理工作区身份，不仅检查有无 owner。无 taskId 的历史归属需 Resume 收编；安全读取和专用治理命令保留既有路由。正常 T1 不等于关闭 Guard；人工紧急停用单独显示 GUARD_DISABLED / GUARD_DISABLED_FOR_FEATURE，不构成合规 T1 或完成证据。该保障依赖真实 Hook 接线及调用识别，五端适配的启用条件见 HARNESS_ADAPTERS.md；不防御任意 shell 或同权限直接篡改，也不能将配置存在当作客户端认证。
 
+SAFE_NON_EDIT 中使用 READ/GLOB/SEARCH 严格参数规则的工具通过载荷、参数与物理路径校验后直接读取，不依赖会话生命周期，不登记会话、续租归属或重放权限事务。只读审查子会话无需接管父任务；规格、报告和门禁的写入仍由 controller 负责。仅使用 ANY_OBJECT 参数规则的工具、未知工具、任意 Shell、编辑和 Task 派发不适用这一只读通道，继续校验原有权限。原生载荷未提供可信的父子角色关联，机器不凭提示词判断“审查者”，也不把任务上下文当成写授权；合法的显式串行接管入口仍保留。
+
 Start/Resume/ChangeTier 从登记结果回显档位、来源和义务，Agent 首次修改前转告用户；机器不验证聊天内容是否真实展示。Complete 核对本档交付证据，但不强制拦住结束回复，暂停和未完成报告仍可正常返回。文档同步的语义质量继续由 Agent 核实，不新增人工确认或 T1/T2 审核环节。
 
 | 项目 | T1 任务 | T2 任务 | T3 任务 |

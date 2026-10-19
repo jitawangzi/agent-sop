@@ -4,7 +4,7 @@
 
 ## 修改任务入口（优先于下方兼容示例）
 
-本规则只用于安装 SOP 的宿主。讨论、解释和只读审核无需档位或 Discover；转为修改源码、测试、配置或项目文档时，新任务、切换功能/工作区或跨 Agent 接管先 `ai-sop.ps1 Task -Operation Discover`，根据用户目标与已有记录选择 Start 或 Resume。独立新任务人工指定优先、未指定 T2；续做继承原档位。Start/Resume 成功后才能写入；首次修改前向用户说明已登记档位、来源及本档义务。同一会话连续执行已确认任务时无需重复 Discover / Resume 或播报；不要求用户记住接管口令。子 Agent 继承 controller 的 taskId、档位和执行授权。任务身份、档位和下一动作记录在功能目录的 `tasks/<taskId>/task.json`，与 SDD 计划内的 Task/Step 区分。
+本规则只用于安装 SOP 的宿主。讨论、解释和只读审核无需档位或 Discover；转为修改源码、测试、配置或项目文档时，新任务、切换功能/工作区或跨 Agent 接管先 `ai-sop.ps1 Task -Operation Discover`，根据用户目标与已有记录选择 Start 或 Resume。独立新任务人工指定优先、未指定 T2；续做继承原档位。Start/Resume 成功后才能写入；首次修改前向用户说明已登记档位、来源及本档义务。同一会话连续执行已确认任务时无需重复 Discover / Resume 或播报；不要求用户记住接管口令。子 Agent 沿用 controller 的 taskId、档位与工作范围，但不自动继承会话写权限。只读审查不调用 Start/Resume/Recover/ConfirmTakeover；读取失败时报告路径或载荷错误，由 controller 处理。任务身份、档位和下一动作记录在功能目录的 `tasks/<taskId>/task.json`，与 SDD 计划内的 Task/Step 区分。
 
 - T1/T2 使用任务自己的档位和验证，不因历史 T3 规格自动升档；无需创建完整计划。
 - T3 沿用本适配器的需求设计、独立审查和覆盖要求。调用 `workflow-state.ps1` 的 ValidateChangeImpact、ValidateTestCoverage、VerifyCompletion 时带 `-TaskId`，避免误走旧执行证据规则。
@@ -136,7 +136,7 @@ brainstorming 节点按需咨询 `design-architect`；设计产出后由 `design
 - **不创建或修改 `.ai-sop/runtime/`**
 - 把发现返回给 Superpowers controller
 
-任何编辑规范产物的专家调用都属于修改型工作，继承 controller 的活动 taskId、档位及会话执行授权；只读的咨询性 review 不需要任务或档位。
+任何编辑规范产物的专家调用都属于修改型工作，沿用 controller 的任务范围与档位，但子会话不自动获得写入授权；优先由 controller 落盘，确需交接时按串行交接流程执行。只读 review 直接返回审查结果，由 controller 写入报告与门禁，不认领或接管父任务；读取仍须通过载荷和物理路径检查。
 
 **专家 Skill 自包含（禁止再读 Superpowers 原生全文）**：
 专家执行单元只读本仓库对应 `SKILL.md`。**不要**再去读本机 Superpowers 插件模板（`implementer-prompt.md`、`task-reviewer-prompt.md`、`code-reviewer.md`、`test-driven-development` 等）——那些是 controller 派发/流程模板，与专家 overlay（按协议走查等）冲突。需要的通用纪律已内联在专家 Skill 正文。T3 编排仍由 controller 显式调用 Superpowers 流程 skill。

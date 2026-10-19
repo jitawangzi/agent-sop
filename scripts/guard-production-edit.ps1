@@ -25,6 +25,7 @@ if (-not (Get-Command Get-AiSopWorkflowSessionKey -ErrorAction SilentlyContinue)
     . $script:GuardSessionScript
 }
 . (Join-Path $PSScriptRoot 'task-execution.ps1')
+. (Join-Path $PSScriptRoot 'task-delegation.ps1')
 
 function Get-AiSopGuardRoot {
     if (-not [string]::IsNullOrWhiteSpace($env:AI_SOP_GUARD_ROOT)) {
@@ -437,7 +438,7 @@ function Get-AiSopExactOwnerDecision {
         [Nullable[DateTimeOffset]]$DeadlineUtc
     )
 
-    $sessionLock = $null
+    $sessionLocks = @()
     $ownerLock = $null
     $sessionLockPath = ""
     $ownerLockPath = ""
@@ -453,9 +454,21 @@ function Get-AiSopExactOwnerDecision {
             -SessionKey $sessionKey `
             -WorkspacePath $workspace
         $sessionLockPath = "$sessionPath.lock"
-        $sessionLock = Enter-AiSopWorkflowFileLock `
-            -LockPath $sessionLockPath `
-            -DeadlineUtc $DeadlineUtc
+        # 先读取锁集合提示，再按固定顺序获取全部 Session 锁，最后获取 Owner 锁。
+        $hint=Read-AiSopWorkflowSessionRecord -SessionPath $sessionPath -ExpectedSessionKey $sessionKey
+        $keys=@($sessionKey)
+        if ($hint.boundFeature) {
+            $hintOwnerPath=Join-Path (Get-AiSopWorkflowOwnerRegistryRoot -WorkspacePath $workspace) ($hint.boundFeature.ToLowerInvariant()+'.json')
+            if ([IO.File]::Exists($hintOwnerPath)) {
+                $hintOwner=Read-AiSopGuardOwner -OwnerPath $hintOwnerPath -ExpectedFeature $hint.boundFeature
+                if ($hintOwner.executionDelegation.status -ceq 'ACTIVE') { $keys+= [string]$hintOwner.sessionBinding.sessionKey }
+            }
+        }
+        foreach ($key in @($keys | Sort-Object -Unique)) {
+            $lockPath=(Get-AiSopWorkflowSessionPath -SessionKey $key -WorkspacePath $workspace)+'.lock'
+            $handle=Enter-AiSopWorkflowFileLock -LockPath $lockPath -DeadlineUtc $DeadlineUtc
+            $sessionLocks+=@{path=$lockPath;handle=$handle}
+        }
         $session = Read-AiSopWorkflowSessionRecord `
             -SessionPath $sessionPath `
             -ExpectedSessionKey $sessionKey
@@ -533,6 +546,14 @@ function Get-AiSopExactOwnerDecision {
         $ownerSpec = Resolve-PhysicalPathIdentity `
             -Path ([string]$owner.specDirectory)
         $pathComparison = if ([OperatingSystem]::IsWindows()) { [StringComparison]::OrdinalIgnoreCase } else { [StringComparison]::Ordinal }
+        $delegated=Test-AiSopExecutionDelegate $owner $session $AcceptedAt
+        $binding=if ($delegated) { $owner.executionDelegation } else { $owner.sessionBinding }
+        if ($delegated) {
+            if ($owner.sessionBinding.sessionKey -notin $keys) { throw 'DELEGATION_CHANGED_RETRY' }
+            $parent=Read-AiSopWorkflowSessionRecord -SessionPath (Get-AiSopWorkflowSessionPath -SessionKey $owner.sessionBinding.sessionKey -WorkspacePath $workspace) -ExpectedSessionKey $owner.sessionBinding.sessionKey
+            Assert-AiSopDelegationParent $owner $parent $AcceptedAt
+            if ($HookEvent.toolName -in @('Task','Agent','dispatch_agent','spawn_agent','invoke_subagent','InvokeSubagent','define_subagent','DefineSubagent','manage_subagents','ManageSubagents')) { throw 'DELEGATE_CONTROL_DENIED' }
+        } elseif ($owner.executionDelegation.status -ceq 'ACTIVE' -and $HookEvent.toolName -notin @('Task','Agent','dispatch_agent','spawn_agent','invoke_subagent','InvokeSubagent','define_subagent','DefineSubagent','manage_subagents','ManageSubagents')) { throw 'TASK_EXECUTION_DELEGATED' }
         if (
             [string]$owner.agent -cne [string]$HookEvent.agent -or
             [string]$owner.ownerId -cne [string]$session.boundOwnerId -or
@@ -544,8 +565,8 @@ function Get-AiSopExactOwnerDecision {
                 $expectedSpec,
                 $pathComparison
             ) -or
-            [string]$owner.sessionBinding.sessionKey -cne $sessionKey -or
-            [string]$owner.sessionBinding.sessionEpochId -cne
+            [string]$binding.sessionKey -cne $sessionKey -or
+            [string]$binding.sessionEpochId -cne
                 [string]$session.sessionEpochId
         ) {
             throw "OWNER_IDENTITY_MISMATCH"
@@ -585,9 +606,9 @@ function Get-AiSopExactOwnerDecision {
             $ownerLock.Dispose()
             Remove-AiSopWorkflowLockFile -LockPath $ownerLockPath
         }
-        if ($null -ne $sessionLock) {
-            $sessionLock.Dispose()
-            Remove-AiSopWorkflowLockFile -LockPath $sessionLockPath
+        for ($i=$sessionLocks.Count-1; $i -ge 0; $i--) {
+            $sessionLocks[$i].handle.Dispose()
+            Remove-AiSopWorkflowLockFile -LockPath $sessionLocks[$i].path
         }
     }
 }

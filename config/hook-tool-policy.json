@@ -793,7 +793,7 @@
         "ANTIGRAVITY"
       ],
       "canonicalName": "SUBAGENT",
-      "toolClass": "SAFE_NON_EDIT",
+      "toolClass": "OWNER_REQUIRED",
       "argumentProfile": "ANY_OBJECT",
       "targetExtractor": "NONE"
     },
@@ -806,7 +806,7 @@
         "ANTIGRAVITY"
       ],
       "canonicalName": "SUBAGENT",
-      "toolClass": "SAFE_NON_EDIT",
+      "toolClass": "OWNER_REQUIRED",
       "argumentProfile": "ANY_OBJECT",
       "targetExtractor": "NONE"
     },
@@ -819,7 +819,7 @@
         "ANTIGRAVITY"
       ],
       "canonicalName": "SUBAGENT",
-      "toolClass": "SAFE_NON_EDIT",
+      "toolClass": "OWNER_REQUIRED",
       "argumentProfile": "ANY_OBJECT",
       "targetExtractor": "NONE"
     },
@@ -832,7 +832,7 @@
         "ANTIGRAVITY"
       ],
       "canonicalName": "SUBAGENT",
-      "toolClass": "SAFE_NON_EDIT",
+      "toolClass": "OWNER_REQUIRED",
       "argumentProfile": "ANY_OBJECT",
       "targetExtractor": "NONE"
     },
@@ -845,7 +845,7 @@
         "ANTIGRAVITY"
       ],
       "canonicalName": "SUBAGENT",
-      "toolClass": "SAFE_NON_EDIT",
+      "toolClass": "OWNER_REQUIRED",
       "argumentProfile": "ANY_OBJECT",
       "targetExtractor": "NONE"
     },
@@ -858,7 +858,7 @@
         "ANTIGRAVITY"
       ],
       "canonicalName": "SUBAGENT",
-      "toolClass": "SAFE_NON_EDIT",
+      "toolClass": "OWNER_REQUIRED",
       "argumentProfile": "ANY_OBJECT",
       "targetExtractor": "NONE"
     },
@@ -1003,7 +1003,7 @@
         "ANTIGRAVITY"
       ],
       "canonicalName": "SUBAGENT",
-      "toolClass": "SAFE_NON_EDIT",
+      "toolClass": "OWNER_REQUIRED",
       "argumentProfile": "ANY_OBJECT",
       "targetExtractor": "NONE"
     },

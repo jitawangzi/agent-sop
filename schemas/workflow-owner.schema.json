@@ -253,6 +253,65 @@
         "taskId": {
           "type": "string",
           "pattern": "^[A-Za-z0-9][A-Za-z0-9_-]{0,79}$"
+        },
+        "executionDelegation": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "id",
+            "status",
+            "taskId",
+            "parentSessionKey",
+            "parentSessionEpochId",
+            "sessionKey",
+            "sessionEpochId",
+            "createdAt",
+            "expiresAt",
+            "revokedAt",
+            "reason"
+          ],
+          "properties": {
+            "id": {
+              "$ref": "#/$defs/id"
+            },
+            "status": {
+              "enum": [
+                "ACTIVE",
+                "REVOKED"
+              ]
+            },
+            "taskId": {
+              "type": "string",
+              "pattern": "^[A-Za-z0-9][A-Za-z0-9_-]{0,79}$"
+            },
+            "parentSessionKey": {
+              "$ref": "#/$defs/sha256"
+            },
+            "parentSessionEpochId": {
+              "$ref": "#/$defs/id"
+            },
+            "sessionKey": {
+              "$ref": "#/$defs/sha256"
+            },
+            "sessionEpochId": {
+              "$ref": "#/$defs/id"
+            },
+            "createdAt": {
+              "type": "string",
+              "format": "date-time"
+            },
+            "expiresAt": {
+              "type": "string",
+              "format": "date-time"
+            },
+            "revokedAt": {
+              "type": "string"
+            },
+            "reason": {
+              "type": "string",
+              "minLength": 1
+            }
+          }
         }
       },
       "allOf": [

@@ -21,6 +21,8 @@ param(
     [string]$SpecDirectory = "",
     [string]$Operation = 'Discover',
     [string]$TaskId,
+    [ValidatePattern('^[A-Za-z0-9._:-]+$')][string]$ChildNativeSessionId,
+    [ValidateRange(1,480)][int]$DelegationMinutes = 120,
     [ValidatePattern('^[A-Za-z0-9._:-]+$')][string]$NativeSessionId,
     [ValidateSet('T1','T2','T3')][string]$Tier = 'T2',
     [string]$Objective,
@@ -274,7 +276,7 @@ switch ($Action) {
     }
     "Task" {
         $taskArgs = @{ Operation=$Operation; WorkspacePath=$WorkspaceRoot }
-        foreach ($name in @('Feature','SpecDirectory','TaskId','NativeSessionId','Tier','Objective','Agent','NextAction','Notes','Kind','Batch','Executable','Arguments','CaseIds','Profile','TimeoutSeconds','ForceRecovery','ConfirmTakeover','RunId','Reason','UserRequest','Documentation','Tests','Summary','Applicability','FollowUpId','FollowUpKind','Scope','SourceTaskId','Disposition','Resolution','Json','OutputFormat','IncludeHistory','RecheckHistory','BaselineInputsRef','CaptureBaseline','JUnitReports','CaseMap','QuarantineInvalidEvidence','LogTailLines')) {
+        foreach ($name in @('Feature','SpecDirectory','TaskId','ChildNativeSessionId','DelegationMinutes','NativeSessionId','Tier','Objective','Agent','NextAction','Notes','Kind','Batch','Executable','Arguments','CaseIds','Profile','TimeoutSeconds','ForceRecovery','ConfirmTakeover','RunId','Reason','UserRequest','Documentation','Tests','Summary','Applicability','FollowUpId','FollowUpKind','Scope','SourceTaskId','Disposition','Resolution','Json','OutputFormat','IncludeHistory','RecheckHistory','BaselineInputsRef','CaptureBaseline','JUnitReports','CaseMap','QuarantineInvalidEvidence','LogTailLines')) {
             if ($PSBoundParameters.ContainsKey($name)) { $taskArgs[$name] = $PSBoundParameters[$name] }
         }
         & (Join-Path $WorkspaceRoot '.ai-sop/scripts/workflow-task.ps1') @taskArgs

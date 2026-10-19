@@ -62,7 +62,7 @@ function Get-AiSopTaskEntryCommand {
     } elseif (-not $scriptPath.Equals($engineEntry,$comparison)) { return $null }
 
     $switches=@('Json','IncludeHistory','RecheckHistory','CaptureBaseline','ConfirmTakeover','ForceRecovery','QuarantineInvalidEvidence')
-    $values=@('Operation','Feature','TaskId','Tier','Objective','Agent','NativeSessionId','WorkspacePath','SpecDirectory','NextAction','Notes','UserRequest','Reason','LogTailLines','OutputFormat')
+    $values=@('Operation','Feature','TaskId','Tier','Objective','Agent','NativeSessionId','WorkspacePath','SpecDirectory','NextAction','Notes','UserRequest','Reason','LogTailLines','OutputFormat','ChildNativeSessionId','DelegationMinutes')
     $parameters=@{}
     while ($index -lt $parts.Count) {
         $parameter=$parts[$index]
@@ -74,12 +74,12 @@ function Get-AiSopTaskEntryCommand {
         if ($name -notin $values -or $index -ge $parts.Count) { return $null }
         $value=$parts[$index]
         if ($value -is [Management.Automation.Language.StringConstantExpressionAst]) { $parameters[$name]=$value.Value }
-        elseif ($name -eq 'LogTailLines' -and $value -is [Management.Automation.Language.ConstantExpressionAst] -and $value.Value -is [int]) { $parameters[$name]=$value.Value }
+        elseif ($name -in @('LogTailLines','DelegationMinutes') -and $value -is [Management.Automation.Language.ConstantExpressionAst] -and $value.Value -is [int]) { $parameters[$name]=$value.Value }
         else { return $null }
         $index++
     }
     $readOperations=@('Discover','Status','FollowUps','InspectRecovery','Changes')
-    $writeOperations=@('Start','Resume','Recover','Suspend','Cancel','ChangeTier')
+    $writeOperations=@('Start','Resume','Recover','Suspend','Cancel','ChangeTier','Join','Delegate','RevokeDelegation')
     $operation=if ($parameters.ContainsKey('Operation')) { $parameters.Operation } elseif ($scriptPath.Equals($rootEntry,$comparison)) { 'Discover' } else { '' }
     if ($operation -notin ($readOperations+$writeOperations)) { return $null }
     if ($parameters.ContainsKey('Agent') -and $parameters.Agent -cne $Agent) { return $null }

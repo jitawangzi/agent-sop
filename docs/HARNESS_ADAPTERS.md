@@ -22,6 +22,8 @@ Pi 的 edit 同时兼容旧版 `path/oldText/newText` 和新版 `path/edits[]`�
 
 先 Start/Resume，成功后回显实际档位与执行要求，再修改。未指定默认 T2；新 T1/T3 仍须 UserRequest。讨论与原生只读工具不需要任务。Shell 仍按已有保守策略处理，不能因为名字叫“测试”或“读取”便自动放行任意命令。无法识别的工具拒绝并保留诊断，不猜测它是只读。
 
+实现子会话不走 Resume 接管。使用自己的会话参数 Join 回报身份，父会话 Delegate 后再恢复同一子会话，执行及撤销步骤见 [执行委派](EXECUTION_DELEGATION.md)。只读子会话仍不 Join，不改变权限。
+
 ## 验证
 
 自动化覆盖五端事件载荷和真实任务状态变迁：无任务拒绝源码/文档编辑，Start 后允许，Suspend 后拒绝，Resume 后允许，Cancel 后拒绝；另测 Pi 扩展进程错误、坏 JSON 和超时。隔离探测命令：

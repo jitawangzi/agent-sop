@@ -186,7 +186,7 @@ try {
 
     Assert-ToolAuthorized "ANTIGRAVITY" "invoke_subagent" @{
         Subagents = @(@{ TypeName = "research"; Role = "Reviewer"; Prompt = "Check" })
-    } "SAFE_NON_EDIT" "invoke_subagent"
+    } "OWNER_REQUIRED" "invoke_subagent"
 
     Assert-ToolAuthorized "ANTIGRAVITY" "Read" @{
         path = $targetFile
@@ -198,7 +198,7 @@ try {
 
     Assert-ToolAuthorized "ANTIGRAVITY" "Agent" @{
         prompt = "Review"
-    } "SAFE_NON_EDIT" "Agent PascalCase"
+    } "OWNER_REQUIRED" "Agent PascalCase"
 
     Write-Host "`n=== 2. Claude Code Native Tool Matrix ===" -ForegroundColor Cyan
     $claudePayload = [ordered]@{

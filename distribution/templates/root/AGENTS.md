@@ -24,7 +24,9 @@
 
 ## 开始、执行、完成
 
-**只读子 Agent**：审查只读取工作区文件并返回报告，由 controller 保持任务归属和记录门禁。子会话不调用 Start、Resume、Recover 或 ConfirmTakeover，不修改规格、代码及权限记录。读取失败时报告具体路径/载荷错误，不以接管父任务绕过；子会话 ID 不等于写入授权。需要修改时由 controller 执行，或使用已验证的显式委派/串行交接机制，不假定子 Agent 自动继承权限。
+**只读子 Agent**：审查只读取工作区文件并返回报告，由 controller 保持任务归属和记录门禁。子会话不调用 Start、Resume、Recover 或 ConfirmTakeover，不修改规格、代码及权限记录。读取失败时报告具体路径/载荷错误，不以接管父任务绕过；子会话 ID 不等于写入授权。需要修改时由 controller 执行，或使用单个执行子会话的显式委派，不假定子 Agent 自动继承权限。
+
+**实现子会话**：先用自己的会话参数 `Task Join` 回报 nativeSessionId；父会话 `Task Delegate -ChildNativeSessionId <真实ID> -Reason <原因>` 后再恢复同一子会话。父会话保留归属但暂停编辑/验证，仅子会话执行；结束后父会话 RevokeDelegation 再收尾。子会话不 Resume/ConfirmTakeover，不改档或批准。用法及异常恢复见 `.ai-sop/docs/EXECUTION_DELEGATION.md`。
 
 1. 准备执行修改时，新任务、切换功能/工作区或跨 Agent 接管先 `pwsh -NoProfile -File ./ai-sop.ps1 Task -Operation Discover`，区分独立修改、原任务续做、补收尾。多个候选才询问一次，无需固定接管口令。同会话任务已明确时沿用 taskId，不按文件或回复重复 Discover/Resume。
 2. 独立修改用 Start，继续原修改用 Resume；**操作成功后才能写入**。新 Start 未指定档位为 T2；选择 T1/T3 必须带 `-UserRequest` 保存已有人工原话，不编造或为已明确选择重复确认。沿用现有 FeatureName，独立小任务使用新的 taskId；新功能名使用 PascalCase（`[A-Z][A-Za-z0-9]+`，无连字符）并向用户回显，不为躲避旧任务状态改功能名。

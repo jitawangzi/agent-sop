@@ -1,7 +1,7 @@
 #requires -Version 7.0
 [CmdletBinding()]
 param(
-    [Parameter(Mandatory)][ValidateSet('Discover','Status','FollowUps','Recover','Start','Resume','Checkpoint','Suspend','Cancel','Run','RetryEvidence','ReviewImpact','Verify','Complete','ChangeTier','RecordSync','SetApplicability','AddFollowUp','CloseFollowUp','ReopenFollowUp','Changes','SetBaseline','SetCaseScope','InspectRecovery')][string]$Operation,
+    [Parameter(Mandatory)][ValidateSet('Discover','Status','FollowUps','Recover','Start','Resume','Checkpoint','Suspend','Cancel','Run','RetryEvidence','ReviewImpact','Verify','Complete','ChangeTier','RecordSync','SetApplicability','AddFollowUp','CloseFollowUp','ReopenFollowUp','Changes','SetBaseline','SetCaseScope','InspectRecovery','Join','Delegate','RevokeDelegation')][string]$Operation,
     [string]$WorkspacePath = (Get-Location).Path,
     [string]$SpecDirectory,
     [string]$Feature,
@@ -10,6 +10,8 @@ param(
     [ValidateSet('T1','T2','T3')][string]$Tier = 'T2',
     [string]$Objective,
     [ValidateSet('CLAUDE_CODE','CODEX','CURSOR','COPILOT','ANTIGRAVITY','PI')][string]$Agent,
+    [ValidatePattern('^[A-Za-z0-9._:-]+$')][string]$ChildNativeSessionId,
+    [ValidateRange(1,480)][int]$DelegationMinutes = 120,
     [string]$NextAction,
     [string]$Notes,
     [ValidateSet('compile','test')][string]$Kind,
@@ -146,11 +148,25 @@ if ($Operation -eq 'Resume' -and -not $TaskId -and $owner -and $owner.status -eq
 }
 if (-not $TaskId) { throw 'TASK_SELECTION_REQUIRED: use Discover and select an existing task; no implicit takeover.' }
 $task = Read-AiSopTask $SpecDirectory $TaskId
+if ($Operation -eq 'Run' -and @($task.verifications | Where-Object outcome -eq 'RUNNING').Count) { throw 'RUN_UNFINISHED: wait for the current verification or inspect recovery after it stops' }
 if ($Operation -eq 'Changes') { Get-AiSopTaskChanges $task $WorkspacePath | ConvertTo-Json -Depth 12; exit 0 }
 $ownerArgs.OwnerId = $task.ownerId
 $ownerArgs.TaskId = $TaskId
 if ($Operation -eq 'Recover') {
     & $ownerScript -Operation Recover @ownerArgs -ForceRecovery:$ForceRecovery -QuarantineInvalidEvidence:$QuarantineInvalidEvidence -RecoveryReason $Reason
+    exit $LASTEXITCODE
+}
+if ($Operation -eq 'Join') {
+    if ($task.status -ne 'ACTIVE' -or $owner.status -ne 'ACTIVE' -or $owner.taskId -cne $TaskId) { throw 'TASK_NOT_ACTIVE' }
+    $native = Get-AiSopInvocationSessionId $Agent
+    $joined = Invoke-AiSopWorkflowSession -Operation Register -Agent $Agent -NativeSessionId $native -WorkspacePath $WorkspacePath -LifecycleProof CONFIRMED -AcceptedAt ([DateTimeOffset]::UtcNow)
+    @{ nativeSessionId=$native; sessionKey=$joined.Record.sessionKey; taskId=$TaskId; authorized=$false; nextAction='Report this nativeSessionId to the parent; wait for Task Delegate. Do not Resume or ConfirmTakeover.' } | ConvertTo-Json
+    exit 0
+}
+if ($Operation -in @('Delegate','RevokeDelegation')) {
+    $delegationArgs=@{}
+    if ($ChildNativeSessionId) { $delegationArgs.ChildNativeSessionId=$ChildNativeSessionId }
+    & $ownerScript -Operation Checkpoint @ownerArgs -DelegationAction $Operation @delegationArgs -DelegationMinutes $DelegationMinutes -DelegationReason $Reason
     exit $LASTEXITCODE
 }
 if ($Operation -eq 'Resume') {
@@ -246,9 +262,11 @@ if ($junit) {
     $CaseIds = @($junit.cases.id)
 }
 if ($Batch -notmatch '^[A-Za-z0-9][A-Za-z0-9_-]{0,79}$') { throw 'BATCH_ID_INVALID' }
-& $ownerScript -Operation Validate @ownerArgs | Out-Null
+& $ownerScript -Operation Validate @ownerArgs -ExecutionAccess | Out-Null
 if ($LASTEXITCODE -ne 0) { throw 'TASK_OWNER_INVALID' }
 $runOwner = Get-Content -LiteralPath $ownerPath -Raw | ConvertFrom-Json -AsHashtable
+$runSession = Get-AiSopWorkflowSession -SessionKey (Get-AiSopWorkflowSessionKey -Agent $Agent -NativeSessionId (Get-AiSopInvocationSessionId $Agent) -WorkspacePath $WorkspacePath) -WorkspacePath $WorkspacePath
+$executionBinding = Get-AiSopExecutionBinding $runOwner $runSession.Record
 $before = Get-AiSopInputSnapshot $WorkspacePath
 $bindSpecs = $task.tier -eq 'T3' -and $Kind -eq 'test'
 $specBefore = if ($bindSpecs) { Get-AiSopTaskSpecDigest $SpecDirectory } else { $null }
@@ -256,12 +274,13 @@ $runId = [guid]::NewGuid().ToString('N')
 $taskDir = Split-Path -Parent (Get-AiSopTaskPath $SpecDirectory $TaskId)
 $context = @{
     protocol='2'; taskId=$TaskId; ownerId=$task.ownerId
-    sessionKey=$runOwner.sessionBinding.sessionKey; sessionEpochId=$runOwner.sessionBinding.sessionEpochId
+    sessionKey=$executionBinding.sessionKey; sessionEpochId=$executionBinding.sessionEpochId
     workspace=$WorkspacePath; runnerMachine=[Environment]::MachineName; runnerPid=[string]$PID
     runnerStartedAt=[Diagnostics.Process]::GetCurrentProcess().StartTime.ToUniversalTime().ToString('o')
     engineScriptHash=(Get-FileHash -LiteralPath $PSCommandPath).Hash.ToLowerInvariant(); logPath=".ai-workspace/.runtime/verification/$Feature/$TaskId/$runId.log"
     timeoutSeconds=[string]$TimeoutSeconds
 }
+if ($executionBinding.id) { $context.delegationId=$executionBinding.id; $context.parentSessionKey=$executionBinding.parentSessionKey; $context.parentSessionEpochId=$executionBinding.parentSessionEpochId }
 if ($junit) {
     $junitBefore=@{}
     foreach ($relative in $junit.reports) { $junitBefore[$relative]=Get-AiSopJUnitFileIdentity (Resolve-AiSopWorkspaceChild $WorkspacePath $relative) }
@@ -330,6 +349,14 @@ function Update-RunLease {
         if ($bound.EffectiveStatus -ne 'ACTIVE' -or $bound.Record.sessionEpochId -cne $context.sessionEpochId -or
             $bound.Record.boundOwnerId -cne $task.ownerId -or $bound.Record.boundFeature -cne $Feature) { throw 'RUN_SESSION_LOST: the original session is no longer active and bound' }
         $lease.expiresAt=[DateTimeOffset]::Parse($bound.Record.expiresAt)
+        if ($context.delegationId) {
+            $liveOwner=Get-Content -LiteralPath $ownerPath -Raw | ConvertFrom-Json -AsHashtable
+            if (-not (Test-AiSopExecutionDelegate $liveOwner $bound.Record) -or $liveOwner.executionDelegation.id -cne $context.delegationId) { throw 'RUN_DELEGATION_LOST' }
+            $parent=Get-AiSopWorkflowSession -SessionKey $liveOwner.sessionBinding.sessionKey -WorkspacePath $WorkspacePath -DeadlineUtc $deadline
+            Assert-AiSopDelegationParent $liveOwner $parent.Record
+            $delegationExpiry=[DateTimeOffset]::Parse($liveOwner.executionDelegation.expiresAt)
+            if ($delegationExpiry -lt $lease.expiresAt) { $lease.expiresAt=$delegationExpiry }
+        }
         if ([DateTimeOffset]::UtcNow -ge $lease.expiresAt) { throw 'RUN_SESSION_LOST: original lease expired' }
         if ($lease.expiresAt -lt $deadline) { $deadline=$lease.expiresAt }
         if ($lease.checkpointPending -or $lease.expiresAt -le [DateTimeOffset]::UtcNow.AddMinutes(5)) {
@@ -345,9 +372,9 @@ function Update-RunLease {
         $lease.nextCheckAt=[DateTimeOffset]::UtcNow.AddSeconds(5)
     } catch {
         $failure=$_.Exception.Message; $now=[DateTimeOffset]::UtcNow
-        # Only transient lock/deadline contention is retryable. A lost identity,
-        # invalid evidence, IO error or expired lease must stop the child.
-        if ($failure -match '(^|[:\s])WORKFLOW_(LOCK_TIMEOUT|DEADLINE_EXCEEDED)(?=$|[:\s])' -and $now -lt $lease.expiresAt) {
+        # 锁竞争或并发心跳使快照失效时有限重试；下一轮先重验原会话、epoch 和委派。
+        # 身份丢失、证据错误、IO 错误或租约到期仍立即停止子进程。
+        if ($failure -match '(^|[:\s])WORKFLOW_(LOCK_TIMEOUT|DEADLINE_EXCEEDED|TRANSACTION_PRECONDITION_FAILED)(?=$|[:\s])' -and $now -lt $lease.expiresAt) {
             if (-not $lease.retryUntil) { $lease.retryUntil=$now.AddSeconds(30) }
             if ($lease.expiresAt -lt $lease.retryUntil) { $lease.retryUntil=$lease.expiresAt }
             if ($now -lt $lease.retryUntil) {

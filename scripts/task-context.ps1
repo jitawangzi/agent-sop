@@ -10,6 +10,7 @@
 . (Join-Path $PSScriptRoot 'task-recovery.ps1')
 . (Join-Path $PSScriptRoot 'hidden-process.ps1')
 . (Join-Path $PSScriptRoot 'task-execution.ps1')
+. (Join-Path $PSScriptRoot 'task-delegation.ps1')
 
 function Resolve-AiSopTaskWorkflowStatePath {
     param([string]$SpecDirectory)
@@ -206,7 +207,7 @@ function Get-AiSopTaskSummary {
     return [ordered]@{
         feature=$Task.feature; taskId=$Task.taskId; tier=$Task.tier; status=$Task.status; objective=$Task.objective
         executionLocality=$locality; executionLocation=$Task.executionLocation
-        ownerStatus=$ownerStatus; sessionStatus=$sessionStatus; verification=$verification
+        ownerStatus=$ownerStatus; sessionStatus=$sessionStatus; verification=$verification; executionDelegation=$inspection.executionDelegation
         verificationScope=$(if ($checkCurrentInputs) { 'CURRENT_INPUTS' } else { 'NOT_CHECKED' })
         recordedApprovals=(Get-AiSopRecordedApprovals $SpecDirectory)
         nextAction=$Task.nextAction; suggestedAction=$action; suggestedActionCode=$inspection.suggestedActionCode; guidanceSteps=$inspection.guidanceSteps; notes=$Task.notes; runs=$runs

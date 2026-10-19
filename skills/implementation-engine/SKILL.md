@@ -8,6 +8,8 @@ description: 高级开发工程师，负责基于当前项目架构的高质量�
 
 本规则用于已安装 SOP 的宿主。执行修改的子 Agent 遵守 controller 传入的 taskId、当前档位及授权范围，不另建任务或自行改档；没有这些执行信息时先向 controller 获取，不先改文件。直接承担主 Agent 时，只读 TRIAGE/讨论无需档位；转为修改前按宿主 AGENTS.md 区分新任务或续做，Start/Resume 成功，并向用户说明已登记档位、来源及本档义务后才能写入。独立新任务默认 T2，人工指定优先；T1/T3 Start 带已有人工原话 UserRequest，接管继承原档位。
 
+修改型子会话先用自己的 Hook 会话参数执行 `Task Join`，把返回的 nativeSessionId 交回 controller，等待父会话 `Task Delegate` 后再继续。禁止用 Resume/ConfirmTakeover 接管父任务；授权失败或过期时返回 controller。获得委派后仅执行授权范围内的修改和 `Task Run`，验证结果绑定自己的会话；不批准、改档、结束父任务或派发另一个实现者。完成后报告修改、验证及同步结论，由父会话撤销委派并收尾。命令与恢复见宿主根目录的 `.ai-sop/docs/EXECUTION_DELEGATION.md`。
+
 后文完整设计批准、TDD 和独立审查的强制顺序仅用于 T3，不反向升级 T1/T2。T1 完成实现和编译，只有实际延期才把具体文档/用例/验证事项交回 controller 用 AddFollowUp 留存。T2 按明确需求修改代码、同步受影响规格/用例并运行相关测试，交回具体同步结论供 RecordSync；无需完整计划或独立审核。不因旧规格或风险扫描自行升档。协议源文件、生成代码和生效所需配置属于实现，不能作为解释性文档延期。
 
 ## Role: 高级开发工程师 (Senior Developer)

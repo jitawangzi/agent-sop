@@ -170,6 +170,7 @@ function Write-AiSopTaskStatus {
         foreach ($item in $Items) {
             Write-Output "[$($item.status)] $($item.feature)/$($item.taskId) $($item.tier) — $($item.objective)"
             Write-Output "  owner=$($item.ownerStatus) session=$($item.sessionStatus) evidence=$($item.verification)"
+            if ($item.executionDelegation) { Write-Output "  delegation=$($item.executionDelegation.status) child=$($item.executionDelegation.sessionKey) expires=$($item.executionDelegation.expiresAt)" }
             if ($item.executionLocation) { Write-Output "  execution=$($item.executionLocality) $($item.executionLocation.machine):$($item.executionLocation.workspace) (synced observation, not permission)" }
             if ($item.status -in @('DONE','CANCELLED')) {
                 if ($item.verificationScope -eq 'CURRENT_INPUTS') { Write-Output '  history: explicit current-input recheck; terminal task status is unchanged' }

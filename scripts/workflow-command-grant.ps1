@@ -1,4 +1,5 @@
 #requires -Version 7.0
+. (Join-Path $PSScriptRoot 'task-delegation.ps1')
 
 # Exact, one-use command grants. Records contain the canonical Owner tuple and
 # hashes only; command text, native session identifiers, tokens, and payloads
@@ -1326,6 +1327,8 @@ function Assert-AiSopWorkflowCommandGrantIssueGate {
             }
         }
         { $_ -in @("Validate", "Complete", "Suspend", "Cancel", "Checkpoint") } {
+            $binding=$Owner.sessionBinding
+            if ($Intent.operation -in @('Validate','Checkpoint') -and (Test-AiSopExecutionDelegate $Owner $Session $AcceptedAt)) { $binding=$Owner.executionDelegation }
             if (
                 -not $ownerExact -or
                 [string]$Owner.schemaVersion -cne "1.1" -or
@@ -1334,9 +1337,9 @@ function Assert-AiSopWorkflowCommandGrantIssueGate {
                     [string]$Intent.workspacePath,
                     [System.StringComparison]::OrdinalIgnoreCase
                 ) -or
-                [string]$Owner.sessionBinding.sessionKey -cne
+                [string]$binding.sessionKey -cne
                     [string]$Session.sessionKey -or
-                [string]$Owner.sessionBinding.sessionEpochId -cne
+                [string]$binding.sessionEpochId -cne
                     [string]$Session.sessionEpochId -or
                 [string]$Session.boundFeature -cne [string]$Intent.feature -or
                 [string]$Session.boundWorkflow -cne [string]$Intent.workflow -or

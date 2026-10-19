@@ -4,7 +4,7 @@
   "sourceUrl": "https://github.com/jitawangzi/agent-sop.git",
   "toolPolicy": {
     "path": "config/hook-tool-policy.json",
-    "blobSha256": "8b40c2551f8cf9f468e2af6b596bd62825519987a8eed84e884df74dedbcf33d"
+    "blobSha256": "9d3bed58535a6ea727ec4b2ba9328d6d42654b6151e9bf3889399414be927044"
   },
   "certification": {
     "path": "distribution/harness-certification.json",
@@ -23,8 +23,8 @@
     {
       "source": "distribution/templates/root/AGENTS.md",
       "target": "AGENTS.md",
-      "sourceBlobSha256": "52e306d6b282a2d660c99184dcb81bb997bc8e2500ece402a357c2338248d079",
-      "targetSha256": "52e306d6b282a2d660c99184dcb81bb997bc8e2500ece402a357c2338248d079",
+      "sourceBlobSha256": "a9e69963e7245b027e08d80c25036d74ac55d8a0db80ba3d23950d9f1cc4c533",
+      "targetSha256": "a9e69963e7245b027e08d80c25036d74ac55d8a0db80ba3d23950d9f1cc4c533",
       "legacySha256": "25903e4b86512c55ac3f7e7aee50f1c7ab4557e276cd9322619c731a180574dc",
       "encoding": "utf8-no-bom",
       "lineEnding": "lf"
@@ -50,8 +50,8 @@
     {
       "source": "distribution/templates/root/ai-sop.ps1",
       "target": "ai-sop.ps1",
-      "sourceBlobSha256": "2f28098d357e497abe8010d1f99c91bb2846183b595bf81506ee1c14bcaecb71",
-      "targetSha256": "2f28098d357e497abe8010d1f99c91bb2846183b595bf81506ee1c14bcaecb71",
+      "sourceBlobSha256": "2a6355eacd7bd01f7337c92d5e682f1b0bd3a046e35e72b05f4e9c194cea3b97",
+      "targetSha256": "2a6355eacd7bd01f7337c92d5e682f1b0bd3a046e35e72b05f4e9c194cea3b97",
       "legacySha256": "559596303d23f80e2a6b8e10d8473e2825720f2decb389f58e1d5c658c4d9534",
       "encoding": "utf8-no-bom",
       "lineEnding": "lf"

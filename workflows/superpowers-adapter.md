@@ -17,6 +17,10 @@
 
 下方旧 Claim/Complete 与功能级 evidence 命令用于未迁移任务的兼容路径；新任务以本节及 `shared-artifacts.md` 为准。
 
+## 实现子会话的执行权
+
+父会话先派发身份登记，子会话 Task Join 回报真实 nativeSessionId；父会话 Delegate 后再恢复同一子会话。父归属保持不变，委派期间只有该子会话编辑和 Run，父会话可派发、读取和控制任务。完成后先 RevokeDelegation，再记录同步、审查和完成门禁。子会话不 Resume/ConfirmTakeover；没有可靠会话 ID 或客户端不能恢复同一子会话时，由父会话自行实现，不冒用父身份。详见 [执行委派与恢复](../docs/EXECUTION_DELEGATION.md)。
+
 ## 归属
 
 **Superpowers 是 T3 的完整过程引擎**。六个 harness 使用同一任务入口，默认 T2；STRICT 表示具备 T3 能力，不表示自动选择 T3。T1/T2 按各自轻量流程执行，不要求加载完整 Superpowers 编排。工具能力不足时说明缺口，不能自行改档（见 `harness-capability.ps1`）。`workflow-orchestrator` 是人工按需调用的独立审计编排器，不是新任务的默认入口。

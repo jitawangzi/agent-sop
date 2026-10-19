@@ -140,5 +140,5 @@ function Get-AiSopTaskRecoveryDiagnostics {
             $steps=@(@{code='RESOLVE_PARALLEL_T3';message='Preserve both workspaces and pause one T3 at its origin; sync its PAUSED record before continuing. Suspend/Cancel/Recover remain available. Reconcile code/specs and rerun affected validation; never merge approvals or rewrite evidence hashes. See .ai-sop/docs/PARALLEL_TASKS.md.'})+$steps
         }
     }
-    return @{schemaVersion='1.0';taskId=$TaskId;records=$items;readOnly=$true;ownerStatus=$ownerStatus;sessionStatus=$sessionStatus;executionLocality=$locality;parallelProblems=$parallel;guidanceSteps=$steps;suggestedActionCode=$steps[0].code;guidance=($steps.message -join ' ')}
+    return @{schemaVersion='1.0';executionDelegation=$(if ($ownerMatches) { $owner.executionDelegation } else { $null });taskId=$TaskId;records=$items;readOnly=$true;ownerStatus=$ownerStatus;sessionStatus=$sessionStatus;executionLocality=$locality;parallelProblems=$parallel;guidanceSteps=$steps;suggestedActionCode=$steps[0].code;guidance=($steps.message -join ' ')}
 }

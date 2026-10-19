@@ -47,12 +47,17 @@ let counter = 0;
 const cursor = (name, input, extra = {}) => ({ conversation_id: session, session_id: session,
   generation_id: 'generation-1', tool_use_id: `tool-${++counter}\npart`, hook_event_name: 'preToolUse',
   cursor_version: '3.15.19', workspace_roots: roots, tool_name: name, tool_input: input, ...extra });
-async function task(op, agent = 'CURSOR', nativeSession = session) {
+async function task(op, agent = 'CURSOR', nativeSession = session, extra = []) {
   const args = ['-NoProfile', '-File', join(workspace, '.ai-sop/scripts/workflow-task.ps1'), '-Operation', op,
     '-WorkspacePath', workspace, '-Feature', 'Probe', '-TaskId', `${agent.toLowerCase()}-process-test`, '-Agent', agent, '-NativeSessionId', nativeSession];
   if (op === 'Start') args.push('-Objective', '真实进程验收');
   if (op === 'Start' && agent === 'CURSOR') args.push('-Tier', 'T3', '-UserRequest', '父任务按 T3 验证子会话只读隔离');
-  const command = "[Console]::OutputEncoding=[Text.UTF8Encoding]::new($false); & " + args.slice(2).map(x => x.startsWith('-') ? x : "'" + x.replaceAll("'", "''") + "'").join(' ') + '; exit $LASTEXITCODE';
+  args.push(...extra);
+  const quote = x => "'" + x.replaceAll("'", "''") + "'";
+  const parts = args.slice(2).map(x => x.startsWith('-') ? x : quote(x));
+  const argumentIndex = args.slice(2).indexOf('-Arguments');
+  if (argumentIndex >= 0) parts.splice(argumentIndex, 4, '-Arguments', "@('-NoProfile','-Command','exit 0')");
+  const command = "$ErrorActionPreference='Stop'; [Console]::OutputEncoding=[Text.UTF8Encoding]::new($false); & " + parts.join(' ') + '; exit $LASTEXITCODE';
   const r = await run(['-NoProfile', '-Command', command]); assert.equal(r.code, 0, r.stdout + r.stderr);
 }
 // 只比较权限及任务的持久记录，关联/去重缓存不代表授权。
@@ -191,6 +196,40 @@ try {
   assert.equal((await hook('.cursor', 'PRE_TOOL_USE', cursor('Write', { file_path: file, content: '修改' }))).value.permission, 'deny');
   await task('Resume');
   assert.equal((await hook('.cursor', 'PRE_TOOL_USE', cursor('Write', { file_path: file, content: '修改' }))).value.permission, 'allow');
+  // 显式实现委派：使用真实 Hook 进程，不用父会话标识冒充子会话。
+  const implementer = 'implementation-child';
+  const imp = (name, input) => cursor(name, input, { session_id: implementer, conversation_id: implementer });
+  const entryPath = join(workspace, '.ai-sop/scripts/workflow-task.ps1');
+  const joinCommand = `pwsh -NoProfile -File '${entryPath}' -Operation Join -Feature Probe -TaskId cursor-process-test -Agent CURSOR -NativeSessionId '${implementer}'`;
+  assert.equal((await hook('.cursor', 'PRE_TOOL_USE', imp('Shell', { command: joinCommand }))).value.permission, 'allow');
+  await task('Join', 'CURSOR', implementer);
+  assert.equal((await hook('.cursor', 'PRE_TOOL_USE', imp('Write', { file_path: file, content: 'NO' }))).value.permission, 'deny');
+  const ownerFile = join(env.AI_SOP_OWNER_REGISTRY, 'probe.json');
+  const bindingBefore = JSON.parse(await readFile(ownerFile, 'utf8')).sessionBinding;
+  const delegateCommand = `pwsh -NoProfile -File '${entryPath}' -Operation Delegate -Feature Probe -TaskId cursor-process-test -Agent CURSOR -NativeSessionId '${session}' -ChildNativeSessionId '${implementer}' -Reason 'implementation'`;
+  assert.equal((await hook('.cursor', 'PRE_TOOL_USE', cursor('Shell', { command: delegateCommand }))).value.permission, 'allow');
+  assert.equal((await hook('.cursor', 'PRE_TOOL_USE', imp('Shell', { command: delegateCommand }))).value.permission, 'deny');
+  await task('Delegate', 'CURSOR', session, ['-ChildNativeSessionId', implementer, '-Reason', 'implementation']);
+  assert.deepEqual(JSON.parse(await readFile(ownerFile, 'utf8')).sessionBinding, bindingBefore);
+  for (const adapter of ['.cursor', '.claude']) {
+    assert.equal((await hook(adapter, 'PRE_TOOL_USE', imp('Write', { file_path: file, content: 'AUTHORIZED' }))).value.permission, 'allow');
+    assert.equal((await hook(adapter, 'PRE_TOOL_USE', cursor('Write', { file_path: file, content: 'NO' }))).value.permission, 'deny');
+    assert.equal((await hook(adapter, 'PRE_TOOL_USE', cursor('Task', reviewInput))).value.permission, 'allow');
+    assert.equal((await hook(adapter, 'PRE_TOOL_USE', imp('Task', reviewInput))).value.permission, 'deny');
+  }
+  const shellWrite = await hook('.cursor', 'PRE_TOOL_USE', imp('Shell', { command: "Set-Content -LiteralPath 'src/中文.txt' -Value 'AUTHORIZED' -NoNewline" }));
+  assert.equal(shellWrite.value.permission, 'allow');
+  const actualWrite = await run(['-NoProfile', '-Command', "Set-Content -LiteralPath 'src/中文.txt' -Value 'AUTHORIZED' -NoNewline"]);
+  assert.equal(actualWrite.code, 0); assert.equal(await readFile(file, 'utf8'), 'AUTHORIZED');
+  assert.equal((await hook('.cursor', 'PRE_TOOL_USE', imp('Write', { file_path: join(root, 'outside.txt'), content: 'NO' }))).value.permission, 'deny');
+  await task('Run', 'CURSOR', implementer, ['-Kind', 'compile', '-Executable', 'pwsh', '-Arguments', '-NoProfile', '-Command', 'exit 0', '-TimeoutSeconds', '20']);
+  const execution = JSON.parse(await readFile(join(workspace, '.ai-workspace/specs/features/Probe/tasks/cursor-process-test/task.json'), 'utf8')).verifications.at(-1);
+  assert.equal(execution.outcome, 'PASSED'); assert.ok(execution.context.delegationId);
+  assert.deepEqual(JSON.parse(await readFile(ownerFile, 'utf8')).sessionBinding, bindingBefore);
+  await task('RevokeDelegation', 'CURSOR', session, ['-Reason', 'implementation finished']);
+  assert.equal((await hook('.cursor', 'PRE_TOOL_USE', imp('Write', { file_path: file, content: 'NO' }))).value.permission, 'deny');
+  assert.equal((await hook('.cursor', 'PRE_TOOL_USE', cursor('Write', { file_path: file, content: 'BEFORE' }))).value.permission, 'allow');
+  await writeFile(file, 'BEFORE');
   await task('Cancel');
   assert.equal((await hook('.cursor', 'PRE_TOOL_USE', cursor('Write', { file_path: file, content: '修改' }))).value.permission, 'deny');
   const piSession = 'pi-process-fixture';

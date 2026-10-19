@@ -1206,7 +1206,7 @@ function Add-AiSopHarnessSessionContext {
     $payload=ConvertFrom-AiSopJson $RawPayload
     $sessionId=if ($payload.Contains('conversationId')) { $payload.conversationId } elseif ($payload.Contains('conversation_id')) { $payload.conversation_id } else { $payload.session_id }
     if ($sessionId -isnot [string] -or $sessionId -notmatch '^[A-Za-z0-9._:-]+$') { return $Result.Envelope }
-    $message="AI SOP 当前会话：$sessionId。执行修改前先 Task Start/Resume；所有 Task 命令携带 -Agent $($Result.Agent) -NativeSessionId '$sessionId'，避免子进程另建会话。未指定档位默认 T2；成功后先回显登记档位和流程，再修改。纯讨论和只读审查不启动任务。只读子 Agent 不得调用 Start/Resume/Recover/ConfirmTakeover；读取被拒绝时报告路径或载荷原因，不接管父任务。"
+    $message="AI SOP 当前会话：$sessionId。主会话执行修改前先 Task Start/Resume；实现子会话先 Task Join 回报自己的 nativeSessionId，等待父会话 Delegate，禁止用 Resume/ConfirmTakeover 抢占父任务；所有 Task 命令携带 -Agent $($Result.Agent) -NativeSessionId '$sessionId'，避免子进程另建会话。未指定档位默认 T2；成功后先回显登记档位和流程，再修改。纯讨论和只读审查不启动任务。只读子 Agent 不得调用 Start/Resume/Recover/ConfirmTakeover；读取被拒绝时报告路径或载荷原因，不接管父任务。"
     $envelope=ConvertFrom-AiSopJson $Result.Envelope
     if ($Result.Decision -eq 'ALLOW' -and $EventHint -in @('SESSION_START','PRE_INVOCATION')) {
         switch ($Result.Agent) {

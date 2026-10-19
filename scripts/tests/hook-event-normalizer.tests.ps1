@@ -1223,7 +1223,7 @@ try {
     }
     Assert-Equal $fourTerminalCount 16 "Four-terminal/four-state matrix incomplete."
 
-    # Antigravity specific safe tools (view_file, list_dir, ask_question, invoke_subagent, etc.)
+    # Antigravity 读取/提问保持原分类，子会话派发需要归属。
     foreach ($agToolCase in @(
         @("view_file", [ordered]@{ AbsolutePath = (Join-Path $Workspace "README.md"); toolAction = "Viewing file"; toolSummary = "View file" }, "SAFE_NON_EDIT"),
         @("ViewFile", [ordered]@{ AbsolutePath = (Join-Path $Workspace "README.md") }, "SAFE_NON_EDIT"),
@@ -1231,8 +1231,8 @@ try {
         @("ListDir", [ordered]@{ DirectoryPath = $Workspace }, "SAFE_NON_EDIT"),
         @("ask_question", [ordered]@{ questions = @(@{ question = "Confirm?"; options = @("Yes", "No") }) }, "SAFE_NON_EDIT"),
         @("AskQuestion", [ordered]@{ questions = @() }, "SAFE_NON_EDIT"),
-        @("invoke_subagent", [ordered]@{ Subagents = @(@{ Role = "Tester"; Prompt = "Run" }) }, "SAFE_NON_EDIT"),
-        @("InvokeSubagent", [ordered]@{ Subagents = @() }, "SAFE_NON_EDIT")
+        @("invoke_subagent", [ordered]@{ Subagents = @(@{ Role = "Tester"; Prompt = "Run" }) }, "OWNER_REQUIRED"),
+        @("InvokeSubagent", [ordered]@{ Subagents = @() }, "OWNER_REQUIRED")
     )) {
         $agPayload = New-AntigravityToolPayload `
             -ToolName $agToolCase[0] `

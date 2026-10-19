@@ -64,7 +64,7 @@ Run 结束发现输入不稳定时，直接使用已有前后快照列出新增/
 
 Status/Discover 显示未完成运行的开始时间、已运行秒数、配置的超时、日志字节数及最后更新时间，默认只读取日志元数据。需要最近输出时，可用 `./ai-sop.ps1 Task -Operation Discover -Feature Example -TaskId change-1 -LogTailLines 20`，无需为看日志扫描当前源码；Status 也支持此参数；也支持 `Task -Operation InspectRecovery -LogTailLines 20`。最多请求 200 行，每份日志最多读取末尾 32 KiB，截断时标记 `tailTruncated`。远端运行不读取同名本地日志；旧记录未保存超时则显示 UNKNOWN，不能推断为无限运行。日志不更新不等于卡死；这些即时观察不续期、不终止进程、不构成执行证据。
 
-Run 自动续期当前绑定会话，不重新激活已结束或已转移的会话。运行中的会话检查/续期遇到锁竞争，会在最后确认的原租约有效期内退避重试，连续重试最多 30 秒；租约到期、身份变化或其他协调错误会停止子进程，记为 INTERRUPTED 并保留 RUN_CONTROL_INTERRUPTED 诊断，不冒充测试断言失败。执行结果先原子保存到任务目录的 `<runId>.pending.json`，再通过事务入账；只有成功入账才删除待保存文件。事务失败时可用 `Task -Operation RetryEvidence -Feature Example -TaskId fix-1 -Agent CODEX -RunId <id>` 重试保存，不重新执行命令。会话已结束/到期时，待原进程停止后 Recover：匹配的本地终态结果会随恢复事务保存，再 Resume；没有有效终态结果才记 INTERRUPTED。旧任务的终态 owner 不阻塞另一任务的恢复。
+Run 自动续期当前绑定会话，不重新激活已结束或已转移的会话。运行中的会话检查/续期遇到锁竞争或并发心跳导致事务快照过期，会先重验原会话、epoch 及执行委派，再在最后确认的原租约有效期内退避重试，连续重试最多 30 秒；租约到期、身份变化或其他协调错误会停止子进程，记为 INTERRUPTED 并保留 RUN_CONTROL_INTERRUPTED 诊断，不冒充测试断言失败。执行结果先原子保存到任务目录的 `<runId>.pending.json`，再通过事务入账；只有成功入账才删除待保存文件。事务失败时可用 `Task -Operation RetryEvidence -Feature Example -TaskId fix-1 -Agent CODEX -RunId <id>` 重试保存，不重新执行命令。会话已结束/到期时，待原进程停止后 Recover：匹配的本地终态结果会随恢复事务保存，再 Resume；没有有效终态结果才记 INTERRUPTED。旧任务的终态 owner 不阻塞另一任务的恢复。
 
 同一 kind/batch 的重跑保持命令、Profile 和 CaseIds 范围一致。确需更换时在 Run 提供 `-Reason "调整验证命令/范围的具体原因"`，保留旧尝试及替换关联；不得改用无关成功命令掩盖失败。修复代码后用原命令重跑不需要额外参数。
 
@@ -100,6 +100,7 @@ Start 成功后立即输出 `TASK_START_INPUTS`：CAPTURED 表示起点已保存
 
 ```powershell
 & ./ai-sop.ps1 Task -Operation Changes -Feature Example -TaskId change-1
+pwsh -NoProfile -File ./ai-sop.ps1 Inputs
 & ./ai-sop.ps1 Task -Operation SetCaseScope -Feature Example -TaskId change-1 -Agent CODEX `
   -CaseIds @('TC-CURRENT', 'TC-REGRESSION') -Reason '本次调整的行为及共享路径回归'
 ```
@@ -783,7 +784,7 @@ audit_fix_policy=REPORT_ONLY。
 | 架构/契约设计（brainstorming 咨询） | `design-architect` |
 | 测试覆盖校验（实现后） | `quality-assurance` / `test-plan-auditor` |
 
-任何编辑规范产物的专家调用都属于修改型工作，沿用 controller 的任务范围与档位，但子会话不自动获得写入授权；优先由 controller 落盘，确需交接时按串行交接流程执行。只读 review 直接返回审查结果，由 controller 写入报告与门禁，不认领或接管父任务；读取仍须通过载荷和物理路径检查。
+任何编辑规范产物的专家调用都属于修改型工作，沿用 controller 的任务范围与档位，但子会话不自动获得写入授权；优先由 controller 落盘，需要实现子会话时按 [显式执行委派](docs/EXECUTION_DELEGATION.md) 执行 Join → Delegate → Run → RevokeDelegation；父会话保持归属，同一任务只允许一个执行者。只读 review 直接返回审查结果，由 controller 写入报告与门禁，不认领或接管父任务；读取仍须通过载荷和物理路径检查。
 
 ## 审计门禁（仅 T3，三层职责）
 

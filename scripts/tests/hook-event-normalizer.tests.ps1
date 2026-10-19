@@ -1068,6 +1068,21 @@ try {
         $conflictRead.toolClass "UNKNOWN" `
         "Conflicting exact policy entries must become UNKNOWN."
 
+    # 复现 Cursor Task 的空外层模型；元数据不应改变调用归属分类。
+    $cursorTask = Get-FixturePayload -Name 'cursor-pre-tool-edit.json' -Workspace $Workspace -Transcript $Transcript
+    $cursorTask.tool_name = 'Task'
+    $cursorTask.tool_input = [ordered]@{ description='Review design'; prompt='独立审查'; model='review-model'; subagent_type='design-reviewer' }
+    $cursorTask.model = ''
+    $cursorTask.tool_use_id = "cursor-review`npart-1"
+    $cursorTaskEvent = ConvertTo-AiSopHookEvent -RawPayload (ConvertTo-RawPayload $cursorTask) -EventHint PRE_TOOL_USE -TrustedWorkspaceRoot $Workspace -AcceptedAt $AcceptedAt
+    Assert-Equal $cursorTaskEvent.toolClass 'OWNER_REQUIRED' '空模型的 Task 仍必须检查归属。'
+    foreach ($invalidModel in @($null, 42, @{}, @('model'))) {
+        $cursorTask.model = $invalidModel
+        Assert-ThrowsCode -Code 'PAYLOAD_SHAPE_INVALID' -Action {
+            ConvertTo-AiSopHookEvent -RawPayload (ConvertTo-RawPayload $cursorTask) -EventHint PRE_TOOL_USE -TrustedWorkspaceRoot $Workspace -AcceptedAt $AcceptedAt
+        } -Message '非字符串模型必须拒绝。'
+    }
+
     $cursorToolClasses = @(
         @("Read", [ordered]@{
             file_path = (Join-Path $Workspace "README.md")

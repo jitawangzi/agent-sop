@@ -117,7 +117,21 @@ try {
   await task('Start');
   const active = await hook('.cursor', 'PRE_TOOL_USE', cursor('Write', { file_path: file, content: '修改' }));
   assert.equal(active.value.permission, 'allow', JSON.stringify(active));
+  // Cursor 子 Agent 的外层模型为空；两条实际加载的 Hook 都必须接受合法载荷。
+  const reviewInput = { description: 'Review design', prompt: '独立审查，不修改文件', model: 'review-model', subagent_type: 'design-reviewer' };
+  for (const adapter of ['.cursor', '.claude']) {
+    const review = await hook(adapter, 'PRE_TOOL_USE', cursor('Task', reviewInput, { model: '' }));
+    assert.equal(review.value.permission, 'allow', JSON.stringify(review));
+    const invalid = await hook(adapter, 'PRE_TOOL_USE', cursor('Task', reviewInput, { model: 42 }));
+    assert.equal(invalid.value.permission, 'deny', JSON.stringify(invalid));
+    assert.match(invalid.value.agent_message, /PAYLOAD_SHAPE_INVALID/);
+  }
   await task('Suspend');
+  for (const adapter of ['.cursor', '.claude']) {
+    const review = await hook(adapter, 'PRE_TOOL_USE', cursor('Task', reviewInput, { model: '' }));
+    assert.equal(review.value.permission, 'deny', JSON.stringify(review));
+    assert.doesNotMatch(review.value.agent_message, /PAYLOAD_SHAPE_INVALID/);
+  }
   assert.equal((await hook('.cursor', 'PRE_TOOL_USE', cursor('Write', { file_path: file, content: '修改' }))).value.permission, 'deny');
   await task('Resume');
   assert.equal((await hook('.cursor', 'PRE_TOOL_USE', cursor('Write', { file_path: file, content: '修改' }))).value.permission, 'allow');

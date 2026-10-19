@@ -681,8 +681,12 @@ function Test-CursorPreToolUseShape {
     ) {
         return $false
     }
+    # Cursor 派发子 Agent 时外层 model 可为空，实际模型位于 tool_input。
+    # 此字段仅为元数据；仍拒绝非字符串，且不放宽会话与工具身份校验。
+    if ((Test-MapHasKey $Payload 'model') -and $Payload.model -isnot [string]) {
+        return $false
+    }
     foreach ($field in @(
-        "model",
         "model_id",
         "cursor_version",
         "tool_use_id",

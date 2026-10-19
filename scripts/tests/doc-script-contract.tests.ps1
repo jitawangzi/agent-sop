@@ -129,6 +129,11 @@ function Get-TaskDocProblems {
         $value=$Command.parameters[$name]
         if ($null -ne $value -and $value -notmatch '<[^>]+>' -and $TaskContract[$name].Count -and $value -notin $TaskContract[$name]) { "Invalid Task ${name}: $value" }
     }
+    # 非默认档位的可复制示例必须包含人工选择依据，防止文档引导出无法启动的命令。
+    if ($Command.parameters.Operation -eq 'Start' -and $Command.parameters.Tier -in @('T1','T3') -and
+        (-not $Command.parameters.ContainsKey('UserRequest') -or [string]::IsNullOrWhiteSpace($Command.parameters.UserRequest))) {
+        'Non-default Task Start requires UserRequest'
+    }
 }
 
 function Get-TaskForwardingProblems {
@@ -249,6 +254,16 @@ Use `./ai-sop.ps1 Task -Operation Imaginary -MissingSwitch value` or ``./.ai-sop
     Assert-Contract 'Inline parser finds root and direct commands' ($inlineExamples.Count -eq 2)
     Assert-Contract 'Inline invalid operation and parameter are rejected' (@(Get-TaskDocProblems $inlineExamples[0] $taskContract $rootContract).Count -eq 2)
     Assert-Contract 'Inline valid command is accepted' (@(Get-TaskDocProblems $inlineExamples[1] $taskContract $rootContract).Count -eq 0)
+
+    $tierExamples=@(Get-TaskDocCommands @'
+```powershell
+pwsh -NoProfile -File ./ai-sop.ps1 Task -Operation Start -Tier T1 -Objective '修改示例'
+pwsh -NoProfile -File ./ai-sop.ps1 Task -Operation Start -Tier T3 -Objective '修改示例' -UserRequest '按 T3 执行'
+pwsh -NoProfile -File ./ai-sop.ps1 Task -Operation Start -Objective '默认 T2 示例'
+```
+'@)
+    Assert-Contract '非默认档位示例遗漏人工原话时应拒绝' (@(Get-TaskDocProblems $tierExamples[0] $taskContract $rootContract) -contains 'Non-default Task Start requires UserRequest')
+    Assert-Contract '显式依据和默认 T2 示例保持可用' (@(Get-TaskDocProblems $tierExamples[1] $taskContract $rootContract).Count -eq 0 -and @(Get-TaskDocProblems $tierExamples[2] $taskContract $rootContract).Count -eq 0)
 
     $fixture=Join-Path ([IO.Path]::GetTempPath()) ('sop-contract-forwarding-' + [guid]::NewGuid().ToString('N'))
     try {

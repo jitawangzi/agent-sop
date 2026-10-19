@@ -1,6 +1,26 @@
 #requires -Version 7.0
 # Task policy metadata is changed by the owner Checkpoint transaction only.
 
+function Assert-AiSopInitialTaskTier {
+    param([string]$Tier, [string]$UserRequest)
+    if ($Tier -notin @('T1','T2','T3')) { throw 'TASK_TIER_INVALID' }
+    if ($Tier -ne 'T2' -and [string]::IsNullOrWhiteSpace($UserRequest)) {
+        throw 'TASK_TIER_USER_REQUEST_REQUIRED: new T1/T3 tasks require -UserRequest with the human tier selection; omit Tier to use default T2'
+    }
+}
+
+function New-AiSopTaskTierSelection {
+    param([string]$Tier, [string]$UserRequest, [string]$At, [switch]$Legacy)
+    # 原话由调用方记录，用于追溯选择依据，不代表独立的人类身份认证。
+    if ($Legacy) { return @{ tier=$Tier; source='LEGACY_PRESERVED'; recordedAt=$At } }
+    Assert-AiSopInitialTaskTier $Tier $UserRequest
+    $selection=@{ tier=$Tier; source='DEFAULT'; recordedAt=$At }
+    if (-not [string]::IsNullOrWhiteSpace($UserRequest)) {
+        $selection.source='USER_REQUEST'; $selection.userRequest=$UserRequest
+    }
+    return $selection
+}
+
 function Update-AiSopTaskPolicy {
     param($Task, $Update, [string]$SpecDirectory, [string]$WorkspacePath, [string]$At)
     if ($Update.operation -in @('ChangeTier','SetApplicability','SetBaseline','SetCaseScope') -and @($Task.verifications | Where-Object { $_.outcome -eq 'RUNNING' }).Count) {

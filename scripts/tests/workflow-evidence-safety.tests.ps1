@@ -131,7 +131,7 @@ try {
     Task Resume imported | Out-Null
     Task Cancel imported | Out-Null
 
-    Task Start paths @{Tier='T1';Objective='Workspace executable and optional VCS metadata'} | Out-Null
+    Task Start paths @{Tier='T1'; UserRequest='本测试明确选择 T1';Objective='Workspace executable and optional VCS metadata'} | Out-Null
     $svnFixture=Join-Path $workspace '.svn'
     [IO.Directory]::CreateDirectory($svnFixture) | Out-Null
     try {
@@ -152,7 +152,7 @@ try {
     # Exercise real subprocesses, short leases and failed final transactions.
     foreach ($scenario in @('lease','contention','expired','revoked','retry','ended')) {
         Write-Output "Evidence safety scenario: $scenario"
-        Task Start $scenario @{Tier='T1';Objective="Runtime $scenario"} | Out-Null
+        Task Start $scenario @{Tier='T1'; UserRequest='本测试明确选择 T1';Objective="Runtime $scenario"} | Out-Null
         $ready=Join-Path $workspace ".ai-workspace/$scenario.ready"
         $finish=Join-Path $workspace ".ai-workspace/$scenario.finish"
         $child=Join-Path $root "$scenario-child.ps1"

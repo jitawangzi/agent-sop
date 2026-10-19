@@ -49,17 +49,20 @@
 - [ ] **E3**（整体收尾）：全部 Task 完成后，AI **通过 Skill 显式调用** `superpowers:requesting-code-review` 做整体收尾审查，**未**跳过（哪怕改动很小）。
 - [ ] **E4**（全功能审计·可选）：复杂大功能交付后，可**手动**触发 `workflow-orchestrator` AUDIT_ONLY 全盘审计（`REPORT_ONLY`/`AUTO_REPAIR`）查跨任务契约一致性——它是可选手动收尾，**不**在主流程必经链。
 
-### F. 生产代码编辑 Guard（归属强制）
+### F. 任务写前 Guard（实际 Hook 接入路径）
 
-- [ ] **F1**：未 Claim 归属前，编辑默认生产路径（`src/`、`pkg/`、`WebRoot/`、`config/` 等，见 `Get-AiSopProductionPatterns`）被 guard 拒绝，stderr 提示"requires ACTIVE feature owner"。
-- [ ] **F2**：Claim 归属后（`SUPERPOWERS`），编辑生产代码被放行。
-- [ ] **F3**：归属用 `SUPERPOWERS`（不再是 `CUSTOM_SKILLS`），`agent` 字段反映实际工具：
+- [ ] **F1**：未建立任务时，识别出的源码、测试、配置及项目文档编辑被拒绝；安全读取仍可执行。仅有旧 ACTIVE owner 而无 taskId 时提示 TASK_REQUIRED，按 Discover / Resume 收编。
+- [ ] **F2**：Start / Resume 成功后，当前会话关联的 ACTIVE task、合法档位和 owner 身份一致时，编辑可放行；任务暂停或身份不匹配时拒绝。
+- [ ] **F3**：修改前输出实际登记档位、来源及本档义务；本清单验证人工选择的 T3，启动示例必须替换真实请求：
   ```powershell
-  pwsh -NoProfile -File .\.ai-sop\scripts\workflow-owner.ps1 -Operation Claim `
-    -SpecDirectory ".ai-workspace\specs\features/<FeatureName>" `
-    -Feature "<FeatureName>" -Workflow SUPERPOWERS `
-    -Agent "<CLAUDE_CODE|COPILOT|ANTIGRAVITY|CURSOR|CODEX|PI>" -OwnerId "<run-id>"
+  pwsh -NoProfile -File ./ai-sop.ps1 Task -Operation Start `
+    -Feature "<FeatureName>" -TaskId "<TaskId>" -Tier T3 `
+    -Objective "<本次目标>" -UserRequest "<人工选择 T3 的原话>" `
+    -Agent "<CLAUDE_CODE|COPILOT|ANTIGRAVITY|CURSOR|CODEX|PI>"
   ```
+- [ ] **F4**：正常 T1 使用任务入口，不停用 Guard；人工紧急停用明确显示 GUARD_DISABLED / GUARD_DISABLED_FOR_FEATURE，不被当作合规 T1。
+
+必须记录所测工具是否真实调用 Hook，不能凭配置存在判为通过。当前 Codex blockingHook=false，其写前阻断项标为能力缺口；不要关闭防护来完成此清单。
 
 ### G. 完成验证
 

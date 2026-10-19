@@ -117,7 +117,7 @@ try {
     $template=Join-Path (Split-Path -Parent $scripts) 'distribution/templates/root/ai-sop.ps1'
     Copy-Item -LiteralPath $template -Destination (Join-Path $workspace 'ai-sop.ps1')
     [IO.File]::WriteAllText($counter,'')
-    $started=Task Start one @{Tier='T1';Objective='Input evidence and independent start'} | Out-String
+    $started=Task Start one @{Tier='T1'; UserRequest='本测试明确选择 T1';Objective='Input evidence and independent start'} | Out-String
     Assert ($started -match 'TASK_START_INPUTS: CAPTURED' -and [IO.File]::ReadAllText($counter) -ceq 'scan;') 'Start feedback missing or performed another snapshot'
     Task Run one @{Kind='compile';Executable='pwsh';Arguments=@('-NoProfile','-Command','exit 0')} | Out-Null
     Task Run one @{Kind='compile';Executable='pwsh';Arguments=@('-NoProfile','-Command','exit 0')} | Out-Null
@@ -144,10 +144,10 @@ try {
     Assert ((Read-AiSopVerificationInputs $task.verifications[0] $receiver).digest -ceq $task.verifications[0].inputDigest) 'Portable input manifest could not be read'
     Task Suspend | Out-Null
     $beforeStart=[IO.File]::ReadAllText((Get-AiSopTaskPath $spec one))
-    Fails { Task Start one @{Tier='T1';Objective='Different independent goal'} } 'TASK_ALREADY_EXISTS'
+    Fails { Task Start one @{Tier='T1'; UserRequest='本测试明确选择 T1';Objective='Different independent goal'} } 'TASK_ALREADY_EXISTS'
     Assert ([IO.File]::ReadAllText((Get-AiSopTaskPath $spec one)) -ceq $beforeStart) 'Rejected Start mutated original task'
     Fails { Task Resume one @{Objective='Different goal'} } 'RESUME_OBJECTIVE_MISMATCH'
-    Task Start two @{Tier='T1';Objective='Another task'} | Out-Null
+    Task Start two @{Tier='T1'; UserRequest='本测试明确选择 T1';Objective='Another task'} | Out-Null
     [IO.File]::WriteAllText($counter,'')
     $status=& $entry -Operation Status -WorkspacePath $workspace -Feature Example -Json | ConvertFrom-Json
     Assert ($status.schemaVersion -eq '1.0' -and $status.tasks.Count -eq 2 -and [IO.File]::ReadAllText($counter) -ceq 'scan;') 'Status did not share one input snapshot across tasks'
@@ -204,7 +204,7 @@ try {
     $recheckAll=& (Join-Path $workspace 'ai-sop.ps1') Task -Operation Status -Feature Example -IncludeHistory -RecheckHistory -Json | ConvertFrom-Json
     Assert (@($recheckAll.tasks | Where-Object { $_.diagnostics -match 'INPUT_POLICY_INVALID' }).Count -eq 2) 'Task entry failed to forward the explicit historical recheck'
     Put $config ($policy | ConvertTo-Json -Depth 5)
-    Task Start three @{Tier='T3';Objective='Malformed specification diagnostics'} | Out-Null
+    Task Start three @{Tier='T3'; UserRequest='本测试明确选择 T3';Objective='Malformed specification diagnostics'} | Out-Null
     Put '.ai-workspace/specs/features/Example/05_test_coverage.json' '{broken'
     $bad=& $entry -Operation Status -WorkspacePath $workspace -Feature Example -TaskId three -Json | ConvertFrom-Json
     Assert ($bad.tasks[0].status -eq 'ACTIVE' -and $bad.tasks[0].diagnostics -match 'SPEC_JSON_INVALID:') 'Invalid spec misreported as corrupt task or success'

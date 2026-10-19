@@ -25,7 +25,20 @@ try {
     [IO.Directory]::CreateDirectory($spec) | Out-Null
     [IO.File]::WriteAllText((Join-Path $workspace 'input.txt'), 'valid')
     [IO.File]::WriteAllText((Join-Path $spec '06_design_contract.md'), 'Historical contract')
-    Task Start urgent @{ Tier='T1'; Objective='Urgent behavior adjustment' } | Out-Null
+    # 新任务先落实档位依据；拒绝时不留下任务、归属或绑定会话。
+    foreach ($nonDefault in @('T1','T3')) {
+        Fails { Task Start rejected @{ Tier=$nonDefault; Objective='Missing human tier selection' } } 'TASK_TIER_USER_REQUEST_REQUIRED'
+    }
+    Fails { Task Start rejected @{ Tier='T1'; Objective='Blank selection'; UserRequest='  ' } } 'TASK_TIER_USER_REQUEST_REQUIRED'
+    Assert (-not [IO.Directory]::Exists((Join-Path $spec 'tasks/rejected'))) 'Rejected Start left a task directory'
+    Assert (-not [IO.File]::Exists((Join-Path $env:AI_SOP_OWNER_REGISTRY 'example.json'))) 'Rejected Start claimed ownership'
+    Assert (-not @(Get-ChildItem -LiteralPath $env:AI_SOP_SESSION_REGISTRY -Filter '*.json' -Recurse -ErrorAction SilentlyContinue).Count) 'Rejected Start registered a session'
+    Fails { & (Join-Path $scripts 'workflow-owner.ps1') -Operation Claim -Feature Example -SpecDirectory $spec -TaskId direct-rejected -OwnerId direct-owner -Tier T3 -Objective 'Direct creation missing selection' -Agent CODEX } 'TASK_TIER_USER_REQUEST_REQUIRED'
+    Assert (-not [IO.File]::Exists((Get-AiSopTaskPath $spec direct-rejected))) 'Direct Claim bypassed the initial tier check'
+    $urgentFeedback=Task Start urgent @{ Tier='T1'; Objective='Urgent behavior adjustment'; UserRequest='Use T1 for this urgent adjustment.' } | Out-String
+    $selection=(Read-AiSopTask $spec urgent).tierSelection
+    Assert ($selection.tier -eq 'T1' -and $selection.source -eq 'USER_REQUEST' -and $selection.userRequest -ceq 'Use T1 for this urgent adjustment.') 'Initial tier selection was not persisted'
+    Assert ($urgentFeedback -match 'TASK_TIER: T1 source=USER_REQUEST' -and $urgentFeedback -match 'T1 仍受任务归属保护') 'T1 startup did not display the registered tier and delivery requirements'
     Assert (-not (Read-AiSopTask $spec urgent).followUps) 'T1 automatically created debt'
     $follow=@{ FollowUpId='field-doc'; FollowUpKind='documentation'; Summary='Update field meaning'; Scope=@('06_design_contract.md#response','Decoder#read') }
     Task AddFollowUp urgent $follow | Out-Null
@@ -45,11 +58,13 @@ try {
     & $entry -Operation Cancel -WorkspacePath $workspace -Feature Other -TaskId other -Agent CODEX | Out-Null
     $started=Task Start next @{ Objective='Independent small task' } | Out-String
     Assert ((Read-AiSopTask $spec next).tier -eq 'T2') 'Unspecified task did not default to T2'
+    Assert ((Read-AiSopTask $spec next).tierSelection.source -eq 'DEFAULT' -and $started -match 'TASK_TIER: T2 source=DEFAULT' -and $started -match '同步受影响的文档和用例') 'Default T2 selection or delivery reminder missing'
     Assert ($started -match 'field-doc' -and $started -match 'FOLLOW_UP_NON_BLOCKING') 'Same-feature startup did not show pending details'
     Assert (-not (Read-AiSopTask $spec next).followUps) 'New task inherited old follow-ups as its own work'
     $env:CODEX_SESSION_ID='policy-handoff'
     $resumed=Task Resume next @{ConfirmTakeover=$true} | Out-String
     Assert ($resumed -match 'field-doc' -and (Read-AiSopTask $spec next).tier -eq 'T2') 'Handoff omitted earlier deferred work or changed tier'
+    Assert ($resumed -match 'TASK_TIER: T2 source=DEFAULT') 'Resume displayed an inferred tier instead of its saved selection'
     Task Run next (@{Kind='compile'} + $check) | Out-Null
     Task Run next (@{Kind='test'} + $check) | Out-Null
     Fails { Task Complete next } 'MISSING_SYNC_REVIEW'
@@ -58,7 +73,7 @@ try {
     Assert ((Read-AiSopTask $spec urgent).followUps[0].status -eq 'PENDING') 'T2 completion silently cleared historical follow-ups'
 
     # Close historical items through the current owner, preserving source task completion.
-    Task Start sync @{ Tier='T1'; Objective='Synchronize earlier documentation and tests' } | Out-Null
+    Task Start sync @{ Tier='T1'; Objective='Synchronize earlier documentation and tests'; UserRequest='Use T1 to synchronize the earlier work.' } | Out-Null
     Task CloseFollowUp sync @{ SourceTaskId='urgent'; FollowUpId='field-doc'; Resolution='Updated the response section in 06_design_contract.md.' } | Out-Null
     Fails { Task CloseFollowUp sync @{ SourceTaskId='urgent'; FollowUpId='field-test'; Disposition='NOT_NEEDED'; Resolution='Already covered' } } 'userRequest'
     Fails { Task CloseFollowUp sync @{ SourceTaskId='../escape'; FollowUpId='field-test'; Resolution='Wrong path' } } 'TASK_ID_INVALID'
@@ -72,7 +87,7 @@ try {
     $cancelled=Task Cancel sync | Out-String
     Assert ($cancelled -match 'FOLLOW_UP_CANCEL_REVIEW' -and $cancelled -match 'field-doc' -and $cancelled -match 'field-test' -and $cancelled -match 'FOLLOW_UP_NON_BLOCKING') 'Cancel hid resolutions made by this task'
     Assert ((Read-AiSopTask $spec sync).status -eq 'CANCELLED' -and (Read-AiSopTask $spec urgent).followUps[0].status -eq 'RESOLVED') 'Cancel blocked or automatically rolled back resolved work'
-    Task Start reopen @{Tier='T1';Objective='Reassess the cancelled synchronization'} | Out-Null
+    Task Start reopen @{Tier='T1';Objective='Reassess the cancelled synchronization';UserRequest='Use T1 to reassess the cancelled synchronization.'} | Out-Null
     Fails { Task ReopenFollowUp reopen @{SourceTaskId='urgent';FollowUpId='field-doc'} } 'reason'
     Fails { Task ReopenFollowUp reopen @{SourceTaskId='../escape';FollowUpId='field-doc';Reason='Invalid source'} } 'TASK_ID_INVALID'
     Task ReopenFollowUp reopen @{SourceTaskId='urgent';FollowUpId='field-doc';Reason='Documentation edit was reverted after cancellation.'} | Out-Null
@@ -96,9 +111,10 @@ try {
     Fails { Task Run change @{Kind='test'; Executable='pwsh'; Arguments=@('-NoProfile','-Command','exit 2')} } 'Task Run failed'
     Fails { Task ChangeTier change @{Tier='T1'; Reason='Urgent'} } 'userRequest'
     Fails { Task SetApplicability change @{Kind='test'; Applicability='NOT_APPLICABLE'; Reason='Environment unavailable'} } 'FAILED_VERIFICATION_NOT_INAPPLICABLE'
-    Task ChangeTier change @{Tier='T1'; Reason='User requests a compile-only handoff'; UserRequest='Use T1 now; I will handle the tests separately.'} | Out-Null
+    $changedFeedback=Task ChangeTier change @{Tier='T1'; Reason='User requests a compile-only handoff'; UserRequest='Use T1 now; I will handle the tests separately.'} | Out-String
     $changed=Read-AiSopTask $spec change
     Assert ($changed.tier -eq 'T1' -and $changed.tierHistory.Count -eq 1 -and $changed.verifications[-1].exitCode -eq 2) 'Tier change erased evidence or lacked audit'
+    Assert ($changed.tierSelection.source -eq 'DEFAULT' -and $changed.tierSelection.tier -eq 'T2' -and $changedFeedback -match 'TASK_TIER: T1 source=USER_REQUEST_CHANGE') 'Tier change rewrote initial choice or omitted its current tier feedback'
     Task Suspend change | Out-Null
     Fails { Task Resume change @{Tier='T2'} } 'TASK_TIER_CHANGE_REQUIRES_EXPLICIT_OPERATION'
     $env:AI_SESSION_ID='policy-cursor'
@@ -133,11 +149,37 @@ try {
     Fails { Task SetApplicability docs @{Kind='test'; Applicability='NOT_APPLICABLE'; Reason='No tests'} } 'T3_VERIFICATION_REQUIRED'
     Task Cancel docs | Out-Null
 
+    # 非默认新任务有依据；显式 T2 也可以留痕，历史任务接管不要求伪造原话。
+    $fullFeedback=Task Start full @{Tier='T3';Objective='Full workflow fixture';UserRequest='Use T3 for the full workflow.'} | Out-String
+    Assert ((Read-AiSopTask $spec full).tierSelection.source -eq 'USER_REQUEST' -and $fullFeedback -match 'TASK_TIER: T3 source=USER_REQUEST') 'T3 initial selection or startup feedback missing'
+    Task Cancel full | Out-Null
+    Task Start explicit-normal @{Tier='T2';Objective='Explicit normal workflow';UserRequest='Use T2 for this change.'} | Out-Null
+    Assert ((Read-AiSopTask $spec explicit-normal).tierSelection.userRequest -ceq 'Use T2 for this change.') 'Explicit T2 human choice lost its attribution'
+    Task Cancel explicit-normal | Out-Null
+    Task Start old-tier @{Tier='T1';Objective='Historical task fixture';UserRequest='Use T1 to create this historical fixture.'} | Out-Null
+    Task Suspend old-tier | Out-Null
+    $oldTask=Read-AiSopTask $spec old-tier
+    $oldTask.Remove('tierSelection')
+    [IO.File]::WriteAllText((Get-AiSopTaskPath $spec old-tier), (ConvertTo-AiSopWorkflowCanonicalJson $oldTask))
+    $oldFeedback=Task Resume old-tier | Out-String
+    Assert (-not (Read-AiSopTask $spec old-tier).tierSelection -and $oldFeedback -match 'TASK_TIER: T1 source=LEGACY_UNRECORDED') 'Historical Resume changed tier, demanded retrospective evidence, or fabricated a selection'
+    Task Cancel old-tier | Out-Null
+
+    $legacySpec=Join-Path $workspace '.ai-workspace/specs/features/Legacy'
+    [IO.Directory]::CreateDirectory($legacySpec) | Out-Null
+    & (Join-Path $scripts 'workflow-owner.ps1') -Operation Claim -Feature Legacy -SpecDirectory $legacySpec -OwnerId legacy-owner -Tier T3 -Agent CODEX | Out-Null
+    Fails { & $entry -Operation Resume -WorkspacePath $workspace -Feature Legacy -Agent CODEX -Tier T2 } 'TASK_TIER_CHANGE_REQUIRES_EXPLICIT_OPERATION'
+    $legacyFeedback=& $entry -Operation Resume -WorkspacePath $workspace -Feature Legacy -Agent CODEX | Out-String
+    $legacyOwner=Get-Content -LiteralPath (Join-Path $env:AI_SOP_OWNER_REGISTRY 'legacy.json') -Raw | ConvertFrom-Json
+    $legacyTask=Read-AiSopTask $legacySpec $legacyOwner.taskId
+    Assert ($legacyTask.tier -eq 'T3' -and $legacyTask.tierSelection.source -eq 'LEGACY_PRESERVED' -and -not $legacyTask.tierSelection.userRequest -and $legacyFeedback -match 'TASK_TIER: T3 source=LEGACY_PRESERVED') 'Legacy adoption failed to preserve tier without invented human evidence'
+    & $entry -Operation Cancel -WorkspacePath $workspace -Feature Legacy -TaskId $legacyOwner.taskId -Agent CODEX | Out-Null
+
     # Unreadable unrelated reminders are diagnostic, never a startup gate.
     $broken=Join-Path $workspace '.ai-workspace/specs/features/Broken/tasks/old'
     [IO.Directory]::CreateDirectory($broken) | Out-Null
     [IO.File]::WriteAllText((Join-Path $broken 'task.json'), '{broken')
-    $warned=Task Start scan @{ Tier='T1'; Objective='Independent task despite an old corrupt reminder' } 3>&1 | Out-String
+    $warned=Task Start scan @{ Tier='T1'; Objective='Independent task despite an old corrupt reminder'; UserRequest='Use T1 for this independent task.' } 3>&1 | Out-String
     Assert ($warned -match 'FOLLOW_UP_SCAN_UNAVAILABLE' -and (Read-AiSopTask $spec scan).status -eq 'ACTIVE') 'Unrelated reminder corruption prevented startup'
     Task Cancel scan | Out-Null
     Remove-Item -LiteralPath (Join-Path $broken 'task.json')

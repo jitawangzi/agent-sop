@@ -114,13 +114,13 @@ try {
         $env:AI_SOP_OWNER_REGISTRY=Join-Path $root 'receiver-owner'
         Fails { & $entry -Operation Resume -WorkspacePath $remoteWorkspace -Feature Example -TaskId recovery -Agent CODEX } 'TASK_NOT_RESUMABLE'
         $before=[IO.File]::ReadAllText($remoteTaskPath)
-        Fails { & $entry -Operation Start -WorkspacePath $remoteWorkspace -Feature Example -TaskId independent -Tier T1 -Objective 'Independent work' -Agent CODEX } 'TASK_ACTIVE_CONFLICT:recovery'
+        Fails { & $entry -Operation Start -WorkspacePath $remoteWorkspace -Feature Example -TaskId independent -Tier T1 -UserRequest '本测试明确选择 T1' -Objective 'Independent work' -Agent CODEX } 'TASK_ACTIVE_CONFLICT:recovery'
         Assert ($before -ceq [IO.File]::ReadAllText($remoteTaskPath) -and -not (Test-Path -LiteralPath (Get-AiSopTaskPath $remoteSpec 'independent'))) 'Rejected orphan conflict mutated tasks'
         Assert (-not (Test-Path -LiteralPath (Join-Path $env:AI_SOP_OWNER_REGISTRY 'example.json'))) 'Rejected orphan conflict acquired ownership'
         # Legacy Claim must not bypass task-level exclusivity either.
         Fails { & (Join-Path $scripts 'workflow-owner.ps1') -Operation Claim -SpecDirectory $remoteSpec -Feature Example -OwnerId legacy -Agent CODEX } 'TASK_ACTIVE_CONFLICT:recovery'
         & $entry -Operation Recover -WorkspacePath $remoteWorkspace -Feature Example -TaskId recovery -Agent CODEX | Out-Null
-        & $entry -Operation Start -WorkspacePath $remoteWorkspace -Feature Example -TaskId independent -Tier T1 -Objective 'Independent work after recovery' -Agent CODEX | Out-Null
+        & $entry -Operation Start -WorkspacePath $remoteWorkspace -Feature Example -TaskId independent -Tier T1 -UserRequest '本测试明确选择 T1' -Objective 'Independent work after recovery' -Agent CODEX | Out-Null
         Assert ($LASTEXITCODE -eq 0) 'Paused orphan blocked independent work'
         & $entry -Operation Cancel -WorkspacePath $remoteWorkspace -Feature Example -TaskId independent -Agent CODEX | Out-Null
         # Resuming a paused task also checks synced ACTIVE siblings even when
@@ -154,7 +154,7 @@ try {
     # A paused task outlives independent siblings: active is a conflict; released
     # and completed ownership is history and must not send the user to unlock it.
     $sibling=@{WorkspacePath=$workspace;Feature='Example';TaskId='sibling';Agent='CODEX'}
-    & $entry -Operation Start @sibling -Tier T1 -Objective 'Independent source check' | Out-Null
+    & $entry -Operation Start @sibling -Tier T1 -UserRequest '本测试明确选择 T1' -Objective 'Independent source check' | Out-Null
     $inspection=Task InspectRecovery | ConvertFrom-Json
     Assert ($inspection.ownerStatus -eq 'OTHER_TASK' -and $inspection.guidanceSteps.code -contains 'OTHER_TASK_OWNER') 'Active sibling conflict was hidden'
     & $entry -Operation Suspend @sibling | Out-Null

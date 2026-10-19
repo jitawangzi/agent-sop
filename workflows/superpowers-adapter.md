@@ -4,7 +4,7 @@
 
 ## 修改任务入口（优先于下方兼容示例）
 
-进入新任务、切换功能/工作区或跨 Agent 接管时先 `ai-sop.ps1 Task -Operation Discover`，根据用户目标与已有记录选择 Start 或 Resume。同一会话连续执行已确认的任务时无需重复 Discover / Resume；不要求用户记住接管口令。任务身份、档位和下一动作记录在功能目录的 `tasks/<taskId>/task.json`，与 SDD 计划内的 Task/Step 区分。
+本规则只用于安装 SOP 的宿主。讨论、解释和只读审核无需档位或 Discover；转为修改源码、测试、配置或项目文档时，新任务、切换功能/工作区或跨 Agent 接管先 `ai-sop.ps1 Task -Operation Discover`，根据用户目标与已有记录选择 Start 或 Resume。独立新任务人工指定优先、未指定 T2；续做继承原档位。Start/Resume 成功后才能写入；首次修改前向用户说明已登记档位、来源及本档义务。同一会话连续执行已确认任务时无需重复 Discover / Resume 或播报；不要求用户记住接管口令。子 Agent 继承 controller 的 taskId、档位和执行授权。任务身份、档位和下一动作记录在功能目录的 `tasks/<taskId>/task.json`，与 SDD 计划内的 Task/Step 区分。
 
 - T1/T2 使用任务自己的档位和验证，不因历史 T3 规格自动升档；无需创建完整计划。
 - T3 沿用本适配器的需求设计、独立审查和覆盖要求。调用 `workflow-state.ps1` 的 ValidateChangeImpact、ValidateTestCoverage、VerifyCompletion 时带 `-TaskId`，避免误走旧执行证据规则。
@@ -26,7 +26,8 @@
 先 Discover，再为独立工作 Start 或为原任务 Resume。默认 T2，人工指定优先：T1 实现与编译，T2 实现、相关规格/用例同步及编译/相关测试；两者无默认独立审查。下图仅展开人工选择的 **T3**：专家 Skill 作为执行单元与门禁组件调用。
 
 ```text
-Task Discover -> Task Start -Tier T3（或 Resume 原 T3 任务）
+Task Discover -> Task Start -Tier T3 -UserRequest "人工选择原话"（或 Resume 原 T3 任务）
+              -> 向用户说明已登记 T3、来源和本档义务
 -> superpowers:brainstorming
      （一轮调用，两次独立呈递：需求探索 -> 人工确认 01_server_rules.md
        -> 续做设计 -> design-architect 产出 06_design_contract.md
@@ -135,7 +136,7 @@ brainstorming 节点按需咨询 `design-architect`；设计产出后由 `design
 - **不创建或修改 `.ai-sop/runtime/`**
 - 把发现返回给 Superpowers controller
 
-任何编辑规范产物的专家调用都属于修改型工作，需要活动的 Superpowers owner ID；只读的咨询性 review 不需要。
+任何编辑规范产物的专家调用都属于修改型工作，继承 controller 的活动 taskId、档位及会话执行授权；只读的咨询性 review 不需要任务或档位。
 
 **专家 Skill 自包含（禁止再读 Superpowers 原生全文）**：
 专家执行单元只读本仓库对应 `SKILL.md`。**不要**再去读本机 Superpowers 插件模板（`implementer-prompt.md`、`task-reviewer-prompt.md`、`code-reviewer.md`、`test-driven-development` 等）——那些是 controller 派发/流程模板，与专家 overlay（按协议走查等）冲突。需要的通用纪律已内联在专家 Skill 正文。T3 编排仍由 controller 显式调用 Superpowers 流程 skill。
@@ -200,7 +201,7 @@ Superpowers 控制器派发 subagent 时，应按角色复杂度选档，平衡�
 
 ## 执行强度分层
 
-默认 T2，人工指定优先；档位属于本次任务，接管保留，独立新任务不继承。Agent 负责影响分析与建议，不自动升降档。
+默认 T2，人工指定优先；档位属于本次任务，接管保留，独立新任务不继承。Agent 负责影响分析与建议，不自动升降档。新 Start 选择 T1/T3 必须带 UserRequest 保存已有人工原话；无依据时按默认 T2，不把“简单”“尽快”推断为 T1。选择留痕不是人工身份认证，已有明确选择不重复询问。
 
 - **T1**：先 Start 再实现，通过 Task Run 编译。确需延期的文档、测试用例或验证用 AddFollowUp 记录；无影响就不创建待办。已选择 T1 不重复确认。
 - **T2**：需求与验收点明确即可实施，同步受影响的需求、设计与用例，编译和相关测试通过；RecordSync 记录已更新或无需更新的具体依据。无需头脑风暴、正式计划、独立代码审核，也不默认启动完整业务环境。
@@ -252,13 +253,15 @@ pwsh -NoProfile -File .\.ai-sop\scripts\workflow-state.ps1 -Operation ValidateTe
 
 ## 归属强制
 
-PreToolUse hook 在每次文件编辑前运行 `guard-production-edit.ps1`（各 harness 共用：hook 命令统一指向 `./.ai-sop/scripts/hook-dispatcher.ps1`；Claude Code 经 `.claude/settings.json`，其它经 `.agents/hooks.json`/`.cursor/hooks.json`/`.github/hooks/ai-sop.json`）。除非机器级注册表中存在 ACTIVE 的 `SUPERPOWERS` owner，否则拒绝编辑默认生产路径（`src/`、`pkg/`、`cmd/`、`internal/`、`app/`、`lib/`、`WebRoot/`、`config/`、`include/`；可由 `.ai-sop/config/project-policy.json` 的 `productionPatterns` 覆盖）。guard 异常时可手动关（`.ai-sop/.guard-disabled`）。**更推荐一次性 `.guard-token.json`。**
+实际接入 PreToolUse 的适配器通过 `./.ai-sop/scripts/hook-dispatcher.ps1` 调用 `guard-production-edit.ps1`。所有识别出的工作区 FILE_EDIT（含测试、配置及项目文档）都检查会话绑定的 ACTIVE task、合法档位及 owner 身份；只有旧 owner 时先通过 Resume 收编，不能直接 Claim 代替任务入口。安全读取和专用登记/恢复命令保留各自路由。
 
-`AI_SOP_SKIP_OWNER_GUARD=1`（或旧版 `SERVER_NEW_SKIP_OWNER_GUARD=1`）仅作为非功能型一次性小改（临时 hot-fix、探索性 probe）的逃生口。为绕过某次功能运行的归属而设置它是流程违规。
+正常 T1 仍需任务登记及本档验证。`.ai-sop/.guard-disabled`、一次性 `.guard-token.json` 和 `AI_SOP_SKIP_OWNER_GUARD=1`（兼容旧名 `SERVER_NEW_SKIP_OWNER_GUARD`）仅用于人工明确的紧急维护，输出 GUARD_DISABLED / GUARD_DISABLED_FOR_FEATURE；Agent 不得自行以小改或赶工为由启用，停用不代表 T1 合规或任务完成。
+
+写前阻断取决于工具真实执行 Hook 及调用识别，配置文件存在不能证明接入成功，也不保证识别任意 shell 写入。当前 Codex blockingHook=false；它仍须遵守任务入口、档位回显及 Complete。详见操作手册「任务写前 Guard」。
 
 ## 归属完成
 
-任务模式使用 Task Run 留证，T2 另用 RecordSync 说明同步结果，证据就绪后直接 Task Complete，失败按返回缺项修复；不把 Verify / Status 串成固定收尾步骤。长任务在重要阶段用 Checkpoint 保存下一动作；暂停时直接 Suspend 并带 NextAction / Notes，无需紧邻重复 Checkpoint。异常中断先 InspectRecovery，再按诊断 Recover → Resume。独立新修改沿用功能名、创建新 taskId。只读审计不创建任务或认领归属。
+任务模式使用 Task Run 留证，T2 另用 RecordSync 说明同步结果，证据就绪后直接 Task Complete；收尾说明实际档位、同步/延期范围、验证结果及 Complete 是否成功。允许暂停或报告未完成，不以阻止结束回复替代完成门禁。失败按返回缺项修复；不把 Verify / Status 串成固定收尾步骤。长任务在重要阶段用 Checkpoint 保存下一动作；暂停时直接 Suspend 并带 NextAction / Notes，无需紧邻重复 Checkpoint。异常中断先 InspectRecovery，再按诊断 Recover → Resume。独立新修改沿用功能名、创建新 taskId。只读审计不创建任务或认领归属。
 
 仅没有 taskId 的旧归属使用 ledger 中的 owner ID 调用 `workflow-owner.ps1 -Operation Validate` / Complete；不得把旧命令用作新任务的捷径。事务不确定时保留 journal 与目标文件，Preflight 只做诊断，不通过删除日志或强制释放绕过。
 

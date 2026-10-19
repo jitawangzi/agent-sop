@@ -111,7 +111,7 @@ $c.commands.mutate.timeoutSeconds=17
 [IO.File]::WriteAllText($path,($c | ConvertTo-Json -Depth 10))
 '@
     $config.commands.mutate=@{kind='compile';executable='pwsh';arguments=@('-NoProfile','-Command',$mutate)}; SaveConfig
-    Task Start @{Tier='T1';Objective='Detect definition mutation during execution'} | Out-Null
+    Task Start @{Tier='T1'; UserRequest='本测试明确选择 T1';Objective='Detect definition mutation during execution'} | Out-Null
     Fails { Task Run @{Profile='mutate'} } 'INPUTS_CHANGED_DURING_RUN'
     $last=(Read-AiSopTask $spec $taskId).verifications[-1]
     Assert ($last.outcome -eq 'FAILED' -and -not $last.inputsStable -and $last.diagnostic -match 'STALE_PROFILE_EVIDENCE') 'Definition mutation lost the persisted failure'

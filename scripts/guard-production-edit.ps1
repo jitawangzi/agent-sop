@@ -57,9 +57,8 @@ function Test-AiSopGuardEscapeEnabled {
     [CmdletBinding()]
     param()
 
-    # Global T1 escape is env or the human-created .guard-disabled file.
-    # Feature tokens are NOT global: they are checked in Get-AiSopGuardDecision
-    # against the session-bound feature.
+    # 人工维护可通过环境变量或 .guard-disabled 停用防护；这不代表正常 T1。
+    # 功能令牌仅在 Get-AiSopGuardDecision 内匹配会话绑定的功能，不全局放行。
     if (Test-AiSopGuardEnvSkipEnabled) { return $true }
     if (Test-AiSopGuardEnvSkipDenied) { return $false }
 
@@ -91,6 +90,7 @@ function Get-AiSopGuardTokenRecord {
             Path = $tokenPath
         }
     } catch {
+        [Console]::Error.WriteLine('[WARN] GUARD_TOKEN_INVALID: 人工维护令牌不可读取或格式无效，继续执行正常防护。')
         return $null
     }
 }
@@ -148,14 +148,15 @@ function Test-AiSopGuardPathWithinRoot {
         [System.IO.Path]::DirectorySeparatorChar,
         [System.IO.Path]::AltDirectorySeparatorChar
     )
+    $comparison = if ([OperatingSystem]::IsWindows()) { [StringComparison]::OrdinalIgnoreCase } else { [StringComparison]::Ordinal }
     return (
         $normalizedPath.Equals(
             $normalizedRoot,
-            [System.StringComparison]::OrdinalIgnoreCase
+            $comparison
         ) -or
         $normalizedPath.StartsWith(
             $normalizedRoot + [System.IO.Path]::DirectorySeparatorChar,
-            [System.StringComparison]::OrdinalIgnoreCase
+            $comparison
         )
     )
 }
@@ -308,16 +309,42 @@ function Get-AiSopGuardTargetDecision {
             -ReasonCode $code
     }
 
-    if (-not $hasProductionTarget) {
-        return New-AiSopGuardDecision `
-            -Decision ALLOW `
-            -ReasonCode NON_PRODUCTION_FILE_EDIT
-    }
+    # 首次修改前必须登记任务；测试、配置和文档不能因目录不在生产清单而绕过。
     return New-AiSopGuardDecision `
         -Decision DENY `
         -ReasonCode OWNER_REQUIRED `
         -RequiresExactOwner $true `
-        -IsProduction $true
+        -IsProduction $hasProductionTarget
+}
+
+function Read-AiSopGuardTask {
+    param(
+        [System.Collections.IDictionary]$Owner,
+        [string]$SpecDirectory
+    )
+
+    $taskId = [string]$Owner.taskId
+    if ([string]::IsNullOrWhiteSpace($taskId)) { throw 'TASK_REQUIRED' }
+    if ($taskId -cnotmatch '^[A-Za-z0-9][A-Za-z0-9_-]{0,79}$') { throw 'TASK_ID_INVALID' }
+    $taskPath = Resolve-PhysicalPathIdentity -Path (Join-Path $SpecDirectory "tasks/$taskId/task.json")
+    $comparison = if ([OperatingSystem]::IsWindows()) { [StringComparison]::OrdinalIgnoreCase } else { [StringComparison]::Ordinal }
+    $prefix = $SpecDirectory.TrimEnd('\', '/') + [IO.Path]::DirectorySeparatorChar
+    if (-not $taskPath.StartsWith($prefix, $comparison)) { throw 'TASK_PATH_ESCAPE' }
+    if (-not [IO.File]::Exists($taskPath)) { throw 'TASK_NOT_FOUND' }
+    try {
+        $json = [IO.File]::ReadAllText($taskPath)
+        Assert-AiSopWorkflowJsonSchema -Json $json -SchemaId TASK
+        $task = ConvertFrom-AiSopWorkflowJson -Json $json -AsHashtable
+    } catch {
+        [Console]::Error.WriteLine('[WARN] TASK_REGISTRY_CORRUPT: 任务记录无法验证，拒绝修改。')
+        throw 'TASK_REGISTRY_CORRUPT'
+    }
+    if ($task.taskId -cne $taskId -or $task.feature -cne $Owner.feature -or $task.ownerId -cne $Owner.ownerId) {
+        throw 'TASK_IDENTITY_MISMATCH'
+    }
+    if ($task.status -cne 'ACTIVE') { throw 'TASK_INACTIVE' }
+    if ($task.tier -cnotin @('T1', 'T2', 'T3')) { throw 'TASK_TIER_INVALID' }
+    return $task
 }
 
 function Read-AiSopGuardOwner {
@@ -373,7 +400,8 @@ function Test-AiSopGuardTransactionJournalPresent {
 function Get-AiSopGuardAuthorizationSnapshot {
     param(
         [System.Collections.IDictionary]$Session,
-        [System.Collections.IDictionary]$Owner
+        [System.Collections.IDictionary]$Owner,
+        [System.Collections.IDictionary]$Task
     )
 
     $snapshot = [ordered]@{
@@ -387,6 +415,11 @@ function Get-AiSopGuardAuthorizationSnapshot {
         sessionEpochId = [string]$Owner.sessionBinding.sessionEpochId
         ownerLastTransactionId = [string]$Owner.lastTransactionId
         sessionLastTransactionId = [string]$Session.lastTransactionId
+        taskId = [string]$Task.taskId
+        taskFeature = [string]$Task.feature
+        taskOwnerId = [string]$Task.ownerId
+        taskStatus = [string]$Task.status
+        taskTier = [string]$Task.tier
     }
     return Get-AiSopWorkflowSha256 (
         ConvertTo-AiSopWorkflowCanonicalJson $snapshot
@@ -488,20 +521,24 @@ function Get-AiSopExactOwnerDecision {
                 $workspace
             ) ".ai-workspace\specs\features\$($session.boundFeature)"
         )
+        if (-not (Test-AiSopGuardPathWithinRoot -Path $expectedSpec -Root $workspace)) {
+            throw 'TASK_PATH_ESCAPE'
+        }
         $ownerWorkspace = Resolve-PhysicalPathIdentity `
             -Path ([string]$owner.workspacePath)
         $ownerSpec = Resolve-PhysicalPathIdentity `
             -Path ([string]$owner.specDirectory)
+        $pathComparison = if ([OperatingSystem]::IsWindows()) { [StringComparison]::OrdinalIgnoreCase } else { [StringComparison]::Ordinal }
         if (
             [string]$owner.agent -cne [string]$HookEvent.agent -or
             [string]$owner.ownerId -cne [string]$session.boundOwnerId -or
             -not $ownerWorkspace.Equals(
                 $workspace,
-                [System.StringComparison]::OrdinalIgnoreCase
+                $pathComparison
             ) -or
             -not $ownerSpec.Equals(
                 $expectedSpec,
-                [System.StringComparison]::OrdinalIgnoreCase
+                $pathComparison
             ) -or
             [string]$owner.sessionBinding.sessionKey -cne $sessionKey -or
             [string]$owner.sessionBinding.sessionEpochId -cne
@@ -512,9 +549,12 @@ function Get-AiSopExactOwnerDecision {
             throw "OWNER_IDENTITY_MISMATCH"
         }
 
+        # 在既有 Session -> Owner 锁内校验同一份任务，避免检查期间被暂停或换档。
+        $task = Read-AiSopGuardTask -Owner $owner -SpecDirectory $expectedSpec
         $snapshotHash = Get-AiSopGuardAuthorizationSnapshot `
             -Session $session `
-            -Owner $owner
+            -Owner $owner `
+            -Task $task
         return New-AiSopGuardDecision `
             -Decision ALLOW `
             -ReasonCode EXACT_OWNER_AUTHORIZED `
@@ -528,6 +568,7 @@ function Get-AiSopExactOwnerDecision {
         if ($code -notmatch "^[A-Z][A-Z0-9_]*$") {
             $code = "GUARD_INTERNAL_ERROR"
         }
+        [Console]::Error.WriteLine("[WARN] ${code}: 写前任务授权未通过。")
         return New-AiSopGuardDecision `
             -Decision DENY `
             -ReasonCode $code `
@@ -570,7 +611,7 @@ function Get-AiSopGuardDecision {
     }
 
     $token = Get-AiSopGuardTokenRecord
-    if ($null -ne $token) {
+    if ($null -ne $token -and $targetDecision.RequiresExactOwner) {
         $boundFeature = ""
         try {
             $workspace = Resolve-PhysicalPathIdentity `
@@ -587,6 +628,7 @@ function Get-AiSopGuardDecision {
                 -ExpectedSessionKey $sessionKey
             $boundFeature = [string]$session.boundFeature
         } catch {
+            [Console]::Error.WriteLine('[WARN] GUARD_TOKEN_SESSION_UNBOUND: 无法确认功能令牌的会话归属，继续执行正常防护。')
             $boundFeature = ""
         }
         if (
@@ -598,7 +640,7 @@ function Get-AiSopGuardDecision {
         ) {
             return New-AiSopGuardDecision `
                 -Decision ALLOW `
-                -ReasonCode T1_TOKEN_ESCAPE `
+                -ReasonCode GUARD_DISABLED_FOR_FEATURE `
                 -RequiresExactOwner $false `
                 -IsProduction $targetDecision.IsProduction
         }

@@ -35,7 +35,7 @@ description: 编排人工请求的独立审计片段，默认只出报告；明�
 - `audit_fix_policy`：`REPORT_ONLY`（只出报告，**默认**）/ `AUTO_REPAIR`（自动修复并回归）
 
 ### 执行流程（人工驱动）
-1. REPORT_ONLY 的只读审计无需认领。AUTO_REPAIR 的初查可先按只读方式收集发现，在实际修改前按下方任务入口 Start / Resume，保持人工指定档位。派发专家时附本次用途（初查只出报告或修复后复审）、已有档位、明确需求及已有编译证据；从当前请求继承，不要求用户另填字段。
+1. REPORT_ONLY 的只读审计无需选择档位、Discover 或认领。AUTO_REPAIR 的初查可先按只读方式收集发现，在实际修改前按下方任务入口 Start / Resume。独立修复人工指定优先、未指定为 T2，续做继承原档位；成功后按登记结果向用户说明档位来源与本档义务。派发专家时附 taskId、档位、执行授权、本次用途（初查只出报告或修复后复审）、明确需求及已有编译证据；专家继承，不另建任务或自行改档，不要求用户另填字段。
 2. 若规格目录存在 `04_change_impact.json` 且含 `behaviorVariants` / 类型扩展，**默认 Protocol Trace**：派 `implementation-auditor` Mode C 与 `logic-auditor` Mode E，输入 `entry_points`=`04.entryPoints`。禁止只按 class 或 revision diff 起审。
 3. 否则按序调专家 skill：
    - `implementation-auditor`（实现/契约合规 + 完整性）
@@ -78,7 +78,7 @@ description: 编排人工请求的独立审计片段，默认只出报告；明�
 
 ## Agent & Feature Ownership
 
-读取生产代码或功能规格做审计无需开发归属。实际修复使用 Task 入口：先 Discover 辨认功能与未完成任务；独立修复创建新 taskId，继续原修复用 Resume。先 Start 再修改，T1/T2/T3 都保留原始起点记录，Resume 不重新采集。继续同一活动修复时复用其授权执行流程，不重复创建归属。
+本段只适用于已安装 SOP 的宿主。读取生产代码或功能规格做审计无需开发归属。实际修复使用 Task 入口：先 Discover 辨认功能与未完成任务；独立修复创建新 taskId，继续原修复用 Resume。Start/Resume 成功后才修改；新建 T1/T3 必须带 UserRequest 保存实际人工选择原话，无需为已明确选择重复确认。T1/T2/T3 都保留原始起点记录，Resume 不重新采集。继续同一活动修复时复用其授权执行流程，不重复创建归属或播报。
 
 ```powershell
 & ./ai-sop.ps1 Task -Operation Discover -Feature Example
@@ -88,7 +88,7 @@ description: 编排人工请求的独立审计片段，默认只出报告；明�
 & ./ai-sop.ps1 Task -Operation Resume -Feature Example -TaskId audit-fix-1 -Agent CODEX
 ```
 
-示例中的工具身份、目标和档位按当前请求填写。验证用 Task Run，按档位同步规格与用例（T2 使用 RecordSync），证据就绪后直接 Task Complete（内含完成校验，Verify 仅作可选的提前诊断）。正常暂停先停止本次运行、处理待入账结果，再 Suspend 释放执行占用并保留 taskId 和检查点。异常中断先 Status / InspectRecovery，再按诊断 Recover；已恢复为 PAUSED 时直接 Resume，不重复 Suspend。正常交接用 Resume，不自动强制接管；暂停不代表验收完成。T1 的延期事项用 AddFollowUp 非阻断提醒。只读审计发现旧 DONE 有待办时，不因当前代码变化要求旧任务重新完成。
+示例中的工具身份、目标和档位按当前请求填写。最终报告说明实际档位、同步/延期情况、验证结果及 Complete 是否成功；只读报告不宣告开发任务完成。验证用 Task Run，按档位同步规格与用例（T2 使用 RecordSync），证据就绪后直接 Task Complete（内含完成校验，Verify 仅作可选的提前诊断）。正常暂停先停止本次运行、处理待入账结果，再 Suspend 释放执行占用并保留 taskId 和检查点。异常中断先 Status / InspectRecovery，再按诊断 Recover；已恢复为 PAUSED 时直接 Resume，不重复 Suspend。正常交接用 Resume，不自动强制接管；暂停不代表验收完成。T1 的延期事项用 AddFollowUp 非阻断提醒。只读审计发现旧 DONE 有待办时，不因当前代码变化要求旧任务重新完成。
 
 旧 Owner Claim / Complete 仅用于已有无 taskId 流程的兼容恢复，参见 `.ai-sop/SUPERPOWERS_MANUAL.md`；新修复不进入该兼容路径。
 

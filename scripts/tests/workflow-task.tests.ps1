@@ -56,7 +56,7 @@ try {
     $first = Read-AiSopTask $spec 'fix-a'
     Assert ($first.tier -eq 'T2') 'Task tier changed because historical design exists'
     $env:CODEX_SESSION_ID='other-feature-session'
-    & $entry -Operation Start -WorkspacePath $workspace -Feature Other -TaskId parallel -Tier T1 -Objective 'Independent feature' -Agent CODEX | Out-Null
+    & $entry -Operation Start -WorkspacePath $workspace -Feature Other -TaskId parallel -Tier T1 -UserRequest '本测试明确选择 T1' -Objective 'Independent feature' -Agent CODEX | Out-Null
     Assert ($LASTEXITCODE -eq 0) 'Different feature was blocked by Example owner'
     & $entry -Operation Cancel -WorkspacePath $workspace -Feature Other -TaskId parallel -Agent CODEX | Out-Null
     $env:CODEX_SESSION_ID='task-session-a'
@@ -90,14 +90,14 @@ try {
     Assert ($feedback -match 'TASK_COMPLETED:Example/fix-a tier=T2 status=DONE; ownership released' -and $feedback -notmatch 'example\.json') 'Complete did not summarize the committed task result'
     Assert ((Read-AiSopTask $spec 'fix-a').status -eq 'DONE') 'Task not completed'
     Assert ([IO.File]::ReadAllText((Join-Path $spec '06_design_contract.md')) -eq 'legacy design') 'Historical design was modified'
-    Task Start fix-b @{ Tier='T1'; Objective='Quick independent change' } | Out-Null
+    Task Start fix-b @{ Tier='T1'; UserRequest='本测试明确选择 T1'; Objective='Quick independent change' } | Out-Null
     Assert ((Read-AiSopTask $spec 'fix-b').verifications.Count -eq 0) 'New task inherited old evidence'
     Task Run fix-b @{ Kind='compile'; Executable='pwsh'; Arguments=@('-NoProfile','-Command','exit 0') } | Out-Null
     $feedback=Task Suspend fix-b @{ NextAction='Resume implementation'; Notes='Waiting for input' } | Out-String
     Assert ($feedback -match 'TASK_SUSPENDED:Example/fix-b tier=T1 status=PAUSED; ownership released') 'Suspend did not summarize release'
     Assert ((Read-AiSopTask $spec 'fix-b').status -eq 'PAUSED') 'Suspend must not mark task DONE'
     # An unrelated sequential task may finish while the previous one is paused.
-    Task Start fix-c @{ Tier='T1'; Objective='Another independent fix' } | Out-Null
+    Task Start fix-c @{ Tier='T1'; UserRequest='本测试明确选择 T1'; Objective='Another independent fix' } | Out-Null
     $feedback=Task Cancel fix-c | Out-String
     Assert ($feedback -match 'TASK_CANCELLED:Example/fix-c tier=T1 status=CANCELLED; ownership released') 'Cancel did not summarize release'
     $env:CODEX_SESSION_ID='task-session-b'
@@ -152,7 +152,7 @@ try {
     Task Run fix-d @{ Kind='test'; Batch='regression'; Executable='pwsh'; Arguments=@('-NoProfile','-Command','exit 0'); Reason='Restore the fixture command after launch failure' } | Out-Null
     Task Complete fix-d | Out-Null
     [IO.File]::WriteAllText((Join-Path $workspace 'src/deleted.txt'), 'old input')
-    Task Start fix-e @{ Tier='T1'; Objective='Changing inputs during build' } | Out-Null
+    Task Start fix-e @{ Tier='T1'; UserRequest='本测试明确选择 T1'; Objective='Changing inputs during build' } | Out-Null
     $output=[Collections.Generic.List[string]]::new(); $failure=''
     try {
         Task Run fix-e @{ Kind='compile'; Executable='pwsh'; Arguments=@('-NoProfile','-Command',"[IO.File]::WriteAllText('src/input.txt','changed-during-build'); [IO.File]::WriteAllText('src/added.txt','new'); [IO.File]::Delete('src/deleted.txt')") } 6>&1 | ForEach-Object { $output.Add([string]$_) }

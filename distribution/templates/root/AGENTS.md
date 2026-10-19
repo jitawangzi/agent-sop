@@ -4,7 +4,9 @@
 
 ## 执行强度：默认 T2，人工显式选择优先
 
-档位属于本次任务。接管继承原档位；独立新任务采用默认值或用户选择。Agent 判断影响范围并提出建议，**不自行升降档**，不因历史 T3 规格、协议/存储关键词或工具名称强加完整流程。
+本规则仅适用于已安装本 SOP 的宿主项目，不向普通未安装项目或引擎开发仓库传播。讨论、解释和只读审核无需选择档位、Discover 或认领；转为修改源码、测试、配置或项目文档前，必须先确定本次任务与档位。
+
+档位属于本次任务。接管继承原档位；独立新任务人工指定优先，未指定直接采用 T2，无需确认。“简单改一下”“尽快处理”不等于选择 T1。Agent 判断影响范围并提出建议，**不自行升降档**，不因历史 T3 规格、协议/存储关键词或工具名称强加完整流程。
 
 | 档位 | 完成要求 | 流程 |
 |---|---|---|
@@ -22,12 +24,14 @@
 
 ## 开始、执行、完成
 
-1. 新任务、切换功能/工作区或跨 Agent 接管时，先 `pwsh -NoProfile -File ./ai-sop.ps1 Task -Operation Discover`，区分独立修改、原任务续做、补收尾。仅讨论不认领；多个候选才询问一次，无需固定接管口令。同会话任务已明确时沿用 taskId，不按文件或回复重复 Discover/Resume。
-2. 独立修改用 Start，先建立任务再改代码；继续原修改用 Resume。沿用现有 FeatureName，独立小任务使用新的 taskId；新功能名使用 PascalCase（`[A-Z][A-Za-z0-9]+`，无连字符）并向用户回显，不为躲避旧任务状态改功能名。
+1. 准备执行修改时，新任务、切换功能/工作区或跨 Agent 接管先 `pwsh -NoProfile -File ./ai-sop.ps1 Task -Operation Discover`，区分独立修改、原任务续做、补收尾。多个候选才询问一次，无需固定接管口令。同会话任务已明确时沿用 taskId，不按文件或回复重复 Discover/Resume。
+2. 独立修改用 Start，继续原修改用 Resume；**操作成功后才能写入**。新 Start 未指定档位为 T2；选择 T1/T3 必须带 `-UserRequest` 保存已有人工原话，不编造或为已明确选择重复确认。沿用现有 FeatureName，独立小任务使用新的 taskId；新功能名使用 PascalCase（`[A-Z][A-Za-z0-9]+`，无连字符）并向用户回显，不为躲避旧任务状态改功能名。
+   首次修改前，依据登记结果向用户简短说明“本次按 **T2（默认）** 执行：修改实现、同步受影响文档和用例，完成编译及相关测试”；人工选择或续做则注明来源及实际档位义务。同一任务不重复播报；接管、新任务或改档时再说明。子 Agent 继承 controller 的 taskId、档位和执行授权，不自行默认成 T2 或另建任务。
 3. 编译/测试用 Task Run 记录真实执行。满足本档条件后直接 Complete；它内含完成校验，成功才标记 DONE 并释放归属。Verify 仅用于提前诊断，不固定串行 Verify → Status → Complete；失败后修复具体缺项，条件未变不反复重试。
 
 ```powershell
-pwsh -NoProfile -File ./ai-sop.ps1 Task -Operation Start -Feature <Feature> -TaskId <TaskId> -Tier <T1|T2|T3> -Objective "本次目标" -Agent <工具>
+pwsh -NoProfile -File ./ai-sop.ps1 Task -Operation Start -Feature <Feature> -TaskId <TaskId> -Objective "本次目标" -Agent <工具>
+# 上例默认 T2；人工选择 T1/T3 时加 -Tier T1 或 -Tier T3，以及 -UserRequest "实际选择原话"。
 pwsh -NoProfile -File ./ai-sop.ps1 Task -Operation Resume -Feature <Feature> -TaskId <TaskId> -Agent <工具>
 pwsh -NoProfile -File ./ai-sop.ps1 Task -Operation Run -Feature <Feature> -TaskId <TaskId> -Agent <工具> -Profile <名称>
 pwsh -NoProfile -File ./ai-sop.ps1 Task -Operation Complete -Feature <Feature> -TaskId <TaskId> -Agent <工具>
@@ -44,6 +48,8 @@ pwsh -NoProfile -File ./ai-sop.ps1 Task -Operation Complete -Feature <Feature> -
 ## 暂停、接管与异常
 
 长任务的重要节点按需 Checkpoint；短 T1/T2 不为每次编辑写检查点。暂停直接 Suspend 并带 NextAction/Notes，保存进度并释放占用；Cancel 表示取消，不表示完成，也不撤销实际代码修改。旧任务暂停后可启动独立小任务，无需先通过旧完成门禁。
+
+**写前检查**：实际接入 Hook 的编辑路径会核对当前活动任务、合法档位及 owner/session 身份；只有旧 owner 没有 taskId 时须 Resume 收编。正常 T1 也必须登记和验证；人工紧急停用 Guard 是独立维护操作，不代表 T1 合规或完成，Agent 不得自行启用。Hook 未接入（当前 Codex 适配）或未识别的写入路径不能承诺机器阻断；开场说明和 Complete 仍须遵守。
 
 **Guard 拦截后的任务识别**：Discover 确认 Feature/taskId；普通续做 Resume，异常中断先 InspectRecovery，按诊断 Recover → Resume。不得直接 Claim、手写权限或启用绕过开关规避任务入口。确认旧 Agent 已停止且验证进程不再运行，才进行强制恢复；已明确授权的接管不重复询问。跨 ACTIVE/IDLE 会话的正常接管按提示使用 ConfirmTakeover。
 
@@ -82,6 +88,6 @@ pwsh -NoProfile -File ./ai-sop.ps1 Task -Operation Complete -Feature <Feature> -
 
 ## 汇报
 
-开始、长耗时操作、重要结论、阻塞和交接时简短说明进展。完成时报告实际改动、验证范围和剩余事项；编译通过不等于行为测试通过，单元测试不等于完整业务验证。无需固定状态行，也不为汇报专门重复 Status。澄清每轮最多 3 个聚焦问题；需求明确且已授权时连续执行。
+开始、长耗时操作、重要结论、阻塞和交接时简短说明进展。收尾报告实际档位、改动、文档/用例同步或无需更新的依据、验证范围，以及 Complete 是否成功；不能只改代码就宣称 T2 完成。编译通过不等于行为测试通过，单元测试不等于完整业务验证。允许暂停或报告未完成，不以阻止结束回复代替完成检查。除首次修改前的档位说明外，无需固定状态行，也不为汇报专门重复 Status。澄清每轮最多 3 个聚焦问题；需求明确且已授权时连续执行。
 
 遇到拦截明确说明：`[SOP 拦截] <工具/任务> 因 <具体原因> 无法执行 <动作>；下一步：<具体恢复建议>`。交接写清 Feature、taskId、档位、已完成与未解决项。报告已覆盖场景的结果，不宣称绝对无缺陷。

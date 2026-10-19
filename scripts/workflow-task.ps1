@@ -103,11 +103,16 @@ if ($PSBoundParameters.ContainsKey('Notes')) { $ownerArgs.Notes = $Notes }
 if ($Operation -eq 'Start') {
     if (-not $TaskId) { $TaskId = 'task-' + [guid]::NewGuid().ToString('N') }
     if ([IO.File]::Exists((Get-AiSopTaskPath $SpecDirectory $TaskId))) { throw 'TASK_ALREADY_EXISTS: Start creates a new TaskId; use Resume to continue the existing task' }
+    Assert-AiSopInitialTaskTier $Tier $UserRequest
     [IO.Directory]::CreateDirectory($SpecDirectory) | Out-Null
-    & $ownerScript -Operation Claim -CreateTaskOnly @ownerArgs -TaskId $TaskId -OwnerId ('task-' + $TaskId) -Tier $Tier -Objective $Objective -CaptureBaseline:$CaptureBaseline
+    & $ownerScript -Operation Claim -CreateTaskOnly @ownerArgs -TaskId $TaskId -OwnerId ('task-' + $TaskId) -Tier $Tier -Objective $Objective -UserRequest $UserRequest -CaptureBaseline:$CaptureBaseline
     if ($LASTEXITCODE -ne 0) { throw 'TASK_START_FAILED' }
-    Write-Output "TASK_STARTED:$Feature/$TaskId tier=$Tier"
-    try { Write-AiSopTaskStartSummary (Read-AiSopTask $SpecDirectory $TaskId) }
+    try {
+        $registeredTask=Read-AiSopTask $SpecDirectory $TaskId
+        Write-Output "TASK_STARTED:$Feature/$TaskId tier=$($registeredTask.tier)"
+        Write-AiSopTaskTierSummary $registeredTask
+        Write-AiSopTaskStartSummary $registeredTask
+    }
     catch { Write-Warning "TASK_START_FEEDBACK_UNAVAILABLE: task was started; use Status to inspect its origin. $($_.Exception.Message)" -WarningAction Continue }
     Write-AiSopFollowUpReminder $WorkspacePath $Feature
     exit 0
@@ -117,15 +122,21 @@ if ($Operation -eq 'Resume' -and -not $TaskId -and $owner -and $owner.status -eq
     # Legacy adoption is explicit Resume, preserving owner identity and approvals.
     $TaskId = 'legacy-' + [guid]::NewGuid().ToString('N')
     $legacyState = Join-Path $SpecDirectory 'feature-state.json'
-    if (-not $PSBoundParameters.ContainsKey('Tier') -and (Test-Path -LiteralPath $legacyState)) {
-        $Tier = (Get-Content -LiteralPath $legacyState -Raw | ConvertFrom-Json).tier
+    if (Test-Path -LiteralPath $legacyState) {
+        $legacyTier = (Get-Content -LiteralPath $legacyState -Raw | ConvertFrom-Json).tier
+        if ($PSBoundParameters.ContainsKey('Tier') -and $Tier -cne $legacyTier) { throw 'TASK_TIER_CHANGE_REQUIRES_EXPLICIT_OPERATION: Resume preserves the original tier; use ChangeTier after adoption' }
+        $Tier = $legacyTier
     }
     if (-not $PSBoundParameters.ContainsKey('Tier') -and -not (Test-Path -LiteralPath $legacyState)) { throw 'LEGACY_TIER_REQUIRED: inspect original scope and explicitly select its tier before adoption.' }
     if ($Tier -notin @('T1','T2','T3')) { throw 'LEGACY_TIER_REQUIRED: original tier is not T1/T2/T3; select the intended tier explicitly for adoption' }
     if (-not $Objective) { $Objective = "Continue existing feature $Feature" }
     & $ownerScript -Operation Transfer @ownerArgs -OwnerId $owner.ownerId -TaskId $TaskId -Tier $Tier -Objective $Objective -ConfirmTakeover:$ConfirmTakeover | Where-Object { $_ -cne $ownerPath -and $_ -cne 'VALID' }
     if ($LASTEXITCODE -ne 0) { throw 'TASK_ADOPTION_FAILED' }
-    Write-AiSopTaskOperationResult Resume $Feature $TaskId $Tier
+    try {
+        $registeredTask=Read-AiSopTask $SpecDirectory $TaskId
+        Write-AiSopTaskOperationResult Resume $Feature $TaskId $registeredTask.tier
+        Write-AiSopTaskTierSummary $registeredTask
+    } catch { Write-Warning "TASK_RESUME_FEEDBACK_UNAVAILABLE: Resume succeeded; use Status to inspect the registered tier. $($_.Exception.Message)" -WarningAction Continue }
     Write-AiSopFollowUpReminder $WorkspacePath $Feature
     exit 0
 }
@@ -154,7 +165,11 @@ if ($Operation -eq 'Resume') {
         } else { & $ownerScript -Operation Transfer @ownerArgs -ConfirmTakeover:$ConfirmTakeover | Where-Object { $_ -cne $ownerPath -and $_ -cne 'VALID' } }
     } else { throw 'TASK_NOT_RESUMABLE: terminal task or missing local ownership; inspect/recover ownership before resuming.' }
     if ($LASTEXITCODE -ne 0) { throw 'TASK_RESUME_FAILED' }
-    Write-AiSopTaskOperationResult Resume $Feature $TaskId $task.tier
+    try {
+        $registeredTask=Read-AiSopTask $SpecDirectory $TaskId
+        Write-AiSopTaskOperationResult Resume $Feature $TaskId $registeredTask.tier
+        Write-AiSopTaskTierSummary $registeredTask
+    } catch { Write-Warning "TASK_RESUME_FEEDBACK_UNAVAILABLE: Resume succeeded; use Status to inspect the registered tier. $($_.Exception.Message)" -WarningAction Continue }
     Write-AiSopFollowUpReminder $WorkspacePath $Feature
     exit 0
 }
@@ -175,6 +190,10 @@ if ($Operation -in @('ChangeTier','RecordSync','SetApplicability','AddFollowUp',
     & $ownerScript -Operation Checkpoint @ownerArgs -TaskUpdateJson (ConvertTo-Json -InputObject $update -Depth 8 -Compress)
     if ($LASTEXITCODE -ne 0) { throw 'TASK_POLICY_UPDATE_FAILED' }
     Write-Output "TASK_POLICY_UPDATED:$Operation"
+    if ($Operation -eq 'ChangeTier') {
+        try { Write-AiSopTaskTierSummary (Read-AiSopTask $SpecDirectory $TaskId) }
+        catch { Write-Warning "TASK_TIER_FEEDBACK_UNAVAILABLE: ChangeTier succeeded; use Status to inspect the registered tier. $($_.Exception.Message)" -WarningAction Continue }
+    }
     exit 0
 }
 if ($Operation -eq 'ReviewImpact') {

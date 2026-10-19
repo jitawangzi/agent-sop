@@ -329,6 +329,29 @@
         }
       }
     },
+    "tierSelection": {
+      "description": "与任务创建一起记录的初始档位选择。人工原话由调用方提供，仅用于追溯依据，不是独立的人类身份认证；历史任务可缺省此字段。",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["tier", "source", "recordedAt"],
+      "properties": {
+        "tier": { "enum": ["T1", "T2", "T3"] },
+        "source": { "enum": ["DEFAULT", "USER_REQUEST", "LEGACY_PRESERVED"] },
+        "recordedAt": { "type": "string", "format": "date-time" },
+        "userRequest": { "type": "string", "pattern": "\\S" }
+      },
+      "allOf": [
+        {
+          "if": { "properties": { "source": { "const": "DEFAULT" } } },
+          "then": { "properties": { "tier": { "const": "T2" } } }
+        },
+        {
+          "if": { "properties": { "source": { "const": "USER_REQUEST" } } },
+          "then": { "required": ["userRequest"] },
+          "else": { "not": { "required": ["userRequest"] } }
+        }
+      ]
+    },
     "tierHistory": {
       "type": "array",
       "items": {

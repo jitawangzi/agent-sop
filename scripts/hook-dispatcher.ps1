@@ -31,6 +31,7 @@ foreach ($dependency in @(
     "workflow-transaction.ps1",
     "workflow-session.ps1",
     "workflow-command-grant.ps1",
+    'task-entry-command.ps1',
     "guard-production-edit.ps1"
 )) {
     $depPath = Join-Path $PSScriptRoot $dependency
@@ -62,6 +63,7 @@ foreach ($dependency in @(
     "workflow-transaction.ps1",
     "workflow-session.ps1",
     "workflow-command-grant.ps1",
+    'task-entry-command.ps1',
     "guard-production-edit.ps1"
 )) {
     . (Join-Path $PSScriptRoot $dependency)
@@ -105,6 +107,12 @@ function Get-AiSopDispatcherDenyReason {
     switch ($ReasonCode) {
         "OWNER_REQUIRED" {
             return "$prefix missing active Owner. Run ./ai-sop.ps1 Task -Operation Discover to identify the feature and task; use Start for an independent task or Resume to continue it. For interrupted ownership, inspect Status and InspectRecovery before Recover, then Resume. Confirm the old agent has stopped before any forced recovery; do not auto-Claim or force-release to bypass this guard."
+        }
+        { $_ -in @('TASK_REQUIRED', 'TASK_NOT_FOUND', 'TASK_INACTIVE', 'SESSION_NOT_FOUND', 'SESSION_INACTIVE', 'SESSION_BINDING_INVALID', 'OWNER_NOT_FOUND') } {
+            return "$prefix 写入前必须存在本会话绑定的 ACTIVE 任务和 T1/T2/T3 档位。先运行 ./ai-sop.ps1 Task -Operation Discover；独立任务使用 Start（未指定默认 T2），继续任务或收编历史归属使用 Resume。Start/Resume 成功并向用户说明实际档位后再修改；正常 T1 也必须登记任务，不可用停用防护替代。"
+        }
+        { $_ -in @('TASK_ID_INVALID', 'TASK_PATH_ESCAPE', 'TASK_IDENTITY_MISMATCH', 'TASK_REGISTRY_CORRUPT', 'TASK_TIER_INVALID') } {
+            return "$prefix 任务身份、路径或档位无效，已拒绝修改。运行 ./ai-sop.ps1 Task -Operation Discover，再用 Task -Operation InspectRecovery 核对本工作区及任务；不要手改 task.json 或停用防护来绕过。"
         }
         "WORKFLOW_TRANSACTION_INDETERMINATE" {
             $journalPath = ""
@@ -452,6 +460,20 @@ function Get-AiSopDispatcherToolPlan {
         [DateTimeOffset]$AcceptedAt,
         [Nullable[DateTimeOffset]]$DeadlineUtc
     )
+
+    # 任务登记和恢复入口必须先于会话/任务检查，防止要求先有任务才能 Start。
+    # 仅放行限定的本地治理命令；业务执行及任意脚本仍走正常写前授权。
+    if ([string]$HookEvent.toolClass -ceq 'OWNER_REQUIRED') {
+        $entryTool = Get-AiSopDispatcherToolContext -RawPayload $RawPayload -HookEvent $HookEvent
+        if (Test-AiSopDispatcherShellTool -ToolName $entryTool.Name) {
+            $entryCommand = Get-AiSopDispatcherShellCommandText -Arguments $entryTool.Arguments
+            $entry = Get-AiSopTaskEntryCommand -CommandText $entryCommand -WorkspacePath ([string]$HookEvent.workspacePath) `
+                -Cwd ([string]$HookEvent.cwd) -Agent ([string]$HookEvent.agent) -ToolArguments $entryTool.Arguments
+            if ($null -ne $entry) {
+                return New-AiSopDispatcherPlan -Decision ALLOW -ReasonCode $entry.reasonCode -SideEffectKind NONE
+            }
+        }
+    }
 
     $session = Get-AiSopDispatcherSession `
         -HookEvent $HookEvent `
@@ -866,11 +888,26 @@ function ConvertFrom-AiSopDispatcherDedupResult {
     param(
         [object]$HookEvent,
         [object]$DedupResult,
-        [int64]$DurationMs
+        [int64]$DurationMs,
+        [DateTimeOffset]$AcceptedAt,
+        [Nullable[DateTimeOffset]]$DeadlineUtc
     )
 
     $decision = [string]$DedupResult.Record.decision
     $reason = [string]$DedupResult.Record.reasonCode
+    # 去重记录只证明上次已处理；写入许可必须依据当前任务和档位重新检查。
+    # 已登记或恢复任务后，旧拒绝结果同样不能把合法重试永久锁住。
+    # 启动/恢复专用命令的授权有独立校验，不在这里阻断无任务的登记入口。
+    if ($DedupResult.IsDuplicate -and $DedupResult.Record.state -ceq 'APPLIED' -and
+        $HookEvent.event -ceq 'PRE_TOOL_USE' -and $reason -cnotin @('COMMAND_GRANT_ISSUED', 'TASK_BOOTSTRAP_COMMAND') -and
+        $HookEvent.toolClass -in @('FILE_EDIT', 'OWNER_REQUIRED')) {
+        $current = Get-AiSopGuardDecision -HookEvent $HookEvent -AcceptedAt $AcceptedAt -DeadlineUtc $DeadlineUtc
+        $decision = [string]$current.Decision
+        $reason = [string]$current.ReasonCode
+    }
+    if ($reason -in @('GUARD_DISABLED', 'GUARD_DISABLED_FOR_FEATURE')) {
+        [Console]::Error.WriteLine("[WARN] ${reason}: 人工维护已停用写前防护，本次放行不代表按 T1/T2/T3 正常执行。")
+    }
     $grantId = [string]$DedupResult.Record.bootstrapGrantId
     $agent = [string]$HookEvent.agent
     $envelope = ConvertTo-AiSopDispatcherEnvelope `
@@ -936,10 +973,8 @@ function Invoke-AiSopHookDispatcher {
         }
         $deadlineUtc = [DateTimeOffset]::UtcNow.AddMilliseconds($dispatcherDeadlineMs)
 
-        # Parse before T1_ESCAPE so classification still happens. Human escape
-        # (env / .guard-disabled) then skips owner/journal work. Prefer
-        # .guard-token.json over a global switch. If parse fails, T1 still
-        # ALLOW so a broken SOP cannot lock the human out.
+        # 先解析工具分类；人工维护开关随后跳过归属/日志检查。
+        # 解析失败时仍保留人工修复入口，但不能将此放行称为正常 T1。
         $hookEvent = ConvertTo-AiSopHookEvent `
             -RawPayload $RawPayload `
             -EventHint $EventHint `
@@ -949,17 +984,18 @@ function Invoke-AiSopHookDispatcher {
         $agent = [string]$hookEvent.agent
 
         if (Test-AiSopGuardEscapeEnabled) {
+            [Console]::Error.WriteLine('[WARN] GUARD_DISABLED: 人工维护已停用写前防护，本次放行不代表按 T1/T2/T3 正常执行。')
             $watch.Stop()
             return New-AiSopDispatcherResult `
                 -Agent $agent `
                 -Decision ALLOW `
-                -ReasonCode T1_ESCAPE `
+                -ReasonCode GUARD_DISABLED `
                 -Envelope (
                     ConvertTo-AiSopDispatcherEnvelope `
                         -Agent $agent `
                         -EventHint $EventHint `
                         -Decision ALLOW `
-                        -ReasonCode T1_ESCAPE
+                        -ReasonCode GUARD_DISABLED
                 ) `
                 -ExitCode 0 `
                 -DurationMs $watch.ElapsedMilliseconds
@@ -987,7 +1023,9 @@ function Invoke-AiSopHookDispatcher {
             return ConvertFrom-AiSopDispatcherDedupResult `
                 -HookEvent $hookEvent `
                 -DedupResult $duplicate `
-                -DurationMs $watch.ElapsedMilliseconds
+                -DurationMs $watch.ElapsedMilliseconds `
+                -AcceptedAt $AcceptedAt `
+                -DeadlineUtc $deadlineUtc
         }
 
         # 5-8. Plan lifecycle, four-state target policy, canonical command
@@ -1054,23 +1092,26 @@ function Invoke-AiSopHookDispatcher {
         return ConvertFrom-AiSopDispatcherDedupResult `
             -HookEvent $hookEvent `
             -DedupResult $dedup `
-            -DurationMs $watch.ElapsedMilliseconds
+            -DurationMs $watch.ElapsedMilliseconds `
+            -AcceptedAt $AcceptedAt `
+            -DeadlineUtc $deadlineUtc
     } catch {
         $watch.Stop()
         if ([string]::IsNullOrWhiteSpace($agent)) {
             $agent = Get-AiSopDispatcherInferredAgent -RawPayload $RawPayload
         }
         if (Test-AiSopGuardEscapeEnabled) {
+            [Console]::Error.WriteLine('[WARN] GUARD_DISABLED: 人工维护已停用写前防护，本次放行不代表按 T1/T2/T3 正常执行。')
             return New-AiSopDispatcherResult `
                 -Agent $agent `
                 -Decision ALLOW `
-                -ReasonCode T1_ESCAPE `
+                -ReasonCode GUARD_DISABLED `
                 -Envelope (
                     ConvertTo-AiSopDispatcherEnvelope `
                         -Agent $agent `
                         -EventHint $EventHint `
                         -Decision ALLOW `
-                        -ReasonCode T1_ESCAPE
+                        -ReasonCode GUARD_DISABLED
                 ) `
                 -ExitCode 0 `
                 -DurationMs $watch.ElapsedMilliseconds

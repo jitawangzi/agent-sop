@@ -49,11 +49,13 @@ pwsh -NoProfile -File ./.ai-sop/scripts/workflow-owner.ps1 -Operation Transfer `
 
 **旧归属凭证丢失**：先用 Status / Preflight 检查可恢复的身份和本地状态；无法核实 ownerId 时报告缺口，不用占位值强制释放。已完成工作下的新修改沿用功能目录、创建独立 taskId，不为规避旧状态另开功能。
 
-## 生产代码编辑 Guard
+## 任务写前 Guard
 
-PreToolUse hook 在每次文件编辑前运行 `guard-production-edit.ps1`（各 harness 共用：hook 命令统一指向 `./.ai-sop/scripts/hook-dispatcher.ps1`；Claude Code 经 `.claude/settings.json`，其它经 `.agents/hooks.json`/`.cursor/hooks.json`/`.github/hooks/ai-sop.json`）。编辑默认生产路径（`src/`、`pkg/`、`cmd/`、`internal/`、`app/`、`lib/`、`WebRoot/`、`config/`、`include/`；宿主可用 `.ai-sop/config/project-policy.json` 的 `productionPatterns` 覆盖）前，**必须存在 ACTIVE 的 `SUPERPOWERS` owner**，否则被拒绝。`AI_SOP_SKIP_OWNER_GUARD=1`（或旧版 `SERVER_NEW_SKIP_OWNER_GUARD=1`）仅对非功能型一次性小改生效；为绕过归属而设它是流程违规。guard 异常可手动关（`.ai-sop/.guard-disabled`）。**更推荐用一次性令牌**：写 `.ai-sop/.guard-token.json`（`{feature, reason, operator, expiresAt}`），guard 仅当 feature 匹配且未过期时放行，过期自动删除，防 `.guard-disabled` 被遗忘导致后续任务无防护。
+新版 Guard 对实际接入 Hook 且识别出的工作区 FILE_EDIT 检查当前会话关联的 ACTIVE task、合法档位及 owner 身份。历史 ACTIVE owner 没有 taskId 时不能直接编辑；先 Discover 辨明原任务，再显式 Resume 收编并保留原档位、批准与身份。直接 Claim / Transfer 只用于兼容诊断和恢复，不代替写前任务入口；无可信起点的旧 T3 仍遵守原引擎收尾限制。
 
-**Guard 绕过合规提醒**：若 AI 发现 `AI_SOP_SKIP_OWNER_GUARD=1` 或 `SERVER_NEW_SKIP_OWNER_GUARD=1` 开启但当前任务涉及复杂/多文件代码变更，必须在开始前 Warning 提醒用户：“当前开启了 Guard 绕过，此修改将不记录归属且跳过审查。请确认是否为临时小改；若非小改请关闭该变量并走正常归属流程。”AI 不得在复杂变更时默记配合用户违规而不提醒。
+正常 T1 也需要任务、编译/基础验证及 Complete。`AI_SOP_SKIP_OWNER_GUARD`（兼容 `SERVER_NEW_SKIP_OWNER_GUARD`）、`.ai-sop/.guard-disabled` 和一次性 `.guard-token.json` 保留为人工明确要求的紧急维护入口，输出 GUARD_DISABLED / GUARD_DISABLED_FOR_FEATURE，不能称作 T1 或小改快通道。Agent 不得自行启用；发现已停用时明确提醒其当前不提供写前防护，维护结束后恢复。设置这些开关本身不构成任务完成或自动豁免审查。
+
+只读讨论无需任务；Hook 未接入或未识别的调用不承诺写前阻断，当前 Codex blockingHook=false。边界与操作细节见 `.ai-sop/SUPERPOWERS_MANUAL.md`「任务写前 Guard」。
 
 ## 跨工具交接状态（feature-state.json）
 

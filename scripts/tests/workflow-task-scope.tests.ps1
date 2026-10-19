@@ -63,7 +63,7 @@ try {
         } finally { [IO.Directory]::Delete($svnFixture) }
     }
     Put 'src/inherited.txt' 'prior unfinished change'
-    Task Start one @{Tier='T3';Objective='Independent scoped change'} | Out-Null
+    Task Start one @{Tier='T3'; UserRequest='本测试明确选择 T3';Objective='Independent scoped change'} | Out-Null
     $task=Read-AiSopTask $spec one
     Assert ($task.baseline.revision -ceq $originalRevision -and $task.baseline.inputsRef) 'T3 start baseline missing'
     Assert ($task.startImpact.status -eq 'ABSENT') 'Start did not record absence of an impact contract'
@@ -220,7 +220,7 @@ try {
     # A prior task's high-risk change must not leak through nested risk helpers.
     Put 'src/ExampleRouter.java' 'public class ExampleRouter {}'
     [IO.File]::AppendAllText((Join-Path $spec '06_design_contract.md'),"`nImplementation: src/ExampleRouter.java")
-    Task Start two @{Tier='T3';Objective='Next independent task'} | Out-Null
+    Task Start two @{Tier='T3'; UserRequest='本测试明确选择 T3';Objective='Next independent task'} | Out-Null
     $second=Read-AiSopTask $spec two
     Assert ($second.startImpact.status -eq 'CAPTURED' -and (Get-AiSopTaskImpactDisposition $second $workspace) -eq 'HISTORICAL') 'Unchanged prior task impact burdened independent work'
     $historicalRaw=[IO.File]::ReadAllText($impactPath)
@@ -271,7 +271,7 @@ try {
     Task Cancel two | Out-Null
     foreach ($tier in @('T1','T2')) {
         $id='risk-'+$tier.ToLowerInvariant()
-        Task Start $id @{Tier=$tier;Objective='Read-only task risk'} | Out-Null
+        Task Start $id @{Tier=$tier; UserRequest="本测试明确选择 $tier";Objective='Read-only task risk'} | Out-Null
         $lightTask=Read-AiSopTask $spec $id
         $taskPath=Get-AiSopTaskPath $spec $id
         $protected=@{}
@@ -314,7 +314,7 @@ try {
     }
     $legacyImpact=ConvertFrom-AiSopWorkflowJson $oldImpactRaw -AsHashtable; $legacyImpact.Remove('taskId')
     [IO.File]::WriteAllText($impactPath,(ConvertTo-AiSopWorkflowCanonicalJson $legacyImpact))
-    Task Start three @{Tier='T1';Objective='Quick task later explicitly upgraded'} | Out-Null
+    Task Start three @{Tier='T1'; UserRequest='本测试明确选择 T1';Objective='Quick task later explicitly upgraded'} | Out-Null
     $light=Read-AiSopTask $spec three
     Assert ((Get-AiSopTaskImpactDisposition $light $workspace) -eq 'HISTORICAL') 'Unchanged legacy 04 without taskId blocked an independent task'
     Assert (-not $light.baseline.inputsRef -and $light.startInputs.mode -eq 'BOUNDED') 'T1 start requested unbounded full capture'

@@ -3,343 +3,220 @@
 [CmdletBinding()]
 param()
 
-$ErrorActionPreference = "Stop"
-
-$ScriptsRoot = $PSScriptRoot
-$DispatcherScript = Join-Path $ScriptsRoot "hook-dispatcher.ps1"
-$OwnerScript = Join-Path $ScriptsRoot "workflow-owner.ps1"
-$ClaudeRoot = Split-Path -Parent $ScriptsRoot
-$WorkspaceRoot = Split-Path -Parent $ClaudeRoot
-$ProbeRoot = Join-Path ([System.IO.Path]::GetTempPath()) (
-    "guard-live-" + [guid]::NewGuid().ToString("N")
-)
-$ProbeSuffix = [guid]::NewGuid().ToString("N").Substring(0, 12)
-$Feature = "GuardLiveProbe$ProbeSuffix"
-$OwnerId = "guard-live-$ProbeSuffix"
-$FeatureSpecDir = Join-Path $ClaudeRoot "specs\features\$Feature"
-$RegistryVariables = @(
-    "SERVER_NEW_WORKFLOW_REGISTRY",
-    "SERVER_NEW_WORKFLOW_SESSION_REGISTRY",
-    "SERVER_NEW_WORKFLOW_COMMAND_GRANT_REGISTRY",
-    "SERVER_NEW_WORKFLOW_TRANSACTION_REGISTRY",
-    "SERVER_NEW_HOOK_DEDUP_REGISTRY",
-    "SERVER_NEW_HOOK_CORRELATION_REGISTRY",
-    "SERVER_NEW_SKIP_OWNER_GUARD"
-)
+$ErrorActionPreference = 'Stop'
+$SourceScripts = $PSScriptRoot
+$SourceEngine = Split-Path -Parent $SourceScripts
+. (Join-Path $SourceScripts 'path-identity.ps1')
+$TempRoot = Resolve-PhysicalPathIdentity ([IO.Path]::GetTempPath())
+$ProbeRoot = Resolve-PhysicalPathIdentity (Join-Path $TempRoot ('guard-live-' + [guid]::NewGuid().ToString('N')))
+$WorkspaceRoot = Join-Path $ProbeRoot 'workspace'
+$ProbeEngine = Join-Path $WorkspaceRoot '.ai-sop'
+$Feature = 'GuardLiveProbe'
+$TaskId = 'guard-probe'
+$SessionId = 'cursor-live-' + [guid]::NewGuid().ToString('N')
+$FeatureSpecDir = Join-Path $WorkspaceRoot ".ai-workspace/specs/features/$Feature"
+$TaskPath = Join-Path $FeatureSpecDir "tasks/$TaskId/task.json"
+$TaskScript = Join-Path $ProbeEngine 'scripts/workflow-task.ps1'
 $SavedEnvironment = @{}
+$EnvironmentOverrides = [ordered]@{
+    AI_SOP_REGISTRY_ROOT = (Join-Path $ProbeRoot 'registry')
+    AI_SOP_OWNER_REGISTRY = (Join-Path $ProbeRoot 'owners')
+    AI_SOP_SESSION_REGISTRY = (Join-Path $ProbeRoot 'sessions')
+    AI_SOP_COMMAND_GRANT_REGISTRY = (Join-Path $ProbeRoot 'grants')
+    AI_SOP_TRANSACTION_REGISTRY = (Join-Path $ProbeRoot 'transactions')
+    SERVER_NEW_WORKFLOW_REGISTRY = (Join-Path $ProbeRoot 'owners')
+    SERVER_NEW_WORKFLOW_SESSION_REGISTRY = (Join-Path $ProbeRoot 'sessions')
+    SERVER_NEW_WORKFLOW_COMMAND_GRANT_REGISTRY = (Join-Path $ProbeRoot 'grants')
+    SERVER_NEW_WORKFLOW_TRANSACTION_REGISTRY = (Join-Path $ProbeRoot 'transactions')
+    SERVER_NEW_HOOK_DEDUP_REGISTRY = (Join-Path $ProbeRoot 'dedup')
+    SERVER_NEW_HOOK_CORRELATION_REGISTRY = (Join-Path $ProbeRoot 'correlation')
+    AI_SOP_GUARD_ROOT = $ProbeEngine
+    AI_SOP_SKIP_OWNER_GUARD = '0'
+    SERVER_NEW_SKIP_OWNER_GUARD = '0'
+    AI_SESSION_ID = $SessionId
+}
+$ProbeCreated = $false
+$LocationPushed = $false
+$ProbeResult = $null
 
 function Assert-LiveProbe {
-    param(
-        [bool]$Condition,
-        [string]$Message
-    )
-
-    if (-not $Condition) {
-        throw $Message
-    }
-}
-
-function ConvertTo-LiveJson {
-    param([object]$Value)
-
-    return $Value | ConvertTo-Json -Compress -Depth 40
+    param([bool]$Condition, [string]$Message)
+    if (-not $Condition) { throw $Message }
 }
 
 function Invoke-LiveDispatch {
-    param(
-        [string]$RawPayload,
-        [string]$EventHint,
-        [DateTimeOffset]$AcceptedAt
-    )
-
-    return Invoke-AiSopHookDispatcher `
-        -RawPayload $RawPayload `
-        -EventHint $EventHint `
-        -TrustedWorkspaceRoot $WorkspaceRoot `
-        -AcceptedAt $AcceptedAt
+    param([string]$RawPayload, [string]$EventHint = 'PRE_TOOL_USE')
+    Invoke-AiSopHookDispatcher -RawPayload $RawPayload -EventHint $EventHint `
+        -TrustedWorkspaceRoot $WorkspaceRoot -AcceptedAt ([DateTimeOffset]::UtcNow)
 }
 
 function New-LiveCursorPayload {
     param(
-        [ValidateSet("START", "TOOL")]
-        [string]$Kind,
-        [string]$SessionId,
-        [string]$ToolName = "",
+        [ValidateSet('START','TOOL')][string]$Kind = 'TOOL',
+        [string]$NativeSession = $SessionId,
+        [string]$ToolName = '',
         [hashtable]$ToolInput = @{},
-        [string]$Occurrence = "live"
+        [string]$Occurrence = ([guid]::NewGuid().ToString('N'))
     )
-
-    if ($Kind -eq "START") {
-        return ConvertTo-LiveJson ([ordered]@{
-            session_id = $SessionId
-            is_background_agent = $false
-            composer_mode = "agent"
-        })
+    if ($Kind -eq 'START') {
+        return (@{ session_id=$NativeSession; is_background_agent=$false; composer_mode='agent' } | ConvertTo-Json -Compress)
     }
-    return ConvertTo-LiveJson ([ordered]@{
-        conversation_id = $SessionId
-        generation_id = "generation-$Occurrence"
-        hook_event_name = "preToolUse"
-        workspace_roots = @($WorkspaceRoot)
-        tool_name = $ToolName
-        tool_input = $ToolInput
-        tool_use_id = "tool-$Occurrence"
-        cwd = $WorkspaceRoot
+    return ([ordered]@{
+        conversation_id=$NativeSession; generation_id="generation-$Occurrence"
+        hook_event_name='preToolUse'; workspace_roots=@($WorkspaceRoot)
+        tool_name=$ToolName; tool_input=$ToolInput; tool_use_id="tool-$Occurrence"; cwd=$WorkspaceRoot
+    } | ConvertTo-Json -Compress -Depth 20)
+}
+
+function Invoke-LiveTask {
+    param([ValidateSet('Start','Resume','Suspend','Cancel')][string]$Operation)
+    $command = "pwsh -NoProfile -File './.ai-sop/scripts/workflow-task.ps1' -Operation '$Operation' -Feature '$Feature' -TaskId '$TaskId' -Agent CURSOR"
+    if ($Operation -eq 'Start') { $command += " -Tier T2 -Objective '隔离验证写前任务检查'" }
+    $hook = Invoke-LiveDispatch (New-LiveCursorPayload -ToolName Shell -ToolInput @{command=$command})
+    Assert-LiveProbe ($hook.Decision -eq 'ALLOW' -and $hook.ReasonCode -eq 'TASK_BOOTSTRAP_COMMAND') (
+        "Task $Operation 引导命令被拒绝或走错路由：$($hook.ReasonCode)"
+    )
+    $arguments = @{ Operation=$Operation; WorkspacePath=$WorkspaceRoot; Feature=$Feature; TaskId=$TaskId; Agent='CURSOR' }
+    if ($Operation -eq 'Start') { $arguments.Tier='T2'; $arguments.Objective='隔离验证写前任务检查' }
+    & $TaskScript @arguments 3>&1 | Out-Null
+    Assert-LiveProbe ($LASTEXITCODE -eq 0) "Task $Operation 执行失败：$LASTEXITCODE"
+}
+
+function Invoke-LiveEdit {
+    param([string]$RelativePath)
+    Invoke-LiveDispatch (New-LiveCursorPayload -ToolName Edit -ToolInput @{
+        file_path=(Join-Path $WorkspaceRoot $RelativePath); old_string='before'; new_string='after'
     })
 }
 
-function New-LiveOwnerCommand {
-    param([string]$Operation)
-
-    return (
-        "pwsh -NoProfile -File '.\.ai-sop\scripts\workflow-owner.ps1' " +
-        "-Operation '$Operation' " +
-        "-SpecDirectory '.claude\specs\features\$Feature' " +
-        "-Feature '$Feature' " +
-        "-Workflow 'SUPERPOWERS' " +
-        "-Agent 'CURSOR' " +
-        "-OwnerId '$OwnerId'"
-    )
-}
-
 try {
-    foreach ($name in $RegistryVariables) {
+    foreach ($name in $EnvironmentOverrides.Keys) {
         $SavedEnvironment[$name] = [Environment]::GetEnvironmentVariable($name)
     }
-    $env:SERVER_NEW_WORKFLOW_REGISTRY = Join-Path $ProbeRoot "owners"
-    $env:SERVER_NEW_WORKFLOW_SESSION_REGISTRY = Join-Path $ProbeRoot "sessions"
-    $env:SERVER_NEW_WORKFLOW_COMMAND_GRANT_REGISTRY =
-        Join-Path $ProbeRoot "grants"
-    $env:SERVER_NEW_WORKFLOW_TRANSACTION_REGISTRY =
-        Join-Path $ProbeRoot "transactions"
-    $env:SERVER_NEW_HOOK_DEDUP_REGISTRY = Join-Path $ProbeRoot "dedup"
-    $env:SERVER_NEW_HOOK_CORRELATION_REGISTRY =
-        Join-Path $ProbeRoot "correlation"
-    Remove-Item Env:SERVER_NEW_SKIP_OWNER_GUARD -ErrorAction SilentlyContinue
+    Assert-LiveProbe (-not (Test-Path -LiteralPath $ProbeRoot)) '隔离探测目录已存在，拒绝复用。'
+    [IO.Directory]::CreateDirectory($WorkspaceRoot) | Out-Null
+    $ProbeCreated = $true
+    $WorkspaceRoot = Resolve-PhysicalPathIdentity $WorkspaceRoot
+    [IO.Directory]::CreateDirectory((Join-Path $ProbeEngine 'scripts')) | Out-Null
+    # 复制运行时文件到临时宿主，不读取或改写真实宿主的功能记录及防护开关。
+    Get-ChildItem -LiteralPath $SourceScripts -Filter '*.ps1' -File | ForEach-Object {
+        Copy-Item -LiteralPath $_.FullName -Destination (Join-Path $ProbeEngine 'scripts')
+    }
+    foreach ($directory in @('schemas','config')) {
+        Copy-Item -LiteralPath (Join-Path $SourceEngine $directory) -Destination $ProbeEngine -Recurse
+    }
+    [IO.Directory]::CreateDirectory((Join-Path $WorkspaceRoot 'src')) | Out-Null
+    [IO.Directory]::CreateDirectory((Join-Path $WorkspaceRoot 'docs')) | Out-Null
+    [IO.File]::WriteAllText((Join-Path $WorkspaceRoot 'src/probe.txt'), 'before')
+    [IO.File]::WriteAllText((Join-Path $WorkspaceRoot 'docs/probe.md'), 'before')
+    foreach ($name in $EnvironmentOverrides.Keys) {
+        [Environment]::SetEnvironmentVariable($name, $EnvironmentOverrides[$name])
+    }
+    Push-Location -LiteralPath $WorkspaceRoot
+    $LocationPushed = $true
+    . (Join-Path $ProbeEngine 'scripts/hook-dispatcher.ps1')
 
-    [System.IO.Directory]::CreateDirectory($FeatureSpecDir) | Out-Null
-    . $DispatcherScript
-    $now = [DateTimeOffset]::UtcNow
-    $sessionId = "cursor-live-$ProbeSuffix"
+    $start = Invoke-LiveDispatch (New-LiveCursorPayload -Kind START) -EventHint SESSION_START
+    Assert-LiveProbe ($start.Decision -eq 'ALLOW') "Cursor 会话注册失败：$($start.ReasonCode)"
+    foreach ($relativePath in @('src/probe.txt','docs/probe.md')) {
+        $withoutTask = Invoke-LiveEdit $relativePath
+        Assert-LiveProbe ($withoutTask.Decision -eq 'DENY') "缺少任务时仍允许编辑：$relativePath"
+    }
+    $read = Invoke-LiveDispatch (New-LiveCursorPayload -ToolName Read -ToolInput @{file_path=(Join-Path $WorkspaceRoot 'docs/probe.md')})
+    Assert-LiveProbe ($read.Decision -eq 'ALLOW') '只读查询不应要求修改任务。'
 
-    $start = Invoke-LiveDispatch `
-        -RawPayload (
-            New-LiveCursorPayload -Kind START -SessionId $sessionId
-        ) `
-        -EventHint SESSION_START `
-        -AcceptedAt $now
-    Assert-LiveProbe ($start.Decision -eq "ALLOW") (
-        "Cursor live lifecycle registration failed: $($start.ReasonCode)"
+    Invoke-LiveTask Start
+    $task = Get-Content -LiteralPath $TaskPath -Raw | ConvertFrom-Json
+    $ownerPath = Join-Path (Get-AiSopWorkflowOwnerRegistryRoot -WorkspacePath $WorkspaceRoot) ($Feature.ToLowerInvariant() + '.json')
+    $owner = Get-Content -LiteralPath $ownerPath -Raw | ConvertFrom-Json
+    Assert-LiveProbe ($task.status -eq 'ACTIVE' -and $task.tier -eq 'T2' -and $owner.taskId -ceq $TaskId -and
+        $owner.schemaVersion -eq '1.1' -and $owner.status -eq 'ACTIVE' -and $owner.sessionBinding.sessionKey -ceq $start.SessionKey) (
+        'Task Start 未建立绑定当前会话的合法 T2 任务。'
     )
+    foreach ($relativePath in @('src/probe.txt','docs/probe.md')) {
+        $edit = Invoke-LiveEdit $relativePath
+        Assert-LiveProbe ($edit.Decision -eq 'ALLOW' -and $edit.ReasonCode -eq 'EXACT_OWNER_AUTHORIZED') (
+            "合法活动任务未能授权编辑：$relativePath / $($edit.ReasonCode)"
+        )
+    }
+    $shell = Invoke-LiveDispatch (New-LiveCursorPayload -ToolName Shell -ToolInput @{command='Get-Location'})
+    Assert-LiveProbe ($shell.Decision -eq 'ALLOW' -and $shell.ReasonCode -eq 'EXACT_OWNER_AUTHORIZED') '合法活动任务未能授权普通 Shell。'
 
-    $claimCommand = New-LiveOwnerCommand -Operation Claim
-    $claimHook = Invoke-LiveDispatch `
-        -RawPayload (
-            New-LiveCursorPayload `
-                -Kind TOOL `
-                -SessionId $sessionId `
-                -ToolName Shell `
-                -ToolInput @{ command = $claimCommand } `
-                -Occurrence "claim"
-        ) `
-        -EventHint PRE_TOOL_USE `
-        -AcceptedAt $now.AddMilliseconds(100)
-    Assert-LiveProbe (
-        $claimHook.Decision -eq "ALLOW" -and
-        $claimHook.ReasonCode -eq "COMMAND_GRANT_ISSUED"
-    ) "Isolated Owner 1.1 Claim grant was not issued."
+    Invoke-LiveTask Suspend
+    Assert-LiveProbe ((Invoke-LiveEdit 'docs/probe.md').Decision -eq 'DENY') '暂停任务仍可编辑普通文档。'
+    Invoke-LiveTask Resume
+    Assert-LiveProbe ((Invoke-LiveEdit 'docs/probe.md').Decision -eq 'ALLOW') 'Resume 后仍无法编辑普通文档。'
 
-    & $OwnerScript `
-        -Operation Claim `
-        -SpecDirectory $FeatureSpecDir `
-        -Feature $Feature `
-        -Workflow SUPERPOWERS `
-        -Agent CURSOR `
-        -OwnerId $OwnerId |
-        Out-Null
-    $ownerPath = Join-Path (
-        $env:SERVER_NEW_WORKFLOW_REGISTRY
-    ) ($Feature.ToLowerInvariant() + ".json")
-    $owner = [System.IO.File]::ReadAllText($ownerPath) | ConvertFrom-Json
-    Assert-LiveProbe (
-        $owner.schemaVersion -eq "1.1" -and
-        $owner.status -eq "ACTIVE" -and
-        $owner.sessionBinding.sessionKey -eq $start.SessionKey
-    ) "Live probe did not create an exact isolated Owner 1.1."
+    $unknown = Invoke-LiveDispatch (New-LiveCursorPayload -ToolName unknown_live_tool)
+    Assert-LiveProbe ($unknown.Decision -eq 'DENY') '未知工具被意外放行。'
+    Assert-LiveProbe ((Invoke-LiveDispatch '{').Decision -eq 'DENY') '损坏的工具输入被意外放行。'
 
-    $production = Invoke-LiveDispatch `
-        -RawPayload (
-            New-LiveCursorPayload `
-                -Kind TOOL `
-                -SessionId $sessionId `
-                -ToolName Edit `
-                -ToolInput @{
-                    file_path = (
-                        Join-Path $WorkspaceRoot "src\com\GuardLiveProbe.java"
-                    )
-                    old_string = "before"
-                    new_string = "after"
-                } `
-                -Occurrence "production"
-        ) `
-        -EventHint PRE_TOOL_USE `
-        -AcceptedAt $now.AddMilliseconds(200)
-    Assert-LiveProbe (
-        $production.Decision -eq "ALLOW" -and
-        $production.ReasonCode -eq "EXACT_OWNER_AUTHORIZED"
-    ) "Exact isolated Owner 1.1 did not authorize production FILE_EDIT."
-
-    $shell = Invoke-LiveDispatch `
-        -RawPayload (
-            New-LiveCursorPayload `
-                -Kind TOOL `
-                -SessionId $sessionId `
-                -ToolName Shell `
-                -ToolInput @{ command = "Get-Location" } `
-                -Occurrence "shell"
-        ) `
-        -EventHint PRE_TOOL_USE `
-        -AcceptedAt $now.AddMilliseconds(300)
-    Assert-LiveProbe (
-        $shell.Decision -eq "ALLOW" -and
-        $shell.ReasonCode -eq "EXACT_OWNER_AUTHORIZED"
-    ) "Exact isolated Owner 1.1 did not authorize OWNER_REQUIRED."
-
-    $unknown = Invoke-LiveDispatch `
-        -RawPayload (
-            New-LiveCursorPayload `
-                -Kind TOOL `
-                -SessionId $sessionId `
-                -ToolName unknown_live_tool `
-                -ToolInput @{} `
-                -Occurrence "unknown"
-        ) `
-        -EventHint PRE_TOOL_USE `
-        -AcceptedAt $now.AddMilliseconds(400)
-    Assert-LiveProbe ($unknown.Decision -eq "DENY") (
-        "UNKNOWN live tool unexpectedly allowed."
-    )
-
-    $malformed = Invoke-LiveDispatch `
-        -RawPayload "{" `
-        -EventHint PRE_TOOL_USE `
-        -AcceptedAt $now.AddMilliseconds(500)
-    Assert-LiveProbe ($malformed.Decision -eq "DENY") (
-        "Malformed live payload unexpectedly allowed."
-    )
-
-    $perfSession = "cursor-live-perf-$ProbeSuffix"
-    Invoke-LiveDispatch `
-        -RawPayload (
-            New-LiveCursorPayload -Kind START -SessionId $perfSession
-        ) `
-        -EventHint SESSION_START `
-        -AcceptedAt $now.AddSeconds(1) |
-        Out-Null
+    # 性能采样走真实只读路径，不借用无任务的编辑绕过作为基准。
+    $perfSession = 'cursor-perf-' + [guid]::NewGuid().ToString('N')
+    $perfStart = Invoke-LiveDispatch (New-LiveCursorPayload -Kind START -NativeSession $perfSession) -EventHint SESSION_START
+    Assert-LiveProbe ($perfStart.Decision -eq 'ALLOW') '只读性能探测会话注册失败。'
     $samples = @()
     foreach ($index in 1..20) {
-        $watch = [System.Diagnostics.Stopwatch]::StartNew()
-        $result = Invoke-LiveDispatch `
-            -RawPayload (
-                New-LiveCursorPayload `
-                    -Kind TOOL `
-                    -SessionId $perfSession `
-                    -ToolName Edit `
-                    -ToolInput @{
-                        file_path = (
-                            Join-Path $WorkspaceRoot (
-                                ".claude\live-perf-$index.tmp"
-                            )
-                        )
-                        old_string = "before"
-                        new_string = "after"
-                    } `
-                    -Occurrence "perf-$index"
-            ) `
-            -EventHint PRE_TOOL_USE `
-            -AcceptedAt $now.AddSeconds(1 + $index)
+        $watch = [Diagnostics.Stopwatch]::StartNew()
+        $result = Invoke-LiveDispatch (New-LiveCursorPayload -NativeSession $perfSession -ToolName Read `
+            -ToolInput @{file_path=(Join-Path $WorkspaceRoot 'docs/probe.md')} -Occurrence "perf-$index")
         $watch.Stop()
-        Assert-LiveProbe ($result.Decision -eq "ALLOW") (
-            "Normal live performance fixture was denied."
-        )
+        Assert-LiveProbe ($result.Decision -eq 'ALLOW') '无任务会话的只读性能探测被拒绝。'
         $samples += $watch.ElapsedMilliseconds
     }
     $orderedSamples = @($samples | Sort-Object)
     $normalPathMaxMs = ($samples | Measure-Object -Maximum).Maximum
-    $p50 = $orderedSamples[[Math]::Floor(($orderedSamples.Count - 1) * 0.50)]
-    $p95 = $orderedSamples[[Math]::Floor(($orderedSamples.Count - 1) * 0.95)]
-    Assert-LiveProbe ($normalPathMaxMs -lt 1000) (
-        "Normal live path exceeded 1000ms: ${normalPathMaxMs}ms."
-    )
+    Assert-LiveProbe ($normalPathMaxMs -lt 1000) "只读探测路径超过 1000ms：${normalPathMaxMs}ms。"
 
-    $completeCommand = New-LiveOwnerCommand -Operation Complete
-    $completeHook = Invoke-LiveDispatch `
-        -RawPayload (
-            New-LiveCursorPayload `
-                -Kind TOOL `
-                -SessionId $sessionId `
-                -ToolName Shell `
-                -ToolInput @{ command = $completeCommand } `
-                -Occurrence "complete"
-        ) `
-        -EventHint PRE_TOOL_USE `
-        -AcceptedAt ([DateTimeOffset]::UtcNow)
-    Assert-LiveProbe (
-        $completeHook.Decision -eq "ALLOW" -and
-        $completeHook.ReasonCode -eq "COMMAND_GRANT_ISSUED"
-    ) "Isolated Owner Complete grant was not issued."
-    & $OwnerScript `
-        -Operation Complete `
-        -SpecDirectory $FeatureSpecDir `
-        -Feature $Feature `
-        -Workflow SUPERPOWERS `
-        -Agent CURSOR `
-        -OwnerId $OwnerId |
-        Out-Null
-
-    [pscustomobject][ordered]@{
-        result = "PASS"
-        ownerSchemaVersion = "1.1"
-        ownerRegistryIsolated = $true
-        currentOwner1_0UsedForAuthorization = $false
-        sampleCount = $samples.Count
-        p50Ms = $p50
-        p95Ms = $p95
-        normalPathMaxMs = $normalPathMaxMs
-        configuredTimeoutMs = 5000
-        concern = (
-            "This script validates the installed dispatcher and native " +
-            "envelopes in-process. Product-host timeout behavior remains a " +
-            "separate exact-version certification concern."
-        )
-    } | ConvertTo-Json -Depth 10
-    exit 0
+    # 探测并未实现业务目标，不制造编译/测试证据或调用 Complete 冒充交付。
+    Invoke-LiveTask Cancel
+    $cancelled = Get-Content -LiteralPath $TaskPath -Raw | ConvertFrom-Json
+    Assert-LiveProbe ($cancelled.status -eq 'CANCELLED') '探测任务未通过 Cancel 关闭。'
+    Assert-LiveProbe ((Invoke-LiveEdit 'docs/probe.md').Decision -eq 'DENY') '取消任务后仍可编辑普通文档。'
+    $ProbeResult = [ordered]@{
+        result='PASS'; scope='IN_PROCESS_DISPATCHER'; workspaceIsolated=$true; ownerRegistryIsolated=$true
+        ownerSchemaVersion='1.1'; taskTier='T2'; finalTaskStatus='CANCELLED'
+        sourceAndDocumentEditsRequireTask=$true; currentOwner1_0UsedForAuthorization=$false
+        samplePath='READ_WITHOUT_TASK'; sampleCount=$samples.Count
+        p50Ms=$orderedSamples[[Math]::Floor(($orderedSamples.Count-1)*0.50)]
+        p95Ms=$orderedSamples[[Math]::Floor(($orderedSamples.Count-1)*0.95)]
+        normalPathMaxMs=$normalPathMaxMs; clientHookCertified=$false
+        concern='仅验证隔离宿主中的 dispatcher 与原生事件载荷，不代表真实客户端 Hook 接线或客户端超时认证。'
+    }
 } catch {
-    [pscustomobject][ordered]@{
-        result = "FAIL"
-        errorCode = if (
-            $_.Exception.Message -match "^[A-Z][A-Z0-9_]*$"
-        ) {
-            $_.Exception.Message
-        } else {
-            "LIVE_PROBE_FAILED"
-        }
-        errorMessage = $_.Exception.Message
-    } | ConvertTo-Json -Depth 10
-    exit 1
+    $ProbeResult = [ordered]@{ result='FAIL'; scope='IN_PROCESS_DISPATCHER'; errorCode='LIVE_PROBE_FAILED'; errorMessage=$_.Exception.Message }
 } finally {
-    foreach ($name in $RegistryVariables) {
-        $saved = $SavedEnvironment[$name]
-        if ($null -eq $saved) {
-            Remove-Item "Env:$name" -ErrorAction SilentlyContinue
-        } else {
-            Set-Item "Env:$name" -Value $saved
+    try {
+        # 中途失败也优先用正常任务入口关闭探测任务，再清理隔离数据。
+        if (Test-Path -LiteralPath $TaskPath) {
+            $remaining = Get-Content -LiteralPath $TaskPath -Raw | ConvertFrom-Json
+            if ($remaining.status -eq 'PAUSED') { Invoke-LiveTask Resume; $remaining.status='ACTIVE' }
+            if ($remaining.status -eq 'ACTIVE') { Invoke-LiveTask Cancel }
+        }
+    } catch {
+        [Console]::Error.WriteLine("[WARN] 探测任务收尾失败：$($_.Exception.Message)")
+        $ProbeResult = [ordered]@{ result='FAIL'; scope='IN_PROCESS_DISPATCHER'; errorCode='LIVE_PROBE_CLEANUP_FAILED'; errorMessage=$_.Exception.Message }
+    } finally {
+        if ($LocationPushed) { Pop-Location }
+        foreach ($name in $SavedEnvironment.Keys) {
+            [Environment]::SetEnvironmentVariable($name, $SavedEnvironment[$name])
         }
     }
-    if (Test-Path -LiteralPath $FeatureSpecDir) {
-        [System.IO.Directory]::Delete($FeatureSpecDir, $true)
-    }
-    if (Test-Path -LiteralPath $ProbeRoot) {
-        [System.IO.Directory]::Delete($ProbeRoot, $true)
+    if ($ProbeCreated -and (Test-Path -LiteralPath $ProbeRoot)) {
+        try {
+            # 删除前确认最终物理路径仍为本次创建的临时根，不向其他目录递归。
+            $resolvedProbe = Resolve-PhysicalPathIdentity $ProbeRoot
+            $comparison = if ([OperatingSystem]::IsWindows()) { [StringComparison]::OrdinalIgnoreCase } else { [StringComparison]::Ordinal }
+            Assert-LiveProbe ($resolvedProbe.Equals($ProbeRoot,$comparison) -and
+                (Resolve-PhysicalPathIdentity (Split-Path -Parent $resolvedProbe)).Equals($TempRoot,$comparison) -and
+                (Split-Path -Leaf $resolvedProbe) -match '^guard-live-[0-9a-f]{32}$') '探测清理路径不在预期临时目录中。'
+            Remove-Item -LiteralPath $resolvedProbe -Recurse -Force
+        } catch {
+            [Console]::Error.WriteLine("[WARN] 隔离目录清理失败：$($_.Exception.Message)")
+            $ProbeResult = [ordered]@{ result='FAIL'; scope='IN_PROCESS_DISPATCHER'; errorCode='LIVE_PROBE_CLEANUP_FAILED'; errorMessage=$_.Exception.Message }
+        }
     }
 }
+$ProbeResult | ConvertTo-Json -Depth 10
+if ($ProbeResult.result -eq 'PASS') { exit 0 }
+exit 1

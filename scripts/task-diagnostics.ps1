@@ -141,6 +141,21 @@ function Write-AiSopTaskStartSummary {
     }
 }
 
+function Write-AiSopTaskTierSummary {
+    param($Task)
+    # 只使用成功事务后读到的任务记录，不为展示扫描业务输入或重新判定档位。
+    $source=if ($Task.tierSelection) { [string]$Task.tierSelection.source } else { 'LEGACY_UNRECORDED' }
+    $history=@($Task.tierHistory | Where-Object { $null -ne $_ })
+    if ($history.Count -and $history[-1].to -ceq $Task.tier) { $source='USER_REQUEST_CHANGE' }
+    $requirements=switch ($Task.tier) {
+        'T1' { '完成修改及适用的编译检查；仅对实际延期的文档或测试事项留痕。T1 仍受任务归属保护。' }
+        'T2' { '完成修改，同步受影响的文档和用例，执行适用的编译及相关测试；无需更新时说明依据。' }
+        'T3' { '执行完整流程，保留需求与设计批准、独立审核及完整交付门禁。' }
+        default { throw 'TASK_TIER_INVALID' }
+    }
+    Write-Output "TASK_TIER: $($Task.tier) source=$source; $requirements"
+}
+
 function Write-AiSopTaskStatus {
     param($Items, [string]$WorkspacePath, [string]$Operation, [string]$Format, [string[]]$Warnings)
     if ($Format -eq 'Json') {

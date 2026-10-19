@@ -83,7 +83,7 @@ try {
     $blocked=Join-Path $workspace '.ai-workspace/.runtime/verification/Example/blocked'
     [IO.File]::WriteAllText($blocked,'file prevents directory creation')
     Task Cancel | Out-Null
-    & $entry -Operation Start -WorkspacePath $workspace -Feature Example -TaskId blocked -Tier T1 -Objective 'Blocked log path' -Agent CODEX | Out-Null
+    & $entry -Operation Start -WorkspacePath $workspace -Feature Example -TaskId blocked -Tier T1 -UserRequest '本测试明确选择 T1' -Objective 'Blocked log path' -Agent CODEX | Out-Null
     Fails { & $entry -Operation Run -WorkspacePath $workspace -Feature Example -TaskId blocked -Kind compile -Executable pwsh -Arguments @('-NoProfile','-Command','exit 0') -Agent CODEX } 'RUN_LOG_UNAVAILABLE'
     Assert ((Read-AiSopTask $spec blocked).verifications.Count -eq 0) 'Log I/O failure left phantom RUNNING attempt'
     Write-Output 'PASS: optional JUnit exact mapping, fresh reports, skipped/failing results, secure XML and log setup failure'

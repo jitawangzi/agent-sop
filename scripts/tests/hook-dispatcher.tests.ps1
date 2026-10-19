@@ -26,7 +26,10 @@ $RegistryVariables = @(
     "SERVER_NEW_WORKFLOW_TRANSACTION_REGISTRY",
     "SERVER_NEW_HOOK_DEDUP_REGISTRY",
     "SERVER_NEW_HOOK_CORRELATION_REGISTRY",
-    "SERVER_NEW_SKIP_OWNER_GUARD"
+    "SERVER_NEW_SKIP_OWNER_GUARD",
+    'AI_SOP_SKIP_OWNER_GUARD',
+    'AI_SOP_GUARD_ROOT',
+    'AI_SESSION_ID'
 )
 
 function Assert-Equal {
@@ -310,6 +313,8 @@ try {
     $env:SERVER_NEW_HOOK_CORRELATION_REGISTRY =
         Join-Path $TestRoot "correlation"
     Remove-Item Env:SERVER_NEW_SKIP_OWNER_GUARD -ErrorAction SilentlyContinue
+    Remove-Item Env:AI_SOP_SKIP_OWNER_GUARD -ErrorAction SilentlyContinue
+    $env:AI_SOP_GUARD_ROOT = Join-Path $Workspace '.ai-sop'
 
     foreach ($path in @(
         $Workspace,
@@ -325,6 +330,8 @@ try {
     Copy-Item `
         -LiteralPath $OwnerScript `
         -Destination (Join-Path $Workspace ".ai-sop\scripts\workflow-owner.ps1")
+    Copy-Item -LiteralPath (Join-Path $ScriptsRoot 'workflow-task.ps1') -Destination (Join-Path $Workspace '.ai-sop/scripts/workflow-task.ps1')
+    Copy-Item -LiteralPath (Join-Path $ClaudeRoot 'distribution/templates/root/ai-sop.ps1') -Destination (Join-Path $Workspace 'ai-sop.ps1')
 
     if (-not (Test-Path -LiteralPath $DispatcherScript -PathType Leaf)) {
         throw "Required Task 4 artifact does not exist: $DispatcherScript"
@@ -336,6 +343,22 @@ try {
 
     . $DispatcherScript
     . $SessionScript
+    $now = [DateTimeOffset]::UtcNow
+
+    # 没有任务或活动会话时仍能进入受限的 Start/Resume，不开放任意 Shell。
+    $entryStart = "pwsh -NoProfile -File './ai-sop.ps1' Task -Operation Start -Feature Bootstrap -TaskId bootstrap -Agent CLAUDE_CODE -Objective '验证引导'"
+    $entryPayload = New-ClaudePayload -Event PRE_TOOL_USE -SessionId 'entry-without-session' -ToolName Bash -ToolInput @{ command=$entryStart } -Occurrence 'entry-start'
+    $entryResult = Invoke-Dispatch -RawPayload $entryPayload -EventHint PRE_TOOL_USE -AcceptedAt $now
+    Assert-Equal $entryResult.Decision 'ALLOW' '无任务也必须能够执行合法 Start。'
+    Assert-Equal $entryResult.ReasonCode 'TASK_BOOTSTRAP_COMMAND' '专用任务入口不应伪装成已授权任务。'
+    $entryReplay = Invoke-Dispatch -RawPayload $entryPayload -EventHint PRE_TOOL_USE -AcceptedAt $now.AddMilliseconds(1)
+    Assert-Equal $entryReplay.Decision 'ALLOW' '入口重复调用不能被缺少任务锁死。'
+    $entrySessionKey = Get-AiSopWorkflowSessionKey -Agent CLAUDE_CODE -NativeSessionId 'entry-without-session' -WorkspacePath $Workspace
+    Assert-True (-not [IO.File]::Exists((Get-AiSopWorkflowSessionPath -SessionKey $entrySessionKey -WorkspacePath $Workspace))) '入口识别不能自行创建会话或归属。'
+    $blockedEntry = Invoke-Dispatch -RawPayload (New-ClaudePayload -Event PRE_TOOL_USE -SessionId 'entry-run-without-session' -ToolName Bash -ToolInput @{
+        command="pwsh -NoProfile -File './ai-sop.ps1' Task -Operation Run -Feature Bootstrap -TaskId bootstrap -Agent CLAUDE_CODE -Executable pwsh"
+    } -Occurrence 'entry-run') -EventHint PRE_TOOL_USE -AcceptedAt $now
+    Assert-Equal $blockedEntry.Decision 'DENY' '不能借任务入口在无任务时执行任意程序。'
 
     # Recovery instructions are part of the native deny contract. Rendering
     # them must not mutate a journal or encourage bypassing task ownership.
@@ -400,8 +423,6 @@ try {
         "empty arguments must yield no command text."
     )
 
-    $now = [DateTimeOffset]::UtcNow
-
     $env:SERVER_NEW_SKIP_OWNER_GUARD = "1"
     $escapeSessionCountBefore = @(
         Get-ChildItem `
@@ -412,41 +433,41 @@ try {
         -RawPayload "not-json" `
         -EventHint PRE_TOOL_USE `
         -AcceptedAt $now
-    Assert-Equal $escape.Decision "ALLOW" "Exact T1 escape did not allow."
+    Assert-Equal $escape.Decision "ALLOW" '显式人工维护停用应允许修复。'
     Assert-Equal @(
         Get-ChildItem `
             -LiteralPath $env:SERVER_NEW_WORKFLOW_SESSION_REGISTRY `
             -Filter *.json -File -ErrorAction SilentlyContinue
-    ).Count $escapeSessionCountBefore "T1 escape performed a side effect."
+    ).Count $escapeSessionCountBefore '人工维护停用不应写入会话。'
 
     $agEscape = Invoke-Dispatch `
         -RawPayload (New-AntigravityPayload `
             -Event PRE_INVOCATION `
-            -SessionId "t1-antigravity") `
+            -SessionId 'maintenance-antigravity') `
         -EventHint PRE_INVOCATION `
         -AcceptedAt $now
     Assert-Equal $agEscape.Decision "ALLOW" (
-        "T1 Antigravity PRE_INVOCATION did not allow."
+        '人工维护停用应允许 Antigravity PRE_INVOCATION。'
     )
     Assert-Equal $agEscape.Envelope "{}" (
-        "T1 Antigravity PRE_INVOCATION must return empty JSON, not decision: $($agEscape.Envelope)"
+        "人工维护停用的 PRE_INVOCATION 必须保留空 JSON 协议：$($agEscape.Envelope)"
     )
     $agToolEscape = Invoke-Dispatch `
         -RawPayload (New-AntigravityPayload `
             -Event PRE_TOOL_USE `
-            -SessionId "t1-antigravity" `
+            -SessionId 'maintenance-antigravity' `
             -ToolName "read_file" `
             -ToolInput @{ path = (Join-Path $Workspace ".claude\scratch\r") }) `
         -EventHint PRE_TOOL_USE `
         -AcceptedAt $now
     Assert-Equal $agToolEscape.Decision "ALLOW" (
-        "T1 Antigravity PRE_TOOL_USE did not allow."
+        '人工维护停用应允许 Antigravity PRE_TOOL_USE。'
     )
     Assert-True ($agToolEscape.Envelope -match '"decision"\s*:') (
-        "T1 Antigravity PRE_TOOL_USE envelope missing decision: $($agToolEscape.Envelope)"
+        "人工维护停用的 PRE_TOOL_USE 输出缺少 decision：$($agToolEscape.Envelope)"
     )
-    Assert-Equal $escape.ReasonCode "T1_ESCAPE" (
-        "T1 malformed payload must still ALLOW after parse failure."
+    Assert-Equal $escape.ReasonCode "GUARD_DISABLED" (
+        '人工维护入口在解析失败后仍须可用于修复。'
     )
     # Explicit 0 beats .ai-sop/.guard-disabled so later assertions exercise Guard.
     $env:SERVER_NEW_SKIP_OWNER_GUARD = "0"
@@ -672,7 +693,7 @@ try {
                 -RawPayload (& $adapter.Tool $class $at) `
                 -EventHint PRE_TOOL_USE `
                 -AcceptedAt $at
-            $expected = if ($class -in @("SAFE_NON_EDIT", "FILE_EDIT")) {
+            $expected = if ($class -eq 'SAFE_NON_EDIT') {
                 "ALLOW"
             } else {
                 "DENY"
@@ -819,13 +840,16 @@ try {
     Assert-Equal $claimHook.ReasonCode "COMMAND_GRANT_ISSUED" (
         "Canonical Claim returned the wrong reason."
     )
+    $env:AI_SESSION_ID = $claimSession
     & $OwnerScript `
         -Operation Claim `
         -SpecDirectory $claimSpec `
         -Feature $claimFeature `
         -Workflow SUPERPOWERS `
         -Agent CLAUDE_CODE `
-        -OwnerId $claimOwnerId | Out-Null
+        -OwnerId $claimOwnerId `
+        -TaskId 'guard-task' `
+        -Objective '验证写前任务约束' | Out-Null
     $ownerJson = [System.IO.File]::ReadAllText(
         (Join-Path $env:SERVER_NEW_WORKFLOW_REGISTRY (
             $claimFeature.ToLowerInvariant() + ".json"
@@ -835,9 +859,7 @@ try {
         "Dispatcher bootstrap did not create isolated Owner 1.1."
     )
 
-    $productionHook = Invoke-Dispatch `
-        -RawPayload (
-            New-ClaudePayload `
+    $productionPayload = New-ClaudePayload `
                 -Event PRE_TOOL_USE `
                 -SessionId $claimSession `
                 -ToolName Edit `
@@ -847,7 +869,8 @@ try {
                     new_string = "b"
                 } `
                 -Occurrence "exact-production"
-        ) `
+    $productionHook = Invoke-Dispatch `
+        -RawPayload $productionPayload `
         -EventHint PRE_TOOL_USE `
         -AcceptedAt $claimStartAt.AddSeconds(2)
     Assert-Equal $productionHook.Decision "ALLOW" (
@@ -856,6 +879,37 @@ try {
     Assert-Equal $productionHook.ReasonCode "EXACT_OWNER_AUTHORIZED" (
         "Production exact-owner allow returned the wrong reason."
     )
+
+    # 同一个工具调用重试也必须检查当前任务，不能回放暂停前的许可。
+    $claimTaskPath = Join-Path $claimSpec 'tasks/guard-task/task.json'
+    $claimTask = [IO.File]::ReadAllText($claimTaskPath) | ConvertFrom-Json -AsHashtable -Depth 40
+    $claimTask.status = 'PAUSED'
+    [IO.File]::WriteAllText($claimTaskPath, ($claimTask | ConvertTo-Json -Compress -Depth 40), $Utf8NoBom)
+    $pausedReplay = Invoke-Dispatch -RawPayload $productionPayload -EventHint PRE_TOOL_USE -AcceptedAt $claimStartAt.AddSeconds(3)
+    Assert-Equal $pausedReplay.Decision 'DENY' '去重不得复用任务暂停前的写入许可。'
+    Assert-Equal $pausedReplay.ReasonCode 'TASK_INACTIVE' '去重应报告当前任务不可执行。'
+    $initiallyDeniedPayload = New-ClaudePayload -Event PRE_TOOL_USE -SessionId $claimSession -ToolName Edit -ToolInput @{
+        file_path=(Join-Path $Workspace 'src/com/Exact.java'); old_string='a'; new_string='b'
+    } -Occurrence 'paused-first'
+    $initiallyDenied = Invoke-Dispatch -RawPayload $initiallyDeniedPayload -EventHint PRE_TOOL_USE -AcceptedAt $claimStartAt.AddSeconds(3)
+    Assert-Equal $initiallyDenied.Decision 'DENY' '任务暂停时的新调用应拒绝。'
+    $claimTask.status = 'ACTIVE'
+    $claimTask.tier = 'T1'
+    [IO.File]::WriteAllText($claimTaskPath, ($claimTask | ConvertTo-Json -Compress -Depth 40), $Utf8NoBom)
+    $activeReplay = Invoke-Dispatch -RawPayload $productionPayload -EventHint PRE_TOOL_USE -AcceptedAt $claimStartAt.AddSeconds(4)
+    Assert-Equal $activeReplay.Decision 'ALLOW' '恢复后应按当前任务授权，不因旧快照变化永久阻断。'
+    Assert-Equal $activeReplay.ReasonCode 'EXACT_OWNER_AUTHORIZED' '正常 T1 必须经过任务检查。'
+    $retryDenied = Invoke-Dispatch -RawPayload $initiallyDeniedPayload -EventHint PRE_TOOL_USE -AcceptedAt $claimStartAt.AddSeconds(4)
+    Assert-Equal $retryDenied.Decision 'ALLOW' '恢复任务后，同一工具调用不能被旧拒绝结果锁死。'
+    $replayEvent = ConvertTo-AiSopHookEvent -RawPayload $productionPayload -EventHint PRE_TOOL_USE -TrustedWorkspaceRoot $Workspace -AcceptedAt $claimStartAt.AddSeconds(4)
+    $unsettledReplay = ConvertFrom-AiSopDispatcherDedupResult -HookEvent $replayEvent -DurationMs 0 -AcceptedAt $claimStartAt.AddSeconds(4) -DedupResult @{
+        IsDuplicate=$true; SideEffectAppliedNow=$false
+        Record=@{ state='PREPARED'; decision='DENY'; reasonCode='DEDUP_RECOVERY_REQUIRED'; bootstrapGrantId='' }
+    }
+    Assert-Equal $unsettledReplay.Decision 'DENY' '当前任务合法也不能覆盖未决去重记录的保守拒绝。'
+    Assert-Equal $unsettledReplay.ReasonCode 'DEDUP_RECOVERY_REQUIRED' '未决去重记录必须保留原恢复原因。'
+    $claimTask.tier = 'T2'
+    [IO.File]::WriteAllText($claimTaskPath, ($claimTask | ConvertTo-Json -Compress -Depth 40), $Utf8NoBom)
 
     $copilotSession = "copilot-dual-load"
     $dualStartAt = $now.AddMinutes(3)
@@ -1059,20 +1113,14 @@ try {
         $verifySource -match "normalPathMaxMs"
     ) "Live verification does not report normal-path performance."
 
-    $perfSession = "dispatcher-performance"
+    $perfSession = $claimSession
     $perfStartAt = $now.AddMinutes(4)
-    Invoke-Dispatch `
-        -RawPayload (
-            New-CursorPayload -Event SESSION_START -SessionId $perfSession
-        ) `
-        -EventHint SESSION_START `
-        -AcceptedAt $perfStartAt | Out-Null
     $samples = @()
     foreach ($index in 1..12) {
         $watch = [System.Diagnostics.Stopwatch]::StartNew()
         $perf = Invoke-Dispatch `
             -RawPayload (
-                New-CursorPayload `
+                New-ClaudePayload `
                     -Event PRE_TOOL_USE `
                     -SessionId $perfSession `
                     -ToolName Edit `

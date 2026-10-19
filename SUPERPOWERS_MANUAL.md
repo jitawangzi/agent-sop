@@ -4,7 +4,9 @@
 
 ## 日常最短路径
 
-进入新任务、切换功能/工作区或跨 Agent 接管时先 Discover，确认目标后 Start 或 Resume。同一会话连续执行已确认的任务，无需按文件或回复重复识别/接管。人工指定档位优先，未指定为 T2。
+任务强度只随 SOP 安装应用于宿主项目，不自动用于普通未安装项目或引擎开发仓库。讨论、解释和只读审核无需选择档位或 Discover。转为修改源码、测试、配置或项目文档时，新任务、切换功能/工作区或跨 Agent 接管先 Discover，确认目标后 Start 或 Resume；成功后才能修改。同一会话连续执行已确认的任务，无需按文件或回复重复识别/接管。独立新任务人工指定优先、未指定直接 T2；续做继承原档位，“尽快处理”不能被 Agent 当成 T1 授权。
+
+首次修改前，Agent 必须按已登记结果向用户说明档位、来源和本档工作范围，例如“本次按 **T2（默认）** 执行：修改实现，同步受影响文档和用例，完成编译与相关测试”。人工选择则说明“人工指定”，接管则说明“沿用原任务”；不额外等待确认。同一任务不重复，接管、新任务或人工改档时再说明。子 Agent 继承 controller 的任务、档位和执行授权，不自行另选或另建。
 
 | 档位 | 正常执行路径 |
 |---|---|
@@ -54,7 +56,7 @@ Task Verify 和 Complete 使用相同的批准文件定位规则：优先 `00_wo
 
 脚本由宿主提供。执行 `Task -Operation Run -Feature Example -TaskId fix-1 -Agent CODEX -Profile build` 即可调用；配置采用参数数组，工作目录固定为宿主根目录。T3 测试配置可加 `caseIds`。Profile 不与显式 Kind/Executable/Arguments/Batch/CaseIds/JUnitReports/CaseMap 混用，避免实际命令与配置不一致；超时可用 `-TimeoutSeconds` 覆盖，0 表示不限制。
 
-Resume、Suspend、Cancel、Complete 在操作成功后直接输出 Feature、taskId、档位、任务状态与归属结果，无需再跑 Status 确认。反馈表示本次操作已完成，不代替未来时刻的状态查询；失败不输出成功摘要，底层 owner 兼容接口不变。
+Start、Resume、ChangeTier 成功后从已登记任务回显 `TASK_TIER`、档位来源和交付要求；它供 Agent 在首次修改前向用户说明，不要求用户确认。旧任务缺少选择记录时显示来源未记录，不能补造人工原话。Resume、Suspend、Cancel、Complete 另输出 Feature、taskId、档位、任务状态与归属结果，无需再跑 Status 确认。反馈表示本次操作已完成，不代替未来时刻的状态查询；失败不输出成功摘要，底层 owner 兼容接口不变。
 
 Run 在启动前持久保存 RUNNING，再持续输出并写入任务日志，结束时更新为 PASSED、FAILED 或 TIMED_OUT。异常退出可能留下 RUNNING；Status 根据本机进程身份（PID 与启动时间）区分仍运行和已中断，Recover 将已停止的尝试记为 INTERRUPTED。远端进程无法本地确认，需要先确认原执行已停止。超时会终止本次启动的进程树并记录退出码 124。查看实时日志可使用 PowerShell 的 Get-Content -Wait；停止运行器后，后续 Agent 应检查是否还有遗留子进程。
 
@@ -336,7 +338,7 @@ flowchart TD
 
 ### 执行强度档位（T 档）与提示词指定
 
-默认 T2，人工明确选择优先。相同任务可按时间要求选择不同档位，Agent 不因风险分析自行改档。
+默认 T2，人工明确选择优先。相同任务可按时间要求选择不同档位，Agent 不因风险分析自行改档。新 Start 省略 Tier 或仅指定 T2 均按默认 T2 登记；选择 T1/T3 必须带非空 `-UserRequest`，否则在创建任务和归属前拒绝。人工明确选择 T2 时也可用该参数记录。已有选择直接引用原话，不另设审批；这是 Agent 留痕，不是不可伪造的人工授权。
 
 | 档位 | 选择方式 | 完成要求 |
 |---|---|---|
@@ -344,7 +346,13 @@ flowchart TD
 | T2 快速 | 默认，或“快速修改” | 实现、相关需求/设计/用例同步、编译与相关测试 |
 | T3 完整 | 人工要求完整流程 | 完整 Superpowers 流程，复用仍有效的成果 |
 
-工具能力不足以执行 T3 时说明缺口，不能自动降档。接管保留原任务档位；独立新任务不继承历史 T3。
+工具能力不足以执行 T3 时说明缺口，不能自动降档。接管保留原任务档位；独立新任务不继承历史 T3。新任务的选择依据随任务保存，旧任务 Resume 不追溯补证，旧 owner 收编保留历史档位。
+
+```powershell
+# 人工已明确选择 T1，Agent 引用该次真实请求；T3 同样带 UserRequest。
+& ./ai-sop.ps1 Task -Operation Start -Feature Example -TaskId fix-1 -Agent CODEX `
+  -Tier T1 -Objective '修复当前问题并提供编译结果' -UserRequest '这次用 T1，文档和测试稍后补'
+```
 
 ### 同步记录、人工改档和适用性
 
@@ -433,11 +441,13 @@ pwsh -NoProfile -File .\.ai-sop\scripts\workflow-owner.ps1 -Operation Complete `
   -Agent "<CLAUDE_CODE|COPILOT|ANTIGRAVITY|CURSOR|CODEX|PI>" -OwnerId "<superpowers-run-id>"
 ```
 
-## 生产代码编辑 Guard
+## 任务写前 Guard
 
-PreToolUse hook 在每次文件编辑前运行 `guard-production-edit.ps1`（同一脚本跨所有 harness：Claude Code 经 `.claude/settings.json`，其它经 `.agents/hooks.json`/`.cursor/hooks.json`/`.github/hooks/ai-sop.json`，hook 命令统一指向 `./.ai-sop/scripts/hook-dispatcher.ps1`）。编辑默认生产路径（`src/`、`pkg/`、`cmd/`、`internal/`、`app/`、`lib/`、`WebRoot/`、`config/`、`include/`；可由 `.ai-sop/config/project-policy.json` 的 `productionPatterns` 覆盖）前，必须存在 ACTIVE 的 `SUPERPOWERS` owner。guard 异常时可手动关（`.ai-sop/.guard-disabled` 开关文件）；更推荐一次性 `.guard-token.json`。详见《AI SOP 使用指南》。
+已实际接入 PreToolUse 的适配器通过 `./.ai-sop/scripts/hook-dispatcher.ps1` 调用 `guard-production-edit.ps1`。所有被识别为 FILE_EDIT 的工作区编辑（含源码、测试、配置和项目文档）都需当前会话绑定的 ACTIVE 任务、合法 T1/T2/T3 及一致的工作区/功能/owner 身份；仅有旧 owner 没有 taskId 时返回 TASK_REQUIRED，先 Discover 辨认，再 Resume 收编。只读查询与专用任务登记/恢复命令保持各自路由，避免登记前被写前检查锁住。
 
-`AI_SOP_SKIP_OWNER_GUARD=1`（或旧版 `SERVER_NEW_SKIP_OWNER_GUARD=1`）仅作为非功能型一次性小改（临时 hot-fix、探索性 probe）的逃生口。为绕过某次功能运行的归属而设置它是流程违规。
+正常 T1 同样需要 Start/Resume、验证与 Complete，不通过停用防护执行。`AI_SOP_SKIP_OWNER_GUARD=1`（兼容旧名 `SERVER_NEW_SKIP_OWNER_GUARD`）、`.ai-sop/.guard-disabled` 和一次性 `.guard-token.json` 仅用于人工明确要求的紧急维护；Agent 不得自行用来处理小改、赶工或绕过本任务失败。启用时输出 GUARD_DISABLED 或 GUARD_DISABLED_FOR_FEATURE，明确表示防护停用，不能作为 T1 合规或完成证据；维护后恢复防护。
+
+该检查仅覆盖实际接入 Hook 且成功识别的调用，不声称能识别任意 shell 写入；配置文件存在不等于工具执行了 Hook。当前 Codex 能力声明为 blockingHook=false，不能承诺写前机器阻断；仍须执行任务入口、档位说明与完成检查。人工原话和同步结论是可追溯自报，不证明业务语义正确或防御同权限篡改。
 
 ## 多功能并行开发
 
@@ -778,7 +788,7 @@ audit_fix_policy=REPORT_ONLY。
 | 架构/契约设计（brainstorming 咨询） | `design-architect` |
 | 测试覆盖校验（实现后） | `quality-assurance` / `test-plan-auditor` |
 
-任何编辑规范产物的专家调用都属于修改型工作，需要活动的 Superpowers owner ID；只读的咨询性 review 不需要。
+任何编辑规范产物的专家调用都属于修改型工作，继承 controller 的活动 taskId、档位及会话执行授权；只读的咨询性 review 不需要任务或档位。
 
 ## 审计门禁（仅 T3，三层职责）
 
@@ -887,7 +897,7 @@ T3 最后由 Superpowers `verification-before-completion` 复查测试覆盖与�
 
 ## 完成定义与交付闭环
 
-各档位完成条件以宿主 `AGENTS.md` 的档位表及「开始、执行、完成」为准（[源模板](distribution/templates/root/AGENTS.md)）；T3 详细清单见 [T3 执行参考「完成验收」](workflows/agent-t3.md#完成验收)，无 taskId 的旧命令见 [旧流程兼容与诊断](workflows/agent-legacy.md)。分层设计（机器 vs 自报、证据绑定）见 [QUALITY_GATES.md](docs/QUALITY_GATES.md)。
+收尾说明实际档位、文档/用例同步或无需更新的依据、验证结果及 Complete 是否成功；T1 的真实延期事项保留 FollowUp。允许暂停或报告未完成，不以阻止结束回复代替完成检查。各档位完成条件以宿主 `AGENTS.md` 的档位表及「开始、执行、完成」为准（[源模板](distribution/templates/root/AGENTS.md)）；T3 详细清单见 [T3 执行参考「完成验收」](workflows/agent-t3.md#完成验收)，无 taskId 的旧命令见 [旧流程兼容与诊断](workflows/agent-legacy.md)。分层设计（机器 vs 自报、证据绑定）见 [QUALITY_GATES.md](docs/QUALITY_GATES.md)。
 
 ### 交付闭环时序
 
@@ -916,7 +926,7 @@ T3 最后由 Superpowers `verification-before-completion` 复查测试覆盖与�
 规格目录：.ai-workspace/specs/features/ShopBuyLimit/。
 需求：增加商城物品每日限购功能，每个商品配置 daily_limit，玩家每天最多购买 daily_limit 次，次日 0 点重置。
 ```
-**AI**：先 Discover，确认是独立新任务后 Start -Tier T3，在修改前记录任务起点；进入 `superpowers:brainstorming`，发起澄清提问（$\le 3$ 个聚焦问题）：
+**AI**：先 Discover，确认是独立新任务后 Start -Tier T3 -UserRequest "<本次人工选择完整流程的原话>"，在修改前记录任务起点并回显 T3 来源与义务；进入 `superpowers:brainstorming`，发起澄清提问（$\le 3$ 个聚焦问题）：
 1. 限购计数存储在 Redis 还是 MongoDB？（推荐：Redis 记录当天购买次数，每日 0 点自动失效；购买成功同步记日志）
 2. 超过限购时的错误码返回什么？（推荐：`SHOP_DAILY_BUY_LIMIT_EXCEEDED`）
 3. 是否支持周限购或总限购扩展？（推荐：本次先实现日限购，接口预留限购类型枚举）

@@ -54,6 +54,7 @@ param(
     [Parameter(Mandatory = $false)]
     [string]$TaskId,
     [string]$Objective,
+    [string]$UserRequest,
     [string]$NextAction = "",
     [string]$Notes = "",
     [string]$EvidencePath,
@@ -994,6 +995,10 @@ if ($Operation -in @('ForceRelease','Recover')) {
     exit 0
 }
 
+# 在创建会话或命令授权前拒绝缺少依据的新任务；恢复旧任务不追补历史依据。
+if ($Operation -eq 'Claim' -and $TaskId -and -not [IO.File]::Exists((Get-AiSopTaskPath $ResolvedSpecDirectory $TaskId))) {
+    Assert-AiSopInitialTaskTier $Tier $UserRequest
+}
 $grant = Get-ExactGrant
 $session = Get-GrantSession $grant
 
@@ -1028,10 +1033,19 @@ if ($TaskId) {
         if ($PSBoundParameters.ContainsKey('Tier') -and $Tier -cne $taskBefore.tier) { throw 'TASK_TIER_CHANGE_REQUIRES_EXPLICIT_OPERATION: use Task ChangeTier with the human request' }
         $Tier = [string]$taskBefore.tier
     } elseif ($Operation -eq 'Transfer' -and -not $existingOwner.taskId -and $Objective) {
+        # 收编延续已有档位，不把历史任务伪装成新的人工作出选择。
+        $legacyStatePath=Join-Path $ResolvedSpecDirectory 'feature-state.json'
+        if ([IO.File]::Exists($legacyStatePath)) {
+            $legacyTier=(Get-Content -LiteralPath $legacyStatePath -Raw | ConvertFrom-Json).tier
+            if ($PSBoundParameters.ContainsKey('Tier') -and $Tier -cne $legacyTier) { throw 'TASK_TIER_CHANGE_REQUIRES_EXPLICIT_OPERATION: preserve the original tier during adoption' }
+            $Tier=$legacyTier
+        } elseif (-not $PSBoundParameters.ContainsKey('Tier')) { throw 'LEGACY_TIER_REQUIRED: inspect original scope and explicitly select its tier before adoption' }
+        if ($Tier -notin @('T1','T2','T3')) { throw 'LEGACY_TIER_REQUIRED: original tier is not T1/T2/T3' }
         $taskAfter = [ordered]@{
             schemaVersion='1.0'; taskId=$TaskId; feature=$Feature; ownerId=$OwnerId; tier=$Tier; objective=$Objective
             status='ACTIVE'; nextAction=$NextAction; notes=$Notes; createdAt=$AcceptedAt.ToString('o'); updatedAt=$AcceptedAt.ToString('o')
             requiredCaseIds=@(); verifications=@()
+            tierSelection=(New-AiSopTaskTierSelection $Tier '' $AcceptedAt.ToString('o') -Legacy)
         }
     } elseif ($Operation -ne 'Claim') { throw 'TASK_NOT_FOUND' }
 }
@@ -1208,6 +1222,7 @@ switch ($Operation) {
                 tier = $Tier; objective = $Objective; status = 'ACTIVE'; nextAction = $NextAction; notes = $Notes
                 createdAt = $AcceptedAt.ToString('o'); updatedAt = $AcceptedAt.ToString('o')
                 requiredCaseIds = @(); verifications = @()
+                tierSelection = (New-AiSopTaskTierSelection $Tier $UserRequest $AcceptedAt.ToString('o'))
             }
         }
         $sessionAfter = Copy-WorkflowRecord $session.Record

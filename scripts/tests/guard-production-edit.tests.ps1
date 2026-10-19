@@ -28,6 +28,7 @@ $RegistryVariables = @(
     "SERVER_NEW_HOOK_DEDUP_REGISTRY",
     "SERVER_NEW_HOOK_CORRELATION_REGISTRY",
     "SERVER_NEW_SKIP_OWNER_GUARD",
+    'AI_SOP_SKIP_OWNER_GUARD',
     "AI_SOP_GUARD_ROOT"
 )
 
@@ -133,6 +134,13 @@ function Write-Owner {
     [System.IO.File]::WriteAllText($path, $json, $Utf8NoBom)
 }
 
+function Write-TestTask {
+    param([System.Collections.IDictionary]$Record)
+    $path = Join-Path $Workspace '.ai-workspace/specs/features/GuardFeature/tasks/guard-task/task.json'
+    [IO.Directory]::CreateDirectory((Split-Path -Parent $path)) | Out-Null
+    [IO.File]::WriteAllText($path, ($Record | ConvertTo-Json -Compress -Depth 40), $Utf8NoBom)
+}
+
 function Remove-TestOwners {
     $root = Get-AiSopWorkflowOwnerRegistryRoot
     if (Test-Path -LiteralPath $root -PathType Container) {
@@ -186,6 +194,7 @@ try {
     $env:SERVER_NEW_HOOK_CORRELATION_REGISTRY =
         Join-Path $TestRoot "correlation"
     Remove-Item Env:SERVER_NEW_SKIP_OWNER_GUARD -ErrorAction SilentlyContinue
+    Remove-Item Env:AI_SOP_SKIP_OWNER_GUARD -ErrorAction SilentlyContinue
 
     foreach ($path in @(
         $Workspace,
@@ -227,12 +236,12 @@ try {
     foreach ($value in @("0", "true", "01", "TRUE", "yes")) {
         $env:SERVER_NEW_SKIP_OWNER_GUARD = $value
         Assert-True (-not (Test-AiSopGuardEscapeEnabled)) (
-            "T1 escape accepted non-exact value '$value'."
+            "人工维护开关错误接受 '$value'。"
         )
     }
     $env:SERVER_NEW_SKIP_OWNER_GUARD = "1"
     Assert-True (Test-AiSopGuardEscapeEnabled) (
-        "T1 escape did not accept the exact value '1'."
+        "人工维护开关应接受精确值 '1'。"
     )
     Remove-Item Env:SERVER_NEW_SKIP_OWNER_GUARD -ErrorAction SilentlyContinue
 
@@ -240,12 +249,10 @@ try {
         (Join-Path $Workspace ".claude\scratch\a.txt"),
         (Join-Path $Workspace "docs\b.md")
     )
-    $nonProductionResult = Assert-AllowDecision `
+    $nonProductionResult = Assert-DenyDecision `
         -HookEvent $nonProduction `
-        -Message "All non-production FILE_EDIT targets require no Owner."
-    Assert-Equal $nonProductionResult.ReasonCode "NON_PRODUCTION_FILE_EDIT" (
-        "Non-production decision returned the wrong stable reason."
-    )
+        -Message '文档和测试等非生产目录也必须先登记任务。'
+    Assert-AllowDecision -HookEvent (New-TestHookEvent -ToolClass SAFE_NON_EDIT) -Message '只读操作不要求任务或档位。' | Out-Null
 
     $unknown = New-TestHookEvent -ToolClass UNKNOWN
     Assert-DenyDecision $unknown "UNKNOWN tools must fail closed." | Out-Null
@@ -312,8 +319,30 @@ try {
         }
         lastTransactionId = "guard-baseline"
         baseline = "0"
+        taskId = 'guard-task'
     }
     Write-Owner -Feature "GuardFeature" -Record $baselineOwner
+
+    $noTask = Assert-DenyDecision -HookEvent $productionEvent -Message '只有归属不能替代任务。'
+    Assert-Equal $noTask.ReasonCode 'TASK_NOT_FOUND' '缺失 canonical 任务应明确拒绝。'
+    $baselineTask = [ordered]@{
+        schemaVersion = '1.0'; taskId = 'guard-task'; feature = 'GuardFeature'; ownerId = 'guard-owner'
+        tier = 'T2'; objective = '验证写前任务约束'; status = 'ACTIVE'; nextAction = ''; notes = ''
+        createdAt = $t0.ToString('o'); updatedAt = $t0.ToString('o'); requiredCaseIds = @(); verifications = @()
+    }
+    Write-TestTask $baselineTask
+
+    $escapedTaskTarget = Join-Path $TestRoot 'external-task'
+    [IO.Directory]::CreateDirectory($escapedTaskTarget) | Out-Null
+    $escapedTaskLink = Join-Path $specDirectory 'tasks/escaped-task'
+    New-Item -ItemType Junction -Path $escapedTaskLink -Target $escapedTaskTarget | Out-Null
+    $CreatedJunctions += $escapedTaskLink
+    $escapedTaskOwner = Copy-Record $baselineOwner
+    $escapedTaskOwner.taskId = 'escaped-task'
+    Write-Owner -Feature 'GuardFeature' -Record $escapedTaskOwner
+    $escapedTaskDeny = Assert-DenyDecision -HookEvent $productionEvent -Message '任务目录的链接不能逃逸当前功能。'
+    Assert-Equal $escapedTaskDeny.ReasonCode 'TASK_PATH_ESCAPE' '逃逸的任务目录应在读取前拒绝。'
+    Write-Owner -Feature 'GuardFeature' -Record $baselineOwner
 
     $allowed = Assert-AllowDecision `
         -HookEvent $productionEvent `
@@ -324,6 +353,40 @@ try {
     Assert-True (
         [string]$allowed.AuthorizationSnapshotSha256 -match "^[0-9a-f]{64}$"
     ) "Exact Owner allow did not bind an authorization snapshot hash."
+
+    Assert-AllowDecision -HookEvent $nonProduction -Message '合法任务可修改项目文档和测试目录。' | Out-Null
+    $legacyBinding = Copy-Record $baselineOwner
+    $legacyBinding.Remove('taskId')
+    Write-Owner -Feature 'GuardFeature' -Record $legacyBinding
+    $legacyTaskDeny = Assert-DenyDecision -HookEvent $productionEvent -Message '历史 owner-only 归属必须先 Resume 收编。'
+    Assert-Equal $legacyTaskDeny.ReasonCode 'TASK_REQUIRED' '历史归属应提示任务入口。'
+    Write-Owner -Feature 'GuardFeature' -Record $baselineOwner
+    foreach ($tier in @('T1','T2','T3')) {
+        $task = Copy-Record $baselineTask
+        $task.tier = $tier
+        Write-TestTask $task
+        $tierAllowed = Assert-AllowDecision -HookEvent $productionEvent -Message "正常 $tier 应在任务授权下放行。"
+        Assert-Equal $tierAllowed.ReasonCode 'EXACT_OWNER_AUTHORIZED' '正常档位不得被标记为停用防护。'
+        if ($tier -ne 'T2') {
+            Assert-True ($tierAllowed.AuthorizationSnapshotSha256 -cne $allowed.AuthorizationSnapshotSha256) '授权快照必须绑定档位。'
+        }
+    }
+    foreach ($row in @(
+        @{ key='taskId'; value='different-task'; code='TASK_IDENTITY_MISMATCH' },
+        @{ key='feature'; value='OtherFeature'; code='TASK_IDENTITY_MISMATCH' },
+        @{ key='ownerId'; value='another-owner'; code='TASK_IDENTITY_MISMATCH' },
+        @{ key='status'; value='PAUSED'; code='TASK_INACTIVE' },
+        @{ key='status'; value='DONE'; code='TASK_INACTIVE' },
+        @{ key='status'; value='CANCELLED'; code='TASK_INACTIVE' },
+        @{ key='tier'; value='T0'; code='TASK_REGISTRY_CORRUPT' }
+    )) {
+        $task = Copy-Record $baselineTask
+        $task[$row.key] = $row.value
+        Write-TestTask $task
+        $invalidTask = Assert-DenyDecision -HookEvent $productionEvent -Message "任务 $($row.key)=$($row.value) 不应放行。"
+        Assert-Equal $invalidTask.ReasonCode $row.code '任务拒绝原因不一致。'
+    }
+    Write-TestTask $baselineTask
 
     $shellEvent = New-TestHookEvent -ToolClass OWNER_REQUIRED
     Assert-AllowDecision `
@@ -553,7 +616,7 @@ try {
     $tokenAllow = Assert-AllowDecision `
         -HookEvent $productionEvent `
         -Message "Feature-matching token must allow production edit."
-    Assert-Equal $tokenAllow.ReasonCode "T1_TOKEN_ESCAPE" (
+    Assert-Equal $tokenAllow.ReasonCode "GUARD_DISABLED_FOR_FEATURE" (
         "Matching token used the wrong reason."
     )
     [System.IO.File]::WriteAllText(

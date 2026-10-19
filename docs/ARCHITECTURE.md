@@ -95,11 +95,11 @@ AI 编码工具百花齐放（Claude Code、Copilot、Cursor、Antigravity、Pi�
 
 **问题**：guard 在某些情况（session 注册链断、迁移期、确认安全的批量编辑）会误拦，导致 AI 工具完全无法干活——门禁变成阻塞而非保护。但全局硬编码绕过又不安全。
 
-**为什么这么设计**：手动开关文件 `.ai-sop/.guard-disabled`（创建=关、删除=恢复）。env 优先（显式设非1 不逃逸），未设才看开关文件。开关文件 gitignored（本机运行时开关）。
+**为什么这么设计**：保留人工紧急维护的手动开关 `.ai-sop/.guard-disabled`（创建=关、删除=恢复）、兼容 env 及限定范围的一次性 token；它们是停用防护，不是正常 T1。env 优先（显式设非1 不停用），未设才看开关文件。开关文件 gitignored（本机运行时开关）；启用时明确输出 GUARD_DISABLED / GUARD_DISABLED_FOR_FEATURE，Agent 不得自行以赶工或小改为由使用。
 
 **为什么不用纯 env**：Claude Code 的 hook 是子进程，env 继承不可靠（用户级 env 要重启才生效）。开关文件是文件系统，每个 hook 子进程都能可靠读。
 
-**价值**：门禁异常时可快速恢复工作（手动关），但不留永久后门（gitignored、要手动恢复）；env 路径仍保留给 CI/自动化。
+**价值与边界**：人工处理门禁异常时可以临时维护，结束后必须恢复防护；gitignored 本身不保证恢复，也不提供安全隔离。正常 T1 仍须登记任务、按档验证和 Complete，停用提示不能冒充执行档位或完成证明。
 
 ### 决策6：能力准入 STRICT/BLOCKED（为什么不让所有工具都跑 T3）
 
@@ -332,9 +332,10 @@ AI 编码工具百花齐放（Claude Code、Copilot、Cursor、Antigravity、Pi�
 - 双人工批准（requirement + design）+ SHA 锁定 + 篡改检测。
 
 ### Guard（.ai-sop/scripts/guard-production-edit.ps1）
-- 生产编辑拦截（src/com|WebRoot|config）需 session-bound owner。
-- 手动开关：`.ai-sop/.guard-disabled`（创建=关 guard，删除=恢复）。
-- T1 逃逸：env `SERVER_NEW_SKIP_OWNER_GUARD=1` 或开关文件；env 优先（显式非1 不逃逸）。
+- 已接入 Hook 的工作区 FILE_EDIT 需 session-bound owner、关联的 ACTIVE task 及合法 T1/T2/T3；工作区、功能和任务身份必须一致。历史 owner-only 通过 Resume 收编，安全读取与治理专用入口保留各自路由。
+- 新任务默认 T2；T1/T3 Start 需要 UserRequest 并随任务事务保存选择依据，续做保留原档位，改档保留 tierHistory。首次修改前按登记结果回显档位来源和义务，子 Agent 继承同一任务。人工原话属于自报留痕。
+- 手动停用：`.ai-sop/.guard-disabled`、`AI_SOP_SKIP_OWNER_GUARD`（兼容 `SERVER_NEW_SKIP_OWNER_GUARD`）与一次性 token，仅用于人工明确的紧急维护；输出 GUARD_DISABLED / GUARD_DISABLED_FOR_FEATURE，不再称 T1 逃逸。
+- 写前保证限于真实接入且识别到的调用；Codex 当前 blockingHook=false，不提供此机器阻断。Complete 仍按任务档位验证，不增设阻止 Agent 正常结束回复的门禁。
 
 ## 六、日常维护操作
 

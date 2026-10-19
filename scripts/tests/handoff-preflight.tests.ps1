@@ -219,7 +219,7 @@ try {
     Assert (($adopted.issues.detail -join ' ') -match 'TASK_BASELINE_SOURCE_UNVERIFIED') 'Legacy adopted baseline not reported'
     SaveTask $one
     $env:CODEX_SESSION_ID='preflight-session'
-    & (Get-Process -Id $PID).Path -NoProfile -File (Join-Path $scripts 'workflow-task.ps1') -Operation Start -WorkspacePath $workspace -Feature Live -TaskId live -Tier T1 -Objective 'Live preflight fixture' -Agent CODEX | Out-Null
+    & (Get-Process -Id $PID).Path -NoProfile -File (Join-Path $scripts 'workflow-task.ps1') -Operation Start -WorkspacePath $workspace -Feature Live -TaskId live -Tier T1 -UserRequest '本测试明确选择 T1' -Objective 'Live preflight fixture' -Agent CODEX | Out-Null
     Assert ($LASTEXITCODE -eq 0) 'Live session fixture failed'
     $before=TreeHash
     $live=Get-AiSopHandoffPreflight $workspace Live live

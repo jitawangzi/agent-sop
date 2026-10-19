@@ -35,7 +35,7 @@ description: 编排人工请求的独立审计片段，默认只出报告；明�
 - `audit_fix_policy`：`REPORT_ONLY`（只出报告，**默认**）/ `AUTO_REPAIR`（自动修复并回归）
 
 ### 执行流程（人工驱动）
-1. REPORT_ONLY 的只读审计无需认领。AUTO_REPAIR 在实际修改前按下方任务入口 Start / Resume，保持人工指定档位。
+1. REPORT_ONLY 的只读审计无需认领。AUTO_REPAIR 的初查可先按只读方式收集发现，在实际修改前按下方任务入口 Start / Resume，保持人工指定档位。派发专家时附本次用途（初查只出报告或修复后复审）、已有档位、明确需求及已有编译证据；从当前请求继承，不要求用户另填字段。
 2. 若规格目录存在 `04_change_impact.json` 且含 `behaviorVariants` / 类型扩展，**默认 Protocol Trace**：派 `implementation-auditor` Mode C 与 `logic-auditor` Mode E，输入 `entry_points`=`04.entryPoints`。禁止只按 class 或 revision diff 起审。
 3. 否则按序调专家 skill：
    - `implementation-auditor`（实现/契约合规 + 完整性）
@@ -44,7 +44,7 @@ description: 编排人工请求的独立审计片段，默认只出报告；明�
 5. REPORT_ONLY 返回报告后停止；AUTO_REPAIR 继续下方已授权的修复与回归。报告给出可复核的实际入口和代表路径，供人工验收。
 
 ### 人工决定下一步
-- `REPORT_ONLY`：返回报告，由人决定修复、例外或暂搁；不为输出审计报告创建开发任务或宣告已有任务完成。
+- `REPORT_ONLY`：缺编译证据或规格未批准时仍可静态审查，明确依据及验证缺口；不为审计启动构建/测试、补批准或创建开发任务，不宣告已有任务完成。返回报告，由人决定修复、例外或暂搁。
 - `AUTO_REPAIR`：在已授权范围内调 `implementation-engine` 修复，通过 Task Run 重新编译并执行目标回归；复审属于用户请求的审计修复范围，不使任务自动升为 T3。派审前须带回【编译证据】。需求/设计冲突先说明，T3 遵守批准步骤，T1/T2 按人工给出的需求同步；超出授权范围时交人工选择。编排会话不侵入专家实现职责。
 
 ## AUDIT-EXEMPT 例外声明
@@ -113,7 +113,7 @@ audit_fix_policy=REPORT_ONLY。
 提交版本范围：<起始版本/提交> -> <结束版本/提交或 WORKING>。
 依次执行 implementation-auditor 和 logic-auditor。
 audit_fix_policy=AUTO_REPAIR。
-实现缺陷自动修复，并重新编译、复审和执行目标回归；需求或设计缺口返回对应人工确认。
+保持已有人工指定档位，未指定时按 T2。初查先列发现；实现缺陷在授权范围内自动修复，并重新编译、复审和执行目标回归。T1/T2 按已明确需求同步相关文档，不补 T3 批准；关键需求歧义或超出授权范围时再请我决定，T3 仍遵守批准步骤。
 ```
 
 ### 指定类/方法审计

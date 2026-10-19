@@ -4,7 +4,7 @@
 
 你是一位世界顶级的 **AI 软件工程架构师（AI SWE Architect）**、**操作系统安全与并发控制专家**，同时兼具**开源软件开发者体验（DX）设计专家**的视角。
 
-请对开源项目 **[Agent-SOP](https://github.com/jitawangzi/agent-sop)** 的全套架构设计、物理拦截安全机制、多 Agent 事务锁、密码学门禁以及工程落地规范进行**极其严苛、深度、批判性的全方位审查**，找出潜在的漏洞、设计死锁、过度工程、跨平台隐患与体验卡点，并给出具体的代码/规范优化方案。
+请对开源项目 **[Agent-SOP](https://github.com/jitawangzi/agent-sop)** 的架构设计、Hook 拦截、多 Agent 事务锁、证据门禁及工程落地规范进行审查，找出有证据的问题与体验卡点。先确认本次审查的提交、范围及实际读取的文件；只读输出报告，不修改文件或默认运行全量测试。优先提出收益明确、复杂度低的改进，区分真实缺陷、能力边界与可选建议，不为“全方位”扩大任务。
 
 ---
 
@@ -13,20 +13,20 @@
 ### 1. 项目定位
 **Agent-SOP** 是一个用于企业级代码库的 **AI 编码智能体治理引擎与运行时操作系统（Governance OS for AI Coding Agents）**。
 - **开源地址**：`https://github.com/jitawangzi/agent-sop`
-- **核心哲学**：大模型的输出是**概率性（Probabilistic）**的，但软件工程的交付必须是**100% 确定性（Deterministic）**的。Agent-SOP 的使命就是**把不可控的 AI，关进 100% 确定性的物理工程笼子里**。
+- **核心目标**：用明确的流程、任务归属与可核验的执行证据减少误操作和虚假完成。门禁检查记录与绑定是否满足条件，不证明业务语义正确，也不防御同权限主体直接篡改引擎或记录；能力边界见 `docs/QUALITY_GATES.md`。
 - **支持环境**：
   - **跨语言**：Java, Go, C++, Python, Rust, TypeScript/Web 等任意代码库；
   - **跨版本控制**：原生支持企业级 **SVN 工作副本** 与 **Git Monorepo / Git Submodule**；
   - **跨 IDE / Harness**：Claude Code、Antigravity、Cursor、GitHub Copilot、Pi CLI 等。
 
 ### 2. 核心架构分工：Superpowers（大脑）+ Agent-SOP（操作系统）
-- **顶层认知编排器（Superpowers）**：负责方案探索（`brainstorming`）、任务拆解（`writing-plans`）、子智能体驱动（`subagent-driven-development`）、收尾代码审查（`requesting-code-review`）。
+- **顶层认知编排器（Superpowers，仅 T3）**：负责方案探索（`brainstorming`）、任务拆解（`writing-plans`）、子智能体驱动（`subagent-driven-development`）、收尾代码审查（`requesting-code-review`）。T1/T2 直接使用任务入口与按需专家技能，不强制完整编排或独立审计。
 - **运行时治理底座（Agent-SOP）**：
-  1. **OS 级 PreToolUse Hook 物理阻断**：拦截所有 `write_to_file`、`replace_file_content`、`Bash`（sed/patch）等写入意图，AST 解析规范化路径，未持合法 ACTIVE 租约直接 Exit 2 物理阻断。
-  2. **密码学 SHA-256 防篡改门禁**：`01_server_rules.md`（需求）与 `06_design_contract.md`（设计）经人工批准后锁定 SHA-256，`05_test_coverage.json` 机器可读矩阵硬阻断未覆盖交付。
+  1. **Hook 写入守卫**：对已接入 Harness、已识别工具与命令的受控写入检查路径和归属，拒绝缺少合法 ACTIVE 会话绑定的操作。它不是操作系统沙箱，不保证覆盖任意脚本或外部工具的写入。
+  2. **SHA-256 完整性与证据绑定**：T3 核对需求、设计批准与当前内容，检查覆盖定义和本任务必测范围；各档按任务条件检查真实执行记录及输入绑定。覆盖矩阵不能代替测试断言与业务语义审查。
   3. **跨 IDE 两阶段事务文件锁（Schema 1.1）**：按 `Session -> Owner -> Grant` 严格顺序加锁，2PC 崩溃安全日志与 TTL 租约自愈。
   4. **任务强度**：默认 T2（代码、相关规格/用例同步与验证），人工可选择 T1（极速实现与编译）或 T3（完整流程）。新修改走 Task Discover / Start / Resume；不自动按风险改档，不新增配置/文档第四档。历史 FAST_TRACK 只保留兼容读取。
-  5. **10 个领域专家 Skill 矩阵**：`design-reviewer`（机器自审闭环）、`logic-auditor`（高风险语义漏洞审查）、`implementation-auditor`、`implementation-engine`（TDD 实现）等。
+  5. **领域专家 Skill**：`design-reviewer`（设计审查）、`logic-auditor`（高风险语义审查）、`implementation-auditor`、`implementation-engine` 等。它们定义通用方法，项目规则由宿主 context 注入。
 
 ---
 
@@ -35,8 +35,8 @@
 请从以下 **6 个关键维度** 进行深度审查，直击痛点：
 
 ### 维度 1：操作系统 Hook 与物理防越权安全性（OS Guard & Hook Security）
-- **路径绕过与逃逸**：AST 静态解析是否能 100% 阻断 `../` 路径穿越、Windows 盘符大小写混淆、符号链接（Symlink）穿透、或复杂 Shell 命令（`python -c "open('file','w').write(...)"`）？
-- **授权令牌（CommandGrant）生命周期**：短期 TTL（毫秒级）与自愈补发机制是否存在未授权命令冒用的安全窗口？
+- **路径绕过与逃逸**：已支持的工具和命令是否存在路径穿越、大小写混淆或符号链接绕过？任意解释器脚本与外部工具的未覆盖范围是否明确披露？区分实现漏洞与已声明的非沙箱边界。
+- **授权令牌（CommandGrant）生命周期**：按当前实现核对 TTL、单次使用、会话与工作区绑定，是否存在未授权命令冒用或过期结果复用？
 - **逃生通道风险**：`AI_SOP_SKIP_OWNER_GUARD=1` 与 `.guard-disabled` 开关的合规约束是否足够严密？
 
 ### 维度 2：并发事务锁与死锁/崩溃自愈（Concurrency, 2PC & Crash Recovery）
@@ -52,8 +52,8 @@
 - **概念认知负担**：T 档分流、两阶段事务、Superpowers 适配、专家 Skill 等概念是否过于密集？如何让普通用户“零配置也能秒用，进阶用户能深度定制”？
 
 ### 维度 5：跨 IDE / Harness 兼容性与降级韧性（Portability & Graceful Degradation）
-- **能力准入矩阵**：STRICT 工具（Claude Code / Antigravity / Cursor / Copilot）与 BLOCKED 工具（Pi / 极简终端）的判定机制是否准确？
-- **降级平滑度**：当在弱能力环境（BLOCKED）下运行时，系统静默降级为 T2 单点修复是否足够鲁棒？
+- **能力准入矩阵**：依据 `scripts/harness-capability.ps1` 和当前能力报告核对 STRICT/BLOCKED，不按工具名称假定能力或任务档位。
+- **能力缺口反馈**：已选 T3 却缺少能力时，是否说明缺口并由用户选择更换工具或改档？不得静默升降档；T1/T2 不因完整流程能力缺失而被强加 T3 步骤。
 
 ### 维度 6：PowerShell 7 脚本质量与架构精简（Code Quality & Over-Engineering）
 - **过度工程识别**：哪些设计在真实软件工程中过于重型、可以合并或简化？
@@ -61,37 +61,42 @@
 
 ---
 
-## 三、 核心规范节选（供审查的代码与规约）
+## 三、 核心规范与真源
 
-### 规约 A：AGENTS.md 根指令（节选）
+### 规约 A：宿主任务规则摘要
+
+以 `distribution/templates/root/AGENTS.md`、`workflows/agent-t3.md`、`docs/QUALITY_GATES.md` 的当前版本为准；本仓库根 `AGENTS.md` 是底座维护约定，不是宿主日常任务模板。
+
 ```markdown
 ## 工作流归属与 T 档分级
-- T3 由 Superpowers 编排；T2/T1/快通道用原生单命令直达，不调用 Superpowers。
-- 实际执行档位：MIN(用户显式指定 || 变更类默认, 工具最高支持档位)。
-- T3 必调：brainstorming -> 01需求人工批准 -> design-reviewer(机器自审闭环<=2轮) -> 06设计人工批准 -> writing-plans -> SDD(TDD) -> logic-auditor/implementation-auditor -> requesting-code-review -> verification-before-completion。
-- 快通道：仅限纯配置数值或纯文档，跳过门禁，2项完成条件（编译+格式检查）。
-- 物理拦截：编辑生产代码前必须持有 ACTIVE 且 session-bound 的 Owner 锁，否则 OS Hook 强制退出 Exit 2。
+- 默认 T2，人工指定优先；接管继承原任务档位，独立任务不继承历史 T3。
+- T1 完成实现和真实编译/基础检查，实际延期才记 FollowUp；T2 同步受影响规格/用例并运行相关测试，记录 RecordSync。
+- T3 由 Superpowers 执行完整批准、独立审查、覆盖与验证；复用仍有效成果，不重复已满足的步骤。
+- 不自行升降档，不新增配置/文档快通道；T3 能力不足由用户决定更换工具或改档。
+- 修改前 Start/Resume 取得本任务 ACTIVE 会话归属；Run 留真实证据，Complete 按本档条件验收并释放归属。
+- 只读审核可报告静态发现和未验证范围，不要求补做 T3 批准，也不将审核报告当作编译、测试或完成门禁通过。
 ```
 
-### 规约 B：安装与跨平台分发（install-ai-sop.ps1 节选）
+### 规约 B：安装与跨平台分发（Git 宿主示例）
 ```powershell
-# 任何新工程引入只需 2 行：
+# 已确认使用 Git submodule 的宿主：
 git submodule add https://github.com/jitawangzi/agent-sop.git .ai-sop
 pwsh -NoProfile -File ./.ai-sop/distribution/bootstrap/install-ai-sop.ps1 -Mode Auto -Action Install
-# 自动生成：ai-sop.ps1、tools/ai-sop/ai-sop.lock.json、.agents/hooks.json、.claude/settings.json
 ```
+
+SVN 宿主、升级及投影验证按当前安装文档与 `distribution/` 实现检查，不将上述 Git 示例套用于所有工程。
 
 ---
 
 ## 四、 期望输出格式
 
-请不要给出泛泛而谈的客套话，请按照以下结构输出**高密度、尖锐、且附带具体改进代码/文本**的审查报告：
+请按以下结构输出有文件位置、触发条件和证据的报告。未复现的推断明确标注；未执行测试不能写成通过。已修复的旧问题注明当前状态，低收益或明显增加维护成本的建议列为暂缓，不要求为了凑数提出新机制。
 
 ```markdown
 # Agent-SOP 深度架构审查与优化报告
 
-## 1. 总体评价与架构成熟度评分（1-10分）
-[客观评价该架构在当前 AI 软件工程领域的创新性、前沿度与工程实用价值]
+## 1. 审查范围与验证边界
+[提交、实际读取范围、已执行检查及未验证项]
 
 ## 2. 🔴 阻断级缺陷与安全漏洞 (Blockers / High Risk)
 > 编号：B-01 — 简述问题
@@ -109,8 +114,6 @@ pwsh -NoProfile -File ./.ai-sop/distribution/bootstrap/install-ai-sop.ps1 -Mode 
 > 编号：P-01 — 简述优化点
 > 建议改法：...
 
-## 5. 针对开源全球推广的 3 个关键战略建议
-1. ...
-2. ...
-3. ...
+## 5. 建议处理顺序与暂缓项
+[按用户影响、复现证据与修复成本排序；无发现则如实说明]
 ```

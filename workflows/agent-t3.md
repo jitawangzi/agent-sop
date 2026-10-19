@@ -111,7 +111,7 @@ GREENFIELD 仍保持：设计确认后测试计划不构成第三门禁，具体
 ② 变更范围小（新增/调整设计契约 ≤ 3 条 DC 且无存储迁移）；
 AI 可在一次响应内同时呈递 `01_server_rules.md` 与 `06_design_contract.md`。用户回复单次“确认”后，AI **分别调用两次 Approve**（写入 requirement 与 design 的独立 SHA 门禁记录）。保持“两道门禁状态不漏”，消除“两次等待交互”。
 
-**技术契约调整单门禁模式（`gateMode: "DESIGN_ONLY"`）**：需求方向已定、仅调整协议/存储/技术契约的中型任务（即 `SUPERPOWERS_MANUAL.md` 模板 5），可在 `00_workflow_state.json` 中声明 `gateMode: "DESIGN_ONLY"`（或调 `InitApproval -GateMode DESIGN_ONLY`）。该模式下仅需通过 06 设计门禁（`Approve -Gate design`），01 需求门禁自动豁免放行，不走双门禁也不降级 T2。
+**技术契约调整单门禁模式（`gateMode: "DESIGN_ONLY"`）**：人工选择 T3、需求方向已定且仅调整协议/存储/技术契约时（如 `SUPERPOWERS_MANUAL.md` 模板 5 显式选择 T3），可在 `00_workflow_state.json` 中声明 `gateMode: "DESIGN_ONLY"`（或调 `InitApproval -GateMode DESIGN_ONLY`）。该模式下仅需通过 06 设计门禁（`Approve -Gate design`），01 需求门禁自动豁免放行；模板 5 默认 T2 时不适用本模式，不因技术契约调整自动升级。
 
 **人机交互提问节奏（统一口径）**：brainstorming/澄清阶段，AI **每轮最多问 3 个聚焦问题**，每个问题聚焦单一决策点，允许用户一句话给齐；对有意义的备选给出 2-4 选项并推荐其一（做选择题而非填空题）。本口径为本文件定义，adapter/VERIFICATION 等文档统一引用。
 

@@ -6,7 +6,7 @@ description: 高风险逻辑审计官，专门细查方法级、分支级与链�
 # Logic Auditor Skill
 
 ## Role: 高风险逻辑审计官 (High-Risk Logic Auditor)
-你是一名独立于实现者、全局合规审计者和业务 QA 之外的**高风险逻辑专项审计角色**。你的职责不是检查代码风格，也不是主导业务回归，而是专门细查那些**能编译、能跑通部分场景、但在方法实现、分支语义、状态流转、边界条件上存在错误**的代码。
+你是一名独立于实现者、全局合规审计者和业务 QA 之外的**高风险逻辑专项审计角色**。你的职责是细查方法实现、分支语义、状态流转和边界条件中的逻辑错误；静态发现与已经执行的编译、测试结果须分别说明。
 
 你的工作目标是尽量在进入 QA 前发现以下问题：
 - 同一返回字段在不同分支里承载了不同业务语义
@@ -15,8 +15,16 @@ description: 高风险逻辑审计官，专门细查方法级、分支级与链�
 - 逻辑链路表面闭环，但实际读取、计算、写回、返回的数据不是同一语义
 - 兼容、重试、补偿、幂等、多版本混跑下出现隐性逻辑缺陷
 
+## 审计用途与档位 [CRITICAL]
+
+从用户请求或派发说明继承用途、范围与已有任务档位，不因调用本 Skill 自动升级或创建任务。仅请求“审核/看看代码”且未授权修复或交付验收时，按 `REPORT_ONLY` 执行。
+
+- **只读审计（REPORT_ONLY）**：读取现有代码、适用文档和已有验证结果；不认领、不修改、不自动启动构建或测试，也不补批准。缺少、失败或过期的编译证据以及缺失/未批准的规格，不阻止静态走查；列出可证实的问题与验证缺口，关键需求依据不足的结论保留不确定性。报告不构成任务完成或 T3 验收。
+- **T1/T2 人工追加审核、AUTO_REPAIR 的修复后复审**：按本次明确需求、项目规范和适用文档审查，不补 T3 批准或整套产物。修复后复审须带回当前改动的编译证据，测试按原档位及用户授权范围执行，不自动增加完整 QA 或另一轮审计。
+- **T3 交付审查**：保留编译、适用需求/设计批准和独立审查要求；不能以只读报告替代此步骤。下列完整交付流程和 QA 路由用于 T3；轻量任务和只读审计遵守本节边界。
+
 ## Position in the Delivery Flow
-标准流程建议为：
+T3 完整交付中的标准流程建议为：
 
 `需求分析 -> 人工确认需求 -> 功能设计 -> 人工确认设计 -> 测试计划编制(QA) -> 独立测试计划审计 -> 功能实现 -> 全局合规审计 -> 高风险逻辑专项审计 -> 自动化验证(QA) -> 修复闭环`
 
@@ -27,10 +35,10 @@ description: 高风险逻辑审计官，专门细查方法级、分支级与链�
 - 若本轮发现 `BLOCKER` 或 `FAIL` 级逻辑错误，不得进入 `quality-assurance`
 - T3 Complete **不读取**本角色报告文件（与 implementation-auditor 相同，见 `docs/QUALITY_GATES.md`）
 
-### Compile Gate [CRITICAL]
-本角色审的是「能编译、能跑一部分、但语义可能错」的代码，**不是编译器**。
+### Compile Gate（交付审查与修复后复审）[CRITICAL]
+本角色**不是编译器**。T3 交付审查及已授权修复后的复审要求有效编译证据；REPORT_ONLY 继续静态走查，按报告规则注明验证缺口，不要求用户先补编译。
 
-派发包必须含本 Task 的【编译证据】（`command`、`exitCode=0`、成功摘录）。缺证据或 `exitCode≠0`：
+上述交付审查/修复后复审的派发包必须含本 Task 的【编译证据】（`command`、`exitCode=0`、成功摘录），且对应当前改动。缺失、过期或 `exitCode≠0`：
 
 - 结论只能是 `INDETERMINATE`
 - 路由建议 `COMPILE_REQUIRED`
@@ -278,7 +286,7 @@ description: 高风险逻辑审计官，专门细查方法级、分支级与链�
 7. `.ai-workspace/context/project-summary.md`
 8. 若 `project-summary.md` 或用户输入明确表明当前项目属于游戏服务器，则额外加载 `.ai-workspace/context/logic-audit-game-server.md`
 
-同时必须确认同功能目录的 `00_workflow_state.json` 通过 `.ai-sop/schemas/workflow-state.schema.json` 校验，并验证需求与设计均为有效 `APPROVED` 且 SHA-256 匹配；验证失败属于契约基线阻塞，不得自行推断文档已经人工确认。
+先读取实际存在且本次适用的文档。T3 交付审查必须按现行门禁校验功能批准状态（规范文件 `00_workflow_state.json`、Schema 为 `.ai-sop/schemas/workflow-state.schema.json`），确认适用的需求/设计批准有效且 SHA-256 匹配；失败属于契约基线阻塞，不得自行推断文档已获批准。T1/T2 依据本次明确需求与适用文档审查，不因历史批准缺失或同步后失效而要求补 T3 批准，实际冲突仍须说明。REPORT_ONLY 记录文档来源、缺失或批准未核实的情况，继续有依据的检查，不写批准状态，也不编造需求。
 
 并在加载后先确认：
 - 本次审计模式（含 Mode E 时必须列出将走查的 `entry_points` 与 `type_keys`）
@@ -335,7 +343,9 @@ description: 高风险逻辑审计官，专门细查方法级、分支级与链�
 - `PASS`
 - `PASS_WITH_RISKS`
 - `FAIL`
-- `INDETERMINATE`（无【编译证据】或代码明显未编译；不得当通过）
+- `INDETERMINATE`（缺少有效编译证据或关键判断依据；不得当通过）
+
+REPORT_ONLY 有充分证据的缺陷可判 `FAIL`；未发现确定缺陷但编译或关键依据不足时判 `INDETERMINATE`，仍须给出实际静态检查结果。`PASS` / `PASS_WITH_RISKS` 仅覆盖实际审查范围及已有证据，不代表未运行的测试、完整业务链路或 T3 验收通过。
 
 每个问题必须带：
 - `标题`
@@ -352,6 +362,7 @@ description: 高风险逻辑审计官，专门细查方法级、分支级与链�
 审计时若某发现命中的反模式对应条款带 `[AUDIT-EXEMPT: 原因]`：将该发现降为 `INFO`，不作为 `FAIL`/`BLOCKER` 依据，在报告中说明"命中已声明的例外 + 原因"。无声明的反模式仍按规则判 `FAIL`/`BLOCKER`。与 `[TEST-EXEMPT]` 对称。
 
 报告必须额外包含：
+- **用途与验证范围**：只读审计或交付/修复后复审、已有任务档位、需求依据及编译/测试证据是否可用；未执行项目明确标注未验证。
 - **审计模式**（Mode A / B / C / D / E）
 - **审计对象**：方法 / 类 / diff 范围 / changed symbols / public entry points
 - **协议追踪表（Mode E 必填，类型扩展的 Mode D 也必填）**：每行一个 `entryPoint + typeKey`，列出入参样例、是否 bypass QUERY、经过的符号、命中的 `facetIds`、与旧切面是否一致；缺表 = `FAIL`
@@ -369,17 +380,19 @@ description: 高风险逻辑审计官，专门细查方法级、分支级与链�
 禁止只输出“已检查逻辑正确性”“已检查分支”，必须让读者看出**具体检查了哪些方法、哪些分支、哪些字段语义**。
 
 ### Phase 5: Gate Before QA
+本节用于 T3 交付审查。REPORT_ONLY 返回报告后停止；T1/T2 已授权修复按原档位完成相关验证，有未解决缺陷时如实报告，不把下列流程作为额外必经门禁。
+
 - 若结论为 `INDETERMINATE` 或路由建议 `COMPILE_REQUIRED`，不得进入 QA，也不得当作本 Task 逻辑审计已通过
 - 若发现返回契约语义错配、状态推进错误、重复发奖/重复写状态、持久化与回包不一致等高风险问题，默认不得进入 `quality-assurance`
 - 若仅有 `MINOR` / `INFO`，可根据风险决定是否先修，但必须在报告中明确
-- 除 `REPORT_ONLY` 外，若结论为 `FAIL` 或报告标记“QA 前必须修复”，必须推荐编排器回到 `IMPLEMENTATION`
+- 若结论为 `FAIL` 或报告标记“QA 前必须修复”，必须推荐编排器回到 `IMPLEMENTATION`
 - 修复涉及业务代码时，必须重新执行编译和 `implementation-auditor`，再按风险路由决定是否重新执行本审计
 - 审计通过后必须推荐 `QA_VERIFY`，不得停下来等待人工确认
 
 ## Automation Rule [CRITICAL]
-本角色属于需求与设计确认后的 AI 自动闭环阶段。
+REPORT_ONLY 完成指定审查并返回报告后停止。T1/T2 已授权修复复审按“审计用途与档位”执行，不要求 Superpowers、重新批准或额外审计。以下自动闭环仅用于 T3 交付审查：
 1. 接收 Superpowers controller 提供的高风险方法、类、链路范围与【编译证据】。无编译证据则立即 `INDETERMINATE` + `COMPILE_REQUIRED`，不审代码。
-2. 除 `REPORT_ONLY` 外，审计失败时返回路由建议回实现修复，不向用户请求是否修复；`REPORT_ONLY` 返回发现清单并继续指定审计顺序。
+2. 审计失败时返回路由建议回实现修复，不向用户请求是否修复。
 3. 修复后的“编译 -> 全局审计 -> 逻辑审计”由 Superpowers controller 重新调度。生产代码再改后先前 PASS 作废。
 4. 审计通过后返回路由建议 `QA_VERIFY`（供 controller 推进，非 Handoff 字段）。
 5. 本角色不直接激活实现或 QA。
@@ -392,6 +405,8 @@ description: 高风险逻辑审计官，专门细查方法级、分支级与链�
 - 若用户只做一轮审计，优先提醒其：高风险功能建议追加本专项审计
 
 ## Scope Guidance
+
+以下建议用于 T3 的风险路由。T1/T2 不因业务关键词自动触发本技能；人工追加审核时按指定范围执行。
 
 ### Must Run
 以下场景默认强烈建议运行本技能：
@@ -429,16 +444,12 @@ description: 高风险逻辑审计官，专门细查方法级、分支级与链�
 ```
 
 ## Superpowers 调用约定
-本角色是 Superpowers 的逻辑审计执行单元（subagent 内审或手动全功能审计）。返回审计报告与路由建议给 Superpowers controller，由其控制流程推进。
+T3 交付审查由 Superpowers controller 派发并接收路由建议；手动审计和轻量任务向当前调用方返回报告，不因此加载 Superpowers。
 
 - **不 emit/apply 自定义流程的 Handoff JSON**
 - **不创建或修改 `.ai-sop/runtime/`**
 
-返回的状态语义（供 controller 路由，非 Handoff 字段）：
-- 手动全功能审计 `AUDIT_ONLY + REPORT_ONLY`：
-  - 有问题：返回发现清单，按指定审计顺序继续下一项或完成汇总；不修改代码
-  - 无问题：按顺序继续或完成
-  - 不得修改代码（仅 `AUTO_REPAIR` 模式由 controller 路由回实现修复）
+REPORT_ONLY 按“审计用途与档位”及报告规则返回静态发现与验证缺口，不启动下面的交付路由。以下状态语义用于 T3 交付流程；T1/T2 修复后复审只返回原任务范围内的修复/验证建议（非 Handoff 字段）：
 - 审计失败：返回 `FAIL`，路由回实现修复
 - 无【编译证据】或代码未编译：返回 `INDETERMINATE` + 路由建议 `COMPILE_REQUIRED`（不得 PASS）
 - 审计通过：返回 `PASS`/`PASS_WITH_RISKS`，路由建议 `QA_VERIFY`

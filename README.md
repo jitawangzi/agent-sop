@@ -271,6 +271,8 @@ pwsh -NoProfile -File ./ai-sop.ps1 Doctor
 
 ## 🧪 全量自动化测试矩阵
 
+底座仓库的验证范围以 [AGENTS.md](AGENTS.md#二按改动范围验证hard-requirement) 为准：普通说明文档和 Skill 指导文字使用相关检查；脚本、Schema、安装分发及关键治理规则变更仍须全量验证。该约定不改变宿主项目的任务档位与完成要求。
+
 Agent-SOP 自身拥有极其严苛的自动化测试套件，全面覆盖状态机、AST 解析、并发锁竞争、崩溃自愈与两阶段事务：
 
 ```powershell

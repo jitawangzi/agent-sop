@@ -88,6 +88,7 @@ try {
         $legacyRaw=[IO.File]::ReadAllText($taskPath)
         $inspection=Task InspectRecovery | ConvertFrom-Json
         Assert ($inspection.suggestedActionCode -eq 'RESTORE_BASELINE' -and $inspection.guidance -match 'Resume only repairs') 'Missing baseline was reduced to a session handoff'
+        Assert ($inspection.guidance -match 'without closing the old one' -and $inspection.guidance -match 'normal ownership checks') 'Legacy baseline guidance blocked independent work or bypassed ownership'
         $steps=@(Get-AiSopRecoveryGuidance $legacy @(@{kind='BASELINE';status='UNAVAILABLE'}) ACTIVE EXPIRED)
         Assert (($steps.code -join ',') -ceq 'RESTORE_BASELINE,RESUME_SESSION') 'Expired session hid the independent baseline problem'
         $status=Task Discover @{OutputFormat='JsonLines'} | ConvertFrom-Json

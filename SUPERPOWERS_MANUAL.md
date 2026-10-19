@@ -54,7 +54,11 @@ Task Verify 和 Complete 使用相同的批准文件定位规则：优先 `00_wo
 
 脚本由宿主提供。执行 `Task -Operation Run -Feature Example -TaskId fix-1 -Agent CODEX -Profile build` 即可调用；配置采用参数数组，工作目录固定为宿主根目录。T3 测试配置可加 `caseIds`。Profile 不与显式 Kind/Executable/Arguments/Batch/CaseIds/JUnitReports/CaseMap 混用，避免实际命令与配置不一致；超时可用 `-TimeoutSeconds` 覆盖，0 表示不限制。
 
+Resume、Suspend、Cancel、Complete 在操作成功后直接输出 Feature、taskId、档位、任务状态与归属结果，无需再跑 Status 确认。反馈表示本次操作已完成，不代替未来时刻的状态查询；失败不输出成功摘要，底层 owner 兼容接口不变。
+
 Run 在启动前持久保存 RUNNING，再持续输出并写入任务日志，结束时更新为 PASSED、FAILED 或 TIMED_OUT。异常退出可能留下 RUNNING；Status 根据本机进程身份（PID 与启动时间）区分仍运行和已中断，Recover 将已停止的尝试记为 INTERRUPTED。远端进程无法本地确认，需要先确认原执行已停止。超时会终止本次启动的进程树并记录退出码 124。查看实时日志可使用 PowerShell 的 Get-Content -Wait；停止运行器后，后续 Agent 应检查是否还有遗留子进程。
+
+Run 结束发现输入不稳定时，直接使用已有前后快照列出新增/修改/删除路径（最多 20 条，超出显示总数），并区分输入策略变化、T3 规格变化和输入/规格读取失败。诊断同时保存在该次执行记录的 diagnostic，所选 Profile/报告映射变化沿用原有具体诊断。此反馈不追加输入扫描，不自动重跑或放宽完成条件；命令退出 0 但证据不稳定仍不能完成。
 
 Status/Discover 显示未完成运行的开始时间、已运行秒数、配置的超时、日志字节数及最后更新时间，默认只读取日志元数据。需要最近输出时，可用 `./ai-sop.ps1 Task -Operation Discover -Feature Example -TaskId change-1 -LogTailLines 20`，无需为看日志扫描当前源码；Status 也支持此参数；也支持 `Task -Operation InspectRecovery -LogTailLines 20`。最多请求 200 行，每份日志最多读取末尾 32 KiB，截断时标记 `tailTruncated`。远端运行不读取同名本地日志；旧记录未保存超时则显示 UNKNOWN，不能推断为无限运行。日志不更新不等于卡死；这些即时观察不续期、不终止进程、不构成执行证据。
 

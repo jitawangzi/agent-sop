@@ -210,7 +210,25 @@ try {
     Assert ($bad.tasks[0].status -eq 'ACTIVE' -and $bad.tasks[0].diagnostics -match 'SPEC_JSON_INVALID:') 'Invalid spec misreported as corrupt task or success'
     Fails { Task Run three @{Kind='test';Executable='pwsh';Arguments=@('-NoProfile','-Command','exit 0')} } 'SPEC_JSON_INVALID'
     Fails { Task ReviewImpact three } 'IMPACT_ARTIFACT_MISSING'
+    Put '.ai-workspace/specs/features/Example/05_test_coverage.json' '{}'
+    Fails { Task Run three @{Kind='test';Batch='spec-change';Executable='pwsh';Arguments=@('-NoProfile','-Command',"[IO.File]::WriteAllText('.ai-workspace/specs/features/Example/06_design_contract.md','changed during test')")} } 'INPUTS_CHANGED_DURING_RUN'
+    $last=(Read-AiSopTask $spec three).verifications[-1]
+    Assert ($last.diagnostic -match 'SPEC_CHANGED_DURING_RUN' -and -not $last.inputsStable -and $last.exitCode -ne 0) 'T3 spec mutation was not distinguished and rejected'
+    Fails { Task Run three @{Kind='test';Batch='spec-unreadable';Executable='pwsh';Arguments=@('-NoProfile','-Command',"[IO.File]::WriteAllText('.ai-workspace/specs/features/Example/05_test_coverage.json','{broken')")} } 'INPUTS_CHANGED_DURING_RUN'
+    Assert ((Read-AiSopTask $spec three).verifications[-1].diagnostic -match 'SPEC_SNAPSHOT_UNAVAILABLE: SPEC_JSON_INVALID') 'Spec read failure was misreported as a file mutation'
+    Fails { Task Run three @{Kind='compile';Batch='policy-change';Executable='pwsh';Arguments=@('-NoProfile','-Command',"[IO.File]::WriteAllText('.ai-workspace/context/verification-inputs.json','{`"schemaVersion`":`"1.0`",`"include`":[],`"exclude`":[]}')")} } 'INPUTS_CHANGED_DURING_RUN'
+    Assert ((Read-AiSopTask $spec three).verifications[-1].diagnostic -match 'INPUT_POLICY_CHANGED_DURING_RUN') 'Input policy change was not distinguished'
+    Fails { Task Run three @{Kind='compile';Batch='input-unreadable';Executable='pwsh';Arguments=@('-NoProfile','-Command',"[IO.File]::WriteAllText('.ai-workspace/context/verification-inputs.json','{broken')")} } 'INPUTS_CHANGED_DURING_RUN'
+    Assert ((Read-AiSopTask $spec three).verifications[-1].diagnostic -match 'INPUT_SNAPSHOT_UNAVAILABLE: INPUT_POLICY_INVALID') 'Input read failure lost its cause'
+    Put $config ($policy | ConvertTo-Json -Depth 5)
     Task Cancel three | Out-Null
+    # Large diffs stay useful and bounded without consulting the filesystem.
+    $before=@{digest='old';algorithm='inputs-v4';policyDigest='same';files=@{}}
+    $after=@{digest='new';algorithm='inputs-v4';policyDigest='same';files=@{}}
+    1..25 | ForEach-Object { $after.files[('src/{0:D2}.txt' -f $_)]='hash' }
+    $details=@(Get-AiSopRunInputDiagnostics $before $after)
+    Assert (@($details | Where-Object { $_ -like 'INPUT_FILE_CHANGED:*' }).Count -eq 20 -and $details[-1] -match 'showing 20 of 25') 'Large change output was unbounded or omitted its total'
+    Assert (@(Get-AiSopRunInputDiagnostics $before $before).Count -eq 0) 'Stable inputs produced a change warning'
     # Deployment drift should warn without blocking task listing.
     Put '.ai-sop/distribution/templates/root/ai-sop.ps1' 'new engine entry'
     $drift=& $entry -Operation Discover -WorkspacePath $workspace -Json | ConvertFrom-Json

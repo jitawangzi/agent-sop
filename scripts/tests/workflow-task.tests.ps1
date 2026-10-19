@@ -11,8 +11,10 @@ foreach ($key in @('AI_SOP_OWNER_REGISTRY','AI_SOP_SESSION_REGISTRY','AI_SOP_COM
 function Assert($condition, $message) { if (-not $condition) { throw $message } }
 function MustFail([scriptblock]$action, [string]$message) {
     $failed = $false
-    try { & $action | Out-Null; if ($LASTEXITCODE -ne 0) { $failed=$true } } catch { $failed=$true }
+    $output=[Collections.Generic.List[string]]::new()
+    try { & $action | ForEach-Object { $output.Add([string]$_) }; if ($LASTEXITCODE -ne 0) { $failed=$true } } catch { $failed=$true }
     Assert $failed $message
+    Assert (-not @($output | Where-Object { $_ -match '^TASK_(COMPLETED|RESUMED|SUSPENDED|CANCELLED):' }).Count) 'Failed operation printed a success summary'
 }
 function Task([string]$op, [string]$id, [hashtable]$extra=@{}) {
     & $entry -Operation $op -WorkspacePath $workspace -Feature Example -TaskId $id -Agent CODEX @extra
@@ -84,19 +86,23 @@ try {
     [IO.File]::WriteAllText((Join-Path $workspace 'yarn.lock'), 'dependency-version')
     Assert ((Get-AiSopInputSnapshot $workspace).digest -ne $after.digest) 'Dependency lock file was excluded'
     Remove-Item -LiteralPath (Join-Path $workspace 'yarn.lock')
-    Task Complete fix-a | Out-Null
+    $feedback=Task Complete fix-a | Out-String
+    Assert ($feedback -match 'TASK_COMPLETED:Example/fix-a tier=T2 status=DONE; ownership released' -and $feedback -notmatch 'example\.json') 'Complete did not summarize the committed task result'
     Assert ((Read-AiSopTask $spec 'fix-a').status -eq 'DONE') 'Task not completed'
     Assert ([IO.File]::ReadAllText((Join-Path $spec '06_design_contract.md')) -eq 'legacy design') 'Historical design was modified'
     Task Start fix-b @{ Tier='T1'; Objective='Quick independent change' } | Out-Null
     Assert ((Read-AiSopTask $spec 'fix-b').verifications.Count -eq 0) 'New task inherited old evidence'
     Task Run fix-b @{ Kind='compile'; Executable='pwsh'; Arguments=@('-NoProfile','-Command','exit 0') } | Out-Null
-    Task Suspend fix-b @{ NextAction='Resume implementation'; Notes='Waiting for input' } | Out-Null
+    $feedback=Task Suspend fix-b @{ NextAction='Resume implementation'; Notes='Waiting for input' } | Out-String
+    Assert ($feedback -match 'TASK_SUSPENDED:Example/fix-b tier=T1 status=PAUSED; ownership released') 'Suspend did not summarize release'
     Assert ((Read-AiSopTask $spec 'fix-b').status -eq 'PAUSED') 'Suspend must not mark task DONE'
     # An unrelated sequential task may finish while the previous one is paused.
     Task Start fix-c @{ Tier='T1'; Objective='Another independent fix' } | Out-Null
-    Task Cancel fix-c | Out-Null
+    $feedback=Task Cancel fix-c | Out-String
+    Assert ($feedback -match 'TASK_CANCELLED:Example/fix-c tier=T1 status=CANCELLED; ownership released') 'Cancel did not summarize release'
     $env:CODEX_SESSION_ID='task-session-b'
-    Task Resume fix-b | Out-Null
+    $feedback=Task Resume fix-b | Out-String
+    Assert ($feedback -match 'TASK_RESUMED:Example/fix-b tier=T1 status=ACTIVE; ownership bound to current session') 'Resume lost the inherited tier or session result'
     Assert ((Read-AiSopTask $spec 'fix-b').ownerId -eq 'task-fix-b') 'Resume changed task identity'
     $env:CODEX_SESSION_ID='task-session-c'
     MustFail { Task Resume fix-b } 'Live session takeover must be explicit'
@@ -145,8 +151,17 @@ try {
     MustFail { Task Verify fix-d } 'Launch failure retained older green batch'
     Task Run fix-d @{ Kind='test'; Batch='regression'; Executable='pwsh'; Arguments=@('-NoProfile','-Command','exit 0'); Reason='Restore the fixture command after launch failure' } | Out-Null
     Task Complete fix-d | Out-Null
+    [IO.File]::WriteAllText((Join-Path $workspace 'src/deleted.txt'), 'old input')
     Task Start fix-e @{ Tier='T1'; Objective='Changing inputs during build' } | Out-Null
-    MustFail { Task Run fix-e @{ Kind='compile'; Executable='pwsh'; Arguments=@('-NoProfile','-Command',"[IO.File]::WriteAllText('src/input.txt','changed-during-build'); exit 0") } } 'Input mutation during execution was accepted'
+    $output=[Collections.Generic.List[string]]::new(); $failure=''
+    try {
+        Task Run fix-e @{ Kind='compile'; Executable='pwsh'; Arguments=@('-NoProfile','-Command',"[IO.File]::WriteAllText('src/input.txt','changed-during-build'); [IO.File]::WriteAllText('src/added.txt','new'); [IO.File]::Delete('src/deleted.txt')") } 6>&1 | ForEach-Object { $output.Add([string]$_) }
+    } catch { $failure=$_.Exception.Message }
+    Assert ($failure -match 'INPUTS_CHANGED_DURING_RUN') 'Input mutation during execution was accepted'
+    $last=(Read-AiSopTask $spec fix-e).verifications[-1]
+    foreach ($detail in @('INPUT_FILE_CHANGED:ADDED:"src/added.txt"','INPUT_FILE_CHANGED:DELETED:"src/deleted.txt"','INPUT_FILE_CHANGED:MODIFIED:"src/input.txt"')) {
+        Assert (($output -join "`n").Contains($detail) -and $last.diagnostic.Contains($detail)) "Run did not print and preserve $detail"
+    }
     MustFail { Task Complete fix-e } 'Unstable compile record allowed completion'
     Task Cancel fix-e | Out-Null
 

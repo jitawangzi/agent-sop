@@ -123,8 +123,9 @@ if ($Operation -eq 'Resume' -and -not $TaskId -and $owner -and $owner.status -eq
     if (-not $PSBoundParameters.ContainsKey('Tier') -and -not (Test-Path -LiteralPath $legacyState)) { throw 'LEGACY_TIER_REQUIRED: inspect original scope and explicitly select its tier before adoption.' }
     if ($Tier -notin @('T1','T2','T3')) { throw 'LEGACY_TIER_REQUIRED: original tier is not T1/T2/T3; select the intended tier explicitly for adoption' }
     if (-not $Objective) { $Objective = "Continue existing feature $Feature" }
-    & $ownerScript -Operation Transfer @ownerArgs -OwnerId $owner.ownerId -TaskId $TaskId -Tier $Tier -Objective $Objective -ConfirmTakeover:$ConfirmTakeover
+    & $ownerScript -Operation Transfer @ownerArgs -OwnerId $owner.ownerId -TaskId $TaskId -Tier $Tier -Objective $Objective -ConfirmTakeover:$ConfirmTakeover | Where-Object { $_ -cne $ownerPath -and $_ -cne 'VALID' }
     if ($LASTEXITCODE -ne 0) { throw 'TASK_ADOPTION_FAILED' }
+    Write-AiSopTaskOperationResult Resume $Feature $TaskId $Tier
     Write-AiSopFollowUpReminder $WorkspacePath $Feature
     exit 0
 }
@@ -142,17 +143,18 @@ if ($Operation -eq 'Resume') {
     if ($PSBoundParameters.ContainsKey('Tier') -and $Tier -cne $task.tier) { throw 'TASK_TIER_CHANGE_REQUIRES_EXPLICIT_OPERATION: Resume preserves the original tier; use ChangeTier after resuming' }
     if (@($task.verifications | Where-Object { $_.outcome -eq 'RUNNING' }).Count) { throw 'RUN_UNFINISHED: inspect Status and Recover after execution stops' }
     if ($task.status -eq 'PAUSED') {
-        & $ownerScript -Operation Claim @ownerArgs -Tier $task.tier -Objective $task.objective
+        & $ownerScript -Operation Claim @ownerArgs -Tier $task.tier -Objective $task.objective | Where-Object { $_ -cne $ownerPath -and $_ -cne 'VALID' }
     } elseif ($task.status -eq 'ACTIVE' -and $owner -and $owner.status -eq 'ACTIVE' -and $owner.taskId -ceq $TaskId) {
         $native = Get-AiSopInvocationSessionId $Agent
         $sameSession = $native -and ((Get-AiSopWorkflowSessionKey -Agent $Agent -NativeSessionId $native -WorkspacePath $WorkspacePath) -ceq $owner.sessionBinding.sessionKey)
         if ($sameSession) {
             $boundSession = Get-AiSopWorkflowSession -SessionKey $owner.sessionBinding.sessionKey -WorkspacePath $WorkspacePath
-            if ($boundSession.EffectiveStatus -in @('ENDED','EXPIRED')) { & $ownerScript -Operation RebindSession @ownerArgs }
-            else { & $ownerScript -Operation Validate @ownerArgs }
-        } else { & $ownerScript -Operation Transfer @ownerArgs -ConfirmTakeover:$ConfirmTakeover }
+            if ($boundSession.EffectiveStatus -in @('ENDED','EXPIRED')) { & $ownerScript -Operation RebindSession @ownerArgs | Where-Object { $_ -cne $ownerPath -and $_ -cne 'VALID' } }
+            else { & $ownerScript -Operation Validate @ownerArgs | Where-Object { $_ -cne $ownerPath -and $_ -cne 'VALID' } }
+        } else { & $ownerScript -Operation Transfer @ownerArgs -ConfirmTakeover:$ConfirmTakeover | Where-Object { $_ -cne $ownerPath -and $_ -cne 'VALID' } }
     } else { throw 'TASK_NOT_RESUMABLE: terminal task or missing local ownership; inspect/recover ownership before resuming.' }
     if ($LASTEXITCODE -ne 0) { throw 'TASK_RESUME_FAILED' }
+    Write-AiSopTaskOperationResult Resume $Feature $TaskId $task.tier
     Write-AiSopFollowUpReminder $WorkspacePath $Feature
     exit 0
 }
@@ -180,8 +182,11 @@ if ($Operation -eq 'ReviewImpact') {
     exit $LASTEXITCODE
 }
 if ($Operation -in @('Checkpoint','Suspend','Cancel','Complete')) {
-    & $ownerScript -Operation $Operation @ownerArgs
-    exit $LASTEXITCODE
+    if ($Operation -eq 'Checkpoint') { & $ownerScript -Operation $Operation @ownerArgs; exit $LASTEXITCODE }
+    & $ownerScript -Operation $Operation @ownerArgs | Where-Object { $_ -cne $ownerPath -and $_ -cne 'VALID' }
+    $operationExit=$LASTEXITCODE
+    if ($operationExit -eq 0) { Write-AiSopTaskOperationResult $Operation $Feature $TaskId $task.tier }
+    exit $operationExit
 }
 if ($Operation -eq 'Verify') {
     & (Join-Path $PSScriptRoot 'workflow-state.ps1') -Operation VerifyCompletion -Path (Resolve-AiSopTaskWorkflowStatePath $SpecDirectory) -TaskId $TaskId
@@ -440,11 +445,31 @@ try {
             $record.diagnostic+="; CLEANUP_EVIDENCE_SAVE_FAILED: $($_.Exception.Message)"
         }
     }
+    $inputDiagnostics=@()
     try {
         $after=Get-AiSopInputSnapshot $WorkspacePath
-        $record.inputsStable=($before.digest -ceq $after.digest) -and (-not $bindSpecs -or $specBefore -ceq (Get-AiSopTaskSpecDigest $SpecDirectory))
-        if (-not $record.inputsStable) { $record.outcome='FAILED'; if ($record.exitCode -eq 0) { $record.exitCode=1 } }
-    } catch { $record.inputsStable=$false; $record.outcome='FAILED'; $record.exitCode=1 }
+        $record.inputsStable=$before.digest -ceq $after.digest
+        $inputDiagnostics+=@(Get-AiSopRunInputDiagnostics $before $after)
+    } catch {
+        $record.inputsStable=$false
+        $inputDiagnostics+="INPUT_SNAPSHOT_UNAVAILABLE: $($_.Exception.Message)"
+    }
+    if ($bindSpecs) {
+        try {
+            if ($specBefore -cne (Get-AiSopTaskSpecDigest $SpecDirectory)) {
+                $record.inputsStable=$false
+                $inputDiagnostics+='SPEC_CHANGED_DURING_RUN: T3 requirement/design/test-definition changed'
+            }
+        } catch {
+            $record.inputsStable=$false
+            $inputDiagnostics+="SPEC_SNAPSHOT_UNAVAILABLE: $($_.Exception.Message)"
+        }
+    }
+    if (-not $record.inputsStable) { $record.outcome='FAILED'; if ($record.exitCode -eq 0) { $record.exitCode=1 } }
+    if ($inputDiagnostics.Count) {
+        $record.diagnostic=(@($record.diagnostic)+$inputDiagnostics | Where-Object { $_ }) -join '; '
+        foreach ($diagnostic in $inputDiagnostics) { Write-Host $diagnostic }
+    }
     $definitionProblems=@(Get-AiSopRunDefinitionProblems $record $WorkspacePath)
     if ($definitionProblems.Count) {
         $record.diagnostic=(@($record.diagnostic)+$definitionProblems | Where-Object { $_ }) -join '; '
@@ -463,5 +488,5 @@ try {
     Save-RunEvidence
 }
 Write-Output "RUN_RESULT:$($record.outcome) exit=$($record.exitCode) log=$logPath"
-if (-not $record.inputsStable) { throw 'INPUTS_CHANGED_DURING_RUN: inspect task verification diagnostics' }
+if (-not $record.inputsStable) { throw 'INPUTS_CHANGED_DURING_RUN: verification inputs/definitions changed or could not be read; see the diagnostics above and the saved run record' }
 exit $record.exitCode

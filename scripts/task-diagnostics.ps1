@@ -99,6 +99,36 @@ function Get-AiSopLegacyTaskSummary {
     return $result
 }
 
+function Write-AiSopTaskOperationResult {
+    param([ValidateSet('Resume','Suspend','Cancel','Complete')][string]$Operation,
+        [string]$Feature, [string]$TaskId, [string]$Tier)
+    # Called only after the owner transaction succeeds. Report that operation's
+    # result without a second authority lookup or a business-input scan.
+    $result=switch ($Operation) {
+        'Resume' { @{code='RESUMED';status='ACTIVE';ownership='bound to current session'} }
+        'Suspend' { @{code='SUSPENDED';status='PAUSED';ownership='released'} }
+        'Cancel' { @{code='CANCELLED';status='CANCELLED';ownership='released'} }
+        'Complete' { @{code='COMPLETED';status='DONE';ownership='released'} }
+    }
+    Write-Output "TASK_$($result.code):$Feature/$TaskId tier=$Tier status=$($result.status); ownership $($result.ownership)"
+}
+
+function Get-AiSopRunInputDiagnostics {
+    param($Before, $After)
+    # Use the snapshots already captured by Run; never rescan for presentation.
+    if ($Before.digest -ceq $After.digest) { return }
+    if ($Before.algorithm -cne $After.algorithm -or [string]$Before.policyDigest -cne [string]$After.policyDigest) {
+        'INPUT_POLICY_CHANGED_DURING_RUN: input selection policy or fingerprint algorithm changed'
+    }
+    $changed=@(Get-AiSopChangedInputs $Before $After)
+    foreach ($path in @($changed | Select-Object -First 20)) {
+        $kind=if (-not $Before.files.ContainsKey($path)) { 'ADDED' } elseif (-not $After.files.ContainsKey($path)) { 'DELETED' } else { 'MODIFIED' }
+        "INPUT_FILE_CHANGED:${kind}:$($path | ConvertTo-Json -Compress)"
+    }
+    if ($changed.Count -gt 20) { "INPUT_CHANGES_TRUNCATED: showing 20 of $($changed.Count) changed paths" }
+    if (-not $changed.Count) { 'INPUT_DIGEST_CHANGED_DURING_RUN: no file-content differences; inspect input policy/algorithm' }
+}
+
 function Write-AiSopTaskStartSummary {
     param($Task)
     $origin=$Task.startInputs

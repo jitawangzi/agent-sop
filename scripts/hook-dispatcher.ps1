@@ -201,7 +201,7 @@ function ConvertTo-AiSopDispatcherEnvelope {
                 permission = $nativeDecision
             }
             if ($Decision -eq "DENY") {
-                $result.user_message = "AI SOP Guard blocked this operation."
+                $result.user_message = $reason
                 $result.agent_message = $reason
             }
             return ConvertTo-Json -Compress -InputObject $result
@@ -1173,7 +1173,11 @@ function Add-AiSopHarnessSessionContext {
     } elseif ($Result.Decision -eq 'DENY' -and $EventHint -eq 'PRE_TOOL_USE') {
         switch ($Result.Agent) {
             { $_ -in @('CLAUDE_CODE','CODEX') } { $envelope.hookSpecificOutput.permissionDecisionReason+=" $message" }
-            'CURSOR' { $envelope.agent_message+=" $message" }
+            'CURSOR' {
+                $envelope.agent_message+=" $message"
+                # 部分客户端只向模型展示 user_message，两个通道都提供正常启动入口。
+                $envelope.user_message=$envelope.agent_message
+            }
             default { $envelope.reason+=" $message" }
         }
     }

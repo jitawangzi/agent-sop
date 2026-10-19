@@ -71,10 +71,35 @@ try {
   const edit = cursor('Write', { file_path: file, content: '修改内容' });
   const denied = await hook('.cursor', 'PRE_TOOL_USE', edit, true);
   assert.equal(denied.value.permission, 'deny'); assert.match(denied.value.agent_message, /ACTIVE/);
+  assert.equal(denied.value.user_message, denied.value.agent_message);
+  assert.match(denied.value.user_message, /AI_SOP_GUARD_SESSION_BINDING_INVALID/);
+  // 只使用客户端实际展示的通道取回会话，再验证正常启动入口。
+  const visibleSession = /-Agent CURSOR -NativeSessionId '([^']+)'/.exec(denied.value.user_message)?.[1];
+  assert.equal(visibleSession, session);
   const imported = await hook('.claude', 'PRE_TOOL_USE', edit);
   assert.equal(imported.value.permission, 'deny'); assert.equal(imported.value.agent_message, denied.value.agent_message);
+  assert.equal(imported.value.user_message, denied.value.user_message);
   const read = await hook('.cursor', 'PRE_TOOL_USE', cursor('Read', { file_path: file }, { cwd: '' }));
   assert.equal(read.value.permission, 'allow', JSON.stringify(read));
+  for (const input of [
+    { pattern: '', file_path: workspace, glob: '**/*.txt', output_mode: 'files_with_matches' },
+    { pattern: 'BEFORE', file_path: file, output_mode: 'content' },
+    { pattern: 'BEFORE', path: file }
+  ]) {
+    const search = await hook('.cursor', 'PRE_TOOL_USE', cursor('Grep', input));
+    assert.equal(search.value.permission, 'allow', JSON.stringify(search));
+  }
+  for (const input of [
+    { pattern: 'BEFORE', file_path: root },
+    { pattern: 'BEFORE', file_path: file, path: file },
+    { pattern: 'BEFORE', file_path: 42 },
+    { pattern: null, file_path: file },
+    { pattern: 'BEFORE', file_path: file, command: 'unrecognized' }
+  ]) {
+    const search = await hook('.cursor', 'PRE_TOOL_USE', cursor('Grep', input));
+    assert.equal(search.value.permission, 'deny', JSON.stringify(search));
+  }
+  assert.equal((await hook('.cursor', 'PRE_TOOL_USE', cursor('UnrecognizedSearch', { pattern: '', file_path: file }))).value.permission, 'deny');
   const conflict = await hook('.cursor', 'PRE_TOOL_USE', cursor('Read', { file_path: file }, { session_id: 'foreign-session' }));
   assert.equal(conflict.value.permission, 'deny');
   const outside = await hook('.cursor', 'PRE_TOOL_USE', cursor('Read', { file_path: file }, { workspace_roots: [root] }));
@@ -86,7 +111,7 @@ try {
   const ag = await hook('.agents', 'PRE_TOOL_USE', { conversationId: 'ag-native-fixture', workspacePaths: [workspace],
     stepIdx: 1, toolCall: { name: 'replace_file_content', args: { TargetFile: file, TargetContent: 'BEFORE', ReplacementContent: '修改' } } });
   assert.equal(ag.value.decision, 'deny'); assert.match(ag.value.reason, /写入前/);
-  const bootstrapCommand = "pwsh -NoProfile -File './.ai-sop/scripts/workflow-task.ps1' -Operation Start -Feature Probe -TaskId process-test -Agent CURSOR -NativeSessionId '" + session + "' -Objective '真实进程验收'";
+  const bootstrapCommand = "pwsh -NoProfile -File './.ai-sop/scripts/workflow-task.ps1' -Operation Start -Feature Probe -TaskId process-test -Agent CURSOR -NativeSessionId '" + visibleSession + "' -Objective '真实进程验收'";
   const bootstrap = await hook('.cursor', 'PRE_TOOL_USE', cursor('Shell', { command: bootstrapCommand, cwd: '', timeout: 30000 }, { cwd: '' }));
   assert.equal(bootstrap.value.permission, 'allow', JSON.stringify(bootstrap));
   await task('Start');

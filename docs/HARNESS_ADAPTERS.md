@@ -16,6 +16,8 @@
 
 Hook 注入当前会话说明。Agent 在 Task 命令中携带说明中的 `-Agent` 和 `-NativeSessionId`，避免 CLI 子进程被识别为新会话。该参数仅在当前命令及其子进程生效，结束后恢复；引导检查拒绝与原生 Hook 会话不一致的参数。Pi 同时把原生 session id 传入子进程环境。
 
+Cursor 的拒绝结果在 user_message 和 agent_message 两个通道同时提供原因及当前会话参数；即使客户端未展示 SessionStart 上下文，也可按拒绝说明正常 Start/Resume，无需停用防护或猜测会话 ID。原生 Grep 的 file_path 映射为统一搜索路径，继续执行工作区路径检查；同时传入 path 和 file_path 时拒绝。空正则是合法的只读搜索，不因此要求启动任务。
+
 先 Start/Resume，成功后回显实际档位与执行要求，再修改。未指定默认 T2；新 T1/T3 仍须 UserRequest。讨论与原生只读工具不需要任务。Shell 仍按已有保守策略处理，不能因为名字叫“测试”或“读取”便自动放行任意命令。无法识别的工具拒绝并保留诊断，不猜测它是只读。
 
 ## 验证

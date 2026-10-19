@@ -1396,7 +1396,7 @@ function Test-AiSopToolArgumentProfile {
             )
             if (
                 $patternFields.Count -ne 1 -or
-                -not (Test-StringValue $Arguments[$patternFields[0]])
+                -not (Test-StringValue $Arguments[$patternFields[0]] -AllowEmpty)
             ) {
                 return $false
             }
@@ -1954,9 +1954,20 @@ function Get-AiSopToolPayload {
         "COPILOT_CLAUDE_COMPAT",
         "CURSOR_PRE_TOOL_USE"
     )) {
+        $arguments = $Payload.tool_input
+        if ($NativeShape -eq 'CURSOR_PRE_TOOL_USE' -and $Payload.tool_name -ceq 'Grep' -and
+            (Test-MapHasKey $arguments 'file_path')) {
+            # 原生 Cursor 搜索使用 file_path；进入统一路径校验前转换，拒绝歧义双参数。
+            if (Test-MapHasKey $arguments 'path') { Throw-AiSopHookError 'TOOL_ARGS_INVALID' }
+            $arguments = [ordered]@{}
+            foreach ($key in $Payload.tool_input.Keys) {
+                if ($key -ceq 'file_path') { $arguments.path=$Payload.tool_input[$key] }
+                else { $arguments[$key]=$Payload.tool_input[$key] }
+            }
+        }
         return [pscustomobject]@{
             ToolName = [string]$Payload.tool_name
-            Arguments = $Payload.tool_input
+            Arguments = $arguments
         }
     }
     if ($NativeShape -eq "COPILOT_GITHUB_NATIVE") {

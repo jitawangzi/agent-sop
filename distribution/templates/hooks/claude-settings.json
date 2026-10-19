@@ -7,7 +7,7 @@
           {
             "type": "command",
             "command": "pwsh -NoProfile -File ./.claude/hook-wrapper.ps1 -EventHint SESSION_START",
-            "timeout": 10
+            "timeout": 15
           }
         ]
       }
@@ -19,7 +19,7 @@
           {
             "type": "command",
             "command": "pwsh -NoProfile -File ./.claude/hook-wrapper.ps1 -EventHint SESSION_END",
-            "timeout": 10
+            "timeout": 15
           }
         ]
       }
@@ -31,7 +31,8 @@
           {
             "type": "command",
             "command": "pwsh -NoProfile -File ./.claude/hook-wrapper.ps1 -EventHint PRE_TOOL_USE",
-            "timeout": 10
+            "timeout": 15,
+            "onFailure": "block"
           }
         ]
       }

@@ -58,12 +58,13 @@ Invoke-Test "Cursor CLI -> STRICT" {
     Assert-Equal "STRICT" $r.decision "decision"
 }
 
-Invoke-Test "Codex App -> STRICT without claiming hook support" {
+Invoke-Test "Codex App -> STRICT with documented hook adapter" {
     $r = New-AiSopHarnessCapabilityRecord -A "CODEX" -R "APP" -Ver "desktop" -OsVal "Windows" -Pwsh "7.4"
     Assert-Equal "STRICT" $r.decision "decision"
     Assert-True ($r.capabilities.subagent -eq $true) "subagent true"
     Assert-True ($r.capabilities.evidence -eq $true) "evidence true"
-    Assert-True ($r.capabilities.blockingHook -eq $false) "blockingHook must remain false"
+    Assert-True ($r.capabilities.blockingHook -eq $true) "documented blockingHook capability"
+    Assert-True ($r.evidence.note -match 'not live certification') "capability is not client certification"
 }
 
 Invoke-Test "Copilot CLI -> STRICT (subagent+evidence confirmed for T3 review)" {

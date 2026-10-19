@@ -1006,6 +1006,71 @@
       "toolClass": "SAFE_NON_EDIT",
       "argumentProfile": "ANY_OBJECT",
       "targetExtractor": "NONE"
+    },
+    {
+      "match": {
+        "value": "PiRead",
+        "kind": "EXACT"
+      },
+      "canonicalName": "PI_READ_ONLY",
+      "toolClass": "SAFE_NON_EDIT",
+      "argumentProfile": "ANY_OBJECT",
+      "nativeShapes": [
+        "CLAUDE_PRE_TOOL_USE"
+      ],
+      "targetExtractor": "NONE"
+    },
+    {
+      "match": {
+        "value": "PiGrep",
+        "kind": "EXACT"
+      },
+      "canonicalName": "PI_READ_ONLY",
+      "toolClass": "SAFE_NON_EDIT",
+      "argumentProfile": "ANY_OBJECT",
+      "nativeShapes": [
+        "CLAUDE_PRE_TOOL_USE"
+      ],
+      "targetExtractor": "NONE"
+    },
+    {
+      "match": {
+        "value": "PiFind",
+        "kind": "EXACT"
+      },
+      "canonicalName": "PI_READ_ONLY",
+      "toolClass": "SAFE_NON_EDIT",
+      "argumentProfile": "ANY_OBJECT",
+      "nativeShapes": [
+        "CLAUDE_PRE_TOOL_USE"
+      ],
+      "targetExtractor": "NONE"
+    },
+    {
+      "match": {
+        "value": "PiLs",
+        "kind": "EXACT"
+      },
+      "canonicalName": "PI_READ_ONLY",
+      "toolClass": "SAFE_NON_EDIT",
+      "argumentProfile": "ANY_OBJECT",
+      "nativeShapes": [
+        "CLAUDE_PRE_TOOL_USE"
+      ],
+      "targetExtractor": "NONE"
+    },
+    {
+      "nativeShapes": [
+        "CLAUDE_PRE_TOOL_USE"
+      ],
+      "argumentProfile": "ANY_OBJECT",
+      "toolClass": "SAFE_NON_EDIT",
+      "canonicalName": "CODEX_READ_ONLY",
+      "targetExtractor": "NONE",
+      "match": {
+        "kind": "EXACT",
+        "value": "CodexReadOnly"
+      }
     }
   ]
 }

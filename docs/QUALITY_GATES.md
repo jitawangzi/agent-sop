@@ -12,7 +12,7 @@ Status 默认仅对未完成任务检查当前输入；DONE/CANCELLED 即使有�
 
 **写前与档位边界**：本机制只应用于已安装 SOP 的宿主。讨论、解释、只读审核不需要任务或档位；修改前先确定新任务/续做，Start/Resume 成功并说明实际档位后再写。新任务默认 T2，T1/T3 Start 缺少 UserRequest 则拒绝创建；选择记录随任务事务保存，改档继续使用原有 tierHistory。旧任务续做不追溯补造人工依据，子 Agent 继承 controller 的任务与档位。原话由 Agent 记录，不能据此证明人工身份。
 
-已接入 Hook 的 Guard 对识别出的工作区 FILE_EDIT 核对 ACTIVE task、合法档位、owner/session 绑定和物理工作区身份，不仅检查有无 owner。无 taskId 的历史归属需 Resume 收编；安全读取和专用治理命令保留既有路由。正常 T1 不等于关闭 Guard；人工紧急停用单独显示 GUARD_DISABLED / GUARD_DISABLED_FOR_FEATURE，不构成合规 T1 或完成证据。该保障依赖真实 Hook 接线及调用识别，当前 Codex blockingHook=false，不承诺其写前阻断，也不防御任意 shell 或同权限直接篡改。
+已接入 Hook 的 Guard 对识别出的工作区 FILE_EDIT 核对 ACTIVE task、合法档位、owner/session 绑定和物理工作区身份，不仅检查有无 owner。无 taskId 的历史归属需 Resume 收编；安全读取和专用治理命令保留既有路由。正常 T1 不等于关闭 Guard；人工紧急停用单独显示 GUARD_DISABLED / GUARD_DISABLED_FOR_FEATURE，不构成合规 T1 或完成证据。该保障依赖真实 Hook 接线及调用识别，五端适配的启用条件见 HARNESS_ADAPTERS.md；不防御任意 shell 或同权限直接篡改，也不能将配置存在当作客户端认证。
 
 Start/Resume/ChangeTier 从登记结果回显档位、来源和义务，Agent 首次修改前转告用户；机器不验证聊天内容是否真实展示。Complete 核对本档交付证据，但不强制拦住结束回复，暂停和未完成报告仍可正常返回。文档同步的语义质量继续由 Agent 核实，不新增人工确认或 T1/T2 审核环节。
 

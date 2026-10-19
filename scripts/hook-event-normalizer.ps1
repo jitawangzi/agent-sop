@@ -3148,6 +3148,51 @@ function Get-AiSopHookSessionKey {
     )
 }
 
+function ConvertFrom-AiSopHarnessPayload {
+    param([string]$RawPayload, [ValidateSet('CODEX','PI')][string]$Agent, [string]$EventHint)
+    $payload=ConvertFrom-AiSopJson $RawPayload
+    if ($payload -isnot [System.Collections.IDictionary] -or
+        -not (Test-RequiredStringFields $payload @('session_id','cwd','hook_event_name'))) { Throw-AiSopHookError 'PAYLOAD_SHAPE_INVALID' }
+    $nativeEvent=@{SESSION_START='SessionStart';SESSION_END='SessionEnd';PRE_TOOL_USE='PreToolUse'}[$EventHint]
+    if (-not $nativeEvent -or $payload.hook_event_name -cne $nativeEvent) { Throw-AiSopHookError 'EVENT_HINT_MISMATCH' }
+    # 只翻译已知客户端协议；后续仍执行原有路径、参数和工具策略检查。
+    $out=[ordered]@{session_id=$payload.session_id;cwd=$payload.cwd;hook_event_name=$nativeEvent}
+    if ($EventHint -eq 'SESSION_START') { $out.source=if ($payload.source) { $payload.source } else { 'startup' } }
+    elseif ($EventHint -eq 'SESSION_END') { $out.reason='other' }
+    else {
+        if (-not (Test-RequiredStringFields $payload @('tool_name','tool_use_id')) -or
+            $payload.tool_input -isnot [System.Collections.IDictionary]) { Throw-AiSopHookError 'PAYLOAD_SHAPE_INVALID' }
+        $name=[string]$payload.tool_name
+        $args=$payload.tool_input
+        if ($Agent -eq 'CODEX') {
+            if ($name -cin @('update_plan','request_user_input','request_user_input_async','view_image','list_mcp_resources','list_mcp_resource_templates','read_mcp_resource','tool_search')) { $name='CodexReadOnly' }
+            elseif ($name -cin @('spawn_agent','send_message','resume_agent','close_agent','wait_agent')) { $name='Agent' }
+        }
+        if ($Agent -eq 'CODEX' -and $name -ceq 'apply_patch') {
+            if (-not (Test-OnlyAllowedFields $args @('command','description')) -or
+                -not (Test-RequiredStringFields $args @('command'))) { Throw-AiSopHookError 'TOOL_ARGS_INVALID' }
+            $name='ApplyPatch'; $args=@{patch=$args.command}
+        }
+        if ($Agent -eq 'PI') {
+            switch -CaseSensitive ($name) {
+                'read' { $name='PiRead' }
+                'write' { $name='Write' }
+                'bash' { $name='Bash' }
+                'grep' { $name='PiGrep' }
+                'find' { $name='PiFind' }
+                'ls' { $name='PiLs' }
+                'edit' {
+                    if (-not (Test-OnlyAllowedFields $args @('path','oldText','newText')) -or
+                        $args.oldText -isnot [string] -or $args.newText -isnot [string]) { Throw-AiSopHookError 'TOOL_ARGS_INVALID' }
+                    $name='Edit'; $args=@{path=$args.path;old_string=$args.oldText;new_string=$args.newText}
+                }
+            }
+        }
+        $out.tool_name=$name; $out.tool_input=$args; $out.tool_use_id=$payload.tool_use_id
+    }
+    return ($out | ConvertTo-Json -Compress -Depth 100)
+}
+
 function ConvertTo-AiSopHookEvent {
     [CmdletBinding()]
     param(
@@ -3172,7 +3217,8 @@ function ConvertTo-AiSopHookEvent {
 
         [Nullable[DateTimeOffset]]$DeadlineUtc,
 
-        [string]$ToolPolicyPath = $script:HookToolPolicyPath
+        [string]$ToolPolicyPath = $script:HookToolPolicyPath,
+        [ValidateSet('', 'CODEX', 'PI')][string]$AgentOverride = ''
     )
 
     try {
@@ -3186,6 +3232,10 @@ function ConvertTo-AiSopHookEvent {
 
     $shape = Resolve-AiSopNativeShape `
         -Payload $payload -EventHint $EventHint
+    if ($AgentOverride) {
+        if ($shape.Agent -cne 'CLAUDE_CODE') { Throw-AiSopHookError 'PAYLOAD_SHAPE_INVALID' }
+        $shape.Agent=$AgentOverride
+    }
     $workspace = Get-AiSopWorkspaceContext `
         -Payload $payload `
         -NativeShape $shape.NativeShape `

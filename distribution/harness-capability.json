@@ -1,6 +1,6 @@
 {
   "schemaVersion": "1.0",
-  "generatedAt": "2026-08-21T06:11:38.5475765+00:00",
+  "generatedAt": "2026-08-21T14:11:38.5475765+08:00",
   "releaseDecision": "MIXED",
   "harnesses": [
     {
@@ -26,7 +26,7 @@
         "subagentMechanism": "native subagent_type",
         "note": ""
       },
-      "probedAt": "2026-08-21T06:11:38.4983637+00:00"
+      "probedAt": "2026-08-21T14:11:38.4983637+08:00"
     },
     {
       "agent": "COPILOT",
@@ -51,7 +51,7 @@
         "subagentMechanism": "native",
         "note": "pauseResume pending live confirmation (P3); subagent+evidence confirmed for T3 review"
       },
-      "probedAt": "2026-08-21T06:11:38.5198445+00:00"
+      "probedAt": "2026-08-21T14:11:38.5198445+08:00"
     },
     {
       "agent": "ANTIGRAVITY",
@@ -76,7 +76,7 @@
         "subagentMechanism": "invoke_subagent (native)",
         "note": "pauseResume pending live confirmation (P3); subagent+evidence confirmed for T3 review"
       },
-      "probedAt": "2026-08-21T06:11:38.5204497+00:00"
+      "probedAt": "2026-08-21T14:11:38.5204497+08:00"
     },
     {
       "agent": "CURSOR",
@@ -101,7 +101,7 @@
         "subagentMechanism": "native",
         "note": ""
       },
-      "probedAt": "2026-08-21T06:11:38.5208978+00:00"
+      "probedAt": "2026-08-21T14:11:38.5208978+08:00"
     },
     {
       "agent": "CODEX",
@@ -112,7 +112,7 @@
       "capabilities": {
         "skillDiscovery": true,
         "subagent": true,
-        "blockingHook": false,
+        "blockingHook": true,
         "workspace": true,
         "pauseResume": true,
         "evidence": true
@@ -121,12 +121,12 @@
       "decisionReason": "all critical capabilities satisfied",
       "evidence": {
         "skillPath": ".agents/skills",
-        "hookConfig": "none (project hook adapter unavailable)",
+        "hookConfig": ".codex/hooks.json PreToolUse",
         "sessionMechanism": "CODEX_SESSION_ID",
         "subagentMechanism": "collaboration subagent",
-        "note": "No blocking project hook; subagent+evidence satisfy T3 admission"
+        "note": "Documented capability; requires supported client and hook trust. Not live certification."
       },
-      "probedAt": "2026-09-12T07:47:19.9922751+00:00"
+      "probedAt": "2026-09-12T15:47:19.9922751+08:00"
     },
     {
       "agent": "PI",
@@ -146,12 +146,12 @@
       "decisionReason": "missing critical: subagent, evidence",
       "evidence": {
         "skillPath": ".agents/skills, .pi/skills",
-        "hookConfig": "tool_call extension block",
+        "hookConfig": ".pi/extensions/ai-sop.js tool_call",
         "sessionMechanism": "session_start/session_before_switch",
         "subagentMechanism": "none (core)",
         "note": "No native subagent: independent review (T3) not available; T2 only"
       },
-      "probedAt": "2026-08-21T06:11:38.5213552+00:00"
+      "probedAt": "2026-08-21T14:11:38.5213552+08:00"
     }
   ]
 }

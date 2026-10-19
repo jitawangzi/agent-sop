@@ -128,17 +128,17 @@ function Get-AiSopKnownCapability {
                 capabilities = [ordered]@{
                     skillDiscovery = $true   # .agents/skills
                     subagent       = $true   # collaboration subagents
-                    blockingHook   = $false  # no project hook adapter yet
+                    blockingHook   = $true   # 原生 PreToolUse；必须在客户端信任并启用
                     workspace      = $true
                     pauseResume    = $true   # persistent Codex task/thread
                     evidence       = $true   # independent subagent task + transcript
                 }
                 evidence = [ordered]@{
                     skillPath = ".agents/skills"
-                    hookConfig = "none (project hook adapter unavailable)"
+                    hookConfig = ".codex/hooks.json PreToolUse"
                     sessionMechanism = "CODEX_SESSION_ID"
                     subagentMechanism = "collaboration subagent"
-                    note = "No blocking project hook; subagent+evidence satisfy T3 admission"
+                    note = "Documented hook capability; requires supported client version and trusted hooks; not live certification"
                 }
             }
         }
@@ -155,7 +155,7 @@ function Get-AiSopKnownCapability {
                 }
                 evidence = [ordered]@{
                     skillPath = ".agents/skills, .pi/skills"
-                    hookConfig = "tool_call extension block"
+                    hookConfig = ".pi/extensions/ai-sop.js tool_call"
                     sessionMechanism = "session_start/session_before_switch"
                     subagentMechanism = "none (core)"
                     note = "No native subagent: independent review (T3) not available; T2 only"

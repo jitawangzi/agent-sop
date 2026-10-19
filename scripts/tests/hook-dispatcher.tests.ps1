@@ -373,7 +373,8 @@ try {
                 foreach ($code in @('OWNER_REQUIRED','WORKFLOW_TRANSACTION_INDETERMINATE','UNKNOWN_REASON')) {
                     $envelope = ConvertTo-AiSopDispatcherEnvelope -Agent $agent -EventHint PRE_TOOL_USE -Decision DENY -ReasonCode $code | ConvertFrom-Json -AsHashtable
                     $reason = switch ($agent) {
-                        'CLAUDE_CODE' { Assert-Equal $envelope.hookSpecificOutput.permissionDecision 'deny' "$agent decision"; $envelope.hookSpecificOutput.permissionDecisionReason }
+                        { $_ -in @('CLAUDE_CODE','CODEX') } { Assert-Equal $envelope.hookSpecificOutput.permissionDecision 'deny' "$agent decision"; $envelope.hookSpecificOutput.permissionDecisionReason }
+                        'PI' { Assert-Equal $envelope.block $true "$agent decision"; $envelope.reason }
                         'COPILOT' { Assert-Equal $envelope.permissionDecision 'deny' "$agent decision"; $envelope.permissionDecisionReason }
                         'CURSOR' { Assert-Equal $envelope.permission 'deny' "$agent decision"; $envelope.agent_message }
                         default { Assert-Equal $envelope.decision 'deny' "$agent decision"; $envelope.reason }
@@ -391,7 +392,9 @@ try {
                     }
                 }
                 $allowed = ConvertTo-AiSopDispatcherEnvelope -Agent $agent -EventHint PRE_TOOL_USE -Decision ALLOW -ReasonCode WORKFLOW_TRANSACTION_INDETERMINATE
-                Assert-True ($allowed -match '"allow"' -and $allowed -notmatch 'reason|agent_message|permissionDecisionReason') "$agent ALLOW must not emit recovery guidance"
+                if ($agent -eq 'PI') { Assert-Equal ($allowed | ConvertFrom-Json).block $false 'Pi 原生放行协议' }
+                else { Assert-True ($allowed -match '"allow"') "$agent 原生放行协议" }
+                Assert-True ($allowed -notmatch 'reason|agent_message|permissionDecisionReason') "$agent ALLOW must not emit recovery guidance"
                 Assert-Equal (ConvertTo-AiSopDispatcherEnvelope -Agent $agent -EventHint STOP -Decision ALLOW) '{}' "$agent lifecycle ALLOW stays empty"
             }
         }
@@ -1083,13 +1086,10 @@ try {
         ) "Hook projection does not configure a >=5s timeout: $configPath"
     }
     $cursorTemplate = [System.IO.File]::ReadAllText($configPaths[2])
-    # failClosed may be false by design: the anti-self-lock wrapper degrades to ALLOW
-    # when the dispatcher submodule is uninitialized, and Cursor mirrors that by not
-    # failing closed (so a missing wrapper does not block all tool calls). The
-    # contract is that the field is present and consistent, not that it is true.
+    # 写前入口的超时或异常不能放行；生命周期不要求同样策略。
     Assert-True (
-        $cursorTemplate -match '"failClosed"\s*:\s*(true|false)'
-    ) "Cursor projection is missing the failClosed field."
+        ($cursorTemplate | ConvertFrom-Json).hooks.preToolUse[0].failClosed -eq $true
+    ) "Cursor preToolUse must fail closed."
 
     $verifySource = [System.IO.File]::ReadAllText($VerifyScript)
     Assert-True (

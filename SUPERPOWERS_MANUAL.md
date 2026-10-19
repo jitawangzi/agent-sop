@@ -447,7 +447,7 @@ pwsh -NoProfile -File .\.ai-sop\scripts\workflow-owner.ps1 -Operation Complete `
 
 正常 T1 同样需要 Start/Resume、验证与 Complete，不通过停用防护执行。`AI_SOP_SKIP_OWNER_GUARD=1`（兼容旧名 `SERVER_NEW_SKIP_OWNER_GUARD`）、`.ai-sop/.guard-disabled` 和一次性 `.guard-token.json` 仅用于人工明确要求的紧急维护；Agent 不得自行用来处理小改、赶工或绕过本任务失败。启用时输出 GUARD_DISABLED 或 GUARD_DISABLED_FOR_FEATURE，明确表示防护停用，不能作为 T1 合规或完成证据；维护后恢复防护。
 
-该检查仅覆盖实际接入 Hook 且成功识别的调用，不声称能识别任意 shell 写入；配置文件存在不等于工具执行了 Hook。当前 Codex 能力声明为 blockingHook=false，不能承诺写前机器阻断；仍须执行任务入口、档位说明与完成检查。人工原话和同步结论是可追溯自报，不证明业务语义正确或防御同权限篡改。
+该检查仅覆盖实际接入 Hook 且成功识别的调用，不声称能识别任意 shell 写入；配置文件存在不等于工具执行了 Hook。Codex 已有原生 Hook 适配；须使用支持 Hook 的客户端并审核信任，才能执行写前检查。配置、安装校验与真实客户端认证是三个不同层次，详见 docs/HARNESS_ADAPTERS.md。人工原话和同步结论是可追溯自报，不证明业务语义正确或防御同权限篡改。
 
 ## 多功能并行开发
 

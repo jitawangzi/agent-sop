@@ -8,6 +8,7 @@ function Get-AiSopTaskEntryCommand {
         [string]$WorkspacePath,
         [string]$Cwd,
         [string]$Agent,
+        [string]$NativeSessionId,
         [System.Collections.IDictionary]$ToolArguments
     )
     if ([string]::IsNullOrWhiteSpace($CommandText)) { return $null }
@@ -59,7 +60,7 @@ function Get-AiSopTaskEntryCommand {
     } elseif (-not $scriptPath.Equals($engineEntry,$comparison)) { return $null }
 
     $switches=@('Json','IncludeHistory','RecheckHistory','CaptureBaseline','ConfirmTakeover','ForceRecovery','QuarantineInvalidEvidence')
-    $values=@('Operation','Feature','TaskId','Tier','Objective','Agent','WorkspacePath','SpecDirectory','NextAction','Notes','UserRequest','Reason','LogTailLines','OutputFormat')
+    $values=@('Operation','Feature','TaskId','Tier','Objective','Agent','NativeSessionId','WorkspacePath','SpecDirectory','NextAction','Notes','UserRequest','Reason','LogTailLines','OutputFormat')
     $parameters=@{}
     while ($index -lt $parts.Count) {
         $parameter=$parts[$index]
@@ -80,6 +81,7 @@ function Get-AiSopTaskEntryCommand {
     $operation=if ($parameters.ContainsKey('Operation')) { $parameters.Operation } elseif ($scriptPath.Equals($rootEntry,$comparison)) { 'Discover' } else { '' }
     if ($operation -notin ($readOperations+$writeOperations)) { return $null }
     if ($parameters.ContainsKey('Agent') -and $parameters.Agent -cne $Agent) { return $null }
+    if ($parameters.ContainsKey('NativeSessionId') -and (-not $NativeSessionId -or $parameters.NativeSessionId -cne $NativeSessionId)) { return $null }
     if ($operation -in $writeOperations -and -not $parameters.ContainsKey('Agent')) { return $null }
     if ($parameters.ContainsKey('Tier') -and $parameters.Tier -notin @('T1','T2','T3')) { return $null }
     if ($parameters.ContainsKey('WorkspacePath')) {

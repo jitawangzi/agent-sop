@@ -257,7 +257,7 @@ pwsh -NoProfile -File .\.ai-sop\scripts\workflow-state.ps1 -Operation ValidateTe
 
 正常 T1 仍需任务登记及本档验证。`.ai-sop/.guard-disabled`、一次性 `.guard-token.json` 和 `AI_SOP_SKIP_OWNER_GUARD=1`（兼容旧名 `SERVER_NEW_SKIP_OWNER_GUARD`）仅用于人工明确的紧急维护，输出 GUARD_DISABLED / GUARD_DISABLED_FOR_FEATURE；Agent 不得自行以小改或赶工为由启用，停用不代表 T1 合规或任务完成。
 
-写前阻断取决于工具真实执行 Hook 及调用识别，配置文件存在不能证明接入成功，也不保证识别任意 shell 写入。当前 Codex blockingHook=false；它仍须遵守任务入口、档位回显及 Complete。详见操作手册「任务写前 Guard」。
+写前阻断取决于工具真实执行 Hook 及调用识别，配置文件存在不能证明接入成功，也不保证识别任意 shell 写入。Codex 的原生 Hook 需客户端审核信任；所有客户端仍须遵守任务入口、档位回显及 Complete。详见操作手册「任务写前 Guard」。
 
 ## 归属完成
 
@@ -265,4 +265,4 @@ pwsh -NoProfile -File .\.ai-sop\scripts\workflow-state.ps1 -Operation ValidateTe
 
 仅没有 taskId 的旧归属使用 ledger 中的 owner ID 调用 `workflow-owner.ps1 -Operation Validate` / Complete；不得把旧命令用作新任务的捷径。事务不确定时保留 journal 与目标文件，Preflight 只做诊断，不通过删除日志或强制释放绕过。
 
-各 harness 统一 `SUPERPOWERS` 归属，`agent` 字段区分实际工具（CLAUDE_CODE/COPILOT/ANTIGRAVITY/CURSOR/CODEX/PI）。`CUSTOM_SKILLS`/`GEMINI` 作为兼容身份保留（供历史运行恢复等场景）。Codex 的直接 Claim 使用 `CODEX_SESSION_ID` 注册 session；PI 的 Claim 经 `pi-adapter/bootstrap-pi-session.ps1` 注册 session。
+各 harness 统一 `SUPERPOWERS` 归属，`agent` 字段区分实际工具（CLAUDE_CODE/COPILOT/ANTIGRAVITY/CURSOR/CODEX/PI）。`CUSTOM_SKILLS`/`GEMINI` 作为兼容身份保留（供历史运行恢复等场景）。Codex 的直接 Claim 使用 `CODEX_SESSION_ID` 注册 session；Pi 通过项目扩展注册原生会话，旧 bootstrap 仅保留兼容用途。

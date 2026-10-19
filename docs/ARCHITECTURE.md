@@ -328,14 +328,14 @@ AI 编码工具百花齐放（Claude Code、Copilot、Cursor、Antigravity、Pi�
 
 ### Owner/Session（.ai-sop/scripts/workflow-owner.ps1 等）
 - 功能归属：Claim/Validate/Complete，SUPERPOWERS + 六端（CLAUDE_CODE/COPILOT/ANTIGRAVITY/CURSOR/CODEX/PI）。
-- Owner 1.1 需 session + AST 校验的 command grant；Codex 直接使用 `CODEX_SESSION_ID`，PI 经 `pi-adapter/bootstrap-pi-session.ps1` 注册。
+- Owner 1.1 需 session + AST 校验的 command grant；Codex 直接使用 `CODEX_SESSION_ID`，Pi 通过项目扩展自动注册；旧 bootstrap 仅保留兼容用途。
 - 双人工批准（requirement + design）+ SHA 锁定 + 篡改检测。
 
 ### Guard（.ai-sop/scripts/guard-production-edit.ps1）
 - 已接入 Hook 的工作区 FILE_EDIT 需 session-bound owner、关联的 ACTIVE task 及合法 T1/T2/T3；工作区、功能和任务身份必须一致。历史 owner-only 通过 Resume 收编，安全读取与治理专用入口保留各自路由。
 - 新任务默认 T2；T1/T3 Start 需要 UserRequest 并随任务事务保存选择依据，续做保留原档位，改档保留 tierHistory。首次修改前按登记结果回显档位来源和义务，子 Agent 继承同一任务。人工原话属于自报留痕。
 - 手动停用：`.ai-sop/.guard-disabled`、`AI_SOP_SKIP_OWNER_GUARD`（兼容 `SERVER_NEW_SKIP_OWNER_GUARD`）与一次性 token，仅用于人工明确的紧急维护；输出 GUARD_DISABLED / GUARD_DISABLED_FOR_FEATURE，不再称 T1 逃逸。
-- 写前保证限于真实接入且识别到的调用；Codex 当前 blockingHook=false，不提供此机器阻断。Complete 仍按任务档位验证，不增设阻止 Agent 正常结束回复的门禁。
+- 写前保证限于真实接入且识别到的调用；Codex 通过 .codex/hooks.json、Pi 通过 .pi/extensions/ai-sop.js 接入；支持的客户端必须实际启用或信任适配。Complete 仍按任务档位验证，不增设阻止 Agent 正常结束回复的门禁。
 
 ## 六、日常维护操作
 

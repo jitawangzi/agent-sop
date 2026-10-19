@@ -32,7 +32,9 @@ function Resolve-AiSopInvocationAgent {
 
 function Get-AiSopInvocationSessionId {
     param([string]$Agent)
+    if ($env:AI_SOP_INVOCATION_SESSION_ID) { return $env:AI_SOP_INVOCATION_SESSION_ID }
     if ($Agent -eq 'CODEX' -and $env:CODEX_SESSION_ID) { return $env:CODEX_SESSION_ID }
+    if ($Agent -eq 'CODEX' -and $env:CODEX_THREAD_ID) { return $env:CODEX_THREAD_ID }
     if ($Agent -eq 'ANTIGRAVITY' -and $env:ANTIGRAVITY_SESSION_ID) { return $env:ANTIGRAVITY_SESSION_ID }
     if ($env:AI_SESSION_ID) { return $env:AI_SESSION_ID }
     if ($env:SESSION_ID) { return $env:SESSION_ID }

@@ -55,7 +55,7 @@ pwsh -NoProfile -File ./.ai-sop/scripts/workflow-owner.ps1 -Operation Transfer `
 
 正常 T1 也需要任务、编译/基础验证及 Complete。`AI_SOP_SKIP_OWNER_GUARD`（兼容 `SERVER_NEW_SKIP_OWNER_GUARD`）、`.ai-sop/.guard-disabled` 和一次性 `.guard-token.json` 保留为人工明确要求的紧急维护入口，输出 GUARD_DISABLED / GUARD_DISABLED_FOR_FEATURE，不能称作 T1 或小改快通道。Agent 不得自行启用；发现已停用时明确提醒其当前不提供写前防护，维护结束后恢复。设置这些开关本身不构成任务完成或自动豁免审查。
 
-只读讨论无需任务；Hook 未接入或未识别的调用不承诺写前阻断，当前 Codex blockingHook=false。边界与操作细节见 `.ai-sop/SUPERPOWERS_MANUAL.md`「任务写前 Guard」。
+只读讨论无需任务；Hook 未接入或未识别的调用不承诺写前阻断，Codex 原生 Hook 需客户端审核信任，Pi 扩展需实际加载。边界与操作细节见 `.ai-sop/SUPERPOWERS_MANUAL.md`「任务写前 Guard」。
 
 ## 跨工具交接状态（feature-state.json）
 

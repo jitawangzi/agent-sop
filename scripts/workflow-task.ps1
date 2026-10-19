@@ -6,6 +6,7 @@ param(
     [string]$SpecDirectory,
     [string]$Feature,
     [string]$TaskId,
+    [ValidatePattern('^[A-Za-z0-9._:-]+$')][string]$NativeSessionId,
     [ValidateSet('T1','T2','T3')][string]$Tier = 'T2',
     [string]$Objective,
     [ValidateSet('CLAUDE_CODE','CODEX','CURSOR','COPILOT','ANTIGRAVITY','PI')][string]$Agent,
@@ -45,6 +46,9 @@ param(
     [ValidateRange(0,200)][int]$LogTailLines=0
 )
 $ErrorActionPreference = 'Stop'
+$previousInvocationSession=$env:AI_SOP_INVOCATION_SESSION_ID
+try {
+if ($NativeSessionId) { $env:AI_SOP_INVOCATION_SESSION_ID=$NativeSessionId }
 if ($LogTailLines -and $Operation -notin @('Status','Discover','InspectRecovery')) { throw 'LOG_TAIL_REQUIRES_DIAGNOSTIC_OPERATION' }
 . (Join-Path $PSScriptRoot 'task-context.ps1')
 . (Join-Path $PSScriptRoot 'workflow-session.ps1')
@@ -509,3 +513,5 @@ try {
 Write-Output "RUN_RESULT:$($record.outcome) exit=$($record.exitCode) log=$logPath"
 if (-not $record.inputsStable) { throw 'INPUTS_CHANGED_DURING_RUN: verification inputs/definitions changed or could not be read; see the diagnostics above and the saved run record' }
 exit $record.exitCode
+
+} finally { $env:AI_SOP_INVOCATION_SESSION_ID=$previousInvocationSession }

@@ -1410,13 +1410,13 @@ Invoke-AiSopWorkflowSession `
     } finally {
         $heldKillSessionIndex.Dispose()
         [System.IO.File]::Delete($killEndSessionIndexPath + ".lock")
-        if (
-            $null -ne $killEndProcess -and
-            -not $killEndProcess.HasExited
-        ) {
-            Stop-Process -Id $killEndProcess.Id -Force `
-                -ErrorAction SilentlyContinue
-            $killEndProcess.WaitForExit()
+        if ($null -ne $killEndProcess) {
+            # 已退出的子进程仍可能有未回收的日志流，必须完成有界收尾。
+            if (-not $killEndProcess.HasExited) {
+                Stop-Process -Id $killEndProcess.Id -Force -ErrorAction SilentlyContinue
+            }
+            try { $killEndProcess.WaitForExit() }
+            finally { $killEndProcess.Dispose() }
         }
     }
     Invoke-AiSopWorkflowSession `

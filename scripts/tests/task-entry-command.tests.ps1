@@ -6,7 +6,7 @@ $scripts=Split-Path -Parent $PSScriptRoot
 $fixture=Join-Path ([IO.Path]::GetTempPath()) ('sop-task-entry-'+[guid]::NewGuid().ToString('N'))
 function Assert([bool]$Condition,[string]$Message) { if (-not $Condition) { throw $Message } }
 function Parse([string]$Command,[string]$Cwd=$fixture,[hashtable]$Arguments=@{}) {
-    Get-AiSopTaskEntryCommand -CommandText $Command -WorkspacePath $fixture -Cwd $Cwd -Agent ANTIGRAVITY -ToolArguments $Arguments
+    Get-AiSopTaskEntryCommand -CommandText $Command -WorkspacePath $fixture -Cwd $Cwd -Agent ANTIGRAVITY -NativeSessionId 'native-current' -ToolArguments $Arguments
 }
 try {
     [IO.Directory]::CreateDirectory((Join-Path $fixture '.ai-sop/scripts')) | Out-Null
@@ -17,6 +17,8 @@ try {
     $start="pwsh -NoProfile -File ./ai-sop.ps1 Task -Operation Start -Feature Example -TaskId fix -Objective '修改入口' -Agent ANTIGRAVITY"
     $parsed=Parse $start
     Assert ($parsed.operation -eq 'Start' -and $parsed.reasonCode -eq 'TASK_BOOTSTRAP_COMMAND') '默认 T2 建立入口被拒绝'
+    Assert ((Parse ($start+' -NativeSessionId native-current')).operation -eq 'Start') '匹配当前 Hook 的会话参数应通过'
+    Assert ($null -eq (Parse ($start+' -NativeSessionId another-session'))) '不得用引导入口冒用其他会话'
     Assert ((Parse ($start+" -Tier T1 -UserRequest '按 T1 执行' -CaptureBaseline")).operation -eq 'Start') '显式档位命令无法引导'
     Assert ((Parse 'pwsh -NoProfile -File ./ai-sop.ps1 Task').operation -eq 'Discover') '默认只读发现入口被拒绝'
     foreach($operation in @('Discover','Status','FollowUps','InspectRecovery','Changes')) {

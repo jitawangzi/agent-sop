@@ -10,7 +10,8 @@ param(
         "SESSION_END",
         "STOP"
     )]
-    [string]$EventHint = ""
+    [string]$EventHint = "",
+    [ValidateSet('', 'CODEX', 'PI')][string]$AgentHint = ''
 )
 
 $ErrorActionPreference = "Stop"
@@ -162,7 +163,7 @@ function ConvertTo-AiSopDispatcherEnvelope {
     $nativeDecision = $Decision.ToLowerInvariant()
     $reason = if ($Decision -eq "DENY") { Get-AiSopDispatcherDenyReason -ReasonCode $ReasonCode }
     switch ($Agent) {
-        "CLAUDE_CODE" {
+        { $_ -in @('CLAUDE_CODE','CODEX') } {
             $specific = [ordered]@{
                 hookEventName = "PreToolUse"
                 permissionDecision = $nativeDecision
@@ -176,6 +177,11 @@ function ConvertTo-AiSopDispatcherEnvelope {
                 -InputObject ([ordered]@{
                     hookSpecificOutput = $specific
                 })
+        }
+        'PI' {
+            $result=@{block=($Decision -eq 'DENY')}
+            if ($Decision -eq 'DENY') { $result.reason=$reason }
+            return ($result | ConvertTo-Json -Compress)
         }
         "COPILOT" {
             $result = [ordered]@{
@@ -213,7 +219,7 @@ function Get-AiSopDispatcherDenyExitCode {
 
     # Claude Code's approved protocol requires a non-zero deny exit. Cursor,
     # Copilot and Antigravity consume their native JSON denial on exit zero.
-    if ($Agent -in @("COPILOT", "CURSOR", "ANTIGRAVITY")) {
+    if ($Agent -in @("COPILOT", "CURSOR", "ANTIGRAVITY", 'CODEX', 'PI')) {
         return 0
     }
     return 2
@@ -468,7 +474,7 @@ function Get-AiSopDispatcherToolPlan {
         if (Test-AiSopDispatcherShellTool -ToolName $entryTool.Name) {
             $entryCommand = Get-AiSopDispatcherShellCommandText -Arguments $entryTool.Arguments
             $entry = Get-AiSopTaskEntryCommand -CommandText $entryCommand -WorkspacePath ([string]$HookEvent.workspacePath) `
-                -Cwd ([string]$HookEvent.cwd) -Agent ([string]$HookEvent.agent) -ToolArguments $entryTool.Arguments
+                -Cwd ([string]$HookEvent.cwd) -Agent ([string]$HookEvent.agent) -NativeSessionId ([string]$HookEvent.nativeSessionId) -ToolArguments $entryTool.Arguments
             if ($null -ne $entry) {
                 return New-AiSopDispatcherPlan -Decision ALLOW -ReasonCode $entry.reasonCode -SideEffectKind NONE
             }
@@ -953,12 +959,17 @@ function Invoke-AiSopHookDispatcher {
         [Parameter(Mandatory)]
         [string]$TrustedWorkspaceRoot,
 
-        [DateTimeOffset]$AcceptedAt = [DateTimeOffset]::UtcNow
+        [DateTimeOffset]$AcceptedAt = [DateTimeOffset]::UtcNow,
+        [ValidateSet('', 'CODEX', 'PI')][string]$AgentHint = ''
     )
 
     $watch = [System.Diagnostics.Stopwatch]::StartNew()
     $agent = Get-AiSopDispatcherInferredAgent -RawPayload $RawPayload
+    if ($AgentHint) { $agent=$AgentHint }
     try {
+        $originalRawPayload=$RawPayload
+        # 客户端身份来自安装的入口参数，不能由工具载荷声明或覆盖。
+        if ($AgentHint) { $RawPayload = ConvertFrom-AiSopHarnessPayload $RawPayload $AgentHint $EventHint }
         # Total workflow budget for this hook pass. 750ms was too tight for a
         # cold session Register (measured ~915ms including transaction
         # recovery), so default to 5s; overridable for locked-down or very
@@ -980,8 +991,10 @@ function Invoke-AiSopHookDispatcher {
             -EventHint $EventHint `
             -TrustedWorkspaceRoot $TrustedWorkspaceRoot `
             -AcceptedAt $AcceptedAt `
+            -AgentOverride $AgentHint `
             -DeadlineUtc $deadlineUtc
         $agent = [string]$hookEvent.agent
+        if ($AgentHint) { $hookEvent.rawPayloadSha256=Get-AiSopSha256Hex $originalRawPayload }
 
         if (Test-AiSopGuardEscapeEnabled) {
             [Console]::Error.WriteLine('[WARN] GUARD_DISABLED: 人工维护已停用写前防护，本次放行不代表按 T1/T2/T3 正常执行。')
@@ -1118,6 +1131,7 @@ function Invoke-AiSopHookDispatcher {
         }
         $reason = [string]$_.Exception.Message
         if ($reason -notmatch "^[A-Z][A-Z0-9_]*$") {
+            [Console]::Error.WriteLine("[WARN] Hook 内部检查失败：$reason")
             $reason = "GUARD_INTERNAL_ERROR"
         }
         $envelope = ConvertTo-AiSopDispatcherEnvelope `
@@ -1133,6 +1147,29 @@ function Invoke-AiSopHookDispatcher {
             -ExitCode (Get-AiSopDispatcherDenyExitCode -Agent $agent) `
             -DurationMs $watch.ElapsedMilliseconds
     }
+}
+
+function Add-AiSopHarnessSessionContext {
+    param($Result, [string]$RawPayload, [string]$EventHint)
+    $payload=ConvertFrom-AiSopJson $RawPayload
+    $sessionId=if ($payload.Contains('conversationId')) { $payload.conversationId } elseif ($payload.Contains('conversation_id')) { $payload.conversation_id } else { $payload.session_id }
+    if ($sessionId -isnot [string] -or $sessionId -notmatch '^[A-Za-z0-9._:-]+$') { return $Result.Envelope }
+    $message="AI SOP 当前会话：$sessionId。执行修改前先 Task Start/Resume；所有 Task 命令携带 -Agent $($Result.Agent) -NativeSessionId '$sessionId'，避免子进程另建会话。未指定档位默认 T2；成功后先回显登记档位和流程，再修改。纯讨论不启动任务。"
+    $envelope=ConvertFrom-AiSopJson $Result.Envelope
+    if ($Result.Decision -eq 'ALLOW' -and $EventHint -in @('SESSION_START','PRE_INVOCATION')) {
+        switch ($Result.Agent) {
+            { $_ -in @('CLAUDE_CODE','CODEX') } { $envelope.hookSpecificOutput=@{hookEventName='SessionStart';additionalContext=$message} }
+            'CURSOR' { $envelope.additional_context=$message }
+            'ANTIGRAVITY' { $envelope.injectSteps=@(@{systemMessage=@{systemMessage=$message}}) }
+        }
+    } elseif ($Result.Decision -eq 'DENY' -and $EventHint -eq 'PRE_TOOL_USE') {
+        switch ($Result.Agent) {
+            { $_ -in @('CLAUDE_CODE','CODEX') } { $envelope.hookSpecificOutput.permissionDecisionReason+=" $message" }
+            'CURSOR' { $envelope.agent_message+=" $message" }
+            default { $envelope.reason+=" $message" }
+        }
+    }
+    return ($envelope | ConvertTo-Json -Compress -Depth 20)
 }
 
 if (-not $script:DispatcherWasDotSourced) {
@@ -1155,7 +1192,10 @@ if (-not $script:DispatcherWasDotSourced) {
         $result = Invoke-AiSopHookDispatcher `
             -RawPayload $raw `
             -EventHint $EventHint `
+            -AgentHint $AgentHint `
             -TrustedWorkspaceRoot $script:DispatcherWorkspaceRoot
+        try { $result.Envelope=Add-AiSopHarnessSessionContext $result $raw $EventHint }
+        catch { [Console]::Error.WriteLine("[WARN] HOOK_SESSION_CONTEXT_UNAVAILABLE: $($_.Exception.Message)") }
     }
     [Console]::Out.WriteLine($result.Envelope)
     exit $result.ExitCode

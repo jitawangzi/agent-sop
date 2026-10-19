@@ -1,7 +1,7 @@
 #requires -Version 7.0
 
 [CmdletBinding()]
-param()
+param([ValidateSet('ANTIGRAVITY','CURSOR','PI','CLAUDE_CODE','CODEX')][string]$Agent='CURSOR')
 
 $ErrorActionPreference = 'Stop'
 $SourceScripts = $PSScriptRoot
@@ -33,11 +33,13 @@ $EnvironmentOverrides = [ordered]@{
     AI_SOP_GUARD_ROOT = $ProbeEngine
     AI_SOP_SKIP_OWNER_GUARD = '0'
     SERVER_NEW_SKIP_OWNER_GUARD = '0'
-    AI_SESSION_ID = $SessionId
+    AI_SESSION_ID = 'unrelated-parent-session'
+    AI_SOP_INVOCATION_SESSION_ID = 'unrelated-explicit-session'
 }
 $ProbeCreated = $false
 $LocationPushed = $false
 $ProbeResult = $null
+$script:LiveStepCounter=0
 
 function Assert-LiveProbe {
     param([bool]$Condition, [string]$Message)
@@ -46,7 +48,10 @@ function Assert-LiveProbe {
 
 function Invoke-LiveDispatch {
     param([string]$RawPayload, [string]$EventHint = 'PRE_TOOL_USE')
+    if ($Agent -eq 'ANTIGRAVITY' -and $EventHint -eq 'SESSION_START') { $EventHint='PRE_INVOCATION' }
+    $hint=if ($Agent -in @('CODEX','PI')) { $Agent } else { '' }
     Invoke-AiSopHookDispatcher -RawPayload $RawPayload -EventHint $EventHint `
+        -AgentHint $hint `
         -TrustedWorkspaceRoot $WorkspaceRoot -AcceptedAt ([DateTimeOffset]::UtcNow)
 }
 
@@ -58,6 +63,27 @@ function New-LiveCursorPayload {
         [hashtable]$ToolInput = @{},
         [string]$Occurrence = ([guid]::NewGuid().ToString('N'))
     )
+    if ($Agent -ne 'CURSOR') {
+        if ($ToolName -eq 'Shell') { $ToolName='Bash' }
+        if ($Agent -eq 'ANTIGRAVITY') {
+            $native=@{conversationId=$NativeSession;workspacePaths=@($WorkspaceRoot);transcriptPath=(Join-Path $WorkspaceRoot 'transcript.jsonl');artifactDirectoryPath=$WorkspaceRoot;modelName='auto'}
+            if ($Kind -eq 'START') { $native.invocationNum=1; $native.initialNumSteps=0 }
+            else { $native.toolCall=@{name=$ToolName;args=$ToolInput}; $native.stepIdx=++$script:LiveStepCounter }
+            return ($native | ConvertTo-Json -Compress -Depth 20)
+        }
+        if ($Agent -eq 'CODEX' -and $ToolName -eq 'Edit') {
+            $ToolName='apply_patch'; $ToolInput=@{command="*** Begin Patch`n*** Update File: $($ToolInput.file_path)`n@@`n-before`n+after`n*** End Patch"}
+        }
+        if ($Agent -eq 'PI') {
+            if ($ToolName -eq 'Edit') { $ToolInput=@{path=$ToolInput.file_path;oldText='before';newText='after'} }
+            if ($ToolName -eq 'Read') { $ToolInput=@{path=$ToolInput.file_path} }
+            $ToolName=$ToolName.ToLowerInvariant()
+        }
+        $native=@{session_id=$NativeSession;cwd=$WorkspaceRoot}
+        if ($Kind -eq 'START') { $native.hook_event_name='SessionStart'; $native.source='startup' }
+        else { $native.hook_event_name='PreToolUse';$native.tool_name=$ToolName;$native.tool_input=$ToolInput;$native.tool_use_id="tool-$Occurrence" }
+        return ($native | ConvertTo-Json -Compress -Depth 20)
+    }
     if ($Kind -eq 'START') {
         return (@{ session_id=$NativeSession; is_background_agent=$false; composer_mode='agent' } | ConvertTo-Json -Compress)
     }
@@ -70,16 +96,17 @@ function New-LiveCursorPayload {
 
 function Invoke-LiveTask {
     param([ValidateSet('Start','Resume','Suspend','Cancel')][string]$Operation)
-    $command = "pwsh -NoProfile -File './.ai-sop/scripts/workflow-task.ps1' -Operation '$Operation' -Feature '$Feature' -TaskId '$TaskId' -Agent CURSOR"
+    $command = "pwsh -NoProfile -File './.ai-sop/scripts/workflow-task.ps1' -Operation '$Operation' -Feature '$Feature' -TaskId '$TaskId' -Agent $Agent -NativeSessionId '$SessionId'"
     if ($Operation -eq 'Start') { $command += " -Tier T2 -Objective '隔离验证写前任务检查'" }
     $hook = Invoke-LiveDispatch (New-LiveCursorPayload -ToolName Shell -ToolInput @{command=$command})
     Assert-LiveProbe ($hook.Decision -eq 'ALLOW' -and $hook.ReasonCode -eq 'TASK_BOOTSTRAP_COMMAND') (
         "Task $Operation 引导命令被拒绝或走错路由：$($hook.ReasonCode)"
     )
-    $arguments = @{ Operation=$Operation; WorkspacePath=$WorkspaceRoot; Feature=$Feature; TaskId=$TaskId; Agent='CURSOR' }
+    $arguments = @{ Operation=$Operation; WorkspacePath=$WorkspaceRoot; Feature=$Feature; TaskId=$TaskId; Agent=$Agent; NativeSessionId=$SessionId }
     if ($Operation -eq 'Start') { $arguments.Tier='T2'; $arguments.Objective='隔离验证写前任务检查' }
     & $TaskScript @arguments 3>&1 | Out-Null
     Assert-LiveProbe ($LASTEXITCODE -eq 0) "Task $Operation 执行失败：$LASTEXITCODE"
+    Assert-LiveProbe ($env:AI_SOP_INVOCATION_SESSION_ID -ceq 'unrelated-explicit-session') 'Task 命令泄漏了临时会话环境。'
 }
 
 function Invoke-LiveEdit {
@@ -118,12 +145,23 @@ try {
 
     $start = Invoke-LiveDispatch (New-LiveCursorPayload -Kind START) -EventHint SESSION_START
     Assert-LiveProbe ($start.Decision -eq 'ALLOW') "Cursor 会话注册失败：$($start.ReasonCode)"
+    $contextHint=if ($Agent -eq 'ANTIGRAVITY') { 'PRE_INVOCATION' } else { 'SESSION_START' }
+    $context=Add-AiSopHarnessSessionContext $start (New-LiveCursorPayload -Kind START) $contextHint
+    if ($Agent -ne 'PI') { Assert-LiveProbe ($context.Contains('-NativeSessionId') -and $context.Contains($SessionId)) '原生会话上下文未传入客户端。' }
     foreach ($relativePath in @('src/probe.txt','docs/probe.md')) {
         $withoutTask = Invoke-LiveEdit $relativePath
         Assert-LiveProbe ($withoutTask.Decision -eq 'DENY') "缺少任务时仍允许编辑：$relativePath"
     }
     $read = Invoke-LiveDispatch (New-LiveCursorPayload -ToolName Read -ToolInput @{file_path=(Join-Path $WorkspaceRoot 'docs/probe.md')})
     Assert-LiveProbe ($read.Decision -eq 'ALLOW') '只读查询不应要求修改任务。'
+    if ($Agent -eq 'CODEX') {
+        $view=Invoke-LiveDispatch (New-LiveCursorPayload -ToolName view_image -ToolInput @{path=(Join-Path $WorkspaceRoot 'docs/probe.md')})
+        Assert-LiveProbe ($view.Decision -eq 'ALLOW') 'Codex 原生只读工具不应要求任务。'
+        $spawn=Invoke-LiveDispatch (New-LiveCursorPayload -ToolName spawn_agent -ToolInput @{message='执行修改'})
+        Assert-LiveProbe ($spawn.Decision -eq 'DENY') 'Codex 子 Agent 不得在未登记任务时开始执行。'
+        $unknownRead=Invoke-LiveDispatch (New-LiveCursorPayload -ToolName view_image_extra -ToolInput @{})
+        Assert-LiveProbe ($unknownRead.Decision -eq 'DENY') '只读名称前缀不得放行未知工具。'
+    }
 
     Invoke-LiveTask Start
     $task = Get-Content -LiteralPath $TaskPath -Raw | ConvertFrom-Json
@@ -174,7 +212,7 @@ try {
     Assert-LiveProbe ($cancelled.status -eq 'CANCELLED') '探测任务未通过 Cancel 关闭。'
     Assert-LiveProbe ((Invoke-LiveEdit 'docs/probe.md').Decision -eq 'DENY') '取消任务后仍可编辑普通文档。'
     $ProbeResult = [ordered]@{
-        result='PASS'; scope='IN_PROCESS_DISPATCHER'; workspaceIsolated=$true; ownerRegistryIsolated=$true
+        result='PASS'; agent=$Agent; scope='IN_PROCESS_DISPATCHER'; workspaceIsolated=$true; ownerRegistryIsolated=$true
         ownerSchemaVersion='1.1'; taskTier='T2'; finalTaskStatus='CANCELLED'
         sourceAndDocumentEditsRequireTask=$true; currentOwner1_0UsedForAuthorization=$false
         samplePath='READ_WITHOUT_TASK'; sampleCount=$samples.Count

@@ -4,7 +4,7 @@
   "sourceUrl": "https://github.com/jitawangzi/agent-sop.git",
   "toolPolicy": {
     "path": "config/hook-tool-policy.json",
-    "blobSha256": "4f7d65637992d73eafc277c82153c4f6bee27a4375d5fe185308da9768f7eee5"
+    "blobSha256": "8b40c2551f8cf9f468e2af6b596bd62825519987a8eed84e884df74dedbcf33d"
   },
   "certification": {
     "path": "distribution/harness-certification.json",
@@ -23,8 +23,8 @@
     {
       "source": "distribution/templates/root/AGENTS.md",
       "target": "AGENTS.md",
-      "sourceBlobSha256": "a8db5164f412061e8da6cb8c194a1311b62540883fa1a811d94b132237553608",
-      "targetSha256": "a8db5164f412061e8da6cb8c194a1311b62540883fa1a811d94b132237553608",
+      "sourceBlobSha256": "ddfd72ba05613a5616f0ed7b2158f0da86ac85ffd3016ee9acd33e741762e567",
+      "targetSha256": "ddfd72ba05613a5616f0ed7b2158f0da86ac85ffd3016ee9acd33e741762e567",
       "legacySha256": "25903e4b86512c55ac3f7e7aee50f1c7ab4557e276cd9322619c731a180574dc",
       "encoding": "utf8-no-bom",
       "lineEnding": "lf"
@@ -50,8 +50,8 @@
     {
       "source": "distribution/templates/root/ai-sop.ps1",
       "target": "ai-sop.ps1",
-      "sourceBlobSha256": "01441abdd7b6c0a1ff2bc6a49f4fdacdbf322c48b2fb394f5d73674a88cd3c06",
-      "targetSha256": "01441abdd7b6c0a1ff2bc6a49f4fdacdbf322c48b2fb394f5d73674a88cd3c06",
+      "sourceBlobSha256": "2f28098d357e497abe8010d1f99c91bb2846183b595bf81506ee1c14bcaecb71",
+      "targetSha256": "2f28098d357e497abe8010d1f99c91bb2846183b595bf81506ee1c14bcaecb71",
       "legacySha256": "559596303d23f80e2a6b8e10d8473e2825720f2decb389f58e1d5c658c4d9534",
       "encoding": "utf8-no-bom",
       "lineEnding": "lf"
@@ -77,8 +77,8 @@
     {
       "source": "distribution/templates/hooks/cursor-hooks.json",
       "target": ".cursor/hooks.json",
-      "sourceBlobSha256": "61d5faef77a9be12b04c57ad185e5563740a604229c6960bb1e76368ea4abe4f",
-      "targetSha256": "61d5faef77a9be12b04c57ad185e5563740a604229c6960bb1e76368ea4abe4f",
+      "sourceBlobSha256": "7b4af40d7fb45719ad097e2532f3550b2ad0cf6854992e624eae16faae57e55c",
+      "targetSha256": "7b4af40d7fb45719ad097e2532f3550b2ad0cf6854992e624eae16faae57e55c",
       "legacySha256": "",
       "encoding": "utf8-no-bom",
       "lineEnding": "lf"
@@ -95,8 +95,8 @@
     {
       "source": "distribution/templates/hooks/hook-wrapper.ps1",
       "target": ".agents/hook-wrapper.ps1",
-      "sourceBlobSha256": "12d9fb7fce11e224e6cd76dd366d638ff3aa586f9a141f20c08aabbda9557e9e",
-      "targetSha256": "12d9fb7fce11e224e6cd76dd366d638ff3aa586f9a141f20c08aabbda9557e9e",
+      "sourceBlobSha256": "20f07958aa1bbf71f761aa31be6cf3964898b82d7836e91a35d953568d68a8e6",
+      "targetSha256": "20f07958aa1bbf71f761aa31be6cf3964898b82d7836e91a35d953568d68a8e6",
       "legacySha256": "",
       "encoding": "utf8-no-bom",
       "lineEnding": "lf"
@@ -104,8 +104,8 @@
     {
       "source": "distribution/templates/hooks/hook-wrapper.ps1",
       "target": ".claude/hook-wrapper.ps1",
-      "sourceBlobSha256": "12d9fb7fce11e224e6cd76dd366d638ff3aa586f9a141f20c08aabbda9557e9e",
-      "targetSha256": "12d9fb7fce11e224e6cd76dd366d638ff3aa586f9a141f20c08aabbda9557e9e",
+      "sourceBlobSha256": "20f07958aa1bbf71f761aa31be6cf3964898b82d7836e91a35d953568d68a8e6",
+      "targetSha256": "20f07958aa1bbf71f761aa31be6cf3964898b82d7836e91a35d953568d68a8e6",
       "legacySha256": "",
       "encoding": "utf8-no-bom",
       "lineEnding": "lf"
@@ -113,8 +113,8 @@
     {
       "source": "distribution/templates/hooks/hook-wrapper.ps1",
       "target": ".cursor/hook-wrapper.ps1",
-      "sourceBlobSha256": "12d9fb7fce11e224e6cd76dd366d638ff3aa586f9a141f20c08aabbda9557e9e",
-      "targetSha256": "12d9fb7fce11e224e6cd76dd366d638ff3aa586f9a141f20c08aabbda9557e9e",
+      "sourceBlobSha256": "20f07958aa1bbf71f761aa31be6cf3964898b82d7836e91a35d953568d68a8e6",
+      "targetSha256": "20f07958aa1bbf71f761aa31be6cf3964898b82d7836e91a35d953568d68a8e6",
       "legacySha256": "",
       "encoding": "utf8-no-bom",
       "lineEnding": "lf"
@@ -122,8 +122,8 @@
     {
       "source": "distribution/templates/hooks/hook-wrapper.ps1",
       "target": ".github/hook-wrapper.ps1",
-      "sourceBlobSha256": "12d9fb7fce11e224e6cd76dd366d638ff3aa586f9a141f20c08aabbda9557e9e",
-      "targetSha256": "12d9fb7fce11e224e6cd76dd366d638ff3aa586f9a141f20c08aabbda9557e9e",
+      "sourceBlobSha256": "20f07958aa1bbf71f761aa31be6cf3964898b82d7836e91a35d953568d68a8e6",
+      "targetSha256": "20f07958aa1bbf71f761aa31be6cf3964898b82d7836e91a35d953568d68a8e6",
       "legacySha256": "",
       "encoding": "utf8-no-bom",
       "lineEnding": "lf"
@@ -131,12 +131,49 @@
     {
       "source": "distribution/templates/hooks/claude-settings.json",
       "target": ".claude/settings.json",
-      "sourceBlobSha256": "58c28b0c307927e34b92f660e57e858b9be8f5dafed8e829262b91196f6e1874",
-      "targetSha256": "58c28b0c307927e34b92f660e57e858b9be8f5dafed8e829262b91196f6e1874",
+      "sourceBlobSha256": "2511b1f16755da2f8a1fc5fecc4c4a0f59e6fc5945ed5ca32a084371fca15fdb",
+      "targetSha256": "2511b1f16755da2f8a1fc5fecc4c4a0f59e6fc5945ed5ca32a084371fca15fdb",
       "legacySha256": "",
       "encoding": "utf8-no-bom",
       "lineEnding": "lf",
       "verifyMode": "json-hooks-merge"
+    },
+    {
+      "source": "distribution/templates/hooks/codex-hooks.json",
+      "target": ".codex/hooks.json",
+      "sourceBlobSha256": "d391fbefc5554c63ae84788a4de06b88c3177035b8099d26420d3d88c4844835",
+      "targetSha256": "d391fbefc5554c63ae84788a4de06b88c3177035b8099d26420d3d88c4844835",
+      "legacySha256": "",
+      "encoding": "utf8-no-bom",
+      "lineEnding": "lf",
+      "verifyMode": "json-hooks-merge"
+    },
+    {
+      "source": "distribution/templates/hooks/hook-wrapper.ps1",
+      "target": ".codex/hook-wrapper.ps1",
+      "sourceBlobSha256": "20f07958aa1bbf71f761aa31be6cf3964898b82d7836e91a35d953568d68a8e6",
+      "targetSha256": "20f07958aa1bbf71f761aa31be6cf3964898b82d7836e91a35d953568d68a8e6",
+      "legacySha256": "",
+      "encoding": "utf8-no-bom",
+      "lineEnding": "lf"
+    },
+    {
+      "source": "distribution/templates/hooks/hook-wrapper.ps1",
+      "target": ".pi/hook-wrapper.ps1",
+      "sourceBlobSha256": "20f07958aa1bbf71f761aa31be6cf3964898b82d7836e91a35d953568d68a8e6",
+      "targetSha256": "20f07958aa1bbf71f761aa31be6cf3964898b82d7836e91a35d953568d68a8e6",
+      "legacySha256": "",
+      "encoding": "utf8-no-bom",
+      "lineEnding": "lf"
+    },
+    {
+      "source": "distribution/templates/hooks/pi-extension.js",
+      "target": ".pi/extensions/ai-sop.js",
+      "sourceBlobSha256": "252fe1cc6681f72c80afc5d1ac5c2283489d3384adc410fe9d3a941fd3e8304b",
+      "targetSha256": "252fe1cc6681f72c80afc5d1ac5c2283489d3384adc410fe9d3a941fd3e8304b",
+      "legacySha256": "",
+      "encoding": "utf8-no-bom",
+      "lineEnding": "lf"
     }
   ]
 }

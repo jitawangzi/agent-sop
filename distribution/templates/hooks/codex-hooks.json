@@ -1,0 +1,40 @@
+{
+  "hooks": {
+    "SessionStart": [
+      {
+        "hooks": [
+          {
+            "command": "pwsh -NoProfile -File ./.codex/hook-wrapper.ps1 -AgentHint CODEX -EventHint SESSION_START",
+            "timeout": 15,
+            "type": "command"
+          }
+        ],
+        "matcher": ".*"
+      }
+    ],
+    "PreToolUse": [
+      {
+        "hooks": [
+          {
+            "command": "pwsh -NoProfile -File ./.codex/hook-wrapper.ps1 -AgentHint CODEX -EventHint PRE_TOOL_USE",
+            "timeout": 15,
+            "type": "command"
+          }
+        ],
+        "matcher": ".*"
+      }
+    ],
+    "SessionEnd": [
+      {
+        "hooks": [
+          {
+            "command": "pwsh -NoProfile -File ./.codex/hook-wrapper.ps1 -AgentHint CODEX -EventHint SESSION_END",
+            "timeout": 15,
+            "type": "command"
+          }
+        ],
+        "matcher": ".*"
+      }
+    ]
+  }
+}

@@ -12,3 +12,5 @@ foreach ($agent in @('ANTIGRAVITY','CURSOR','PI','CLAUDE_CODE','CODEX')) {
 }
 & node (Join-Path $PSScriptRoot 'pi-extension.test.mjs')
 if ($LASTEXITCODE -ne 0) { throw 'Pi extension bridge tests failed' }
+& node (Join-Path $PSScriptRoot 'hook-process.test.mjs')
+if ($LASTEXITCODE -ne 0) { throw '真实 Hook 子进程测试失败' }

@@ -23,8 +23,8 @@
     {
       "source": "distribution/templates/root/AGENTS.md",
       "target": "AGENTS.md",
-      "sourceBlobSha256": "ddfd72ba05613a5616f0ed7b2158f0da86ac85ffd3016ee9acd33e741762e567",
-      "targetSha256": "ddfd72ba05613a5616f0ed7b2158f0da86ac85ffd3016ee9acd33e741762e567",
+      "sourceBlobSha256": "c2144c443af6330b6e777a3c7fd5c5c47d08107b30b0a933fbb2724ffcb0a953",
+      "targetSha256": "c2144c443af6330b6e777a3c7fd5c5c47d08107b30b0a933fbb2724ffcb0a953",
       "legacySha256": "25903e4b86512c55ac3f7e7aee50f1c7ab4557e276cd9322619c731a180574dc",
       "encoding": "utf8-no-bom",
       "lineEnding": "lf"
@@ -95,8 +95,8 @@
     {
       "source": "distribution/templates/hooks/hook-wrapper.ps1",
       "target": ".agents/hook-wrapper.ps1",
-      "sourceBlobSha256": "20f07958aa1bbf71f761aa31be6cf3964898b82d7836e91a35d953568d68a8e6",
-      "targetSha256": "20f07958aa1bbf71f761aa31be6cf3964898b82d7836e91a35d953568d68a8e6",
+      "sourceBlobSha256": "bcb0d5d17ed2821ccfc41ef590fafd25817ae9d8579211f5b65348c9f79d5367",
+      "targetSha256": "bcb0d5d17ed2821ccfc41ef590fafd25817ae9d8579211f5b65348c9f79d5367",
       "legacySha256": "",
       "encoding": "utf8-no-bom",
       "lineEnding": "lf"
@@ -104,8 +104,8 @@
     {
       "source": "distribution/templates/hooks/hook-wrapper.ps1",
       "target": ".claude/hook-wrapper.ps1",
-      "sourceBlobSha256": "20f07958aa1bbf71f761aa31be6cf3964898b82d7836e91a35d953568d68a8e6",
-      "targetSha256": "20f07958aa1bbf71f761aa31be6cf3964898b82d7836e91a35d953568d68a8e6",
+      "sourceBlobSha256": "bcb0d5d17ed2821ccfc41ef590fafd25817ae9d8579211f5b65348c9f79d5367",
+      "targetSha256": "bcb0d5d17ed2821ccfc41ef590fafd25817ae9d8579211f5b65348c9f79d5367",
       "legacySha256": "",
       "encoding": "utf8-no-bom",
       "lineEnding": "lf"
@@ -113,8 +113,8 @@
     {
       "source": "distribution/templates/hooks/hook-wrapper.ps1",
       "target": ".cursor/hook-wrapper.ps1",
-      "sourceBlobSha256": "20f07958aa1bbf71f761aa31be6cf3964898b82d7836e91a35d953568d68a8e6",
-      "targetSha256": "20f07958aa1bbf71f761aa31be6cf3964898b82d7836e91a35d953568d68a8e6",
+      "sourceBlobSha256": "bcb0d5d17ed2821ccfc41ef590fafd25817ae9d8579211f5b65348c9f79d5367",
+      "targetSha256": "bcb0d5d17ed2821ccfc41ef590fafd25817ae9d8579211f5b65348c9f79d5367",
       "legacySha256": "",
       "encoding": "utf8-no-bom",
       "lineEnding": "lf"
@@ -122,8 +122,8 @@
     {
       "source": "distribution/templates/hooks/hook-wrapper.ps1",
       "target": ".github/hook-wrapper.ps1",
-      "sourceBlobSha256": "20f07958aa1bbf71f761aa31be6cf3964898b82d7836e91a35d953568d68a8e6",
-      "targetSha256": "20f07958aa1bbf71f761aa31be6cf3964898b82d7836e91a35d953568d68a8e6",
+      "sourceBlobSha256": "bcb0d5d17ed2821ccfc41ef590fafd25817ae9d8579211f5b65348c9f79d5367",
+      "targetSha256": "bcb0d5d17ed2821ccfc41ef590fafd25817ae9d8579211f5b65348c9f79d5367",
       "legacySha256": "",
       "encoding": "utf8-no-bom",
       "lineEnding": "lf"
@@ -151,8 +151,8 @@
     {
       "source": "distribution/templates/hooks/hook-wrapper.ps1",
       "target": ".codex/hook-wrapper.ps1",
-      "sourceBlobSha256": "20f07958aa1bbf71f761aa31be6cf3964898b82d7836e91a35d953568d68a8e6",
-      "targetSha256": "20f07958aa1bbf71f761aa31be6cf3964898b82d7836e91a35d953568d68a8e6",
+      "sourceBlobSha256": "bcb0d5d17ed2821ccfc41ef590fafd25817ae9d8579211f5b65348c9f79d5367",
+      "targetSha256": "bcb0d5d17ed2821ccfc41ef590fafd25817ae9d8579211f5b65348c9f79d5367",
       "legacySha256": "",
       "encoding": "utf8-no-bom",
       "lineEnding": "lf"
@@ -160,8 +160,8 @@
     {
       "source": "distribution/templates/hooks/hook-wrapper.ps1",
       "target": ".pi/hook-wrapper.ps1",
-      "sourceBlobSha256": "20f07958aa1bbf71f761aa31be6cf3964898b82d7836e91a35d953568d68a8e6",
-      "targetSha256": "20f07958aa1bbf71f761aa31be6cf3964898b82d7836e91a35d953568d68a8e6",
+      "sourceBlobSha256": "bcb0d5d17ed2821ccfc41ef590fafd25817ae9d8579211f5b65348c9f79d5367",
+      "targetSha256": "bcb0d5d17ed2821ccfc41ef590fafd25817ae9d8579211f5b65348c9f79d5367",
       "legacySha256": "",
       "encoding": "utf8-no-bom",
       "lineEnding": "lf"

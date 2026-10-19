@@ -49,7 +49,7 @@ pwsh -NoProfile -File ./ai-sop.ps1 Task -Operation Complete -Feature <Feature> -
 
 长任务的重要节点按需 Checkpoint；短 T1/T2 不为每次编辑写检查点。暂停直接 Suspend 并带 NextAction/Notes，保存进度并释放占用；Cancel 表示取消，不表示完成，也不撤销实际代码修改。旧任务暂停后可启动独立小任务，无需先通过旧完成门禁。
 
-**写前检查**：实际接入 Hook 的编辑路径会核对当前活动任务、合法档位及 owner/session 身份；只有旧 owner 没有 taskId 时须 Resume 收编。正常 T1 也必须登记和验证；人工紧急停用 Guard 是独立维护操作，不代表 T1 合规或完成，Agent 不得自行启用。Hook 未接入（当前 Codex 适配）或未识别的写入路径不能承诺机器阻断；开场说明和 Complete 仍须遵守。
+**写前检查**：实际接入 Hook 的编辑路径会核对当前活动任务、合法档位及 owner/session 身份；只有旧 owner 没有 taskId 时须 Resume 收编。正常 T1 也必须登记和验证；人工紧急停用 Guard 是独立维护操作，不代表 T1 合规或完成，Agent 不得自行启用。客户端未加载或未信任 Hook、或写入路径不触发 Hook 时，不能承诺机器阻断；开场说明和 Complete 仍须遵守。
 
 **Guard 拦截后的任务识别**：Discover 确认 Feature/taskId；普通续做 Resume，异常中断先 InspectRecovery，按诊断 Recover → Resume。不得直接 Claim、手写权限或启用绕过开关规避任务入口。确认旧 Agent 已停止且验证进程不再运行，才进行强制恢复；已明确授权的接管不重复询问。跨 ACTIVE/IDLE 会话的正常接管按提示使用 ConfirmTakeover。
 

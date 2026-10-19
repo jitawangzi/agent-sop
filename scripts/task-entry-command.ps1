@@ -38,6 +38,8 @@ function Get-AiSopTaskEntryCommand {
     foreach ($name in @('cwd','workdir','working_directory','workingDirectory')) {
         if ($ToolArguments -and $ToolArguments.Contains($name)) {
             $value=$ToolArguments[$name]
+            # Cursor 的空 cwd 表示沿用已规范化的调用目录，不表示另一个工作区。
+            if ($Agent -ceq 'CURSOR' -and $name -ceq 'cwd' -and $value -is [string] -and $value.Length -eq 0) { continue }
             if ($value -isnot [string] -or [string]::IsNullOrWhiteSpace($value)) { return $null }
             $candidate=if ([IO.Path]::IsPathRooted($value)) { $value } else { Join-Path $working $value }
             if (-not (Resolve-PhysicalPathIdentity $candidate).Equals($workspace,$comparison)) { return $null }

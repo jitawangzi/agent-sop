@@ -30,6 +30,8 @@ Agent 可换为 ANTIGRAVITY、CURSOR、PI、CLAUDE_CODE。此命令不改业务�
 
 实际客户端验收需在临时测试工程中检查：Hook 日志确实出现、无任务的写入被客户端阻止、登记任务后写入成功、暂停后再次阻止。记录客户端版本和载荷；不能以 in-process 探测代替此项，也不要在业务任务中故意制造非法写入。
 
+真实进程回归由 `scripts/tests/hook-process.test.mjs` 覆盖：经项目 wrapper 启动 PowerShell，在本地代码页环境下发送 UTF-8/BOM 与中文路径，严格解码返回字节，检查原生拒绝协议及任务生命周期。Cursor 真实载荷允许相同的 conversation_id/session_id、缺省或空 cwd，以及 Windows `/D:/...` 工作区表示；身份不一致和越界路径仍拒绝。Cursor 自动导入 Claude Hook 时，两份有效载荷识别为同一个 Cursor 会话，由已有去重逻辑处理，不停用用户的其他 Hook。自动化通过仍不代表客户端现场认证通过。
+
 ## 协议依据
 
 - [Codex Hooks](https://learn.chatgpt.com/docs/hooks)：原生 PreToolUse、工具覆盖和信任要求。

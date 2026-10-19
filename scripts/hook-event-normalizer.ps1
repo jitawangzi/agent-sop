@@ -540,16 +540,29 @@ function Test-CopilotNativeShape {
     }
 }
 
+function Test-CursorSessionAliases {
+    param([System.Collections.IDictionary]$Payload)
+    if ($Payload.Contains('conversation_id') -and $Payload.Contains('session_id')) {
+        return ($Payload.conversation_id -is [string] -and $Payload.session_id -is [string] -and
+            $Payload.conversation_id -ceq $Payload.session_id)
+    }
+    return $true
+}
+
 function Test-CursorSessionStartShape {
     param([System.Collections.IDictionary]$Payload)
 
     if (-not (Test-OnlyAllowedFields $Payload @(
         "session_id",
         "is_background_agent",
-        "composer_mode"
+        "composer_mode",
+        "conversation_id", "generation_id", "model", "model_id", "model_params",
+        "hook_event_name", "cursor_version", "workspace_roots", "user_email", "transcript_path"
     ))) {
         return $false
     }
+    if (-not (Test-CursorSessionAliases $Payload)) { return $false }
+    if ($Payload.Contains('hook_event_name') -and $Payload.hook_event_name -cne 'sessionStart') { return $false }
     if (
         -not (Test-RequiredStringFields $Payload @("session_id")) -or
         -not (Test-MapHasKey $Payload "is_background_agent") -or
@@ -575,10 +588,14 @@ function Test-CursorSessionEndShape {
         "duration_ms",
         "is_background_agent",
         "final_status",
-        "error_message"
+        "error_message",
+        "conversation_id", "generation_id", "model", "model_id", "model_params",
+        "hook_event_name", "cursor_version", "workspace_roots", "user_email", "transcript_path"
     ))) {
         return $false
     }
+    if (-not (Test-CursorSessionAliases $Payload)) { return $false }
+    if ($Payload.Contains('hook_event_name') -and $Payload.hook_event_name -cne 'sessionEnd') { return $false }
     if (-not (Test-RequiredStringFields $Payload @(
         "session_id",
         "reason",
@@ -629,6 +646,7 @@ function Test-CursorPreToolUseShape {
 
     $allowed = @(
         "conversation_id",
+        "session_id",
         "generation_id",
         "model",
         "model_id",
@@ -650,11 +668,11 @@ function Test-CursorPreToolUseShape {
     if (-not (Test-RequiredStringFields $Payload @(
         "conversation_id",
         "generation_id",
-        "cwd",
         "tool_name"
     ))) {
         return $false
     }
+    if (-not (Test-CursorSessionAliases $Payload) -or ($Payload.Contains('cwd') -and $Payload.cwd -isnot [string])) { return $false }
     if (
         -not (Test-MapHasKey $Payload "workspace_roots") -or
         -not (Test-StringArrayValue $Payload.workspace_roots) -or
@@ -808,7 +826,10 @@ function Test-HybridPayloadSignals {
     if (
         (Test-MapHasKey $Payload "conversation_id") -and
         (
-            (Test-MapHasKey $Payload "session_id") -or
+            ((Test-MapHasKey $Payload "session_id") -and -not (
+                (Test-MapHasKey $Payload 'workspace_roots') -and (Test-MapHasKey $Payload 'generation_id') -and
+                (Test-CursorSessionAliases $Payload)
+            )) -or
             (Test-MapHasKey $Payload "sessionId") -or
             (Test-MapHasKey $Payload "conversationId")
         )
@@ -844,7 +865,7 @@ function Assert-AiSopEventHint {
     }
 
     if (Test-MapHasKey $Payload "hook_event_name") {
-        $nativeEvent = switch ($Payload.hook_event_name) {
+        $nativeEvent = switch -CaseSensitive ($Payload.hook_event_name) {
             "SessionStart" { "SESSION_START" }
             "SessionEnd" { "SESSION_END" }
             "PreToolUse" { "PRE_TOOL_USE" }
@@ -882,7 +903,7 @@ function Assert-AiSopEventHint {
     }
     if (
         (Test-MapHasKey $Payload "conversation_id") -and
-        $EventHint -ne "PRE_TOOL_USE"
+        $EventHint -ne "PRE_TOOL_USE" -and -not (Test-MapHasKey $Payload 'is_background_agent')
     ) {
         Throw-AiSopHookError "EVENT_HINT_MISMATCH"
     }
@@ -1185,7 +1206,7 @@ function Get-AiSopWorkspaceContext {
     } catch {
         Throw-AiSopHookError "EDIT_PATH_AMBIGUOUS"
     }
-    $cwdCandidate = if (Test-MapHasKey $Payload "cwd") {
+    $cwdCandidate = if ((Test-MapHasKey $Payload "cwd") -and -not ($NativeShape -like 'CURSOR_*' -and [string]::IsNullOrWhiteSpace([string]$Payload.cwd))) {
         [string]$Payload.cwd
     } else {
         $workspace
@@ -1194,13 +1215,16 @@ function Get-AiSopWorkspaceContext {
         -Path $cwdCandidate -WorkspaceRoot $workspace -BasePath $workspace
 
     $rootCandidates = @($workspace)
-    if ($NativeShape -eq "CURSOR_PRE_TOOL_USE") {
+    if ($NativeShape -like 'CURSOR_*' -and (Test-MapHasKey $Payload 'workspace_roots')) {
+        if (-not (Test-StringArrayValue $Payload.workspace_roots)) { Throw-AiSopHookError 'PAYLOAD_SHAPE_INVALID' }
         $rootCandidates = @($Payload.workspace_roots)
     } elseif ($NativeShape -eq "ANTIGRAVITY") {
         $rootCandidates = @($Payload.workspacePaths)
     }
     $roots = @()
     foreach ($rootCandidate in $rootCandidates) {
+        # Cursor 在 Windows 上可发送 URI 风格盘符，仍须经过物理路径边界检查。
+        if ($NativeShape -like 'CURSOR_*' -and [OperatingSystem]::IsWindows() -and $rootCandidate -cmatch '^/[A-Za-z]:/') { $rootCandidate=$rootCandidate.Substring(1) }
         $roots += Resolve-AiSopWorkspacePath `
             -Path ([string]$rootCandidate) `
             -WorkspaceRoot $workspace `

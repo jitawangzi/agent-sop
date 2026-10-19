@@ -11,12 +11,16 @@ param(
         "STOP"
     )]
     [string]$EventHint = "",
-    [ValidateSet('', 'CODEX', 'PI')][string]$AgentHint = ''
+    [ValidateSet('', 'CODEX', 'PI', 'CURSOR', 'ANTIGRAVITY')][string]$AgentHint = ''
 )
 
 $ErrorActionPreference = "Stop"
 
 $script:DispatcherWasDotSourced = $MyInvocation.InvocationName -eq "."
+if (-not $script:DispatcherWasDotSourced) {
+    [Console]::InputEncoding = [Text.UTF8Encoding]::new($false)
+    [Console]::OutputEncoding = [Text.UTF8Encoding]::new($false)
+}
 $script:DispatcherClaudeRoot = Split-Path -Parent $PSScriptRoot
 $script:DispatcherWorkspaceRoot = Split-Path -Parent (
     $script:DispatcherClaudeRoot
@@ -208,6 +212,9 @@ function ConvertTo-AiSopDispatcherEnvelope {
             }
             if ($Decision -eq "DENY") {
                 $result.reason = $reason
+                # 载荷损坏时仍给 Cursor 明确的拒绝字段；不能依赖外层 Shell 保留退出码。
+                $result.permission = 'deny'
+                $result.agent_message = $reason
             }
             return ConvertTo-Json -Compress -InputObject $result
         }
@@ -264,7 +271,7 @@ function Get-AiSopDispatcherInferredAgent {
     ) {
         [void]$candidates.Add("COPILOT")
     }
-    if (
+    if (-not $candidates.Contains('CURSOR') -and (
         $payload.Contains("tool_use_id") -or
         $payload.Contains("permission_mode") -or
         $payload.Contains("prompt_id") -or
@@ -272,7 +279,7 @@ function Get-AiSopDispatcherInferredAgent {
             $payload.Contains("hook_event_name") -and
             -not $payload.Contains("timestamp")
         )
-    ) {
+    )) {
         [void]$candidates.Add("CLAUDE_CODE")
     }
     if ($candidates.Count -eq 1) {
@@ -960,7 +967,7 @@ function Invoke-AiSopHookDispatcher {
         [string]$TrustedWorkspaceRoot,
 
         [DateTimeOffset]$AcceptedAt = [DateTimeOffset]::UtcNow,
-        [ValidateSet('', 'CODEX', 'PI')][string]$AgentHint = ''
+        [ValidateSet('', 'CODEX', 'PI', 'CURSOR', 'ANTIGRAVITY')][string]$AgentHint = ''
     )
 
     $watch = [System.Diagnostics.Stopwatch]::StartNew()
@@ -969,7 +976,7 @@ function Invoke-AiSopHookDispatcher {
     try {
         $originalRawPayload=$RawPayload
         # 客户端身份来自安装的入口参数，不能由工具载荷声明或覆盖。
-        if ($AgentHint) { $RawPayload = ConvertFrom-AiSopHarnessPayload $RawPayload $AgentHint $EventHint }
+        if ($AgentHint -in @('CODEX','PI')) { $RawPayload = ConvertFrom-AiSopHarnessPayload $RawPayload $AgentHint $EventHint }
         # Total workflow budget for this hook pass. 750ms was too tight for a
         # cold session Register (measured ~915ms including transaction
         # recovery), so default to 5s; overridable for locked-down or very
@@ -991,9 +998,10 @@ function Invoke-AiSopHookDispatcher {
             -EventHint $EventHint `
             -TrustedWorkspaceRoot $TrustedWorkspaceRoot `
             -AcceptedAt $AcceptedAt `
-            -AgentOverride $AgentHint `
+            -AgentOverride $(if ($AgentHint -in @('CODEX','PI')) { $AgentHint } else { '' }) `
             -DeadlineUtc $deadlineUtc
         $agent = [string]$hookEvent.agent
+        if ($AgentHint -and $agent -cne $AgentHint) { $agent=$AgentHint; throw 'PAYLOAD_AGENT_MISMATCH' }
         if ($AgentHint) { $hookEvent.rawPayloadSha256=Get-AiSopSha256Hex $originalRawPayload }
 
         if (Test-AiSopGuardEscapeEnabled) {
@@ -1188,7 +1196,7 @@ if (-not $script:DispatcherWasDotSourced) {
             -ExitCode 2 `
             -DurationMs 0
     } else {
-        $raw = [Console]::In.ReadToEnd()
+        $raw = [Console]::In.ReadToEnd().TrimStart([char]0xFEFF)
         $result = Invoke-AiSopHookDispatcher `
             -RawPayload $raw `
             -EventHint $EventHint `

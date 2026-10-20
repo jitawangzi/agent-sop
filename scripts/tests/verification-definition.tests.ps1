@@ -38,6 +38,16 @@ try {
     SaveConfig
     Task Start @{Tier='T2';Objective='Verify command definitions'} | Out-Null
     Task RecordSync @{Documentation='UNCHANGED';Tests='UNCHANGED';Summary='Existing fixture requirements and regression remain applicable'} | Out-Null
+    # 复现真实 pwsh -File 误传数组：拒绝发生在创建 RUNNING/失败批次之前。
+    $taskBefore=[IO.File]::ReadAllText((Get-AiSopTaskPath $spec $taskId))
+    $badArguments="'/d','/c','echo','unreachable'"
+    $nativeOutput=& (Get-Process -Id $PID).Path -NoProfile -File $entry -Operation Run -WorkspacePath $workspace -Feature Example -TaskId $taskId -Agent CODEX -Kind test -Batch malformed -Executable cmd.exe -Arguments $badArguments 2>&1 | Out-String
+    Assert ($LASTEXITCODE -ne 0 -and $nativeOutput -match 'RUN_ARGUMENT_ARRAY_LITERAL') 'Native -File argument error was not explained before execution'
+    Assert ([IO.File]::ReadAllText((Get-AiSopTaskPath $spec $taskId)) -ceq $taskBefore) 'Rejected array literal left a failed batch or changed the task'
+    Assert (-not (Test-Path (Join-Path $workspace '.ai-workspace/.runtime/verification/Example/definition'))) 'Rejected array literal started verification logging'
+    # 正常脚本数据中的引号、逗号以及完整的 -Command 文本不应被拆分或拒绝。
+    Assert-AiSopRunArgumentShape pwsh @('-NoProfile','-Command',"Write-Output 'a,b'")
+    Assert-AiSopRunArgumentShape cmd.exe @('/d','/c','echo','a,b')
     Task Run @{Profile='build'} | Out-Null
     Task Run @{Profile='test'} | Out-Null
     Task Verify | Out-Null

@@ -26,6 +26,8 @@ description: 高级开发工程师，负责基于当前项目架构的高质量�
 2. **交工前自审清单 (Self-Review Checklist)**：编译通过后，必须自检 Completeness（无遗漏需求）、Quality（命名准确/结构清晰）、Discipline（严格遵守 YAGNI 不过度设计）、Testing（真实断言非空 Mock，核对输出中的非预期异常与警告）。主动触发异常路径时，按项目规范保留日志，并以有效断言验证处理结果；不得为追求“零噪声”删除、降级或屏蔽项目要求的日志，也不能仅凭退出码为零忽略真实异常。
 3. **TDD 证据链契约 (RED ➔ GREEN Evidence，仅 T3)**：记录真实失败验证（RED 命令与报错）与通过验证（GREEN 命令与输出）。T2 运行相关测试并如实报告，不要求为已有实现补造 RED；T1 不强制增加测试阶段。
 
+验证批次按验证目标固定命名。同一组测试的 RED → GREEN、审计修复后复测必须复用同一 `Kind/Batch`，不要另建 `red`、`green`、`final2` 等阶段批次；Run 自动保留每次尝试。交接时把批次、命令/Profile、CaseIds 或 JUnit 映射一起交回 controller。T3 的 SetCaseScope 只登记必测范围，不自动为 Run 补齐覆盖；执行必须绑定真实覆盖的用例。参数数组用 PowerShell 内的 `& ./ai-sop.ps1 ... -Arguments @(...)` 或 Profile，不能把数组表达式直接传给 `pwsh -File`。异常收尾见 `.ai-sop/docs/VERIFICATION_CONTINUATION.md`。
+
 下文为项目领域规则（具体框架与编码风格以宿主 `context/` 为准）。
 
 ## Core Capabilities

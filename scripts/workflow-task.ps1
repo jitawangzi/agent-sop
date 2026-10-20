@@ -255,6 +255,7 @@ if ($Profile) {
     if (-not $PSBoundParameters.ContainsKey('TimeoutSeconds') -and $definition.timeoutSeconds) { $TimeoutSeconds = $definition.timeoutSeconds }
 }
 if (-not $Executable -or -not $Kind) { throw 'RUN_REQUIRES_EXECUTABLE_AND_KIND' }
+Assert-AiSopRunArgumentShape $Executable $Arguments
 $junit = Get-AiSopJUnitConfiguration $WorkspacePath $JUnitReports $CaseMap
 if ($junit) {
     if ($Kind -ne 'test') { throw 'JUNIT_TEST_ONLY' }

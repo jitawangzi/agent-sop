@@ -151,6 +151,17 @@ try {
     MustFail { Task Verify fix-d } 'Launch failure retained older green batch'
     Task Run fix-d @{ Kind='test'; Batch='regression'; Executable='pwsh'; Arguments=@('-NoProfile','-Command','exit 0'); Reason='Restore the fixture command after launch failure' } | Out-Null
     Task Complete fix-d | Out-Null
+    # 同一真实命令经历 RED/GREEN：修复输入后复用批次，保留失败历史且能够收尾。
+    Task Start tdd-cycle @{ Tier='T2'; Objective='Stable verification batch across repair' } | Out-Null
+    Task RecordSync tdd-cycle @{ Documentation='UNCHANGED'; Tests='UNCHANGED'; Summary='Verify the existing input contract after repair.' } | Out-Null
+    $tddCommand=@('-NoProfile','-Command',"if ([IO.File]::ReadAllText('src/input.txt') -ne 'repaired') { exit 7 }")
+    MustFail { Task Run tdd-cycle @{ Kind='test'; Batch='regression'; Executable='pwsh'; Arguments=$tddCommand } } 'RED command unexpectedly passed'
+    [IO.File]::WriteAllText((Join-Path $workspace 'src/input.txt'),'repaired')
+    Task Run tdd-cycle @{ Kind='test'; Batch='regression'; Executable='pwsh'; Arguments=$tddCommand } | Out-Null
+    Task Run tdd-cycle @{ Kind='compile'; Executable='pwsh'; Arguments=@('-NoProfile','-Command','exit 0') } | Out-Null
+    $attempts=@((Read-AiSopTask $spec 'tdd-cycle').verifications | Where-Object { $_.batch -eq 'regression' })
+    Assert ($attempts.Count -eq 2 -and $attempts[0].exitCode -eq 7 -and $attempts[1].exitCode -eq 0) 'TDD retry erased RED or failed to retain GREEN'
+    Task Complete tdd-cycle | Out-Null
     [IO.File]::WriteAllText((Join-Path $workspace 'src/deleted.txt'), 'old input')
     Task Start fix-e @{ Tier='T1'; UserRequest='本测试明确选择 T1'; Objective='Changing inputs during build' } | Out-Null
     $output=[Collections.Generic.List[string]]::new(); $failure=''

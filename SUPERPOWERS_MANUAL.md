@@ -153,6 +153,8 @@ Status、Discover、InspectRecovery 和 Preflight 共用恢复建议，JSON 提�
 
 ## 独立修改、续做与暂停
 
+验证批次应按目标固定命名，RED/GREEN 与多轮修复复用同一批次；旧失败不会被另一个新建成功批次覆盖。参数数组误传、覆盖未登记以及旧任务收尾的处理见 [验证续做与收尾](docs/VERIFICATION_CONTINUATION.md)。
+
 1. 进入新任务、切换功能/工作区或跨 Agent 接管时，用 `pwsh -NoProfile -File ./ai-sop.ps1 Task -Operation Discover` 查看候选；同一会话持续执行已确认的任务无需重复；讨论不认领。
 2. 独立修改使用 `Task -Operation Start -Feature Example -TaskId fix-1 -Tier T2 -Objective "修复既有行为" -Agent CODEX`。
 3. 继续原任务使用 `Task -Operation Resume -Feature Example -TaskId fix-1 -Agent CODEX`，异常中断先按 InspectRecovery 的建议处理；任务身份和档位不变。旧 ACTIVE owner 可省略 TaskId 显式收编，不重置批准。

@@ -45,6 +45,8 @@ pwsh -NoProfile -File ./ai-sop.ps1 Task -Operation Complete -Feature <Feature> -
 
 **验证证据**：Profile 定义在 `.ai-workspace/context/verification-commands.json`；也可 Run 指定 Kind、Batch、Executable、Arguments。必须是真实构建/测试，不能用空命令或固定 exit 0 造成功。同批次更换命令、Profile 或用例范围须写 Reason；失败/超时/中断不能被无关批次或旧成功覆盖。Run 保存失败时保留 pending.json，按提示 RetryEvidence，不盲目重跑或改写证据哈希。
 
+批次按验证目标命名，RED/GREEN、修复后复测复用原 Kind/Batch，Run 自动保留尝试历史；T3 的 SetCaseScope 不替代 Run 的实际 CaseIds/JUnit 映射。参数数组在 PowerShell 内用 `& ./ai-sop.ps1` 传递，不能把逗号表达式直接传给 `pwsh -File`。出现多轮失败/过期批次时读 `.ai-sop/docs/VERIFICATION_CONTINUATION.md` 后继续收尾。
+
 **启动起点**：Start 自动记录 startInputs；T1/T2 的轻量采集超限记 UNAVAILABLE，不阻塞普通编译/相关测试。预期申请执行豁免或后续升 T3 时，可在修改前 Start -CaptureBaseline。Resume/Run 不重拍起点；不能用修改后的快照补造原始基线。TaskId 表示一次独立修改，T3 计划中的 Task/Step 是内部执行单元。
 
 **待同步提醒**：AddFollowUp 在来源任务中记录 documentation / test-cases / verification，含具体 Summary 和 Scope。Start/Resume 自动提醒一次，继续当前任务；不要求确认、不扩大范围、**不因待办升档或阻止完成**。解决后 CloseFollowUp 记录 Resolution；人工明确无需处理才记 NOT_NEEDED 与 UserRequest。DONE 不隐藏待办，新任务完成也不自动清除旧事项。

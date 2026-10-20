@@ -3,6 +3,17 @@
 # This is an integrity boundary for normal APIs, not a trust boundary against a
 # caller with unrestricted write access to the engine and its local registries.
 
+function Assert-AiSopRunArgumentShape {
+    param([string]$Executable, [string[]]$Arguments)
+    # pwsh -File 不会把命令行上的逗号表达式解析成参数数组。
+    # 只识别宿主首参数中的明确误传；不拆分或执行调用者提供的字符串。
+    $hostName = [IO.Path]::GetFileNameWithoutExtension($Executable)
+    if ($hostName -notin @('cmd','pwsh','powershell') -or -not $Arguments.Count) { return }
+    if ($Arguments[0] -match '^\s*([''"])(?:/d|/c|/s|-NoProfile|-NonInteractive|-File|-Command)\1\s*,\s*[''"]') {
+        throw 'RUN_ARGUMENT_ARRAY_LITERAL: host arguments were passed as one comma-separated string. Use -Profile, or invoke & ./ai-sop.ps1 inside PowerShell with -Arguments @(...); pwsh -File cannot parse that array expression. No verification attempt was registered.'
+    }
+}
+
 function Get-AiSopRunEvidencePath {
     param([string]$SpecDirectory, [string]$TaskId, [string]$RunId)
     if ($RunId -notmatch '^[0-9a-f]{32}$') { throw 'RUN_ID_INVALID' }

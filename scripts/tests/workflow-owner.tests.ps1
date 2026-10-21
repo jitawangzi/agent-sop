@@ -1296,6 +1296,9 @@ try {
     & git -C $ws commit -m "feat 2" 2>&1 | Out-Null
     $feat2Sha = (& git -C $ws rev-parse HEAD 2>&1 | Out-String).Trim()
 
+    # 失效的远端默认分支仍可回退到已存在的 main。
+    & git -C $ws symbolic-ref refs/remotes/origin/HEAD refs/remotes/origin/missing
+
     $gitSession = New-Session -Feature $gitFeature -Agent CLAUDE_CODE -NativeSessionId "session-git-1"
     New-Grant -Feature $gitFeature -Session $gitSession -Operation Claim -Agent CLAUDE_CODE -OwnerId "git-owner-1" -Suffix "git-claim" | Out-Null
 
@@ -1309,6 +1312,24 @@ try {
 
     $gitOwnerRecord = Read-OwnerRecord "GitBaselineForkTest"
     Assert-Equal $gitOwnerRecord.baseline $mainSha "Claim without -Baseline on a feature branch must record trunk fork-point, not HEAD."
+
+    # 远端默认分支不叫 main/master 时必须可登记，并优先于同名历史分支。
+    & git -C $ws update-ref refs/remotes/origin/dev $mainSha
+    & git -C $ws symbolic-ref refs/remotes/origin/HEAD refs/remotes/origin/dev
+    & git -C $ws update-ref refs/remotes/origin/main $feat2Sha
+    & git -C $ws branch -f main $feat2Sha
+    $remoteFeature = [pscustomobject]@{
+        Feature = 'RemoteDefaultBranch'
+        Workspace = $ws
+        Spec = (Join-Path $ws '.ai-workspace/specs/features/RemoteDefaultBranch')
+    }
+    [IO.Directory]::CreateDirectory($remoteFeature.Spec) | Out-Null
+    $remoteSession = New-Session -Feature $remoteFeature -Agent CLAUDE_CODE -NativeSessionId 'session-remote-default'
+    New-Grant -Feature $remoteFeature -Session $remoteSession -Operation Claim -Agent CLAUDE_CODE -OwnerId 'remote-default-owner' -Suffix 'remote-default-claim' | Out-Null
+    Invoke-Owner -Feature $remoteFeature -Operation Claim -Workflow SUPERPOWERS -Agent CLAUDE_CODE -OwnerId 'remote-default-owner' | Out-Null
+    $remoteOwnerPath = Join-Path (Get-AiSopWorkflowOwnerRegistryRoot -WorkspacePath $ws) 'remotedefaultbranch.json'
+    $remoteOwner = Get-Content -LiteralPath $remoteOwnerPath -Raw | ConvertFrom-Json
+    Assert-Equal $remoteOwner.baseline $mainSha 'Remote default branch must retain the actual fork-point even when main points at feature HEAD.'
 
     # Test explicit mutation: BindSession with baseline ahead of fork-point must throw BASELINE_MUTATION_DETECTED
     $v1Feature = New-TestFeature "GitBaselineBindTest"
@@ -1326,6 +1347,11 @@ try {
     & git -C $wsV1 add feat.txt 2>&1 | Out-Null
     & git -C $wsV1 commit -m "feat" 2>&1 | Out-Null
     $v1FeatSha = (& git -C $wsV1 rev-parse HEAD 2>&1 | Out-String).Trim()
+
+    # 默认 dev 同样禁止把基线推进到功能分支 HEAD。
+    & git -C $wsV1 update-ref refs/remotes/origin/dev $v1MainSha
+    & git -C $wsV1 symbolic-ref refs/remotes/origin/HEAD refs/remotes/origin/dev
+    & git -C $wsV1 branch -D main 2>&1 | Out-Null
 
     # Pre-create 1.0 owner with trunk baseline
     $v1OwnerPath = Join-Path (Get-AiSopWorkflowOwnerRegistryRoot -WorkspacePath $wsV1) "gitbaselinebindtest.json"
@@ -1371,6 +1397,7 @@ try {
     [System.IO.File]::WriteAllText($dummyFile2, "hello 2`n", $Utf8NoBom)
     & git -C $noTrunkRepo add .
     & git -C $noTrunkRepo commit -m "c2" --quiet
+    & git -C $noTrunkRepo symbolic-ref refs/remotes/origin/HEAD refs/remotes/origin/missing
 
     $noTrunkWs = Join-Path $noTrunkRepo ".ai-workspace\specs\features\NoTrunkFeature"
     [System.IO.Directory]::CreateDirectory($noTrunkWs) | Out-Null

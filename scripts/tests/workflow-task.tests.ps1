@@ -27,9 +27,17 @@ try {
     [IO.Directory]::CreateDirectory($spec) | Out-Null
     [IO.Directory]::CreateDirectory((Join-Path $workspace 'src')) | Out-Null
     [IO.File]::WriteAllText((Join-Path $workspace 'src/input.txt'), 'initial')
-    git -C $workspace init -b main --quiet
+    git -C $workspace init -b dev --quiet
     git -C $workspace -c user.name=Test -c user.email=test@example.invalid add src/input.txt
     git -C $workspace -c user.name=Test -c user.email=test@example.invalid commit --quiet -m initial
+    # 模拟真实宿主以 dev 为默认分支，且工作分支已有后续提交。
+    $defaultBranchBaseline = [string](& git -C $workspace rev-parse HEAD)
+    git -C $workspace update-ref refs/remotes/origin/dev $defaultBranchBaseline
+    git -C $workspace symbolic-ref refs/remotes/origin/HEAD refs/remotes/origin/dev
+    git -C $workspace checkout --quiet -b feature/task
+    [IO.File]::WriteAllText((Join-Path $workspace 'src/input.txt'), 'feature change')
+    git -C $workspace add src/input.txt
+    git -C $workspace -c user.name=Test -c user.email=test@example.invalid commit --quiet -m feature
     # Project context and feature specifications can be separate nested Git repos.
     $contextRoot = Join-Path $workspace '.ai-workspace'
     $specsRoot = Join-Path $contextRoot 'specs'
@@ -54,6 +62,8 @@ try {
     Task Start fix-a @{ Tier='T2'; Objective='Independent fix' } | Out-Null
     Task RecordSync fix-a @{ Documentation='UNCHANGED'; Tests='UNCHANGED'; Summary='Fixture restores existing behavior; existing regression command covers it.' } | Out-Null
     $first = Read-AiSopTask $spec 'fix-a'
+    $defaultBranchOwner = Get-Content -LiteralPath (Join-Path (Get-AiSopWorkflowOwnerRegistryRoot -WorkspacePath $workspace) 'example.json') -Raw | ConvertFrom-Json
+    Assert ($defaultBranchOwner.baseline -eq $defaultBranchBaseline) 'Task Start did not preserve the origin/HEAD fork-point'
     Assert ($first.tier -eq 'T2') 'Task tier changed because historical design exists'
     $env:CODEX_SESSION_ID='other-feature-session'
     & $entry -Operation Start -WorkspacePath $workspace -Feature Other -TaskId parallel -Tier T1 -UserRequest '本测试明确选择 T1' -Objective 'Independent feature' -Agent CODEX | Out-Null

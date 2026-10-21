@@ -1139,7 +1139,14 @@ function Get-GitTrunkForkPoint {
     param([AllowEmptyString()][AllowNull()][string]$WorkspacePath = $null)
     if ([string]::IsNullOrWhiteSpace($WorkspacePath)) { return $null }
 
-    $trunkRefs = @("origin/main", "origin/master", "main", "master")
+    # 优先采用远端声明的默认分支；仅在未配置或引用失效时兼容传统主干名。
+    # 仍计算 merge-base，不能用当前 HEAD 缩窄功能分支的审查起点。
+    $remoteHead = (& git -C $WorkspacePath symbolic-ref --quiet refs/remotes/origin/HEAD 2>$null | Out-String).Trim()
+    $trunkRefs = @()
+    if ($LASTEXITCODE -eq 0 -and $remoteHead -match '^refs/remotes/origin/(?!HEAD$).+') {
+        $trunkRefs += $remoteHead
+    }
+    $trunkRefs += @('refs/remotes/origin/main', 'refs/remotes/origin/master', 'refs/heads/main', 'refs/heads/master')
     foreach ($trunk in $trunkRefs) {
         & git -C $WorkspacePath rev-parse --verify --quiet "$trunk^{commit}" 2>$null | Out-Null
         if ($LASTEXITCODE -eq 0) {
@@ -1207,7 +1214,7 @@ function Resolve-AuthoritativeVcsBaseline {
             return $rootCommit
         }
 
-        throw "BASELINE_MISSING: Unable to resolve authoritative Git trunk fork-point in '$WorkspacePath'. A trunk branch (main/master) is required."
+        throw "BASELINE_MISSING: Unable to resolve authoritative Git trunk fork-point in '$WorkspacePath'. A resolvable origin/HEAD default branch or main/master trunk is required."
     }
 
     if ($isSvn) {

@@ -134,6 +134,31 @@ try {
   const ag = await hook('.agents', 'PRE_TOOL_USE', { conversationId: 'ag-native-fixture', workspacePaths: [workspace],
     stepIdx: 1, toolCall: { name: 'replace_file_content', args: { TargetFile: file, TargetContent: 'BEFORE', ReplacementContent: '修改' } } });
   assert.equal(ag.value.decision, 'deny'); assert.match(ag.value.reason, /写入前/);
+  // 新版原生读取不登记或恢复会话；实际暂停任务后仍只读，不借任务获取写权限。
+  const agReadSession = 'ag-readonly-native';
+  const agTool = (name, args) => ({ conversationId: agReadSession, workspacePaths: [workspace],
+    stepIdx: ++counter, toolCall: { name, args } });
+  const readInputs = [{ Path: file }, { Path: file, StartLine: 1, EndLine: 20, ByteOffset: 0 }, { path: file, offset: 0 }];
+  for (const phase of ['unregistered', 'paused']) {
+    if (phase === 'paused') {
+      await task('Start', 'ANTIGRAVITY', agReadSession);
+      await task('Suspend', 'ANTIGRAVITY', agReadSession);
+    }
+    const beforeRead = await authoritySnapshot();
+    for (const args of readInputs) {
+      const result = await hook('.agents', 'PRE_TOOL_USE', agTool('read_file', args), true);
+      assert.equal(result.code, 0, JSON.stringify(result));
+      assert.equal(result.value.decision, 'allow', JSON.stringify(result));
+    }
+    assert.deepEqual(await authoritySnapshot(), beforeRead, `${phase} 读取不能登记、续租、恢复或接管权限`);
+  }
+  for (const args of [
+    { Path: file, StartLine: '1' }, { Path: file, EndLine: null }, { Path: file, ByteOffset: false },
+    { Path: file, path: file }, { Path: file, ByteOffset: 0, offset: 0 },
+    { Path: file, command: 'unexpected' }, { Path: join(root, 'outside.txt') }
+  ]) assert.equal((await hook('.agents', 'PRE_TOOL_USE', agTool('read_file', args))).value.decision, 'deny');
+  assert.equal((await hook('.agents', 'PRE_TOOL_USE', agTool('write_to_file', { TargetFile: file, CodeContent: 'UNAUTHORIZED', Overwrite: true }))).value.decision, 'deny');
+  assert.equal((await hook('.agents', 'PRE_TOOL_USE', agTool('future_read_file', { Path: file }))).value.decision, 'deny');
   const bootstrapCommand = "pwsh -NoProfile -File './.ai-sop/scripts/workflow-task.ps1' -Operation Start -Feature Probe -TaskId process-test -Agent CURSOR -NativeSessionId '" + visibleSession + "' -Objective '真实进程验收'";
   const bootstrap = await hook('.cursor', 'PRE_TOOL_USE', cursor('Shell', { command: bootstrapCommand, cwd: '', timeout: 30000 }, { cwd: '' }));
   assert.equal(bootstrap.value.permission, 'allow', JSON.stringify(bootstrap));

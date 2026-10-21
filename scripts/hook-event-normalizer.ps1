@@ -1993,9 +1993,26 @@ function Get-AiSopToolPayload {
         }
     }
     if ($NativeShape -eq "ANTIGRAVITY") {
+        $arguments = $Payload.toolCall.args
+        if ($Payload.toolCall.name -ceq 'read_file') {
+            # 新版原生读取参数先映射到既有 READ 契约，复用类型和物理路径校验。
+            # 别名冲突必须拒绝，不能丢弃未知字段而把混合操作误判为只读。
+            $arguments = [ordered]@{}
+            foreach ($key in $Payload.toolCall.args.Keys) {
+                $canonicalKey = switch -CaseSensitive ($key) {
+                    'Path' { 'path' }
+                    'StartLine' { 'line_start' }
+                    'EndLine' { 'line_end' }
+                    'ByteOffset' { 'offset' }
+                    default { $key }
+                }
+                if ($arguments.Contains($canonicalKey)) { Throw-AiSopHookError 'TOOL_ARGS_INVALID' }
+                $arguments[$canonicalKey] = $Payload.toolCall.args[$key]
+            }
+        }
         return [pscustomobject]@{
             ToolName = [string]$Payload.toolCall.name
-            Arguments = $Payload.toolCall.args
+            Arguments = $arguments
         }
     }
     Throw-AiSopHookError "TOOL_ARGS_INVALID"

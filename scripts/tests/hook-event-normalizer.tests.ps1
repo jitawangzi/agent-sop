@@ -1112,6 +1112,15 @@ try {
 
     $antigravityToolClasses = @(
         @("read_file", [ordered]@{
+            Path = (Join-Path $Workspace "README.md")
+            StartLine = 1
+            EndLine = 20
+            ByteOffset = 0
+        }, "SAFE_NON_EDIT"),
+        @("read_file", [ordered]@{
+            Path = (Join-Path $Workspace "README.md")
+        }, "SAFE_NON_EDIT"),
+        @("read_file", [ordered]@{
             path = (Join-Path $Workspace "README.md")
         }, "SAFE_NON_EDIT"),
         @("run_command", [ordered]@{
@@ -1132,6 +1141,38 @@ try {
             $event.toolClass $case[2] `
             "Antigravity $($case[0]) tool class mismatch."
     }
+
+    # 新版读取参数须进入真实 READ 校验，范围变化仍参与去重摘要。
+    $readArguments = [ordered]@{ Path=(Join-Path $Workspace 'README.md'); StartLine=1; EndLine=20; ByteOffset=0 }
+    $readPayload = New-AntigravityToolPayload -ToolName read_file -Arguments $readArguments -Workspace $Workspace
+    $nativeRead = ConvertTo-AiSopHookEvent -RawPayload (ConvertTo-RawPayload $readPayload) -EventHint PRE_TOOL_USE -TrustedWorkspaceRoot $Workspace -AcceptedAt $AcceptedAt
+    $readPayload.toolCall.args = [ordered]@{ path=$readArguments.Path; line_start=1; line_end=20; offset=0 }
+    $legacyRead = ConvertTo-AiSopHookEvent -RawPayload (ConvertTo-RawPayload $readPayload) -EventHint PRE_TOOL_USE -TrustedWorkspaceRoot $Workspace -AcceptedAt $AcceptedAt
+    Assert-Equal $nativeRead.canonicalSemanticArgsSha256 $legacyRead.canonicalSemanticArgsSha256 '新旧等价读取参数应有相同语义摘要。'
+    $readPayload.toolCall.args = $readArguments
+    foreach ($field in @('StartLine','EndLine','ByteOffset')) {
+        $original = $readArguments[$field]
+        $readArguments[$field] = $original + 1
+        $changedRead = ConvertTo-AiSopHookEvent -RawPayload (ConvertTo-RawPayload $readPayload) -EventHint PRE_TOOL_USE -TrustedWorkspaceRoot $Workspace -AcceptedAt $AcceptedAt
+        Assert-True ($changedRead.canonicalSemanticArgsSha256 -cne $nativeRead.canonicalSemanticArgsSha256) '读取范围变化不能复用原摘要。'
+        $readArguments[$field] = 'invalid'
+        $badRead = ConvertTo-AiSopHookEvent -RawPayload (ConvertTo-RawPayload $readPayload) -EventHint PRE_TOOL_USE -TrustedWorkspaceRoot $Workspace -AcceptedAt $AcceptedAt
+        Assert-Equal $badRead.toolClass 'UNKNOWN' '非整数范围不能获只读豁免。'
+        $readArguments[$field] = $original
+    }
+    $readArguments['offset'] = 0
+    Assert-ThrowsCode -Code TOOL_ARGS_INVALID -Action {
+        ConvertTo-AiSopHookEvent -RawPayload (ConvertTo-RawPayload $readPayload) -EventHint PRE_TOOL_USE -TrustedWorkspaceRoot $Workspace -AcceptedAt $AcceptedAt
+    } -Message '同时传入 ByteOffset 与 offset 必须拒绝歧义。'
+    $readArguments.Remove('offset')
+    $readArguments['command'] = 'unexpected'
+    $badRead = ConvertTo-AiSopHookEvent -RawPayload (ConvertTo-RawPayload $readPayload) -EventHint PRE_TOOL_USE -TrustedWorkspaceRoot $Workspace -AcceptedAt $AcceptedAt
+    Assert-Equal $badRead.toolClass 'UNKNOWN' '读取工具不能丢弃未知命令字段后放行。'
+    $readArguments.Remove('command')
+    $readArguments.Path = Join-Path $TestRoot 'outside.txt'
+    Assert-ThrowsCode -Code EDIT_PATH_OUTSIDE_WORKSPACE -Action {
+        ConvertTo-AiSopHookEvent -RawPayload (ConvertTo-RawPayload $readPayload) -EventHint PRE_TOOL_USE -TrustedWorkspaceRoot $Workspace -AcceptedAt $AcceptedAt
+    } -Message '新版参数仍须遵循现有工作区路径边界。'
 
     $fourTerminalMatrix = @(
         @("CLAUDE", "Read", [ordered]@{

@@ -44,6 +44,10 @@ Codex 的常用 Shell 只读命令无需活动任务，暂停或取消任务后�
 
 真实进程回归由 `scripts/tests/hook-process.test.mjs` 覆盖：经项目 wrapper 启动 PowerShell，在本地代码页环境下发送 UTF-8/BOM 与中文路径，严格解码返回字节，检查原生拒绝协议及任务生命周期。Cursor 真实载荷允许相同的 conversation_id/session_id、缺省或空 cwd，以及 Windows `/D:/...` 工作区表示；身份不一致和越界路径仍拒绝。Cursor 自动导入 Claude Hook 时，两份有效载荷识别为同一个 Cursor 会话，由已有去重逻辑处理，不停用用户的其他 Hook。自动化通过仍不代表客户端现场认证通过。
 
+Antigravity `read_file` 接受新版 `Path`、`StartLine`、`EndLine`、`ByteOffset`，并兼容旧版 `path`、`line_start`、`line_end`、`offset`。原生参数先映射到严格 READ 校验；未知字段、非整数范围和重复别名仍拒绝。合法读取无需 Start/Resume，未登记或 INACTIVE 会话也可读取，且不会登记、续租、恢复或接管任务。此适配不把宽泛 ANY_OBJECT 工具或任意 Shell 命令当作只读。
+
+读取仍遵守当前 Hook 的工作区物理路径边界。跨项目审核应在对应项目工作区使用其 Hook 读取；临时 Resume 一个任务既不是只读前提，也不能解除跨工作区路径限制。
+
 ## 协议依据
 
 - [Codex Hooks](https://learn.chatgpt.com/docs/hooks)：原生 PreToolUse、工具覆盖和信任要求。

@@ -40,13 +40,17 @@ Codex 的“项目受信任”和“Hook 已信任”是两项独立状态。验
 
 Codex 的常用 Shell 只读命令无需活动任务，暂停或取消任务后也可继续讨论、查看代码：例如 `Get-Content -LiteralPath 'src/example.txt'`、`Get-ChildItem src -File`、`rg -n pattern src`、`git status --short`、`git diff`、`git log --oneline -n 5`。支持固定只读管道（例如 `Get-Content ... | Select-Object -First 20`）及多个已识别的读取语句；POSIX Shell 支持字面路径的 cat/head/tail 和 sed 行范围读取。路径须在工作区内，未知参数、变量、脚本块、重定向以及混合写入不会获此豁免；遇到复杂只读表达式被拒，可拆成简单读取命令，无需为讨论创建任务。
 
-放行时通过 Codex 原生 `updatedInput.command` 返回重新构造的命令：Git 禁用 pager、可选锁、fsmonitor、签名校验及外部 diff/textconv，rg 禁用配置文件，PowerShell 使用模块限定的只读 cmdlet。去重重放仍重验路径并返回安全化命令。任意 Shell、脚本执行和文件写入继续执行任务防护；此豁免不改变其他客户端的 Shell 策略。
+放行时通过 Codex 原生 `updatedInput.command` 返回重新构造的命令：Git 禁用 pager、可选锁、fsmonitor、签名校验及外部 diff/textconv，rg 禁用配置文件，PowerShell 使用模块限定的只读 cmdlet。去重重放仍重验路径并返回安全化命令。任意 Shell、脚本执行和文件写入继续执行任务防护。
+
+Antigravity `run_command` 同样支持这些免任务的字面只读命令，包括 `Get-ChildItem`、`rg`、`git status/log/diff`，以及只读取本地配置的 `git remote -v`、`git remote get-url origin`、`git branch --show-current`。使用原生 `CommandLine`、可选 `Cwd`、非负整数 `WaitMsBeforeAsync` 和字符串 `toolSummary/toolAction`；`IsDaemon/RunPersistent` 仅接受省略或 false，已有终端、未知参数和命令混写不获只读豁免。Hook 通过原生 `overwrite.CommandLine` 返回安全化命令，并将 `overwrite.Cwd` 固定为已检查的目录；不设置 `permissionOverrides`，不使用 `auto_approve`，仍由客户端执行自身权限规则。无任务时不能修改 remote、创建/删除分支或运行任意脚本。
 
 真实进程回归由 `scripts/tests/hook-process.test.mjs` 覆盖：经项目 wrapper 启动 PowerShell，在本地代码页环境下发送 UTF-8/BOM 与中文路径，严格解码返回字节，检查原生拒绝协议及任务生命周期。Cursor 真实载荷允许相同的 conversation_id/session_id、缺省或空 cwd，以及 Windows `/D:/...` 工作区表示；身份不一致和越界路径仍拒绝。Cursor 自动导入 Claude Hook 时，两份有效载荷识别为同一个 Cursor 会话，由已有去重逻辑处理，不停用用户的其他 Hook。自动化通过仍不代表客户端现场认证通过。
 
 Antigravity `read_file` 接受新版 `Path`、`StartLine`、`EndLine`、`ByteOffset`，并兼容旧版 `path`、`line_start`、`line_end`、`offset`。原生参数先映射到严格 READ 校验；未知字段、非整数范围和重复别名仍拒绝。合法读取无需 Start/Resume，未登记或 INACTIVE 会话也可读取，且不会登记、续租、恢复或接管任务。此适配不把宽泛 ANY_OBJECT 工具或任意 Shell 命令当作只读。
 
-读取仍遵守当前 Hook 的工作区物理路径边界。跨项目审核应在对应项目工作区使用其 Hook 读取；临时 Resume 一个任务既不是只读前提，也不能解除跨工作区路径限制。
+Antigravity `read_file` 除当前工作区外，还可读取本机用户目录下 `.gemini/{antigravity,antigravity-cli,antigravity-ide}/builtin/skills/`，以及对应 `brain/<当前 conversationId>/` 的上传文件和 Artifacts。范围按本机用户配置目录及当前会话标识推导，不信任载荷提供的任意 `appDataDir/artifactDirectoryPath`；其他会话、配置凭据、目录穿越与链接逃逸仍拒绝。该例外只适用于已严格校验的 `read_file`，不授权写入，也不扩大 Shell 的目录范围。
+
+无任务的 Shell 读取仍限定于当前工作区；跨项目审核应在对应项目工作区读取。已有 ACTIVE 任务下的任意 Shell 沿用归属/命令授权策略，并非逐路径安全沙箱；不能以临时 Resume 审核任务来规避只读通道的范围限制。
 
 ## 协议依据
 

@@ -495,7 +495,8 @@ function Get-AiSopDispatcherToolPlan {
             if ($null -ne $entry) {
                 return New-AiSopDispatcherPlan -Decision ALLOW -ReasonCode $entry.reasonCode -SideEffectKind NONE
             }
-            if ($HookEvent.agent -ceq 'CODEX' -and $null -ne (Get-AiSopReadOnlyShellInput -CommandText $entryCommand `
+            if (($HookEvent.agent -ceq 'CODEX' -or ($HookEvent.agent -ceq 'ANTIGRAVITY' -and $entryTool.Name -ceq 'run_command')) -and
+                $null -ne (Get-AiSopReadOnlyShellInput -CommandText $entryCommand -Agent $HookEvent.agent `
                 -WorkspacePath $HookEvent.workspacePath -Cwd $HookEvent.cwd -ToolArguments $entryTool.Arguments)) {
                 return New-AiSopDispatcherPlan -Decision ALLOW -ReasonCode READ_ONLY_SHELL_COMMAND -SideEffectKind NONE
             }
@@ -946,12 +947,13 @@ function ConvertFrom-AiSopDispatcherDedupResult {
     if ($reason -ceq 'READ_ONLY_SHELL_COMMAND') {
         # 去重重放也重新检查路径及参数，并始终携带安全化后的命令，不能重放裸 ALLOW。
         $tool=Get-AiSopDispatcherToolContext -RawPayload $RawPayload -HookEvent $HookEvent
-        $updated=if ($agent -ceq 'CODEX') { Get-AiSopReadOnlyShellInput `
+        $updated=if ($agent -ceq 'CODEX' -or ($agent -ceq 'ANTIGRAVITY' -and $tool.Name -ceq 'run_command')) { Get-AiSopReadOnlyShellInput -Agent $agent `
             -CommandText (Get-AiSopDispatcherShellCommandText $tool.Arguments) `
             -WorkspacePath $HookEvent.workspacePath -Cwd $HookEvent.cwd -ToolArguments $tool.Arguments }
         if ($null -eq $updated) { throw 'READ_ONLY_COMMAND_CHANGED' }
         $native=ConvertFrom-AiSopJson $envelope
-        $native.hookSpecificOutput.updatedInput=$updated
+        if ($agent -ceq 'ANTIGRAVITY') { $native.overwrite=$updated }
+        else { $native.hookSpecificOutput.updatedInput=$updated }
         $envelope=$native | ConvertTo-Json -Compress -Depth 30
     }
     $exitCode = if ($decision -eq "ALLOW") {

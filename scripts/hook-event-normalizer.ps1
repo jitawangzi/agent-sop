@@ -2286,19 +2286,47 @@ function Resolve-AiSopEditTargets {
     }
 }
 
+function Get-AiSopAntigravityAppDataRoots {
+    # 目录来自本机用户配置目录，不能信任载荷里任意指定的 appDataDir 或 artifactDirectoryPath。
+    $profilePath=Resolve-PhysicalPathIdentity ([Environment]::GetFolderPath([Environment+SpecialFolder]::UserProfile))
+    foreach ($variant in @('antigravity','antigravity-cli','antigravity-ide')) {
+        Join-Path $profilePath ".gemini/$variant"
+    }
+}
+
+function Get-AiSopAntigravityReadRoots {
+    param([string]$NativeSessionId)
+    foreach ($appRoot in Get-AiSopAntigravityAppDataRoots) {
+        Join-Path $appRoot 'builtin/skills'
+        # 会话标识只能是一层目录名，不能用路径分隔符、冒号或父目录表达式扩大范围。
+        if ($NativeSessionId -cmatch '^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$') {
+            Join-Path $appRoot "brain/$NativeSessionId"
+        }
+    }
+}
+
 function Get-AiSopCanonicalPath {
     param(
         [System.Collections.IDictionary]$Arguments,
-        [object]$WorkspaceContext
+        [object]$WorkspaceContext,
+        [string[]]$AdditionalReadRoots=@()
     )
 
     $paths = Get-AiSopPathFieldValues $Arguments
     if ($null -eq $paths -or @($paths).Count -ne 1) {
         return ""
     }
+    $root=$WorkspaceContext.WorkspacePath
+    if ($AdditionalReadRoots.Count -and [IO.Path]::IsPathRooted([string]$paths[0])) {
+        $lexical=[IO.Path]::GetFullPath([string]$paths[0])
+        foreach ($candidate in $AdditionalReadRoots) {
+            if (Test-AiSopPathWithinRoot $lexical $candidate) { $root=$candidate; break }
+        }
+    }
+    # 根目录自身也不能通过链接指向授权范围以外；词法和物理目标都须位于选中的根内。
     $path = Resolve-AiSopWorkspacePath `
         -Path ([string]$paths[0]) `
-        -WorkspaceRoot $WorkspaceContext.WorkspacePath `
+        -WorkspaceRoot $root `
         -BasePath $WorkspaceContext.Cwd
     return $path.ToLowerInvariant()
 }
@@ -2345,13 +2373,14 @@ function Get-AiSopCanonicalToolArguments {
         [System.Collections.IDictionary]$Arguments,
         [object]$PolicyEntry,
         [object]$WorkspaceContext,
-        [string[]]$TargetPaths
+        [string[]]$TargetPaths,
+        [string[]]$AdditionalReadRoots=@()
     )
 
     switch ($PolicyEntry.ArgumentProfile) {
         "READ" {
             return [ordered]@{
-                path = Get-AiSopCanonicalPath $Arguments $WorkspaceContext
+                path = Get-AiSopCanonicalPath $Arguments $WorkspaceContext -AdditionalReadRoots $AdditionalReadRoots
                 offset = if (Test-MapHasKey $Arguments "offset") {
                     $Arguments.offset
                 } else { 0 }
@@ -3374,11 +3403,15 @@ function ConvertTo-AiSopHookEvent {
             $targetPaths = @($resolvedTargets.Lexical)
             $physicalTargetPaths = @($resolvedTargets.Physical)
         }
+        $additionalReadRoots=@()
+        if ($shape.Agent -ceq 'ANTIGRAVITY' -and $toolName -ceq 'read_file' -and $policyEntry.ArgumentProfile -ceq 'READ') {
+            $additionalReadRoots=@(Get-AiSopAntigravityReadRoots -NativeSessionId $nativeSessionId)
+        }
         $canonicalArguments = Get-AiSopCanonicalToolArguments `
             -Arguments $toolPayload.Arguments `
             -PolicyEntry $policyEntry `
             -WorkspaceContext $workspace `
-            -TargetPaths $physicalTargetPaths
+            -TargetPaths $physicalTargetPaths -AdditionalReadRoots $additionalReadRoots
     }
 
     $semanticObject = [ordered]@{

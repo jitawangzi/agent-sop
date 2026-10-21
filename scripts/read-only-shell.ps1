@@ -3,7 +3,27 @@
 # 只解析字面只读命令，不执行待检查的文本；未知语法返回空，继续走原任务防护。
 function Get-AiSopReadOnlyShellInput {
     param([string]$CommandText, [string]$WorkspacePath, [string]$Cwd,
-        [System.Collections.IDictionary]$ToolArguments)
+        [System.Collections.IDictionary]$ToolArguments,
+        [ValidateSet('CODEX','ANTIGRAVITY')][string]$Agent='CODEX')
+    $nativeArguments=$ToolArguments
+    if ($Agent -ceq 'ANTIGRAVITY') {
+        # 原生命令只接受已知的前台执行参数，禁止借已有终端或后台进程绕过检查。
+        if (-not $ToolArguments -or -not $ToolArguments.Contains('CommandLine') -or
+            $ToolArguments.CommandLine -isnot [string] -or $ToolArguments.CommandLine -cne $CommandText) { return $null }
+        foreach ($key in $ToolArguments.Keys) {
+            if ($key -cnotin @('CommandLine','Cwd','WaitMsBeforeAsync','toolSummary','toolAction','IsDaemon','RunPersistent')) { return $null }
+        }
+        foreach ($key in @('IsDaemon','RunPersistent')) {
+            if ($ToolArguments.Contains($key) -and ($ToolArguments[$key] -isnot [bool] -or $ToolArguments[$key])) { return $null }
+        }
+        if ($ToolArguments.Contains('WaitMsBeforeAsync') -and
+            (($ToolArguments.WaitMsBeforeAsync -isnot [int] -and $ToolArguments.WaitMsBeforeAsync -isnot [long]) -or $ToolArguments.WaitMsBeforeAsync -lt 0)) { return $null }
+        foreach ($key in @('toolSummary','toolAction')) {
+            if ($ToolArguments.Contains($key) -and $ToolArguments[$key] -isnot [string]) { return $null }
+        }
+        $ToolArguments=[ordered]@{command=$CommandText}
+        if ($nativeArguments.Contains('Cwd')) { $ToolArguments.cwd=$nativeArguments.Cwd }
+    }
     if ([string]::IsNullOrWhiteSpace($CommandText) -or $CommandText.Length -gt 32768 -or
         $CommandText -match '[`$&<>%!]' -or $CommandText -match '\\["''\r\n]') { return $null }
     if (-not $ToolArguments -or @($ToolArguments.Keys | Where-Object { $_ -in @('command','cmd') }).Count -ne 1) { return $null }
@@ -65,22 +85,41 @@ function Get-AiSopReadOnlyShellInput {
                     $render.Add('-C'); $render.Add((Quote-ReadValue $argv[1])); $index=2
                 }
                 $verb=$argv[$index++]; $render.Add($verb)
-                if ($verb -cnotin @('status','diff','log','show','rev-parse','ls-files')) { return $null }
+                if ($verb -cnotin @('status','diff','log','show','rev-parse','ls-files','remote','branch')) { return $null }
+                if ($verb -ceq 'remote') {
+                    # remote 仅列出本地配置或获取 URL；不接受修改配置、联网或执行远端助手。
+                    $remaining=@($argv | Select-Object -Skip $index)
+                    if ($remaining.Count -eq 0 -or ($remaining.Count -eq 1 -and $remaining[0] -cin @('-v','--verbose'))) {
+                        foreach ($value in $remaining) { $render.Add((Quote-ReadValue $value)) }
+                    } elseif ($remaining[0] -ceq 'get-url') {
+                        $remoteNames=0; $seenRemoteFlags=@{}
+                        foreach ($value in @($remaining | Select-Object -Skip 1)) {
+                            if ($value -cin @('--all','--push') -and $remoteNames -eq 0 -and -not $seenRemoteFlags.ContainsKey($value)) { $seenRemoteFlags[$value]=$true }
+                            elseif ($value -cmatch '^[A-Za-z0-9_][A-Za-z0-9_.-]*$' -and $remoteNames -eq 0) { $remoteNames++ }
+                            else { return $null }
+                        }
+                        if ($remoteNames -ne 1) { return $null }
+                        foreach ($value in $remaining) { $render.Add((Quote-ReadValue $value)) }
+                    } else { return $null }
+                    $pipeline.Add(($render -join ' ')); continue
+                }
                 if ($verb -cin @('diff','log','show')) { $render.Add('--no-ext-diff --no-textconv') }
                 $flags=switch -CaseSensitive ($verb) {
                     status { @('--short','-s','--branch','-b','--porcelain','--porcelain=v1','--porcelain=v2','--untracked-files=no','--untracked-files=normal','--untracked-files=all') }
                     diff { @('--stat','--numstat','--shortstat','--name-only','--name-status','--check','--cached','--staged','--summary','--patch','-p','--no-color','--no-ext-diff','--no-textconv','--no-renames') }
                     log { @('--oneline','--stat','--name-only','--name-status','--all','--decorate','--no-decorate','--no-color','-p','--patch','--no-ext-diff','--no-textconv') }
                     show { @('--stat','--name-only','--name-status','--oneline','--summary','--no-color','--no-ext-diff','--no-textconv') }
-                    rev-parse { @('--show-toplevel','--show-prefix','--git-dir','--is-inside-work-tree','--verify','--short') }
+                    rev-parse { @('--show-toplevel','--show-prefix','--git-dir','--is-inside-work-tree','--verify','--short','--abbrev-ref') }
                     ls-files { @('--cached','--modified','--others','--exclude-standard','--stage','--deleted') }
+                    branch { @('--show-current','--list','-a','--all','-r','--remotes','-v','-vv','--verbose','--no-color') }
                 }
                 $paths=$false
                 while ($index -lt $argv.Count) {
                     $value=$argv[$index++]
                     if ($paths) { if (-not (Test-ReadPath $value)) { return $null } }
-                    elseif ($value -ceq '--') { $paths=$true }
+                    elseif ($value -ceq '--' -and $verb -cne 'branch') { $paths=$true }
                     elseif ($value -cin $flags) {}
+                    elseif ($verb -ceq 'branch') { return $null }
                     elseif ($verb -cin @('log','show') -and $value -cin @('-n','--max-count')) {
                         if ($index -ge $argv.Count -or $argv[$index] -notmatch '^\d{1,6}$') { return $null }
                         $render.Add((Quote-ReadValue $value)); $value=$argv[$index++]
@@ -171,6 +210,13 @@ function Get-AiSopReadOnlyShellInput {
         $statements.Add(($pipeline -join ' | '))
     }
     $updated=[ordered]@{}
+    if ($Agent -ceq 'ANTIGRAVITY') {
+        foreach($key in $nativeArguments.Keys) { $updated[$key]=$nativeArguments[$key] }
+        $updated.CommandLine=$statements -join '; '
+        # 固定到已检查的工作目录，不能继承终端此前切换到的目录。
+        $updated.Cwd=$working
+        return $updated
+    }
     foreach($key in $ToolArguments.Keys) { $updated[$key]=$ToolArguments[$key] }
     # Codex 的 Bash/exec Hook 协议要求 updatedInput.command。
     $updated.Remove('cmd'); $updated.command=$statements -join '; '

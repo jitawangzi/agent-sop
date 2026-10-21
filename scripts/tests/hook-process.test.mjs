@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
 import { mkdtemp, mkdir, cp, copyFile, writeFile, readFile, readdir, rm, realpath } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
+import { tmpdir, homedir } from 'node:os';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -139,6 +139,8 @@ try {
   const agTool = (name, args) => ({ conversationId: agReadSession, workspacePaths: [workspace],
     stepIdx: ++counter, toolCall: { name, args } });
   const readInputs = [{ Path: file }, { Path: file, StartLine: 1, EndLine: 20, ByteOffset: 0 }, { path: file, offset: 0 }];
+  const listCommand = process.platform === 'win32' ? 'Get-ChildItem src -File' : 'rg --files src';
+  const appData = join(await realpath(homedir()), '.gemini/antigravity');
   for (const phase of ['unregistered', 'paused']) {
     if (phase === 'paused') {
       await task('Start', 'ANTIGRAVITY', agReadSession);
@@ -150,6 +152,27 @@ try {
       assert.equal(result.code, 0, JSON.stringify(result));
       assert.equal(result.value.decision, 'allow', JSON.stringify(result));
     }
+    for (const path of [join(appData, 'builtin/skills/probe/SKILL.md'), join(appData, 'brain', agReadSession, 'upload.png')]) {
+      assert.equal((await hook('.agents', 'PRE_TOOL_USE', agTool('read_file', { Path: path }))).value.decision, 'allow');
+    }
+    const shellPayload = agTool('run_command', { CommandLine: listCommand, WaitMsBeforeAsync: 1000, toolSummary: '列目录', IsDaemon: false });
+    for (let replay = 0; replay < 2; replay++) {
+      const result = await hook('.agents', 'PRE_TOOL_USE', shellPayload);
+      assert.equal(result.value.decision, 'allow', JSON.stringify(result));
+      assert.equal(result.value.overwrite.Cwd, workspace);
+      assert.equal(result.value.overwrite.IsDaemon, false);
+      assert.equal(result.value.permissionOverrides, undefined);
+      assert.equal(result.value.hookSpecificOutput, undefined);
+      assert.match(result.value.overwrite.CommandLine, /Microsoft.PowerShell.Management\\Get-ChildItem|rg --no-config/);
+      const executed = await run(['-NoProfile', '-Command', '[Console]::OutputEncoding=[Text.UTF8Encoding]::new($false); ' + result.value.overwrite.CommandLine]);
+      assert.equal(executed.code, 0, executed.stderr);
+      assert.match(executed.stdout, /中文.txt/);
+    }
+    for (const command of ['rg -n BEFORE src', 'git -C .ai-workspace status --short', 'git remote -v', 'git branch --show-current']) {
+      const result = await hook('.agents', 'PRE_TOOL_USE', agTool('run_command', { CommandLine: command, Cwd: workspace, WaitMsBeforeAsync: 1000 }));
+      assert.equal(result.value.decision, 'allow', JSON.stringify(result));
+      assert.match(result.value.overwrite.CommandLine, /--no-config|--no-optional-locks/);
+    }
     assert.deepEqual(await authoritySnapshot(), beforeRead, `${phase} 读取不能登记、续租、恢复或接管权限`);
   }
   for (const args of [
@@ -159,6 +182,15 @@ try {
   ]) assert.equal((await hook('.agents', 'PRE_TOOL_USE', agTool('read_file', args))).value.decision, 'deny');
   assert.equal((await hook('.agents', 'PRE_TOOL_USE', agTool('write_to_file', { TargetFile: file, CodeContent: 'UNAUTHORIZED', Overwrite: true }))).value.decision, 'deny');
   assert.equal((await hook('.agents', 'PRE_TOOL_USE', agTool('future_read_file', { Path: file }))).value.decision, 'deny');
+  for (const args of [
+    { CommandLine: 'git status', IsDaemon: true }, { CommandLine: 'git status', RunPersistent: true },
+    { CommandLine: 'git status', RequestedTerminalID: 'existing' }, { CommandLine: 'git status', Cwd: root },
+    { CommandLine: listCommand, command: 'echo BAD' }, { CommandLine: 'git remote set-url origin invalid' },
+    { CommandLine: 'git branch new-branch' }, { CommandLine: 'git status; git reset --hard' }
+  ]) assert.equal((await hook('.agents', 'PRE_TOOL_USE', agTool('run_command', args))).value.decision, 'deny');
+  for (const path of [join(appData, 'brain/other-session/upload.png'), join(appData, 'credentials.json')]) {
+    assert.equal((await hook('.agents', 'PRE_TOOL_USE', agTool('read_file', { Path: path }))).value.decision, 'deny');
+  }
   const bootstrapCommand = "pwsh -NoProfile -File './.ai-sop/scripts/workflow-task.ps1' -Operation Start -Feature Probe -TaskId process-test -Agent CURSOR -NativeSessionId '" + visibleSession + "' -Objective '真实进程验收'";
   const bootstrap = await hook('.cursor', 'PRE_TOOL_USE', cursor('Shell', { command: bootstrapCommand, cwd: '', timeout: 30000 }, { cwd: '' }));
   assert.equal(bootstrap.value.permission, 'allow', JSON.stringify(bootstrap));

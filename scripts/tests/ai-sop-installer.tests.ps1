@@ -514,6 +514,21 @@ Invoke-Test "SVN upgrade verifies before commit and isolates its pending transac
         Assert-Equal 'INSTALL_TRANSACTION_INCOMPLETE' (Invoke-AiSopVerify $workspace Svn -OutputFormat Json).result 'public Verify still rejects pending work'
         Assert-Equal 'VERIFIED' (Invoke-AiSopVerify $workspace Svn -OutputFormat Json -CompletingTransactionId 'pending-test').result 'install may validate its own applied transaction'
         Assert-True (-not (Test-Path -LiteralPath (Join-Path $pendingDir 'commit.marker'))) 'verification itself does not commit'
+        # 经真实 bootstrap 验证时也不得恢复备份或改写未决现场。
+        $sentinel=Join-Path $workspace 'verify-sentinel.txt'
+        [IO.File]::WriteAllText($sentinel,'current content')
+        [IO.File]::WriteAllText((Join-Path $pendingDir 'sentinel.bak'),'old content')
+        $savedItems=$journal.items
+        $journal.items=@(@{kind='projection';targetPath='verify-sentinel.txt';beforeSha256=('a'*64);afterSha256=('b'*64);backupPath='sentinel.bak';applied=$true})
+        $journal | ConvertTo-Json -Depth 8 | Set-Content -LiteralPath $pendingPath
+        $pendingBytes=[IO.File]::ReadAllText($pendingPath)
+        $verifyOut=& pwsh -NoProfile -File (Join-Path $installed 'distribution/bootstrap/install-ai-sop.ps1') -Mode Svn -Action Verify -WorkspaceRoot $workspace -OutputFormat Json
+        Assert-Equal 1 $LASTEXITCODE 'pending transaction keeps Verify nonzero'
+        Assert-Equal 'INSTALL_TRANSACTION_INCOMPLETE' (($verifyOut | ConvertFrom-Json).result) 'bootstrap Verify reports pending installation'
+        Assert-Equal 'current content' ([IO.File]::ReadAllText($sentinel)) 'Verify must not restore backup'
+        Assert-Equal $pendingBytes ([IO.File]::ReadAllText($pendingPath)) 'Verify must not rewrite journal'
+        $journal.items=$savedItems
+        $journal | ConvertTo-Json -Depth 8 | Set-Content -LiteralPath $pendingPath
         $agents = Join-Path $workspace 'AGENTS.md'
         $original = [IO.File]::ReadAllBytes($agents)
         [IO.File]::AppendAllText($agents, 'drift')

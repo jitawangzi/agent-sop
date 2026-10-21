@@ -32,8 +32,8 @@
     {
       "source": "distribution/templates/root/ANTIGRAVITY.md",
       "target": "ANTIGRAVITY.md",
-      "sourceBlobSha256": "2e85781561d9208fdd6f56c7c8b30e77a69ea8a14a6c1828d47ed31c60767542",
-      "targetSha256": "2e85781561d9208fdd6f56c7c8b30e77a69ea8a14a6c1828d47ed31c60767542",
+      "sourceBlobSha256": "0968f60864fa7f5327239f79eca75caa93658f8e70ddc96a96bc16ba30826271",
+      "targetSha256": "0968f60864fa7f5327239f79eca75caa93658f8e70ddc96a96bc16ba30826271",
       "legacySha256": "48e29a97bf70a1690f3c20a91eb4c2f1bad8d20a340abfaa92e2e76f9e469e25",
       "encoding": "utf8-no-bom",
       "lineEnding": "lf"
@@ -50,8 +50,8 @@
     {
       "source": "distribution/templates/root/ai-sop.ps1",
       "target": "ai-sop.ps1",
-      "sourceBlobSha256": "2a6355eacd7bd01f7337c92d5e682f1b0bd3a046e35e72b05f4e9c194cea3b97",
-      "targetSha256": "2a6355eacd7bd01f7337c92d5e682f1b0bd3a046e35e72b05f4e9c194cea3b97",
+      "sourceBlobSha256": "9b1a0bca5acdade75dfd3f0f1da42e7e0029554eda551ed3f891eed5b6f2a51e",
+      "targetSha256": "9b1a0bca5acdade75dfd3f0f1da42e7e0029554eda551ed3f891eed5b6f2a51e",
       "legacySha256": "559596303d23f80e2a6b8e10d8473e2825720f2decb389f58e1d5c658c4d9534",
       "encoding": "utf8-no-bom",
       "lineEnding": "lf"

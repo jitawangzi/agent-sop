@@ -6,6 +6,7 @@ $scripts=Split-Path -Parent $PSScriptRoot
 $fixture=Join-Path ([IO.Path]::GetTempPath()) ('sop-task-entry-'+[guid]::NewGuid().ToString('N'))
 function Assert([bool]$Condition,[string]$Message) { if (-not $Condition) { throw $Message } }
 function Parse([string]$Command,[string]$Cwd=$fixture,[hashtable]$Arguments=@{}) {
+    if ($Arguments.Count -eq 0) { $Arguments=@{CommandLine=$Command} }
     Get-AiSopTaskEntryCommand -CommandText $Command -WorkspacePath $fixture -Cwd $Cwd -Agent ANTIGRAVITY -NativeSessionId 'native-current' -ToolArguments $Arguments
 }
 try {
@@ -59,6 +60,25 @@ try {
     Assert ($null -eq (Parse $start -Cwd (Join-Path $fixture 'other'))) '不同当前目录借用了宿主入口'
     Assert ($null -eq (Parse $start -Arguments @{working_directory='other'})) '工具目录参数绕过了入口路径校验'
     Assert ((Parse $start -Arguments @{workdir=$fixture}).operation -eq 'Start') '显式宿主根目录被拒绝'
+    foreach ($tail in @('','Help','Verify','Doctor','Doctor -Feature Example','Status -Feature Example -TaskId fix -Json -LogTailLines 5',
+        'Inputs -ExplainOnly -InputPath src -Json','Inputs -CandidatePolicy policy.json',
+        'Preflight -Feature Example -TaskId fix -TargetEnginePath .ai-sop -Json')) {
+        $command="pwsh -NoProfile -File ./ai-sop.ps1 $tail".TrimEnd()
+        $diagnostic=Parse $command
+        Assert ($diagnostic.reasonCode -eq 'SOP_DIAGNOSTIC_COMMAND') "诊断被拒绝：$tail"
+        Assert ($diagnostic.updatedInput.Cwd -eq (Resolve-PhysicalPathIdentity $fixture)) '诊断必须固定已检查的原生工作目录'
+    }
+    foreach ($tail in @('Install','Update','Verify -Operation Start','Doctor -Executable pwsh','Help -Arguments bad',
+        'Status -Feature ../other','Status -TaskId ../other','Inputs -InputPath ../outside',
+        'Inputs -CandidatePolicy ../outside','Preflight -TargetEnginePath ../outside','Doctor -SpecDirectory ../outside',
+        'Verify; Set-Content bad value','Verify > out.txt','Inputs -InputPath $env:SECRET')) {
+        Assert ($null -eq (Parse "pwsh -NoProfile -File ./ai-sop.ps1 $tail")) "诊断越权放行：$tail"
+    }
+    $command='pwsh -NoProfile -File ./ai-sop.ps1 Verify'
+    foreach ($extra in @(@{IsDaemon=$true},@{RequestedTerminalID='old'},@{Cwd='../outside'},@{WaitMsBeforeAsync='1000'},@{command='bad'})) {
+        $args=@{CommandLine=$command}; foreach($key in $extra.Keys){$args[$key]=$extra[$key]}
+        Assert ($null -eq (Parse $command -Arguments $args)) '诊断原生参数没有收紧'
+    }
     Write-Output 'PASS: task bootstrap entry, recovery/read-only routing, identity/path binding and command injection rejection'
 } finally {
     $resolved=[IO.Path]::GetFullPath($fixture)

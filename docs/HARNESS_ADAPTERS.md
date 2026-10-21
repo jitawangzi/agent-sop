@@ -22,6 +22,10 @@ Pi 的 edit 同时兼容旧版 `path/oldText/newText` 和新版 `path/edits[]`�
 
 先 Start/Resume，成功后回显实际档位与执行要求，再修改。未指定默认 T2；新 T1/T3 仍须 UserRequest。讨论与原生只读工具不需要任务。Shell 仍按已有保守策略处理，不能因为名字叫“测试”或“读取”便自动放行任意命令。无法识别的工具拒绝并保留诊断，不猜测它是只读。
 
+从宿主根运行的单条 `pwsh -NoProfile -File ./ai-sop.ps1 Verify`、`Doctor`、`Status`、`Inputs`、`Preflight`、`Help` 是免任务诊断入口；仅接受对应动作的字面参数，路径仍限于当前工作区。重定向、拼接命令、`Install/Update` 或伪装执行参数不获豁免。Antigravity 使用原生 `overwrite.Cwd` 固定执行目录，不提升客户端权限。`Verify` 不初始化子模块、不恢复或清理安装事务；遇到未决安装报告失败，恢复由显式安装处理。
+
+Antigravity 按协议以 `hooks.json` 所在目录为 cwd，因此 `.agents/hooks.json` 中的 `hook-wrapper.ps1` 正确指向 `.agents/hook-wrapper.ps1`。各客户端使用各自投影入口，无需根目录 wrapper；Claude 载荷和其自动导入的 Cursor Hook 通过载荷识别，Pi 扩展显式传 `PI`，不应强制统一为同一 AgentHint。
+
 实现子会话不走 Resume 接管。使用自己的会话参数 Join 回报身份，父会话 Delegate 后再恢复同一子会话，执行及撤销步骤见 [执行委派](EXECUTION_DELEGATION.md)。只读子会话仍不 Join，不改变权限。
 
 ## 验证

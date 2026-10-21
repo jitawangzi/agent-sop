@@ -79,6 +79,7 @@ async function authoritySnapshot() {
 }
 try {
   await mkdir(workspace);
+  await copyFile(join(source, 'distribution/templates/root/ai-sop.ps1'), join(workspace, 'ai-sop.ps1'));
   for (const dir of ['scripts', 'schemas', 'config']) await cp(join(source, dir), join(workspace, '.ai-sop', dir), { recursive: true });
   for (const adapter of ['.cursor', '.agents', '.claude', '.pi', '.codex']) {
     await mkdir(join(workspace, adapter));
@@ -147,6 +148,15 @@ try {
       await task('Suspend', 'ANTIGRAVITY', agReadSession);
     }
     const beforeRead = await authoritySnapshot();
+    for (const action of ['Verify','Doctor','Status -Feature Probe -Json','Inputs -ExplainOnly -InputPath src -Json','Preflight -Feature Probe -Json','Help']) {
+      const payload=agTool('run_command',{CommandLine:`pwsh -NoProfile -File ./ai-sop.ps1 ${action}`,IsDaemon:false});
+      for (let replay=0;replay<2;replay++) {
+        const result=await hook('.agents','PRE_TOOL_USE',payload);
+        assert.equal(result.value.decision,'allow',JSON.stringify(result));
+        assert.equal(result.value.overwrite.Cwd,workspace);
+        assert.equal(result.value.permissionOverrides,undefined);
+      }
+    }
     for (const args of readInputs) {
       const result = await hook('.agents', 'PRE_TOOL_USE', agTool('read_file', args), true);
       assert.equal(result.code, 0, JSON.stringify(result));
@@ -187,6 +197,9 @@ try {
     { CommandLine: 'git status', RequestedTerminalID: 'existing' }, { CommandLine: 'git status', Cwd: root },
     { CommandLine: listCommand, command: 'echo BAD' }, { CommandLine: 'git remote set-url origin invalid' },
     { CommandLine: 'git branch new-branch' }, { CommandLine: 'git status; git reset --hard' }
+    ,{ CommandLine: 'pwsh -NoProfile -File ./ai-sop.ps1 Verify -Operation Start' }
+    ,{ CommandLine: 'pwsh -NoProfile -File ./ai-sop.ps1 Install' }
+    ,{ CommandLine: 'pwsh -NoProfile -File ./ai-sop.ps1 Inputs -InputPath ../outside' }
   ]) assert.equal((await hook('.agents', 'PRE_TOOL_USE', agTool('run_command', args))).value.decision, 'deny');
   for (const path of [join(appData, 'brain/other-session/upload.png'), join(appData, 'credentials.json')]) {
     assert.equal((await hook('.agents', 'PRE_TOOL_USE', agTool('read_file', { Path: path }))).value.decision, 'deny');

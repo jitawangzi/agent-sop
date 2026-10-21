@@ -97,14 +97,24 @@ function Invoke-Doctor {
     try { $s = (svn --version --quiet 2>&1) | Out-String; Add-Check "SVN CLI" (-not [string]::IsNullOrWhiteSpace($s)) $s.Trim() }
     catch { Add-Check "SVN CLI" $false "not found" }
 
-    # JDK 8
+    # 最小诊断不假定项目 Java 版本；具体版本要求由宿主构建配置决定。
     $jh = [string]$env:JAVA_HOME
     $jok = $false; $jd = "JAVA_HOME not set"
     if (-not [string]::IsNullOrWhiteSpace($jh) -and (Test-Path -LiteralPath $jh)) {
-        try { $jo = (& "$jh\bin\java" -version 2>&1) | Out-String; if ($jo -match "1\.8") { $jok=$true; $jd="JDK 1.8 at $jh" } else { $jd="not JDK 8: $jo".Trim() } }
+        try {
+            $javaBin=Join-Path $jh 'bin/java'
+            $javacBin=Join-Path $jh 'bin/javac'
+            $jo=(& $javaBin -version 2>&1) | Out-String
+            $javaExit=$LASTEXITCODE
+            $co=(& $javacBin -version 2>&1) | Out-String
+            $jok=$javaExit -eq 0 -and $LASTEXITCODE -eq 0
+            $jd=($jo.Trim()+"; "+$co.Trim())
+        }
         catch { $jd = "java not runnable: $_" }
     }
-    Add-Check "JDK 8" $jok $jd
+    if ((Test-Path (Join-Path $WorkspaceRoot 'pom.xml')) -or (Test-Path (Join-Path $WorkspaceRoot 'build.gradle')) -or (Test-Path (Join-Path $WorkspaceRoot 'build.gradle.kts'))) {
+        Add-Check "JDK Toolchain" $jok $jd
+    }
 
     # Submodule init
     $disp = Join-Path $WorkspaceRoot ".ai-sop/scripts/hook-dispatcher.ps1"
@@ -157,7 +167,7 @@ function Invoke-Installer {
     # Initialize .ai-sop submodule if missing (fresh clone/checkout).
     $sopDir = Join-Path $WorkspaceRoot ".ai-sop"
     $dispExists = Test-Path -LiteralPath (Join-Path $sopDir "scripts/hook-dispatcher.ps1") -PathType Leaf
-    if (-not $dispExists) {
+    if (-not $dispExists -and $installerAction -ne 'Verify') {
         if (Test-Path -LiteralPath (Join-Path $WorkspaceRoot ".git")) {
             # Git workspace: init submodule.
             Write-Host "Initializing .ai-sop submodule..." -ForegroundColor Cyan

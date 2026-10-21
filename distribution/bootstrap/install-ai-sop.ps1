@@ -47,7 +47,6 @@ if (-not (Test-Path -LiteralPath $CorePath)) {
 try {
 $WorkspaceRoot = Resolve-PhysicalPathIdentity $WorkspaceRoot
 $resolvedMode = Resolve-AiSopMode -Mode $Mode -WorkspaceRoot $WorkspaceRoot
-Restore-AiSopInstallTransactions -WorkspaceRoot $WorkspaceRoot -ClaudeRoot $SopRoot
 
 if ($Action -eq "Verify") {
     $result = Invoke-AiSopVerify -WorkspaceRoot $WorkspaceRoot -Mode $resolvedMode `
@@ -55,6 +54,9 @@ if ($Action -eq "Verify") {
     Write-AiSopInstallResult -Result $result -OutputFormat $OutputFormat
     if ($result.result -eq "VERIFIED") { exit 0 } else { exit 1 }
 }
+
+# 只读 Verify 保留未决现场并报告失败；恢复仅在显式安装时执行。
+Restore-AiSopInstallTransactions -WorkspaceRoot $WorkspaceRoot -ClaudeRoot $SopRoot
 
 # Install path: if lock is missing, auto-bootstrap it from .ai-sop submodule HEAD
 $lockPath = Join-Path $WorkspaceRoot "tools\ai-sop\ai-sop.lock.json"

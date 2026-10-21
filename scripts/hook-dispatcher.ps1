@@ -928,7 +928,7 @@ function ConvertFrom-AiSopDispatcherDedupResult {
     # 已登记或恢复任务后，旧拒绝结果同样不能把合法重试永久锁住。
     # 启动/恢复专用命令的授权有独立校验，不在这里阻断无任务的登记入口。
     if ($DedupResult.IsDuplicate -and $DedupResult.Record.state -ceq 'APPLIED' -and
-        $HookEvent.event -ceq 'PRE_TOOL_USE' -and $reason -cnotin @('COMMAND_GRANT_ISSUED', 'TASK_BOOTSTRAP_COMMAND', 'READ_ONLY_SHELL_COMMAND') -and
+        $HookEvent.event -ceq 'PRE_TOOL_USE' -and $reason -cnotin @('COMMAND_GRANT_ISSUED', 'TASK_BOOTSTRAP_COMMAND', 'SOP_DIAGNOSTIC_COMMAND', 'READ_ONLY_SHELL_COMMAND') -and
         $HookEvent.toolClass -in @('FILE_EDIT', 'OWNER_REQUIRED')) {
         $current = Get-AiSopGuardDecision -HookEvent $HookEvent -AcceptedAt $AcceptedAt -DeadlineUtc $DeadlineUtc
         $decision = [string]$current.Decision
@@ -939,11 +939,24 @@ function ConvertFrom-AiSopDispatcherDedupResult {
     }
     $grantId = [string]$DedupResult.Record.bootstrapGrantId
     $agent = [string]$HookEvent.agent
+    if ($reason -ceq 'SOP_DIAGNOSTIC_COMMAND') {
+        # 每次响应都重验入口和路径，去重记录不能永久授权被替换的入口。
+        $tool=Get-AiSopDispatcherToolContext -RawPayload $RawPayload -HookEvent $HookEvent
+        $diagnostic=Get-AiSopTaskEntryCommand -CommandText (Get-AiSopDispatcherShellCommandText $tool.Arguments) `
+            -WorkspacePath $HookEvent.workspacePath -Cwd $HookEvent.cwd -Agent $agent `
+            -NativeSessionId $HookEvent.nativeSessionId -ToolArguments $tool.Arguments
+        if ($null -eq $diagnostic -or $diagnostic.reasonCode -cne 'SOP_DIAGNOSTIC_COMMAND') { throw 'READ_ONLY_COMMAND_CHANGED' }
+    }
     $envelope = ConvertTo-AiSopDispatcherEnvelope `
         -Agent $agent `
         -EventHint ([string]$HookEvent.event) `
         -Decision $decision `
         -ReasonCode $reason
+    if ($reason -ceq 'SOP_DIAGNOSTIC_COMMAND' -and $agent -ceq 'ANTIGRAVITY') {
+        $native=ConvertFrom-AiSopJson $envelope
+        $native.overwrite=$diagnostic.updatedInput
+        $envelope=$native | ConvertTo-Json -Compress -Depth 30
+    }
     if ($reason -ceq 'READ_ONLY_SHELL_COMMAND') {
         # 去重重放也重新检查路径及参数，并始终携带安全化后的命令，不能重放裸 ALLOW。
         $tool=Get-AiSopDispatcherToolContext -RawPayload $RawPayload -HookEvent $HookEvent

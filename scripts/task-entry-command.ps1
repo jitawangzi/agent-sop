@@ -1,6 +1,6 @@
 #requires -Version 7.0
 
-# 只识别独立的任务管理命令，避免“先有任务才能建立任务”的引导循环。
+# 只识别独立的任务管理和只读诊断命令，避免引导入口依赖活动任务。
 function Get-AiSopTaskEntryCommand {
     [CmdletBinding()]
     param(
@@ -26,7 +26,7 @@ function Get-AiSopTaskEntryCommand {
     if ($command -isnot [Management.Automation.Language.CommandAst] -or $command.Redirections.Count -or
         $command.InvocationOperator -ne [Management.Automation.Language.TokenKind]::Unknown) { return $null }
     $parts=@($command.CommandElements)
-    if ($parts.Count -lt 5 -or $parts[0] -isnot [Management.Automation.Language.StringConstantExpressionAst] -or
+    if ($parts.Count -lt 4 -or $parts[0] -isnot [Management.Automation.Language.StringConstantExpressionAst] -or
         $parts[0].Value -notin @('pwsh','pwsh.exe') -or
         $parts[1] -isnot [Management.Automation.Language.CommandParameterAst] -or $parts[1].ParameterName -ine 'NoProfile' -or $parts[1].Argument -or
         $parts[2] -isnot [Management.Automation.Language.CommandParameterAst] -or $parts[2].ParameterName -ine 'File' -or $parts[2].Argument -or
@@ -56,13 +56,33 @@ function Get-AiSopTaskEntryCommand {
     $engineEntry=Resolve-PhysicalPathIdentity (Join-Path $workspace '.ai-sop/scripts/workflow-task.ps1')
     if (-not [IO.File]::Exists($scriptPath)) { return $null }
     $index=4
+    $action='Task'
     if ($scriptPath.Equals($rootEntry,$comparison)) {
-        if ($parts[$index] -isnot [Management.Automation.Language.StringConstantExpressionAst] -or $parts[$index].Value -ine 'Task') { return $null }
-        $index++
+        $action='Help'
+        if ($index -lt $parts.Count) {
+            if ($parts[$index] -isnot [Management.Automation.Language.StringConstantExpressionAst]) { return $null }
+            $action=$parts[$index++].Value
+        }
+        if ($action -notin @('Task','Verify','Doctor','Status','Inputs','Preflight','Help')) { return $null }
     } elseif (-not $scriptPath.Equals($engineEntry,$comparison)) { return $null }
 
     $switches=@('Json','IncludeHistory','RecheckHistory','CaptureBaseline','ConfirmTakeover','ForceRecovery','QuarantineInvalidEvidence')
     $values=@('Operation','Feature','TaskId','Tier','Objective','Agent','NativeSessionId','WorkspacePath','SpecDirectory','NextAction','Notes','UserRequest','Reason','LogTailLines','OutputFormat','ChildNativeSessionId','DelegationMinutes')
+    if ($action -ne 'Task') {
+        $switches=switch ($action) {
+            Status { @('Json','IncludeHistory','RecheckHistory') }
+            Inputs { @('Json','ExplainOnly') }
+            Preflight { @('Json','IncludeHistory') }
+            default { @() }
+        }
+        $values=switch ($action) {
+            Doctor { @('Feature','SpecDirectory') }
+            Status { @('Feature','SpecDirectory','TaskId','OutputFormat','LogTailLines') }
+            Inputs { @('InputPath','CandidatePolicy') }
+            Preflight { @('Feature','TaskId','TargetEnginePath') }
+            default { @() }
+        }
+    }
     $parameters=@{}
     while ($index -lt $parts.Count) {
         $parameter=$parts[$index]
@@ -77,6 +97,37 @@ function Get-AiSopTaskEntryCommand {
         elseif ($name -in @('LogTailLines','DelegationMinutes') -and $value -is [Management.Automation.Language.ConstantExpressionAst] -and $value.Value -is [int]) { $parameters[$name]=$value.Value }
         else { return $null }
         $index++
+    }
+    if ($action -ne 'Task') {
+        if ($parameters.Feature -and $parameters.Feature -notmatch '^[A-Za-z0-9](?:[A-Za-z0-9._-]*[A-Za-z0-9_-])?$') { return $null }
+        if ($parameters.TaskId -and $parameters.TaskId -notmatch '^[A-Za-z0-9][A-Za-z0-9_-]{0,79}$') { return $null }
+        foreach ($name in @('SpecDirectory','InputPath','CandidatePolicy','TargetEnginePath')) {
+            if (-not $parameters.ContainsKey($name)) { continue }
+            $value=[string]$parameters[$name]
+            if ([string]::IsNullOrWhiteSpace($value)) { return $null }
+            $candidate=Resolve-PhysicalPathIdentity $(if ([IO.Path]::IsPathRooted($value)) { $value } else { Join-Path $workspace $value })
+            if (-not ($candidate.Equals($workspace,$comparison) -or $candidate.StartsWith($prefix,$comparison))) { return $null }
+        }
+        $result=@{operation=$action;reasonCode='SOP_DIAGNOSTIC_COMMAND'}
+        if ($Agent -ceq 'ANTIGRAVITY') {
+            if (-not $ToolArguments -or $ToolArguments.CommandLine -cne $CommandText) { return $null }
+            foreach ($key in $ToolArguments.Keys) {
+                if ($key -cnotin @('CommandLine','Cwd','WaitMsBeforeAsync','toolSummary','toolAction','IsDaemon','RunPersistent')) { return $null }
+            }
+            foreach ($key in @('IsDaemon','RunPersistent')) {
+                if ($ToolArguments.Contains($key) -and ($ToolArguments[$key] -isnot [bool] -or $ToolArguments[$key])) { return $null }
+            }
+            if ($ToolArguments.Contains('WaitMsBeforeAsync') -and
+                (($ToolArguments.WaitMsBeforeAsync -isnot [int] -and $ToolArguments.WaitMsBeforeAsync -isnot [long]) -or $ToolArguments.WaitMsBeforeAsync -lt 0)) { return $null }
+            foreach ($key in @('toolSummary','toolAction')) {
+                if ($ToolArguments.Contains($key) -and $ToolArguments[$key] -isnot [string]) { return $null }
+            }
+            $updated=[ordered]@{}
+            foreach ($key in $ToolArguments.Keys) { $updated[$key]=$ToolArguments[$key] }
+            $updated.Cwd=$workspace
+            $result.updatedInput=$updated
+        }
+        return $result
     }
     $readOperations=@('Discover','Status','FollowUps','InspectRecovery','Changes')
     $writeOperations=@('Start','Resume','Recover','Suspend','Cancel','ChangeTier','Join','Delegate','RevokeDelegation')

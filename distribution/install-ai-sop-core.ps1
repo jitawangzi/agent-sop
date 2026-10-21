@@ -163,7 +163,7 @@ function New-AiSopInstallResult {
 }
 
 function Restore-AiSopInstallTransactions {
-    # DC-018: recover outstanding journals before any new Install/Verify.
+    # DC-018: 显式 Install 前恢复未决日志；Verify 仅检查，不执行恢复。
     param(
         [Parameter(Mandatory)][string]$WorkspaceRoot,
         [Parameter(Mandatory)][string]$ClaudeRoot

@@ -3856,10 +3856,24 @@ function Get-CommandEvidenceProblem {
     if ($names -notcontains "exitCode") { return "exitCode missing" }
     if ([int]$obj.exitCode -ne 0) { return "exitCode=$($obj.exitCode)" }
     if ([string]::IsNullOrWhiteSpace([string]$obj.command)) { return "command missing" }
-    $rawAt = [string]$obj.executedAt
-    if ([string]::IsNullOrWhiteSpace($rawAt)) { return "executedAt missing" }
+    $rawAt = $obj.executedAt
+    if ($null -eq $rawAt -or ($rawAt -is [string] -and [string]::IsNullOrWhiteSpace($rawAt))) { return "executedAt missing" }
     $parsed = [datetimeoffset]::MinValue
-    if (-not [DateTimeOffset]::TryParse($rawAt, [ref]$parsed)) { return "executedAt is not a timestamp" }
+    # ConvertFrom-Json can materialize DateTime. String coercion drops its Kind
+    # and fractional seconds, causing UTC wall time to be reinterpreted as local.
+    if ($rawAt -is [DateTimeOffset]) {
+        $parsed = $rawAt
+    } elseif ($rawAt -is [DateTime]) {
+        # The constructor preserves UTC/Local Kind. Unspecified retains the
+        # existing no-offset timestamp contract: interpret it as local time.
+        try { $parsed = [DateTimeOffset]::new($rawAt) }
+        catch { return "executedAt is not a timestamp" }
+    } elseif ($rawAt -is [string]) {
+        if (-not [DateTimeOffset]::TryParse($rawAt, [ref]$parsed)) { return "executedAt is not a timestamp" }
+    } else {
+        return "executedAt is not a timestamp"
+    }
+    $parsed = $parsed.ToUniversalTime()
     if ($parsed -gt [DateTimeOffset]::UtcNow.AddMinutes(5)) { return "executedAt is in the future" }
     if (([DateTimeOffset]::UtcNow - $parsed).TotalDays -gt $MaxAgeDays) {
         return "stale (older than $MaxAgeDays days)"

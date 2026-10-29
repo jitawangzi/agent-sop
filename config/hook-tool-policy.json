@@ -5,6 +5,19 @@
     {
       "match": {
         "kind": "EXACT",
+        "value": "finish"
+      },
+      "nativeShapes": [
+        "ANTIGRAVITY"
+      ],
+      "canonicalName": "STRUCTURED_OUTPUT",
+      "toolClass": "SAFE_NON_EDIT",
+      "argumentProfile": "STRUCTURED_OUTPUT",
+      "targetExtractor": "NONE"
+    },
+    {
+      "match": {
+        "kind": "EXACT",
         "value": "Read"
       },
       "nativeShapes": [

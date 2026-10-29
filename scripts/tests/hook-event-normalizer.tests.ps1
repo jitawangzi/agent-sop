@@ -1266,6 +1266,7 @@ try {
 
     # Antigravity 读取/提问保持原分类，子会话派发需要归属。
     foreach ($agToolCase in @(
+        @("finish", [ordered]@{ result = @{ text = "完成"; values = @(1, $true, $null) } }, "SAFE_NON_EDIT"),
         @("view_file", [ordered]@{ AbsolutePath = (Join-Path $Workspace "README.md"); toolAction = "Viewing file"; toolSummary = "View file" }, "SAFE_NON_EDIT"),
         @("ViewFile", [ordered]@{ AbsolutePath = (Join-Path $Workspace "README.md") }, "SAFE_NON_EDIT"),
         @("list_dir", [ordered]@{ DirectoryPath = $Workspace; toolAction = "Listing dir"; toolSummary = "List dir" }, "SAFE_NON_EDIT"),

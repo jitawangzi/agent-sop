@@ -26,6 +26,8 @@ Pi 的 edit 同时兼容旧版 `path/oldText/newText` 和新版 `path/edits[]`�
 
 Antigravity 按协议以 `hooks.json` 所在目录为 cwd，因此 `.agents/hooks.json` 中的 `hook-wrapper.ps1` 正确指向 `.agents/hook-wrapper.ps1`。各客户端使用各自投影入口，无需根目录 wrapper；Claude 载荷和其自动导入的 Cursor Hook 通过载荷识别，Pi 扩展显式传 `PI`，不应强制统一为同一 AgentHint。
 
+Antigravity CLI 的原生 `finish` 通过 `PreToolUse` 的 `toolCall.name="finish"`、`toolCall.args=<JSON 对象>` 传输结构化结果。它使用独立的 `STRUCTURED_OUTPUT` 参数档案，归类为 `SAFE_NON_EDIT`；无需 Task Start、owner 或会话恢复，不创建、续租或复活任务/会话，也不改写参数或签发授权。只接受原生公共元数据字段和 `name/args` 工具封套；其他提供方、名称别名、混合封套和顶层操作参数（命令、编辑、工具/任务派发选择器）仍拒绝。结果结构不绑定某个审核 Schema，嵌套 Unicode、数组和对象均作为结果数据保留。此放行仅允许结果传输，不代表审核批准或任务完成；调用方仍须校验原生成功状态、实际 `structured_output`、Schema、来源及回执，不能采用失败后拼接的文本结果。
+
 实现子会话不走 Resume 接管。使用自己的会话参数 Join 回报身份，父会话 Delegate 后再恢复同一子会话，执行及撤销步骤见 [执行委派](EXECUTION_DELEGATION.md)。只读子会话仍不 Join，不改变权限。
 
 ## 验证

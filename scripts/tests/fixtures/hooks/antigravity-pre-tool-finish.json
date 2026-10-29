@@ -1,0 +1,30 @@
+{
+  "conversationId": "fixture-native-finish",
+  "workspacePaths": ["__WORKSPACE__"],
+  "transcriptPath": "fixture/transcript.jsonl",
+  "artifactDirectoryPath": "fixture/artifacts",
+  "executionId": "fixture-execution",
+  "modelName": "gemini-4-argon-high",
+  "isBattleMode": false,
+  "lastUserInput": "Return the read-only result",
+  "agentName": "fixture-reviewer",
+  "parentConversationId": "fixture-parent",
+  "callerContext": "fixture",
+  "rootConversationId": "fixture-root",
+  "stepIdx": 4,
+  "toolCall": {
+    "name": "finish",
+    "args": {
+      "acceptanceComplete": true,
+      "coverage": ["docs/example.md"],
+      "coverageDetails": [{"target": "docs/example.md", "status": "CHECKED", "checks": "只读检查 ✓", "limitations": ""}],
+      "highestSeverity": "NONE",
+      "issues": [],
+      "materialPart": {"packageId": "fixture-package", "partId": "part-1", "coverage": ["fixture-input"]},
+      "scopeComplete": true,
+      "summary": "结构化结果：嵌套对象与 Unicode 🚀",
+      "verdict": "APPROVED",
+      "verifications": []
+    }
+  }
+}

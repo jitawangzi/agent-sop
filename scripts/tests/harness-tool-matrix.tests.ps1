@@ -137,6 +137,9 @@ try {
     } "FILE_EDIT" "Edit PascalCase"
 
     # Antigravity Safe / Read / Exploration tools
+    Assert-ToolAuthorized "ANTIGRAVITY" "finish" @{
+        result = @{ text = "完成"; values = @(1, $true, $null) }
+    } "SAFE_NON_EDIT" "native structured-output transport"
     Assert-ToolAuthorized "ANTIGRAVITY" "view_file" @{
         AbsolutePath = $targetFile
         toolAction = "Viewing file"

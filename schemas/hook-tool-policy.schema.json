@@ -91,6 +91,7 @@
             "READ",
             "GLOB",
             "SEARCH",
+            "STRUCTURED_OUTPUT",
             "ANY_OBJECT",
             "EDIT",
             "WRITE",
@@ -134,6 +135,7 @@
                   "READ",
                   "GLOB",
                   "SEARCH",
+                  "STRUCTURED_OUTPUT",
                   "ANY_OBJECT"
                 ]
               },

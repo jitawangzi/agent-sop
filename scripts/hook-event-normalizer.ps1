@@ -1306,6 +1306,23 @@ function Test-AiSopToolArgumentProfile {
     )
 
     switch ($Profile) {
+        "STRUCTURED_OUTPUT" {
+            # Native finish carries the caller's JSON schema object directly.
+            # Do not couple this transport to a particular review/business schema.
+            # Reject top-level operation selectors rather than treating a mixed
+            # shell/edit/delegation request as a completion. Nested result data is inert.
+            foreach ($key in $Arguments.Keys) {
+                if ($key -iin @('command','CommandLine','command_line','executable',
+                    'operation','tool','tool_name','toolName','toolCall','tool_input','toolArgs',
+                    'file_path','TargetFile','CodeContent','old_string','new_string',
+                    'edits','patch','Subagents','TaskId','NativeSessionId')) { return $false }
+            }
+            if ($Arguments.Contains('content') -and
+                @($Arguments.Keys | Where-Object { $_ -iin @('path','file','filePath','target_file') }).Count) {
+                return $false
+            }
+            return $true
+        }
         "ANY_OBJECT" {
             return $true
         }
@@ -1994,6 +2011,31 @@ function Get-AiSopToolPayload {
     }
     if ($NativeShape -eq "ANTIGRAVITY") {
         $arguments = $Payload.toolCall.args
+        if ($Payload.toolCall.name -ceq 'finish') {
+            # HookArgsCommon + PreToolHookArgs from the native hooks proto.
+            foreach ($key in $Payload.Keys) {
+                if ($key -cnotin @('conversationId','workspacePaths','transcriptPath',
+                    'artifactDirectoryPath','executionId','modelName','isBattleMode',
+                    'lastUserInput','agentName','parentConversationId','callerContext',
+                    'rootConversationId','toolCall','stepIdx')) {
+                    Throw-AiSopHookError 'TOOL_ARGS_INVALID'
+                }
+                if ($key -cnotin @('conversationId','workspacePaths','toolCall','stepIdx','isBattleMode') -and
+                    $Payload[$key] -isnot [string]) { Throw-AiSopHookError 'TOOL_ARGS_INVALID' }
+            }
+            if ((Test-MapHasKey $Payload 'stepIdx') -and
+                (-not (Test-IntegerValue $Payload.stepIdx) -or $Payload.stepIdx -lt 0)) {
+                Throw-AiSopHookError 'TOOL_ARGS_INVALID'
+            }
+            if ((Test-MapHasKey $Payload 'isBattleMode') -and $Payload.isBattleMode -isnot [bool]) {
+                Throw-AiSopHookError 'TOOL_ARGS_INVALID'
+            }
+            # The native PreToolUse contract has exactly name/args in toolCall;
+            # do not discard a second operation hidden beside the result object.
+            foreach ($key in $Payload.toolCall.Keys) {
+                if ($key -cnotin @('name','args')) { Throw-AiSopHookError 'TOOL_ARGS_INVALID' }
+            }
+        }
         if ($Payload.toolCall.name -ceq 'read_file') {
             # 新版原生读取参数先映射到既有 READ 契约，复用类型和物理路径校验。
             # 别名冲突必须拒绝，不能丢弃未知字段而把混合操作误判为只读。
@@ -2102,9 +2144,13 @@ function Resolve-AiSopToolPolicy {
     )
     $validMatches = @(
         $nameMatches | Where-Object {
-            Test-AiSopToolArgumentProfile `
+            # Completion is certified only for this exact native provider/name.
+            ($_.argumentProfile -cne 'STRUCTURED_OUTPUT' -or
+                ($NativeShape -ceq 'ANTIGRAVITY' -and $ToolName -ceq 'finish' -and
+                 $_.toolClass -ceq 'SAFE_NON_EDIT' -and $_.targetExtractor -ceq 'NONE')) -and
+            (Test-AiSopToolArgumentProfile `
                 -Arguments $Arguments `
-                -Profile ([string]$_.argumentProfile)
+                -Profile ([string]$_.argumentProfile))
         }
     )
     if ($validMatches.Count -ne 1) {

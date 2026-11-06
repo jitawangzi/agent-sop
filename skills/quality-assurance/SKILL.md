@@ -273,4 +273,4 @@ T3 只有在以下条件满足时，才能宣称本次选定测试完成：
 - 发现需求或设计冲突：说明冲突；T3 回到对应批准步骤，T1/T2 按人工明确的本次需求处理，不自行升档
 - 外部环境无法解除：报告阻塞；正常暂停先停止本次运行、处理待入账结果，再由归属持有者 Suspend 并保留检查点。异常中断按诊断 Recover，已经恢复为 PAUSED 时直接 Resume，不重复 Suspend
 
-联调、持久化故障窗口及发布结论的适用边界见[验证与发布的证据边界](../../docs/VERIFICATION_RELEASE_BOUNDARIES.md)；按任务实际范围加载，不增加默认完成门禁。
+联调、持久化故障窗口及发布结论的适用边界见《验证与发布的证据边界》：宿主项目从项目根读取 `.ai-sop/docs/VERIFICATION_RELEASE_BOUNDARIES.md`，引擎开发从源码根读取 `docs/VERIFICATION_RELEASE_BOUNDARIES.md`。按任务实际范围加载，不增加默认完成门禁。

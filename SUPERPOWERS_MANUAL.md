@@ -968,3 +968,5 @@ svn commit -m "ShopBuyLimit: 实现商城物品每日限购与跨天重置"
 | `WORKFLOW_LOCK_TIMEOUT` | 并发文件锁竞争或磁盘 IO 延迟 | 检查是否有其他进程卡死，重新执行即可（脚本会自动进行指数退避重试）。 |
 | `GATE_NOT_APPROVED` / `HASH_DRIFT` | 需求/设计文档批准后被非受控修改 | 纯文本润色运行 `workflow-state.ps1 -Operation UpdateHash -Gate <requirement\|design>`；业务修改运行 `ResetApproval` 后重新确认。 |
 | `COVERAGE_UNCOVERED_CLAUSES` | 01/06 新增了 BR/DC 条款但 05 未覆盖 | 运行 `workflow-state.ps1 -Operation SyncCoverage` 同步用例，并在 05 中补齐条款 ID 关联。 |
+
+联调、持久化故障窗口及发布结论的适用边界见[验证与发布的证据边界](docs/VERIFICATION_RELEASE_BOUNDARIES.md)；按任务实际范围加载，不增加默认完成门禁。

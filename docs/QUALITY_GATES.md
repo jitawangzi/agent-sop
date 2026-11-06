@@ -268,3 +268,5 @@ pwsh -NoProfile -File ./.ai-sop/scripts/workflow-state.ps1 -Operation AssessRisk
 审查对象 sha256：<与 Approve -Gate design / Status 相同的 06 SHA>
 审查状态：PASS | PASS_WITH_WARNINGS | NEEDS_FIX
 ```
+
+联调、持久化故障窗口及发布结论的适用边界见[验证与发布的证据边界](VERIFICATION_RELEASE_BOUNDARIES.md)；按任务实际范围加载，不增加默认完成门禁。

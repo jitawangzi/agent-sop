@@ -2,14 +2,14 @@
 
 <p align="center">
   <b>企业级 AI 编码智能体治理引擎与运行时操作系统</b><br>
-  <i>Deterministic OS-Level Guardrails, Cryptographic Gates, and Transactional Multi-Agent OS</i>
+  <i>Tool-call Guardrails, Evidence Binding, and Transactional Workflow State</i>
 </p>
 
 <p align="center">
   <a href="#-核心原理深度剖析"><img src="https://img.shields.io/badge/Architecture-Deterministic%20OS-orange.svg" alt="Architecture"></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/License-MIT-blue.svg" alt="License"></a>
   <a href="https://github.com/PowerShell/PowerShell"><img src="https://img.shields.io/badge/PowerShell-7.0%2B-blue.svg" alt="PowerShell"></a>
-  <a href="#-全量自动化测试矩阵"><img src="https://img.shields.io/badge/Tests-17%2F17%20PASS%20(100%25)-brightgreen.svg" alt="Tests"></a>
+  <a href="#-全量自动化测试矩阵"><img src="https://img.shields.io/badge/Tests-run%20locally-blue.svg" alt="Tests"></a>
   <a href="#-支持的-ide--harness-矩阵"><img src="https://img.shields.io/badge/Harness-Claude%20Code%20|%20Antigravity%20|%20Cursor%20|%20Copilot-green.svg" alt="Harness"></a>
 </p>
 
@@ -31,7 +31,7 @@
 |---|---|
 | 👤 **人类开发者（日常开发）** | 只需阅读下方的 [3 分钟快速上手](#-3-分钟快速上手)。日常 Bug 修复直接说 `快速修改：修复 X 的空指针`；新功能直接描述需求。不需要记复杂的命令或工单！ |
 | 🔄 **跨 IDE / 工具切换** | 在新 IDE（如从 Cursor 切到 Claude Code）直接说 `接着做 <Feature>` 或 `接管任务`，SOP 会自动完成会话绑定与租约交接。 |
-| 🤖 **AI 编码智能体 (Agent)** | 统一加载项目根目录下的 **`AGENTS.md`**（单一真源），严格执行 OS 物理拦截与门禁。 |
+| 🤖 **AI 编码智能体 (Agent)** | 统一加载项目根目录下的 **`AGENTS.md`**（单一真源），严格执行 工具调用拦截与门禁。 |
 | 🛠️ **框架维护与架构师** | 阅读 [底层原理剖析](#-核心原理深度剖析)、[`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) 与 [`docs/QUALITY_GATES.md`](docs/QUALITY_GATES.md)。 |
 
 ---
@@ -44,13 +44,13 @@
 
 | 工业界痛点场景 | 裸奔 AI 的表现 (常规 Prompt 方式) | Agent-SOP 物理级治理表现 |
 |---|---|---|
-| **AI 产生幻觉偷改代码** | AI 随着上下文增长发生疲劳，跳过方案评审直接修改核心生产代码。 | **OS 级 PreToolUse Hook 物理阻断**：未持有合法租约直接拒绝写入磁盘（Exit 2）。 |
-| **AI 偷偷放宽测试标准** | 实现遇阻时，AI 经常会偷偷把需求或测试断言删减，伪造“全部通过”假象。 | **密码学 SHA-256 防篡改门禁**：需求与设计一旦锁定，修改 1 个标点立即触发熔断。 |
+| **AI 产生幻觉偷改代码** | AI 随着上下文增长发生疲劳，跳过方案评审直接修改核心生产代码。 | **工具调用级 PreToolUse Hook 物理阻断**：未持有合法租约直接拒绝写入磁盘（Exit 2）。 |
+| **AI 偷偷放宽测试标准** | 实现遇阻时，AI 经常会偷偷把需求或测试断言删减，伪造“全部通过”假象。 | **SHA-256 证据一致性门禁**：需求与设计一旦锁定，后续校验发现摘要不匹配时拒绝沿用旧批准。 |
 | **多 Agent / 跨 IDE 并发踩踏** | 多个会话或不同 IDE 同时操作同一文件，导致代码被静默覆盖与回退。 | **两阶段事务锁与 Session 状态机**：物理文件锁排队、租约 TTL 超时自愈、崩溃安全日志。 |
 | **改动 1 行代码耗费重型流程** | 修一个错别字也要走完 30 分钟的全套大模型拆解，极其浪费 Token 和时间。 | **T1 / T2 / T3 人工选择**：默认 T2，按时间要求选择流程强度，风险分析仅提供建议。 |
 | **无法融入企业私有工程** | 强依赖理想化的独立 Git 分支，无法适配企业现有的 SVN 工作副本或多端口沙盒。 | **原生混合 VCS 支持**：无侵入嵌入 SVN / Git Monorepo，动态分配端口与运行时隔离。 |
 
-> **核心哲学**：大模型的输出是**概率性（Probabilistic）**的，但软件工程的交付必须是**100% 确定性（Deterministic）**的。Agent-SOP 的使命就是**把不可控的 AI，关进确定性的物理工程笼子里**。
+> **设计目标**：用可执行检查约束已接入的工具调用，并把结论绑定到输入、命令和结果。门禁通过不证明业务无缺陷；完整边界见 [质量保证设计](docs/QUALITY_GATES.md)。
 
 ---
 
@@ -67,15 +67,15 @@ Agent-SOP 不是一组简单的 Markdown 提示词，而是一套**深度介入�
 │        └──────────────────┼─────────────────┴─────────────┘            │
 │                           ▼                                            │
 │  ┌──────────────────────────────────────────────────────────────────┐  │
-│  │ 1. OS 级 PreToolUse Hook 物理拦截层 (hook-dispatcher.ps1)        │  │
+│  │ 1. 工具调用级 PreToolUse Hook 物理拦截层 (hook-dispatcher.ps1)        │  │
 │  │  - 语法树 AST 解析，防止相对路径遍历与参数注入 bypass            │  │
 │  │  - 校验 ACTIVE 归属锁状态与短期 CommandGrant 租约 (TTL 机制)      │  │
-│  │  - 未经授权直接 Exit 2 物理阻断，生产文件 0 污染                  │  │
+│  │  - 已识别未授权调用 Exit 2 拒绝；保障范围依赖 Hook 接入                  │  │
 │  └─────────────────────────────────┬────────────────────────────────┘  │
 │                                    ▼                                   │
 │  ┌──────────────────────────────────────────────────────────────────┐  │
-│  │ 2. 密码学防篡改门禁系统 (workflow-state.ps1)                     │  │
-│  │  - 01_server_rules.md (需求 BR/EX/AC) -> SHA-256 密码学签名      │  │
+│  │ 2. 内容摘要一致性门禁系统 (workflow-state.ps1)                     │  │
+│  │  - 01_server_rules.md (需求 BR/EX/AC) -> SHA-256 内容摘要      │  │
 │  │  - 06_design_contract.md (设计 DC/DR) -> design-reviewer 机器闭环│  │
 │  │  - 05_test_coverage.json -> 机器机检可追溯矩阵 (P0/P1 硬阻断)    │  │
 │  └─────────────────────────────────┬────────────────────────────────┘  │
@@ -94,26 +94,26 @@ Agent-SOP 不是一组简单的 Markdown 提示词，而是一套**深度介入�
 
 ---
 
-### 原理 1：OS 级 PreToolUse Hook 物理拦截（真正的硬约束）
+### 原理 1：工具调用级 PreToolUse Hook 物理拦截（真正的硬约束）
 
-市面上几乎所有 Agent 框架都试图通过 Prompt 告诉模型：“请在获得批准前不要修改生产文件”。但实验表明，长对话下 Prompt 遵循率会随 Token 衰减而跌破 80%。
+仅靠提示词难以检查任务归属、证据过期和失败记录，Agent-SOP 为这些条件提供执行检查。
 
-Agent-SOP 在操作系统与 IDE 工具层之间插入了 **`hook-dispatcher.ps1` 物理防火墙**：
-1. **抽象语法树（AST）静态解析**：拦截所有 `write_to_file`、`replace_file_content`、`Bash`（sed, patch, echo >）等写入意图，进行绝对路径规范化，彻底杜绝 `../` 路径穿越或大小写混淆绕过。
+Agent-SOP 在操作系统与 IDE 工具层之间插入了 **`hook-dispatcher.ps1` 调用检查器**：
+1. **调用识别与路径检查**：对已支持的载荷检查参数、写入意图和物理路径；未知工具、任意 shell 与客户端未启用 Hook 的情况不能宣称受完整保护。
 2. **生产目录白名单扫描**：一旦命中生产代码目录（如 `src/**`、`config/**`、`WebRoot/**`），立即触发归属判定。
-3. **物理驳回（Exit Code 2）**：若当前会话未持有合法的 `ACTIVE` 租约，Hook 在操作系统层面**直接阻断工具执行**，大模型的写入调用根本无法触碰硬盘物理文件，并强制回显错误信息要求 AI 走正规认领流程。
+3. **拒绝调用（Exit Code 2）**：已接线且识别成功的调用不满足归属条件时，Hook 拒绝该调用。它不是操作系统沙箱，不能防御同权限进程直接改写文件。
 
 ---
 
-### 原理 2：密码学 SHA-256 防篡改门禁（锁死需求与契约）
+### 原理 2：SHA-256 证据一致性门禁（锁死需求与契约）
 
 在复杂的开发任务中，大模型常常因无法解决某个边界 Bug，而“自作聪明”地修改原始需求或删除测试用例，谎称交付成功。
 
-Agent-SOP 引入了**不可变密码学门禁机制**：
+Agent-SOP 引入了**版本绑定与变化检测机制**：
 - **两道独立人工门禁**：
   1. `01_server_rules.md`（业务需求）：人工确认后，计算 SHA-256 哈希写入 `00_workflow_state.json` 锁定。
   2. `06_design_contract.md`（设计契约）：必须先经过 `design-reviewer` 机器审查闭环（最多 2 轮熔断），再由人工确认并写入 SHA-256。
-- **动态防篡改比对**：在后续的 TDD 编码、内审和交付阶段，验证器会反复比对物理文件的实时哈希值。任何对需求条款或契约的私自修改，都会直接导致 `ValidateTestCoverage` 报 FAIL 熔断，强制开发者介入。
+- **动态摘要比对**：后续校验检查适用需求、设计和证据的版本绑定。SHA-256 不是数字签名，不证明内容正确或批准者身份，也不防御同权限主体同时改写内容和摘要。
 
 ---
 
@@ -122,7 +122,7 @@ Agent-SOP 引入了**不可变密码学门禁机制**：
 企业开发往往允许多个开发者、或同一个开发者使用多种工具（例如主界面用 Cursor，排查 Bug 用 Claude Code CLI，后台跑 Antigravity）协同工作。
 
 Agent-SOP 实现了一套**无中心依赖的文件级两阶段事务（2PC）协调器**：
-- **有序层级锁（Ordered Locking）**：统一按照 `Session -> Owner -> Grant` 严格顺序获取文件锁，彻底消除多进程死锁可能。
+- **有序层级锁（Ordered Locking）**：统一按照 `Session -> Owner -> Grant` 严格顺序获取文件锁，避免锁顺序反转；仍需处理超时、进程中断和其他资源等待。
 - **崩溃自愈与超时清理**：每次加锁操作均记录带有时间戳与状态（`PREPARED` / `COMMITTED`）的事务日志。若进程异常退出或断电，下次启动时自动执行 Crash Recovery 回滚或续期。
 - **短期租约令牌（CommandGrant TTL）**：对单次命令执行颁发具有毫秒级 TTL 的一次性凭证，防止授权泄漏。
 
@@ -160,8 +160,8 @@ Agent-SOP 实现了一套**无中心依赖的文件级两阶段事务（2PC）�
 ┌────────────────────────────────────────────────────────────────────────┐
 │ 运行时治理操作系统 (Runtime Governance & OS Layer): Agent-SOP          │
 │                                                                        │
-│  🛡️ OS 级 PreToolUse Hook 物理阻断 (未获锁严禁写盘)                     │
-│  🔐 需求与设计 SHA-256 密码学不可变门禁 (防 AI 偷改断言)                │
+│  🛡️ 工具调用级 PreToolUse Hook 物理阻断 (未获锁严禁写盘)                     │
+│  🔐 需求与设计 SHA-256 内容一致性门禁 (防 AI 偷改断言)                │
 │  👥 领域专家智能体 (design-reviewer / logic-auditor / 实现引擎)        │
 │  🔒 跨 IDE 两阶段事务文件锁与崩溃自愈 (Schema 1.1)                     │
 │  🚦 T1 / T2 / T3 人工选择，默认 T2 (平衡速度与完整度)                │
@@ -170,7 +170,7 @@ Agent-SOP 实现了一套**无中心依赖的文件级两阶段事务（2PC）�
 
 ### 两者的角色与边界定义：
 1. **Superpowers 是“顶层大脑”**：负责任务的思考流与认知编排。它指导 AI 如何有条理地与人类沟通、如何分解 Plan、如何调度子 Agent。
-2. **Agent-SOP 是“骨骼与操作系统”**：负责底层的物理防护网与确定性基础设施。它将 Superpowers 的“纯提示词软约束”升级为“操作系统级硬门禁”，并为每个执行步骤提供本项目专属的领域专家（替换掉了通用的 code-reviewer）。
+2. **Agent-SOP 是“骨骼与操作系统”**：负责底层的物理防护网与确定性基础设施。它将 Superpowers 的“纯提示词软约束”升级为“已接入工具调用的执行门禁”，并为每个执行步骤提供本项目专属的领域专家（替换掉了通用的 code-reviewer）。
 3. **分层解耦与独立性**：
    - **T3 重型功能**：深度结合 Superpowers 的思考编排能力 + Agent-SOP 的物理治理底座。
    - **T1 / T2 修改**：完全不依赖 Superpowers；T2 同步相关规格与用例，T1 可记录非阻断待同步事项。
@@ -300,8 +300,8 @@ pwsh -NoProfile -File ./scripts/run-all-tests.ps1
 **Agent-SOP** is an open-source, industrial-grade governance engine and runtime operating system for AI coding agents.
 
 ### Why Agent-SOP?
-- **Deterministic Guardrails**: Uses OS-level `PreToolUse` hook scripts to physically intercept unauthorized file modifications, eliminating reliance on probabilistic prompt instructions.
-- **Cryptographic Gates**: Locks requirements (`01`) and design contracts (`06`) with SHA-256 signatures, preventing agents from secretly modifying acceptance criteria.
+- **Deterministic Guardrails**: Checks supported tool calls through enabled `PreToolUse` hooks. This is not an OS sandbox and cannot prevent arbitrary same-privilege writes.
+- **Cryptographic Gates**: Binds requirements (`01`), designs (`06`) and execution evidence with SHA-256 content digests. Hashes are not signatures and do not prove semantic correctness or authorship.
 - **Transactional Multi-Agent Locks**: Implements 2-Phase Commit (2PC) crash-safe journals and ordered file locks across multiple IDE sessions (Claude Code, Cursor, Antigravity, Copilot).
 - **Task Tiers**: Defaults to T2 (implementation, relevant documentation/tests and verification). Users can choose T1 (urgent implementation and compilation) or T3 (the full workflow); agents advise on risk without changing the selected tier. Deferred T1 work remains visible without blocking independent tasks.
 - **Hybrid VCS & Runtime Isolation**: First-class support for both enterprise SVN working copies and Git monorepos with isolated port/directory sandboxes.

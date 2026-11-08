@@ -31,6 +31,20 @@ try {
     Assert ($report.latest.Count -eq 2 -and $report.history.Count -eq 3) 'Batch histories collapsed'
     Assert ($report.findings[0].declaredStatus -eq 'OPEN' -and $report.taskStatus -eq 'DONE') 'Task PASS closed finding'
     Assert ($report.cleanup.value.outcome -eq 'FAILED') 'Cleanup failure hidden'
+    $evidencePath=Join-Path (Split-Path -Parent $taskPath) evidence.json
+    $originalEvidence=[IO.File]::ReadAllText($evidencePath)
+    foreach($invalid in @('null','[]','[{"cleanup":{"outcome":"PASSED"}}]','"text"','42','true','{"broken":')){
+        [IO.File]::WriteAllText($evidencePath,$invalid)
+        $invalidHash=(Get-FileHash $evidencePath).Hash
+        $partial=Export
+        Assert ($partial.diagnostics -contains 'SUPPLEMENTAL_EVIDENCE_UNREADABLE') 'Invalid supplement diagnostic missing'
+        Assert ($partial.cleanup.source.status -eq 'UNAVAILABLE' -and $partial.unverifiedScope.source.status -eq 'UNAVAILABLE') 'Invalid supplement presented as available'
+        Assert ($partial.cleanup.status -eq 'NOT_RECORDED' -and $partial.unverifiedScope.status -eq 'NOT_RECORDED' -and -not $partial.cleanup.value.outcome) 'Invalid supplement invented facts'
+        Assert ($partial.history.Count -eq 3 -and $partial.latest.Count -eq 2 -and $partial.findings[0].id -eq 'CHECK-1') 'Invalid supplement discarded other evidence'
+        Assert ((Get-FileHash $evidencePath).Hash -eq $invalidHash -and (Get-FileHash $taskPath).Hash -eq $before) 'Read-only export changed evidence'
+    }
+    [IO.File]::WriteAllText($evidencePath,$originalEvidence)
+    $report=Export
     Assert ($report.latest[0].currentInputs -eq 'NOT_CHECKED') 'Implicit current-input claim'
     Assert ((Export -SelectedScope 'src\child\file.java').findings.Count -eq 1) 'Windows scope separator mismatch'
     Assert ((Export -SelectedScope 'src-other').findings.Count -eq 0) 'Same-prefix unrelated scope matched'

@@ -94,8 +94,18 @@ foreach($featureDir in Get-ChildItem -LiteralPath $features -Directory){
 $evidence=FileReference ".ai-workspace/specs/features/$Feature/tasks/$TaskId/evidence.json"
 $supplement=@{}
 if($evidence.status -eq 'PRESENT_UNBOUND'){
-    try {$supplement=ConvertFrom-AiSopWorkflowJson ([IO.File]::ReadAllText((Resolve-AiSopReviewChild $WorkspacePath $evidence.path))) -AsHashtable}
-    catch {$diagnostics.Add('SUPPLEMENTAL_EVIDENCE_UNREADABLE')}
+    try {
+        $raw=[IO.File]::ReadAllText((Resolve-AiSopReviewChild $WorkspacePath $evidence.path))
+        $parsed=ConvertFrom-AiSopWorkflowJson $raw -AsHashtable
+        # PowerShell 会展开单元素数组，保留顶层对象判断，避免把对象数组当成对象。
+        if(-not $raw.TrimStart().StartsWith('{') -or $parsed -isnot [System.Collections.IDictionary]){throw 'SUPPLEMENTAL_EVIDENCE_OBJECT_REQUIRED'}
+        $supplement=$parsed
+    }
+    catch {
+        # 补充材料不可读时保留其他审查事实，不把结构异常解释为清理或验证成功。
+        $evidence.status='UNAVAILABLE'
+        $diagnostics.Add('SUPPLEMENTAL_EVIDENCE_UNREADABLE')
+    }
 }
 $cleanupSummary=@{}
 if($supplement.cleanup.outcome -in @('PASSED','FAILED','UNKNOWN','NOT_RUN')){$cleanupSummary.outcome=$supplement.cleanup.outcome}

@@ -91,7 +91,7 @@ if (Test-Path -LiteralPath $ownerPath) {
     # An existing owner record exists. Two legal cases:
     # 1. status COMPLETE -> prior owner released; allow a fresh PI Register+Claim.
     # 2. status ACTIVE + same PI tuple -> reuse the bound session for a new operation.
-    $existing = Get-Content -Raw -LiteralPath $ownerPath | ConvertFrom-Json
+    $existing = Read-AiSopWorkflowText $ownerPath | ConvertFrom-Json
     if ([string]$existing.status -ceq "COMPLETE") {
         $session = Invoke-AiSopWorkflowSession `
             -Operation Register `

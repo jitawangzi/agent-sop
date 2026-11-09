@@ -101,7 +101,7 @@ if ($SpecDirectory -cne $canonicalSpec) { throw 'TASK_WORKSPACE_MISMATCH' }
 $ownerScript = Join-Path $PSScriptRoot 'workflow-owner.ps1'
 $ownerPath = Join-Path (Get-AiSopWorkflowOwnerRegistryRoot -WorkspacePath $WorkspacePath) ($Feature.ToLowerInvariant() + '.json')
 if ($Operation -eq 'InspectRecovery') { Get-AiSopTaskRecoveryDiagnostics $SpecDirectory $TaskId $WorkspacePath $ownerPath -LogTailLines $LogTailLines | ConvertTo-Json -Depth 12; exit 0 }
-$owner = if ($Operation -ne 'Changes' -and (Test-Path -LiteralPath $ownerPath)) { Get-Content -LiteralPath $ownerPath -Raw | ConvertFrom-Json -AsHashtable } else { $null }
+$owner = if ($Operation -ne 'Changes' -and (Test-Path -LiteralPath $ownerPath)) { Read-AiSopWorkflowText $ownerPath | ConvertFrom-Json -AsHashtable } else { $null }
 if ($Operation -notin @('Verify','Changes')) { $Agent = Resolve-AiSopInvocationAgent $Agent }
 $ownerArgs = @{ Feature=$Feature; SpecDirectory=$SpecDirectory; Workflow='SUPERPOWERS'; Agent=$Agent }
 if ($PSBoundParameters.ContainsKey('NextAction')) { $ownerArgs.NextAction = $NextAction }
@@ -265,7 +265,7 @@ if ($junit) {
 if ($Batch -notmatch '^[A-Za-z0-9][A-Za-z0-9_-]{0,79}$') { throw 'BATCH_ID_INVALID' }
 & $ownerScript -Operation Validate @ownerArgs -ExecutionAccess | Out-Null
 if ($LASTEXITCODE -ne 0) { throw 'TASK_OWNER_INVALID' }
-$runOwner = Get-Content -LiteralPath $ownerPath -Raw | ConvertFrom-Json -AsHashtable
+$runOwner = Read-AiSopWorkflowText $ownerPath | ConvertFrom-Json -AsHashtable
 $runSession = Get-AiSopWorkflowSession -SessionKey (Get-AiSopWorkflowSessionKey -Agent $Agent -NativeSessionId (Get-AiSopInvocationSessionId $Agent) -WorkspacePath $WorkspacePath) -WorkspacePath $WorkspacePath
 $executionBinding = Get-AiSopExecutionBinding $runOwner $runSession.Record
 $before = Get-AiSopInputSnapshot $WorkspacePath
@@ -351,7 +351,7 @@ function Update-RunLease {
             $bound.Record.boundOwnerId -cne $task.ownerId -or $bound.Record.boundFeature -cne $Feature) { throw 'RUN_SESSION_LOST: the original session is no longer active and bound' }
         $lease.expiresAt=[DateTimeOffset]::Parse($bound.Record.expiresAt)
         if ($context.delegationId) {
-            $liveOwner=Get-Content -LiteralPath $ownerPath -Raw | ConvertFrom-Json -AsHashtable
+            $liveOwner=Read-AiSopWorkflowText $ownerPath | ConvertFrom-Json -AsHashtable
             if (-not (Test-AiSopExecutionDelegate $liveOwner $bound.Record) -or $liveOwner.executionDelegation.id -cne $context.delegationId) { throw 'RUN_DELEGATION_LOST' }
             $parent=Get-AiSopWorkflowSession -SessionKey $liveOwner.sessionBinding.sessionKey -WorkspacePath $WorkspacePath -DeadlineUtc $deadline
             Assert-AiSopDelegationParent $liveOwner $parent.Record

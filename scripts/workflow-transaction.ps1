@@ -23,6 +23,8 @@ if (-not (Get-Command Resolve-PhysicalPathIdentity -ErrorAction SilentlyContinue
     . $script:WorkflowPathIdentityScriptPath
 }
 
+. (Join-Path $PSScriptRoot 'atomic-file.ps1')
+
 function ConvertFrom-AiSopWorkflowJson {
     [CmdletBinding()]
     param(
@@ -192,11 +194,8 @@ function Get-AiSopWorkspaceScopeKey {
 function Test-AiSopShouldUnlinkLockFile {
     # POSIX flock is inode-based. Unlinking a lock file after Dispose lets a
     # waiter hold inode N while a new OpenOrCreate gets inode N+1 — mutex breaks.
-    # Windows FileShare.None is name-based; deleting the empty sentinel is fine.
-    if ($script:AiSopForceUnixLockSemantics) {
-        return $false
-    }
-    return [System.OperatingSystem]::IsWindows()
+    # Windows 解锁后删除同样会与重开竞争，产生 AccessDenied；各平台均保留空文件。
+    return $false
 }
 
 function Remove-AiSopWorkflowLockFile {
@@ -360,39 +359,37 @@ function Assert-AiSopWorkflowJsonSchema {
     }
 }
 
-function Write-AiSopWorkflowTextAtomic {
-    param(
-        [string]$Path,
-        [string]$Text
-    )
+function Read-AiSopWorkflowText {
+    param([string]$Path)
+    $stream=[IO.File]::Open($Path,[IO.FileMode]::Open,[IO.FileAccess]::Read,([IO.FileShare]::Read -bor [IO.FileShare]::Delete))
+    $reader=$null
+    try {$reader=[IO.StreamReader]::new($stream);return $reader.ReadToEnd()}
+    finally {if($reader){$reader.Dispose()}else{$stream.Dispose()}}
+}
 
-    $directory = [System.IO.Path]::GetDirectoryName($Path)
-    $temporaryPath = ""
+function Write-AiSopWorkflowTextAtomic {
+    param([string]$Path, [string]$Text)
+    $temporaryPath = ''
+    $published = $false
     try {
-        [System.IO.Directory]::CreateDirectory($directory) | Out-Null
+        [IO.Directory]::CreateDirectory([IO.Path]::GetDirectoryName($Path)) | Out-Null
         $temporaryPath = "$Path.$([guid]::NewGuid().ToString('N')).tmp"
-        [System.IO.File]::WriteAllText(
-            $temporaryPath,
-            $Text,
-            $script:WorkflowUtf8NoBom
-        )
-        [System.IO.File]::Move($temporaryPath, $Path, $true)
+        [IO.File]::WriteAllText($temporaryPath, $Text, $script:WorkflowUtf8NoBom)
+        Move-AiSopWorkflowFileAtomic -Source $temporaryPath -Target $Path
+        $published = $true
     } catch {
-        throw "WORKFLOW_REGISTRY_IO_ERROR"
+        $cause=$_.Exception.GetBaseException()
+        try {[Console]::Error.WriteLine(("WORKFLOW_ATOMIC_WRITE_DIAGNOSTIC: type={0} hresult=0x{1:X8} detail={2}" -f $cause.GetType().FullName,$cause.HResult,$cause.Message))}catch{}
+        try {[Console]::Error.WriteLine("WORKFLOW_ATOMIC_WRITE_RECOVERY: target=$Path temporary=$temporaryPath")}catch{}
+        throw 'WORKFLOW_REGISTRY_IO_ERROR'
     } finally {
-        if (
-            -not [string]::IsNullOrEmpty($temporaryPath) -and
-            [System.IO.File]::Exists($temporaryPath)
-        ) {
-            try {
-                [System.IO.File]::Delete($temporaryPath)
-            } catch {
-                # A stale temp file never authorizes workflow state.
-            }
+        # Failed publication preserves the old target and the candidate for diagnosis.
+        # Only confirmed success permits cleanup; there is no delete/replace gap.
+        if ($published -and [IO.File]::Exists($temporaryPath)) {
+            try {[IO.File]::Delete($temporaryPath)} catch { }
         }
     }
 }
-
 function Read-AiSopWorkflowCanonicalState {
     param(
         [string]$Path,
@@ -401,7 +398,7 @@ function Read-AiSopWorkflowCanonicalState {
     )
 
     try {
-        $raw = [System.IO.File]::ReadAllText($Path)
+        $raw = Read-AiSopWorkflowText $Path
         Assert-AiSopWorkflowJsonSchema -Json $raw -SchemaId $SchemaId
         $value = ConvertFrom-AiSopWorkflowJson -Json $raw -AsHashtable
         return ConvertTo-AiSopWorkflowCanonicalJson $value
@@ -648,7 +645,7 @@ function Read-AiSopWorkflowTransactionJournal {
     param([string]$JournalPath)
 
     try {
-        $raw = [System.IO.File]::ReadAllText($JournalPath)
+        $raw = Read-AiSopWorkflowText $JournalPath
     } catch {
         if ($_.Exception.GetBaseException() -is [IO.FileNotFoundException]) {
             # Retain the public code and a typed cause for the cleanup race.

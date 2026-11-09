@@ -26,7 +26,7 @@ function Get-AiSopInputPolicy {
         return @{ include=@(); exclude=@(); nonExecutable=@(); digest='' }
     }
     try {
-        $raw = [IO.File]::ReadAllText($path)
+        $raw = (Read-AiSopWorkflowText $path)
         if (-not (Test-Json -Json $raw -SchemaFile (Join-Path (Split-Path -Parent $PSScriptRoot) 'schemas/verification-inputs.schema.json') -ErrorAction Stop)) { throw 'schema mismatch' }
         $policy = ConvertFrom-AiSopWorkflowJson $raw -AsHashtable
         foreach ($relative in @($policy.include) + @($policy.exclude | ForEach-Object { $_.path }) + @($policy.nonExecutable | Where-Object { $_ } | ForEach-Object { $_.path })) {
@@ -228,7 +228,7 @@ function Save-AiSopInputManifest {
     $reference = Get-AiSopWorkflowSha256 $raw
     $path = Get-AiSopInputManifestPath $WorkspacePath $reference
     if ([IO.File]::Exists($path)) {
-        if ((Get-AiSopWorkflowSha256 ([IO.File]::ReadAllText($path))) -cne $reference) { throw "INPUT_MANIFEST_CORRUPT: $path" }
+        if ((Get-AiSopWorkflowSha256 ((Read-AiSopWorkflowText $path))) -cne $reference) { throw "INPUT_MANIFEST_CORRUPT: $path" }
     } else { Write-AiSopWorkflowTextAtomic -Path $path -Text $raw }
     return $reference
 }
@@ -242,7 +242,7 @@ function Read-AiSopInputManifest {
         $path = Get-AiSopInputManifestPath $WorkspacePath $ref
         if (-not [IO.File]::Exists($path)) { throw "INPUT_MANIFEST_MISSING: $path; sync specs/.artifacts/inputs from the source workspace or rerun verification" }
         try {
-            $raw = [IO.File]::ReadAllText($path)
+            $raw = (Read-AiSopWorkflowText $path)
             if ((Get-AiSopWorkflowSha256 $raw) -cne $ref) { throw 'content hash mismatch' }
             if (-not (Test-Json -Json $raw -SchemaFile (Join-Path (Split-Path -Parent $PSScriptRoot) 'schemas/input-manifest.schema.json') -ErrorAction Stop)) { throw 'schema mismatch' }
             $snapshot = ConvertFrom-AiSopWorkflowJson $raw -AsHashtable

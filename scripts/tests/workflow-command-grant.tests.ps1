@@ -700,7 +700,7 @@ try {
             }
     } finally {
         $endRetryLock.Dispose()
-        [System.IO.File]::Delete($endRetrySessionIndex + ".lock")
+        Remove-AiSopWorkflowLockFile -LockPath ($endRetrySessionIndex + ".lock")
     }
     Invoke-AiSopWorkflowSession `
         -Operation End `
@@ -1077,8 +1077,7 @@ try {
         Assert-True $lockThrew "A held exact-candidate lock did not fail closed."
     } finally {
         $heldGrantLock.Dispose()
-        Remove-Item -LiteralPath ($firstGrant.GrantPath + ".lock") `
-            -Force -ErrorAction SilentlyContinue
+        Remove-AiSopWorkflowLockFile -LockPath ($firstGrant.GrantPath + ".lock")
     }
     $consumed = Invoke-AiSopWorkflowCommandGrant `
         -Operation Consume `
@@ -1260,7 +1259,7 @@ try {
         $firstEndError = $_.Exception.Message
     } finally {
         $heldSessionIndex.Dispose()
-        [System.IO.File]::Delete($retryEndSessionIndexPath + ".lock")
+        Remove-AiSopWorkflowLockFile -LockPath ($retryEndSessionIndexPath + ".lock")
     }
     if ($firstEndError -cne "WORKFLOW_LOCK_TIMEOUT") {
         $sessionEndCleanupFailures.Add(
@@ -1409,7 +1408,7 @@ Invoke-AiSopWorkflowSession `
         }
     } finally {
         $heldKillSessionIndex.Dispose()
-        [System.IO.File]::Delete($killEndSessionIndexPath + ".lock")
+        Remove-AiSopWorkflowLockFile -LockPath ($killEndSessionIndexPath + ".lock")
         if ($null -ne $killEndProcess) {
             # 已退出的子进程仍可能有未回收的日志流，必须完成有界收尾。
             if (-not $killEndProcess.HasExited) {

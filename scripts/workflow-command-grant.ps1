@@ -517,7 +517,7 @@ function Read-AiSopWorkflowCommandGrantIndex {
         throw "COMMAND_GRANT_CORRUPT"
     }
     try {
-        $raw = [System.IO.File]::ReadAllText($IndexPath)
+        $raw = (Read-AiSopWorkflowText $IndexPath)
     } catch {
         throw "COMMAND_GRANT_IO_ERROR"
     }
@@ -621,7 +621,7 @@ function Set-AiSopWorkflowCommandGrantActiveIndexEntry {
         }
         foreach ($descriptor in $descriptors) {
             try {
-                [System.IO.File]::Delete($descriptor.Path + ".lock")
+                Remove-AiSopWorkflowLockFile -LockPath ($descriptor.Path + ".lock")
             } catch {
                 # Lock-file cleanup is not authorization state.
             }
@@ -729,7 +729,7 @@ function Read-AiSopWorkflowCommandGrantRecord {
         throw "COMMAND_GRANT_NOT_FOUND"
     }
     try {
-        $raw = [System.IO.File]::ReadAllText($GrantPath)
+        $raw = (Read-AiSopWorkflowText $GrantPath)
         if (-not ($raw | Test-Json -SchemaFile $script:WorkflowGrantSchemaPath)) {
             throw "COMMAND_GRANT_CORRUPT"
         }
@@ -938,7 +938,7 @@ function Find-AiSopWorkflowCommandGrant {
     } finally {
         $indexLock.Dispose()
         try {
-            [System.IO.File]::Delete($indexLockPath)
+            Remove-AiSopWorkflowLockFile -LockPath ($indexLockPath)
         } catch {
             # Lock-file cleanup is not authorization state.
         }
@@ -979,7 +979,7 @@ function Find-AiSopWorkflowCommandGrant {
                         -ExpectedSessionEpochId ([string]$entry.sessionEpochId)
                 } finally {
                     $sessionIndexLock.Dispose()
-                    [System.IO.File]::Delete($sessionIndexPath + ".lock")
+                    Remove-AiSopWorkflowLockFile -LockPath ($sessionIndexPath + ".lock")
                 }
                 $activeSessionEntries = @{}
                 foreach ($sessionEntry in @($sessionIndex.entries)) {
@@ -1010,7 +1010,7 @@ function Find-AiSopWorkflowCommandGrant {
                 }
             } finally {
                 $sessionLock.Dispose()
-                [System.IO.File]::Delete($sessionLockPath)
+                Remove-AiSopWorkflowLockFile -LockPath ($sessionLockPath)
             }
         }
         $sessionCheck = $sessionValidity[$sessionIdentity]
@@ -1061,7 +1061,7 @@ function Find-AiSopWorkflowCommandGrant {
         } finally {
             $lock.Dispose()
             try {
-                [System.IO.File]::Delete($lockPath)
+                Remove-AiSopWorkflowLockFile -LockPath ($lockPath)
             } catch {
                 # Lock-file cleanup is not authorization state.
             }
@@ -1134,7 +1134,7 @@ function Invoke-AiSopWorkflowCommandGrantScavenge {
             }
         } finally {
             $lock.Dispose()
-            [System.IO.File]::Delete($lockPath)
+            Remove-AiSopWorkflowLockFile -LockPath ($lockPath)
         }
     }
 }
@@ -1224,7 +1224,7 @@ function Read-AiSopWorkflowGrantOwnerRecord {
         throw "COMMAND_GRANT_OWNER_STATE_INVALID"
     }
     try {
-        $raw = [System.IO.File]::ReadAllText($OwnerPath)
+        $raw = (Read-AiSopWorkflowText $OwnerPath)
         if (-not ($raw | Test-Json -SchemaFile $script:WorkflowGrantOwnerSchemaPath)) {
             throw "COMMAND_GRANT_OWNER_STATE_INVALID"
         }
@@ -1405,7 +1405,7 @@ function Get-AiSopWorkflowCommandGrantPlan {
     } finally {
         $lock.Dispose()
         try {
-            [System.IO.File]::Delete($lockPath)
+            Remove-AiSopWorkflowLockFile -LockPath ($lockPath)
         } catch {
             # Lock-file cleanup is not authorization state.
         }
@@ -1751,7 +1751,7 @@ function Invoke-AiSopWorkflowCommandGrant {
             } finally {
                 $lock.Dispose()
                 try {
-                    [System.IO.File]::Delete($lockPath)
+                    Remove-AiSopWorkflowLockFile -LockPath ($lockPath)
                 } catch {
                     # Lock-file cleanup is not authorization state.
                 }
@@ -1781,7 +1781,7 @@ function Invoke-AiSopWorkflowCommandGrant {
             } finally {
                 $lock.Dispose()
                 try {
-                    [System.IO.File]::Delete($lockPath)
+                    Remove-AiSopWorkflowLockFile -LockPath ($lockPath)
                 } catch {
                     # Lock-file cleanup is not authorization state.
                 }
@@ -1831,7 +1831,7 @@ function Expire-AiSopWorkflowCommandGrantsForSession {
         )
     } finally {
         $probeLock.Dispose()
-        [System.IO.File]::Delete($probeLockPath)
+        Remove-AiSopWorkflowLockFile -LockPath ($probeLockPath)
     }
     $paths = @(
         $sessionIndexPath
@@ -1902,7 +1902,7 @@ function Expire-AiSopWorkflowCommandGrantsForSession {
         }
         foreach ($path in $paths) {
             try {
-                [System.IO.File]::Delete($path + ".lock")
+                Remove-AiSopWorkflowLockFile -LockPath ($path + ".lock")
             } catch {
                 # Lock-file cleanup is not authorization state.
             }

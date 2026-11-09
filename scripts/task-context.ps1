@@ -226,7 +226,7 @@ function Get-AiSopRecordedApprovals {
     if (-not [IO.File]::Exists($path)) { $path=Join-Path $SpecDirectory 'workflow-state.json' }
     if (-not [IO.File]::Exists($path)) { return @{ requirement='NOT_RECORDED'; design='NOT_RECORDED' } }
     try {
-        $state=ConvertFrom-AiSopWorkflowJson ([IO.File]::ReadAllText($path)) -AsHashtable
+        $state=ConvertFrom-AiSopWorkflowJson (Read-AiSopWorkflowText $path) -AsHashtable
         return @{ requirement=[string]$state.requirement.status; design=[string]$state.design.status }
     } catch { return @{ requirement='UNAVAILABLE'; design='UNAVAILABLE' } }
 }

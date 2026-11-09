@@ -31,6 +31,7 @@ $script:DispatcherWorkspaceRoot = Split-Path -Parent (
 # `git submodule update --init` / installer can run from a session hook.
 $script:DispatcherMissingDeps = [System.Collections.Generic.List[string]]::new()
 foreach ($dependency in @(
+    'atomic-file.ps1',
     "hook-event-normalizer.ps1",
     "hook-dedup.ps1",
     "workflow-transaction.ps1",

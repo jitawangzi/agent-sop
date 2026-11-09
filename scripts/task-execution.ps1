@@ -15,7 +15,7 @@ function Read-AiSopTask {
     param([string]$SpecDirectory, [string]$TaskId)
     $path = Get-AiSopTaskPath $SpecDirectory $TaskId
     if (-not [IO.File]::Exists($path)) { throw "TASK_NOT_FOUND: $TaskId" }
-    $raw = [IO.File]::ReadAllText($path)
+    $raw = Read-AiSopWorkflowText $path
     Assert-AiSopWorkflowJsonSchema -Json $raw -SchemaId TASK
     $task = ConvertFrom-AiSopWorkflowJson -Json $raw -AsHashtable
     if ($task.taskId -cne $TaskId -or $task.feature -cne (Split-Path -Leaf $SpecDirectory)) { throw 'TASK_IDENTITY_MISMATCH' }

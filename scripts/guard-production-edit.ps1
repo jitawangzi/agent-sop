@@ -334,7 +334,7 @@ function Read-AiSopGuardTask {
     if (-not $taskPath.StartsWith($prefix, $comparison)) { throw 'TASK_PATH_ESCAPE' }
     if (-not [IO.File]::Exists($taskPath)) { throw 'TASK_NOT_FOUND' }
     try {
-        $json = [IO.File]::ReadAllText($taskPath)
+        $json = (Read-AiSopWorkflowText $taskPath)
         Assert-AiSopWorkflowJsonSchema -Json $json -SchemaId TASK
         $task = ConvertFrom-AiSopWorkflowJson -Json $json -AsHashtable
     } catch {
@@ -362,7 +362,7 @@ function Read-AiSopGuardOwner {
         throw "OWNER_NOT_FOUND"
     }
     try {
-        $json = [System.IO.File]::ReadAllText($OwnerPath)
+        $json = (Read-AiSopWorkflowText $OwnerPath)
         if (-not (
             $json |
                 Test-Json `

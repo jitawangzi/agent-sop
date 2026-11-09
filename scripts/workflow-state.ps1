@@ -135,13 +135,14 @@ if (-not [string]::IsNullOrWhiteSpace($deadlineEnv)) {
         $mutationDeadlineMs = $parsedMs
     }
 }
-$MutationDeadlineUtc = [DateTimeOffset]::UtcNow.AddMilliseconds($mutationDeadlineMs)
 . (Join-Path $PSScriptRoot "workflow-transaction.ps1")
 . (Join-Path $PSScriptRoot "workflow-session.ps1")
 . (Join-Path $PSScriptRoot "task-context.ps1")
 . (Join-Path $PSScriptRoot "workflow-vcs.ps1")
 $script:TaskValidationContext = New-AiSopValidationContext
 $script:WorkflowVcsContext = New-AiSopWorkflowVcsContext
+# 首次类型编译/依赖加载不占用状态操作预算；预算数值与后续绝对截止时间保持不变。
+$MutationDeadlineUtc = [DateTimeOffset]::UtcNow.AddMilliseconds($mutationDeadlineMs)
 
 function Assert-Argument {
     param(
@@ -398,7 +399,7 @@ function Read-JsonObject {
         throw "JSON file does not exist: $FilePath"
     }
 
-    $json = Get-Content -LiteralPath $FilePath -Raw
+    $json = Read-AiSopWorkflowText $FilePath
     try { $parsed = ConvertFrom-AiSopWorkflowJson $json -AsHashtable }
     catch { throw "SPEC_JSON_INVALID: $FilePath; $($_.Exception.Message)" }
     if ($parsed -isnot [Collections.IDictionary]) { throw "SPEC_JSON_INVALID: $FilePath; expected a JSON object" }
@@ -1558,7 +1559,7 @@ function Get-AuthoritativeFeatureBaseline {
         $ownerMirrorPath = Join-Path $specDirFull ".workflow-owner.json"
         if (Test-Path -LiteralPath $ownerMirrorPath -PathType Leaf) {
             try {
-                $ow = Get-Content -LiteralPath $ownerMirrorPath -Raw | ConvertFrom-Json
+                $ow = Read-AiSopWorkflowText $ownerMirrorPath | ConvertFrom-Json
                 if (-not [string]::IsNullOrWhiteSpace($ow.workspacePath)) {
                     $effectiveWs = [string]$ow.workspacePath
                 }
@@ -1585,7 +1586,7 @@ function Get-AuthoritativeFeatureBaseline {
     if ($null -ne $foundRegPath) {
         $owReg = $null
         try {
-            $regRaw = [System.IO.File]::ReadAllText($foundRegPath)
+            $regRaw = (Read-AiSopWorkflowText $foundRegPath)
             $owReg = $regRaw | ConvertFrom-Json
         } catch {
             throw "BASELINE_REGISTRY_CORRUPTED: Transaction registry record at '$foundRegPath' is corrupted: $($_.Exception.Message)"
@@ -1602,7 +1603,7 @@ function Get-AuthoritativeFeatureBaseline {
         $ownerMirrorPath = Join-Path $specDirFull ".workflow-owner.json"
         if (Test-Path -LiteralPath $ownerMirrorPath -PathType Leaf) {
             try {
-                $owMirror = Get-Content -LiteralPath $ownerMirrorPath -Raw | ConvertFrom-Json
+                $owMirror = Read-AiSopWorkflowText $ownerMirrorPath | ConvertFrom-Json
                 if (-not [string]::IsNullOrWhiteSpace($owMirror.baseline) -and 
                     $owMirror.baseline.ToLowerInvariant() -ne $regBaseline.ToLowerInvariant()) {
                     throw "BASELINE_MUTATION_DETECTED: .workflow-owner.json baseline '$($owMirror.baseline)' does not match transaction registry baseline '$regBaseline'. Scope tampering detected."
@@ -1618,7 +1619,7 @@ function Get-AuthoritativeFeatureBaseline {
         $wfStatePath = Resolve-AiSopTaskWorkflowStatePath $specDirFull
         if (Test-Path -LiteralPath $featStatePath -PathType Leaf) {
             try {
-                $fs = Get-Content -LiteralPath $featStatePath -Raw | ConvertFrom-Json
+                $fs = Read-AiSopWorkflowText $featStatePath | ConvertFrom-Json
                 if (-not [string]::IsNullOrWhiteSpace($fs.baseline) -and 
                     $fs.baseline.ToLowerInvariant() -ne $regBaseline.ToLowerInvariant()) {
                     throw "BASELINE_MUTATION_DETECTED: feature-state.json baseline '$($fs.baseline)' does not match transaction registry baseline '$regBaseline'."
@@ -1630,7 +1631,7 @@ function Get-AuthoritativeFeatureBaseline {
         }
         if (Test-Path -LiteralPath $wfStatePath -PathType Leaf) {
             try {
-                $wf = Get-Content -LiteralPath $wfStatePath -Raw | ConvertFrom-Json
+                $wf = Read-AiSopWorkflowText $wfStatePath | ConvertFrom-Json
                 if (-not [string]::IsNullOrWhiteSpace($wf.baseline) -and 
                     $wf.baseline.ToLowerInvariant() -ne $regBaseline.ToLowerInvariant()) {
                     throw "BASELINE_MUTATION_DETECTED: 00_workflow_state.json baseline '$($wf.baseline)' does not match transaction registry baseline '$regBaseline'."
@@ -1656,7 +1657,7 @@ function Get-AuthoritativeFeatureBaseline {
     $ownerMirrorPath = Join-Path $specDirFull ".workflow-owner.json"
     if (Test-Path -LiteralPath $ownerMirrorPath -PathType Leaf) {
         try {
-            $ow = Get-Content -LiteralPath $ownerMirrorPath -Raw | ConvertFrom-Json
+            $ow = Read-AiSopWorkflowText $ownerMirrorPath | ConvertFrom-Json
             if (-not [string]::IsNullOrWhiteSpace($ow.baseline)) { $mirrorBaseline = [string]$ow.baseline }
         } catch {
             throw "BASELINE_REGISTRY_CORRUPTED: Failed to parse .workflow-owner.json in '$specDirFull': $($_.Exception.Message)"
@@ -1671,7 +1672,7 @@ function Get-AuthoritativeFeatureBaseline {
     $impactBaseline = $null
     if (Test-Path -LiteralPath $featStatePath -PathType Leaf) {
         try {
-            $fs = Get-Content -LiteralPath $featStatePath -Raw | ConvertFrom-Json
+            $fs = Read-AiSopWorkflowText $featStatePath | ConvertFrom-Json
             if (-not [string]::IsNullOrWhiteSpace($fs.baseline)) { $fsBaseline = [string]$fs.baseline }
         } catch {
             throw "BASELINE_REGISTRY_CORRUPTED: Failed to parse feature-state.json in '$specDirFull': $($_.Exception.Message)"
@@ -1679,7 +1680,7 @@ function Get-AuthoritativeFeatureBaseline {
     }
     if (Test-Path -LiteralPath $wfStatePath -PathType Leaf) {
         try {
-            $wf = Get-Content -LiteralPath $wfStatePath -Raw | ConvertFrom-Json
+            $wf = Read-AiSopWorkflowText $wfStatePath | ConvertFrom-Json
             if (-not [string]::IsNullOrWhiteSpace($wf.baseline)) { $wfBaseline = [string]$wf.baseline }
         } catch {
             throw "BASELINE_REGISTRY_CORRUPTED: Failed to parse 00_workflow_state.json in '$specDirFull': $($_.Exception.Message)"
@@ -1766,7 +1767,7 @@ function Assert-FeatureBaselineIntegrity {
     $fsPath = Join-Path $SpecDir "feature-state.json"
     if (Test-Path -LiteralPath $fsPath -PathType Leaf) {
         try {
-            $fs = Get-Content -LiteralPath $fsPath -Raw | ConvertFrom-Json
+            $fs = Read-AiSopWorkflowText $fsPath | ConvertFrom-Json
             if (-not [string]::IsNullOrWhiteSpace($fs.baseline) -and $fs.baseline.ToLowerInvariant() -ne $authoritative.ToLowerInvariant()) {
                 throw "BASELINE_MUTATION_DETECTED: feature-state.json baseline '$($fs.baseline)' does not match authoritative Claim baseline '$authoritative'."
             }
@@ -1779,7 +1780,7 @@ function Assert-FeatureBaselineIntegrity {
     $wfPath = Resolve-AiSopTaskWorkflowStatePath $SpecDir
     if (Test-Path -LiteralPath $wfPath -PathType Leaf) {
         try {
-            $wf = Get-Content -LiteralPath $wfPath -Raw | ConvertFrom-Json
+            $wf = Read-AiSopWorkflowText $wfPath | ConvertFrom-Json
             if (-not [string]::IsNullOrWhiteSpace($wf.baseline) -and $wf.baseline.ToLowerInvariant() -ne $authoritative.ToLowerInvariant()) {
                 throw "BASELINE_MUTATION_DETECTED: 00_workflow_state.json baseline '$($wf.baseline)' does not match authoritative Claim baseline '$authoritative'."
             }
@@ -1792,7 +1793,7 @@ function Assert-FeatureBaselineIntegrity {
     $owPath = Join-Path $SpecDir ".workflow-owner.json"
     if (Test-Path -LiteralPath $owPath -PathType Leaf) {
         try {
-            $ow = Get-Content -LiteralPath $owPath -Raw | ConvertFrom-Json
+            $ow = Read-AiSopWorkflowText $owPath | ConvertFrom-Json
             if (-not [string]::IsNullOrWhiteSpace($ow.baseline) -and $ow.baseline.ToLowerInvariant() -ne $authoritative.ToLowerInvariant()) {
                 throw "BASELINE_MUTATION_DETECTED: .workflow-owner.json baseline '$($ow.baseline)' does not match authoritative Claim baseline '$authoritative'."
             }
@@ -4199,7 +4200,7 @@ function Invoke-RecoverPendingJournal {
     if (-not (Test-Path -LiteralPath $journalPath -PathType Leaf)) { return }
 
     try {
-        $raw = [System.IO.File]::ReadAllText($journalPath)
+        $raw = (Read-AiSopWorkflowText $journalPath)
         $journal = $raw | ConvertFrom-Json
         if ($null -eq $journal -or [string]::IsNullOrWhiteSpace($journal.state)) {
             throw "CORRUPT_JOURNAL: Journal file at '$journalPath' is empty or corrupt."
@@ -4397,7 +4398,7 @@ function Sync-FeatureStateTierToT3 {
         $specDir = Split-Path -Parent $StatePath
         $featStateFile = Join-Path $specDir "feature-state.json"
         if (Test-Path -LiteralPath $featStateFile -PathType Leaf) {
-            $fs = Get-Content -LiteralPath $featStateFile -Raw | ConvertFrom-Json
+            $fs = Read-AiSopWorkflowText $featStateFile | ConvertFrom-Json
             $fsDict = [ordered]@{}
             foreach ($p in $fs.psobject.Properties) {
                 $fsDict[$p.Name] = $p.Value
@@ -5168,7 +5169,7 @@ switch ($Operation) {
             $featStatePath = Join-Path $specDir "feature-state.json"
             if (Test-Path -LiteralPath $featStatePath -PathType Leaf) {
                 try {
-                    $fs = Get-Content -LiteralPath $featStatePath -Raw | ConvertFrom-Json
+                    $fs = Read-AiSopWorkflowText $featStatePath | ConvertFrom-Json
                     $planPhases = @(
                         "INIT", "CLASSIFY", "PLANNING", "INTENT", "CLAIMED",
                         "REQUIREMENT_DRAFT", "WAIT_REQUIREMENT_APPROVAL", "REQUIREMENT_APPROVED",
@@ -5216,7 +5217,7 @@ switch ($Operation) {
             $phase = "unknown"
             if (Test-Path -LiteralPath $featStatePath -PathType Leaf) {
                 try {
-                    $fs = Get-Content -LiteralPath $featStatePath -Raw | ConvertFrom-Json
+                    $fs = Read-AiSopWorkflowText $featStatePath | ConvertFrom-Json
                     $tier = [string]$fs.tier
                     $phase = [string]$fs.phase
                 } catch { }
@@ -5307,7 +5308,7 @@ switch ($Operation) {
         $declaredTier = $null
         if (Test-Path -LiteralPath $featStatePath -PathType Leaf) {
             try {
-                $fs = Get-Content -LiteralPath $featStatePath -Raw | ConvertFrom-Json
+                $fs = Read-AiSopWorkflowText $featStatePath | ConvertFrom-Json
                 $declaredTier = [string]$fs.tier
             } catch {}
         }
@@ -5340,7 +5341,7 @@ switch ($Operation) {
             $fsDict = $null
             $fsSchema = Join-Path $SchemaRoot "feature-state.schema.json"
             if (Test-Path -LiteralPath $featStatePath -PathType Leaf) {
-                $fsRaw = [System.IO.File]::ReadAllText($featStatePath)
+                $fsRaw = (Read-AiSopWorkflowText $featStatePath)
                 $fsObj = $fsRaw | ConvertFrom-Json
                 $fsDict = [ordered]@{}
                 foreach ($p in $fsObj.psobject.Properties) {
@@ -5372,7 +5373,7 @@ switch ($Operation) {
             $wfDict = $null
             $wfSchema = Join-Path $SchemaRoot "workflow-state.schema.json"
             if (Test-Path -LiteralPath $wfStatePath -PathType Leaf) {
-                $wfRaw = [System.IO.File]::ReadAllText($wfStatePath)
+                $wfRaw = (Read-AiSopWorkflowText $wfStatePath)
                 $wfObj = $wfRaw | ConvertFrom-Json
                 $wfDict = [ordered]@{}
                 foreach ($p in $wfObj.psobject.Properties) {
@@ -5607,7 +5608,7 @@ switch ($Operation) {
         $tier = "unknown"
         $phase = "unknown"
         if (Test-Path -LiteralPath $featStatePath -PathType Leaf) {
-            try { $fs = Get-Content -LiteralPath $featStatePath -Raw | ConvertFrom-Json; $tier = [string]$fs.tier; $phase = [string]$fs.phase } catch { }
+            try { $fs = Read-AiSopWorkflowText $featStatePath | ConvertFrom-Json; $tier = [string]$fs.tier; $phase = [string]$fs.phase } catch { }
         }
         $hasWorkflowState = (Test-Path -LiteralPath $Path -PathType Leaf) -or (Test-Path -LiteralPath (Join-Path $specDir "workflow-state.json") -PathType Leaf) -or (Test-Path -LiteralPath (Join-Path $specDir "00_workflow_state.json") -PathType Leaf)
         $hasSpecArtifacts = (Test-Path -LiteralPath (Join-Path $specDir "01_server_rules.md") -PathType Leaf) -or 
@@ -5740,7 +5741,7 @@ switch ($Operation) {
         $tier = "unknown"
         $phase = "unknown"
         if (Test-Path -LiteralPath $featStatePath -PathType Leaf) {
-            try { $fs = Get-Content -LiteralPath $featStatePath -Raw | ConvertFrom-Json; $tier = [string]$fs.tier; $phase = [string]$fs.phase } catch { }
+            try { $fs = Read-AiSopWorkflowText $featStatePath | ConvertFrom-Json; $tier = [string]$fs.tier; $phase = [string]$fs.phase } catch { }
         }
         $hasWorkflowState = (Test-Path -LiteralPath $Path -PathType Leaf) -or (Test-Path -LiteralPath (Join-Path $specDir "workflow-state.json") -PathType Leaf) -or (Test-Path -LiteralPath (Join-Path $specDir "00_workflow_state.json") -PathType Leaf)
         $hasSpecArtifacts = (Test-Path -LiteralPath (Join-Path $specDir "01_server_rules.md") -PathType Leaf) -or 

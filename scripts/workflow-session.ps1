@@ -92,7 +92,7 @@ function Read-AiSopWorkflowSessionRecord {
         throw "SESSION_NOT_FOUND"
     }
     try {
-        $raw = [System.IO.File]::ReadAllText($SessionPath)
+        $raw = (Read-AiSopWorkflowText $SessionPath)
         if (-not (
             $raw |
                 Test-Json `

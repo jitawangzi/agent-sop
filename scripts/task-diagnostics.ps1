@@ -91,7 +91,7 @@ function Get-AiSopLegacyTaskSummary {
     $result.ownerStatus='MISSING'
     if ([IO.File]::Exists($ownerPath)) {
         try {
-            $raw=[IO.File]::ReadAllText($ownerPath); Assert-AiSopWorkflowJsonSchema -Json $raw -SchemaId OWNER
+            $raw=(Read-AiSopWorkflowText $ownerPath); Assert-AiSopWorkflowJsonSchema -Json $raw -SchemaId OWNER
             $owner=ConvertFrom-AiSopWorkflowJson $raw -AsHashtable
             $result.ownerStatus=$owner.status; $result.ownerId=$owner.ownerId
         } catch { $result.ownerStatus='UNAVAILABLE'; $result.diagnostics += "LEGACY_OWNER_INVALID: $($_.Exception.Message)" }

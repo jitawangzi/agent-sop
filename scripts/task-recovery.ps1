@@ -58,7 +58,7 @@ function Get-AiSopTaskRecoveryDiagnostics {
     catch { $items+=@{kind='TASK';path=$taskPath;status='UNAVAILABLE';diagnostic=$_.Exception.Message} }
     $locality=if ($task) { Get-AiSopTaskExecutionLocality $task $WorkspacePath } else { 'UNKNOWN' }
     try {
-        $raw=[IO.File]::ReadAllText($OwnerPath); Assert-AiSopWorkflowJsonSchema -Json $raw -SchemaId OWNER
+        $raw=(Read-AiSopWorkflowText $OwnerPath); Assert-AiSopWorkflowJsonSchema -Json $raw -SchemaId OWNER
         $owner=ConvertFrom-AiSopWorkflowJson $raw -AsHashtable
         $record=@{kind='OWNER';path=$OwnerPath;status='VALID';ownerTaskId=[string]$owner.taskId;ownerStatus=$owner.status}
         if (-not $task) { $record.status='UNVERIFIED'; $record.diagnostic='TASK_IDENTITY_UNAVAILABLE: task must be readable before associating local authority' }
@@ -112,7 +112,7 @@ function Get-AiSopTaskRecoveryDiagnostics {
             $item=@{kind='PENDING';runId=$run.runId;path=$path;activity=(Get-AiSopRunActivity $run $WorkspacePath);status='MISSING';outcome=$null;progress=(Get-AiSopRunProgress $run $WorkspacePath $SpecDirectory $TaskId -LogTailLines $LogTailLines)}
             if ([IO.File]::Exists($path)) {
                 try {
-                    $pending=ConvertFrom-AiSopWorkflowJson ([IO.File]::ReadAllText($path)) -AsHashtable
+                    $pending=ConvertFrom-AiSopWorkflowJson ((Read-AiSopWorkflowText $path)) -AsHashtable
                     $probe=ConvertFrom-AiSopWorkflowJson (ConvertTo-AiSopWorkflowCanonicalJson $task) -AsHashtable; $probe.verifications=@($pending)
                     Assert-AiSopWorkflowJsonSchema -Json (ConvertTo-AiSopWorkflowCanonicalJson $probe) -SchemaId TASK
                     if ($pending.outcome -eq 'RUNNING') {

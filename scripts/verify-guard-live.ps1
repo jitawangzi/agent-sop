@@ -7,6 +7,7 @@ $ErrorActionPreference = 'Stop'
 $SourceScripts = $PSScriptRoot
 $SourceEngine = Split-Path -Parent $SourceScripts
 . (Join-Path $SourceScripts 'path-identity.ps1')
+. (Join-Path $SourceScripts 'workflow-transaction.ps1')
 $TempRoot = Resolve-PhysicalPathIdentity ([IO.Path]::GetTempPath())
 $ProbeRoot = Resolve-PhysicalPathIdentity (Join-Path $TempRoot ('guard-live-' + [guid]::NewGuid().ToString('N')))
 $WorkspaceRoot = Join-Path $ProbeRoot 'workspace'
@@ -166,9 +167,9 @@ try {
     }
 
     Invoke-LiveTask Start
-    $task = Get-Content -LiteralPath $TaskPath -Raw | ConvertFrom-Json
+    $task = Read-AiSopWorkflowText $TaskPath | ConvertFrom-Json
     $ownerPath = Join-Path (Get-AiSopWorkflowOwnerRegistryRoot -WorkspacePath $WorkspaceRoot) ($Feature.ToLowerInvariant() + '.json')
-    $owner = Get-Content -LiteralPath $ownerPath -Raw | ConvertFrom-Json
+    $owner = Read-AiSopWorkflowText $ownerPath | ConvertFrom-Json
     Assert-LiveProbe ($task.status -eq 'ACTIVE' -and $task.tier -eq 'T2' -and $owner.taskId -ceq $TaskId -and
         $owner.schemaVersion -eq '1.1' -and $owner.status -eq 'ACTIVE' -and $owner.sessionBinding.sessionKey -ceq $start.SessionKey) (
         'Task Start 未建立绑定当前会话的合法 T2 任务。'
@@ -211,7 +212,7 @@ try {
 
     # 探测并未实现业务目标，不制造编译/测试证据或调用 Complete 冒充交付。
     Invoke-LiveTask Cancel
-    $cancelled = Get-Content -LiteralPath $TaskPath -Raw | ConvertFrom-Json
+    $cancelled = Read-AiSopWorkflowText $TaskPath | ConvertFrom-Json
     Assert-LiveProbe ($cancelled.status -eq 'CANCELLED') '探测任务未通过 Cancel 关闭。'
     Assert-LiveProbe ((Invoke-LiveEdit 'docs/probe.md').Decision -eq 'DENY') '取消任务后仍可编辑普通文档。'
     $ProbeResult = [ordered]@{
@@ -230,7 +231,7 @@ try {
     try {
         # 中途失败也优先用正常任务入口关闭探测任务，再清理隔离数据。
         if (Test-Path -LiteralPath $TaskPath) {
-            $remaining = Get-Content -LiteralPath $TaskPath -Raw | ConvertFrom-Json
+            $remaining = Read-AiSopWorkflowText $TaskPath | ConvertFrom-Json
             if ($remaining.status -eq 'PAUSED') { Invoke-LiveTask Resume; $remaining.status='ACTIVE' }
             if ($remaining.status -eq 'ACTIVE') { Invoke-LiveTask Cancel }
         }

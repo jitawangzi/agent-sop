@@ -1211,6 +1211,18 @@ try {
     Assert-Equal $allow.ExitCode 0 "missing deps SESSION_START must exit 0"
     Assert-True ($allow.Output -match '"decision"\s*:\s*"ALLOW"') "missing deps SESSION_START must ALLOW"
 
+    # A partial upgrade missing only the new native publication helper must
+    # retain the same repair-session allowance and write denial JSON contract.
+    Get-ChildItem -LiteralPath (Split-Path -Parent $DispatcherScript) -File -Filter '*.ps1' |
+        Where-Object Name -ne 'atomic-file.ps1' |
+        Copy-Item -Destination $missingDepsDir
+    $deny = Invoke-HiddenHookScript -File $missingDispatcher -EventHint PRE_TOOL_USE -OutName missing-atomic-deny
+    Assert-Equal $deny.ExitCode 2 'Missing atomic helper must deny writes'
+    Assert-True ($deny.Output -match 'SOP_DEGRADED_MISSING_DEPS') 'Missing atomic helper lost structured reason'
+    $allow = Invoke-HiddenHookScript -File $missingDispatcher -EventHint SESSION_START -OutName missing-atomic-allow
+    Assert-Equal $allow.ExitCode 0 'Missing atomic helper blocked repair session'
+    Assert-True ($allow.Output -match '"decision"\s*:\s*"ALLOW"') 'Missing atomic helper must allow repair session'
+
     $wrapRoot = Join-Path $TestRoot "wrapper-ws"
     [System.IO.Directory]::CreateDirectory((Join-Path $wrapRoot ".agents")) | Out-Null
     $wrapperSrc = Join-Path $ClaudeRoot "distribution\templates\hooks\hook-wrapper.ps1"

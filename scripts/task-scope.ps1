@@ -87,7 +87,7 @@ function Get-AiSopTaskImpactDisposition {
         return 'ABSENT'
     }
     $path=Resolve-AiSopWorkspaceChild $WorkspacePath ".ai-workspace/specs/features/$($Task.feature)/04_change_impact.json"
-    $impact=ConvertFrom-AiSopWorkflowJson ([IO.File]::ReadAllText($path)) -AsHashtable
+    $impact=ConvertFrom-AiSopWorkflowJson ((Read-AiSopWorkflowText $path)) -AsHashtable
     if ($impact -isnot [Collections.IDictionary]) { throw 'TASK_IMPACT_INVALID: expected an object' }
     if ($impact.taskId -ceq $Task.taskId) { return 'CURRENT' }
     if ($Task.impactReview) {
@@ -180,7 +180,7 @@ function Save-AiSopTaskChangeManifest {
     $path=Resolve-AiSopWorkspaceChild $WorkspacePath ".ai-workspace/specs/.artifacts/changes/$($Changes.changeSetDigest).json"
     $raw=ConvertTo-AiSopWorkflowCanonicalJson $Changes.manifest
     if ([IO.File]::Exists($path)) {
-        if ((Get-AiSopWorkflowSha256 ([IO.File]::ReadAllText($path))) -cne $Changes.changeSetDigest) { throw 'TASK_CHANGE_MANIFEST_CORRUPT' }
+        if ((Get-AiSopWorkflowSha256 ((Read-AiSopWorkflowText $path))) -cne $Changes.changeSetDigest) { throw 'TASK_CHANGE_MANIFEST_CORRUPT' }
     } else { Write-AiSopWorkflowTextAtomic -Path $path -Text $raw }
     return $Changes.changeSetDigest
 }
@@ -199,7 +199,7 @@ function Assert-AiSopTaskImpactBinding {
             $Task.impactReview.changeSetDigest -cne $changes.changeSetDigest) { throw 'IMPACT_REVIEW_REQUIRED: inspect current analysis and task delta, then ReviewImpact' }
         $path=Resolve-AiSopWorkspaceChild $WorkspacePath ".ai-workspace/specs/.artifacts/changes/$($changes.changeSetDigest).json"
         if (-not [IO.File]::Exists($path)) { throw "TASK_CHANGE_MANIFEST_MISSING: sync $path from the source workspace" }
-        if ((Get-AiSopWorkflowSha256 ([IO.File]::ReadAllText($path))) -cne $changes.changeSetDigest) { throw 'TASK_CHANGE_MANIFEST_CORRUPT' }
+        if ((Get-AiSopWorkflowSha256 ((Read-AiSopWorkflowText $path))) -cne $changes.changeSetDigest) { throw 'TASK_CHANGE_MANIFEST_CORRUPT' }
     }
     return $changes
 }
@@ -209,7 +209,7 @@ function Read-AiSopTaskCoverage {
     $path=Join-Path $SpecDirectory '05_test_coverage.json'
     if (-not [IO.File]::Exists($path)) { throw "TASK_COVERAGE_MISSING: $path" }
     try {
-        $coverage=ConvertFrom-AiSopWorkflowJson ([IO.File]::ReadAllText($path)) -AsHashtable
+        $coverage=ConvertFrom-AiSopWorkflowJson ((Read-AiSopWorkflowText $path)) -AsHashtable
         if ($coverage -isnot [Collections.IDictionary] -or -not @($coverage.cases).Count) { throw 'cases must be a nonempty array' }
         $ids=[Collections.Generic.HashSet[string]]::new([StringComparer]::Ordinal)
         foreach ($case in $coverage.cases) {

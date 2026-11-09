@@ -177,7 +177,7 @@ function Read-Owner {
         throw "WORKFLOW_OWNER_NOT_FOUND"
     }
     try {
-        $raw = [System.IO.File]::ReadAllText($OwnerPath)
+        $raw = (Read-AiSopWorkflowText $OwnerPath)
         Assert-OwnerSchema $raw
         return ConvertFrom-AiSopWorkflowJson -Json $raw -AsHashtable
     } catch {
@@ -199,11 +199,15 @@ function Write-OwnerAtomic {
 function Write-OwnerMirror {
     param([System.Collections.IDictionary]$Owner)
 
+    $mirrorLock = $null
     try {
         if (-not [string]::IsNullOrWhiteSpace($ResolvedSpecDirectory)) {
             [System.IO.Directory]::CreateDirectory($ResolvedSpecDirectory) |
                 Out-Null
             $json = ConvertTo-AiSopWorkflowCanonicalJson $Owner
+            # All mirror paths (including legacy recovery) share this lock;
+            # the outer spec lock is not held by every caller.
+            $mirrorLock = Enter-AiSopWorkflowFileLock -LockPath ($MirrorPath + '.lock') -DeadlineUtc ([DateTimeOffset]::UtcNow.AddSeconds(5))
             Write-AiSopWorkflowTextAtomic -Path $MirrorPath -Text $json
         }
     } catch {
@@ -211,6 +215,8 @@ function Write-OwnerMirror {
             "Authoritative ownership is valid, but the readable mirror " +
             "could not be updated: $MirrorPath"
         )
+    } finally {
+        if ($null -ne $mirrorLock) { $mirrorLock.Dispose() }
     }
 }
 
@@ -311,7 +317,7 @@ $OwnerPath = if (-not [string]::IsNullOrWhiteSpace($Feature)) {
 # 4. If SpecDirectory is still unknown, try reading specDirectory from existing owner registry
 if ([string]::IsNullOrWhiteSpace($SpecDirectory) -and $null -ne $OwnerPath -and [System.IO.File]::Exists($OwnerPath)) {
     try {
-        $rawEarly = [System.IO.File]::ReadAllText($OwnerPath)
+        $rawEarly = (Read-AiSopWorkflowText $OwnerPath)
         $objEarly = ConvertFrom-AiSopWorkflowJson -Json $rawEarly -AsHashtable
         if ($null -ne $objEarly -and -not [string]::IsNullOrWhiteSpace($objEarly.specDirectory)) {
             $SpecDirectory = [string]$objEarly.specDirectory
@@ -353,7 +359,7 @@ $existingOwner = Read-Owner -AllowMissing
 
 if ($null -eq $existingOwner -and -not [string]::IsNullOrWhiteSpace($MirrorPath) -and (Test-Path -LiteralPath $MirrorPath -PathType Leaf)) {
     try {
-        $rawMirror = [System.IO.File]::ReadAllText($MirrorPath)
+        $rawMirror = (Read-AiSopWorkflowText $MirrorPath)
         Assert-OwnerSchema $rawMirror
         $existingOwner = ConvertFrom-AiSopWorkflowJson -Json $rawMirror -AsHashtable
     } catch {}
@@ -968,7 +974,7 @@ if ($Operation -in @('ForceRelease','Recover')) {
             $pendingPath = Get-AiSopRunEvidencePath $ResolvedSpecDirectory $TaskId $run.runId
             if ($activity -eq 'INTERRUPTED' -and [IO.File]::Exists($pendingPath)) {
                 try {
-                    $pendingResult = ConvertFrom-AiSopWorkflowJson ([IO.File]::ReadAllText($pendingPath)) -AsHashtable
+                    $pendingResult = ConvertFrom-AiSopWorkflowJson ((Read-AiSopWorkflowText $pendingPath)) -AsHashtable
                     # Validate the entire task shape as well as execution identity.
                     $probe=Copy-WorkflowRecord $recoveryTask
                     $probe.verifications=@($pendingResult)
@@ -997,7 +1003,7 @@ if ($Operation -in @('ForceRelease','Recover')) {
         # An unrelated corrupt session must not block recovery of this task.
         # The owner's exact session, and any matching orphan, remain strict.
         if (-not $recoveryOwner.sessionBinding -or $file.BaseName -cne $recoveryOwner.sessionBinding.sessionKey) {
-            try { $candidate = ConvertFrom-AiSopWorkflowJson ([IO.File]::ReadAllText($file.FullName)) -AsHashtable } catch { continue }
+            try { $candidate = ConvertFrom-AiSopWorkflowJson ((Read-AiSopWorkflowText $file.FullName)) -AsHashtable } catch { continue }
             if ($candidate.workspacePath -cne $ownerWs -or $candidate.boundFeature -cne $Feature -or $candidate.boundOwnerId -cne $OwnerId) { continue }
         }
         $bound = Read-AiSopWorkflowSessionRecord -SessionPath $file.FullName
@@ -1708,7 +1714,7 @@ if ($null -ne $taskAfter) {
     if ($taskChanges) { $taskAfter.impactReview.changeSetDigest=$taskChanges.changeSetDigest }
     if ($EvidencePath) {
         if ($Operation -ne 'Checkpoint') { throw 'EVIDENCE_REQUIRES_CHECKPOINT' }
-        $evidence = ConvertFrom-AiSopWorkflowJson ([IO.File]::ReadAllText($EvidencePath)) -AsHashtable
+        $evidence = ConvertFrom-AiSopWorkflowJson ((Read-AiSopWorkflowText $EvidencePath)) -AsHashtable
         $expectedEvidencePath = Get-AiSopRunEvidencePath $ResolvedSpecDirectory $TaskId $evidence.runId
         if ((Resolve-PhysicalPathIdentity $EvidencePath) -cne $expectedEvidencePath) { throw 'EVIDENCE_PATH_INVALID: use the run pending result in its task directory' }
         $pending = @($taskAfter.verifications | Where-Object { $_.outcome -eq 'RUNNING' })
@@ -1859,7 +1865,7 @@ if (-not [string]::IsNullOrWhiteSpace($ResolvedSpecDirectory)) {
                     [System.IO.File]::WriteAllText($featStateFile, $jsonStr, $utf8NoBomEnc)
                 } else {
                     try {
-                        $existingRaw = [System.IO.File]::ReadAllText($featStateFile)
+                        $existingRaw = (Read-AiSopWorkflowText $featStateFile)
                         $existingContent = $existingRaw | ConvertFrom-Json
                         $existingDict = [ordered]@{}
                         foreach ($p in $existingContent.psobject.Properties) {

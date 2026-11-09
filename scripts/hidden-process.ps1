@@ -1,14 +1,16 @@
 #requires -Version 7.0
 # Cleanup can itself block in native I/O. Run it without a PowerShell runspace
 # on a background thread, and never synchronously dispose it again on timeout.
-if (-not ('AiSop.ProcessCleanup' -as [type])) {
+# Compiled types survive dot-sourcing and installation in this PowerShell
+# process. Isolate this implementation from both old six/seven-argument ABIs.
+if (-not ('AiSop.CleanupV2.ProcessCleanup' -as [type])) {
     Add-Type -TypeDefinition @'
 using System;
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.Threading;
 using System.Threading.Tasks;
-namespace AiSop {
+namespace AiSop.CleanupV2 {
     public sealed class CleanupResult {
         public bool Exited;
         public int? ExitCode;
@@ -71,7 +73,7 @@ function Invoke-AiSopProcessCleanup {
         [switch]$Attached
     )
     # Attached handles own no redirected streams; StartInfo cannot be queried.
-    $pending=[AiSop.ProcessCleanup]::Begin($Process,$Started,$Terminate,$Cancellation,$Copies,$Resources,$Attached.IsPresent)
+    $pending=[AiSop.CleanupV2.ProcessCleanup]::Begin($Process,$Started,$Terminate,$Cancellation,$Copies,$Resources,$Attached.IsPresent)
     if (-not $pending.Wait($BudgetMilliseconds)) {
         return @{confirmed=$false;exited=$false;exitCode=$null;diagnostic="PROCESS_CLEANUP_TIMED_OUT: exceeded $($BudgetMilliseconds)ms; background cleanup and descendant exit unconfirmed";pending=$pending}
     }
@@ -218,7 +220,9 @@ function Start-AiSopHiddenProcess {
     Add-Member -InputObject $handle -MemberType ScriptMethod -Name Dispose -Value {
         if ($this.Disposed) { return }
         try { if (-not $this.Completed) { Stop-AiSopHiddenProcess $this } }
-        finally { $this.Disposed=$true }
+        # A call that failed before any cleanup result exists may be retried.
+        # A recorded timeout already consumed its budget and must not restart.
+        finally { $this.Disposed=($this.Completed -or $null -ne $this.Cleanup) }
     }
     if ($PassThru) { return $handle }
     try { $handle.WaitForExit(); return $handle.ExitCode } finally { $handle.Dispose() }

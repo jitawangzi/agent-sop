@@ -43,7 +43,7 @@ function Get-AiSopInputInspection {
     $report=[ordered]@{
         schemaVersion='1.0'; readOnly=$true; mode='FULL'; workspace=$WorkspacePath; algorithm=$snapshot.algorithm; inputDigest=$snapshot.digest
         policyDigest=[string]$snapshot.policyDigest
-        statistics=@{scannedEntries=$trace.scannedEntries;hashedFiles=$trace.hashedFiles;readBytes=$trace.readBytes;elapsedMilliseconds=$trace.elapsedMilliseconds}
+        statistics=@{scannedEntries=$trace.scannedEntries;hashedFiles=$trace.hashedFiles;readBytes=$trace.readBytes;elapsedMilliseconds=$trace.elapsedMilliseconds;pathResolutionMilliseconds=$trace.pathResolutionMilliseconds;hashMilliseconds=$trace.hashMilliseconds}
         largestFiles=@($trace.entries | Where-Object { -not $_.directory -and $_.decision -eq 'INCLUDED' } | Sort-Object @{Expression='bytes';Descending=$true},path | Select-Object -First 10 | ForEach-Object { @{path=$_.path;bytes=$_.bytes} })
         paths=@(foreach ($path in $InputPath) { Get-AiSopInputPathExplanation $WorkspacePath $path $trace })
         candidate=$null

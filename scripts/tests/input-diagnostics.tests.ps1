@@ -30,6 +30,36 @@ try {
     $expectedBytes=0L
     foreach ($path in $snapshot.files.Keys) { $expectedBytes+=(Get-Item -LiteralPath (Join-Path $root $path)).Length }
     Assert ($report.statistics.readBytes -eq $expectedBytes) 'Read-byte statistics include skipped files or omit input bytes'
+    Assert ($report.statistics.pathResolutionMilliseconds -ge 0 -and $report.statistics.hashMilliseconds -ge 0) 'Timing categories missing'
+    $originalText=[IO.File]::ReadAllText((Join-Path $root 'src/build/Main.txt'))
+    $originalTime=[IO.File]::GetLastWriteTimeUtc((Join-Path $root 'src/build/Main.txt'))
+    Put 'src/build/Main.txt' ('x' * $originalText.Length)
+    [IO.File]::SetLastWriteTimeUtc((Join-Path $root 'src/build/Main.txt'),$originalTime)
+    Assert ((Get-AiSopInputSnapshot $root).digest -cne $snapshot.digest) 'Same-length/time content change reused cached hash'
+    Put 'src/build/Main.txt' $originalText
+    [IO.File]::SetLastWriteTimeUtc((Join-Path $root 'src/build/Main.txt'),$originalTime)
+    Assert ((Get-AiSopInputSnapshot $root).digest -ceq $snapshot.digest) 'Restored content changed fingerprint semantics'
+    # Reuse only this traversal's physical root, never a file identity or hash.
+    $physicalResolver=(Get-Command Resolve-PhysicalPathIdentity).ScriptBlock
+    $script:rootResolutions=0;$script:escapeSelectedFile=$false
+    try {
+        function Resolve-PhysicalPathIdentity {
+            param([string]$Path)
+            if([IO.Path]::GetFullPath($Path).TrimEnd('\','/') -eq $root.TrimEnd('\','/')){$script:rootResolutions++}
+            if($script:escapeSelectedFile -and $Path -eq (Join-Path $root 'src/build/Main.txt')){return (Join-Path ([IO.Path]::GetTempPath()) 'outside-unreadable-source.txt')}
+            & $physicalResolver $Path
+        }
+        Get-AiSopInputSnapshot $root|Out-Null
+        $initialRootResolutions=$script:rootResolutions
+        foreach($i in 1..12){Put "src/extra-$i.txt" "extra-$i"}
+        $script:rootResolutions=0
+        Get-AiSopInputSnapshot $root|Out-Null
+        Assert ($script:rootResolutions -eq $initialRootResolutions) 'Physical root resolution grows with file count'
+        foreach($i in 1..12){[IO.File]::Delete((Join-Path $root "src/extra-$i.txt"))}
+        $script:escapeSelectedFile=$true
+        $escapeError='';try{Get-AiSopInputSnapshot $root|Out-Null}catch{$escapeError=$_.Exception.Message}
+        Assert ($escapeError -match 'WORKSPACE_PATH_ESCAPE') 'Selected file physical escape was read before containment rejection'
+    } finally {Set-Item Function:\Resolve-PhysicalPathIdentity -Value $physicalResolver}
     $cache=$report.paths | Where-Object path -eq 'module/build/cache.bin'
     Assert ($cache.decision -eq 'EXCLUDED' -and $cache.rule.path -eq 'module/build' -and @($cache.matchedRules | Where-Object kind -eq 'INCLUDE').Count) 'Module include explanation hid a more specific build exclusion'
     $fixture=$report.paths | Where-Object path -eq 'module/build/fixture.txt'

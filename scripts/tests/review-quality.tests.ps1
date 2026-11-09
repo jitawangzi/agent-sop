@@ -46,15 +46,18 @@ try {
     [IO.File]::WriteAllText($evidencePath,$originalEvidence)
     $report=Export
     Assert ($report.latest[0].currentInputs -eq 'NOT_CHECKED') 'Implicit current-input claim'
+    Assert ($report.preparation.hints -contains 'CHECK_CURRENT_INPUTS_BEFORE_SELECTING_VERIFICATION' -and -not $report.preparation.blocking -and -not $report.preparation.observedInputDigest) 'Preparation invented a current snapshot or gate'
     Assert ((Export -SelectedScope 'src\child\file.java').findings.Count -eq 1) 'Windows scope separator mismatch'
     Assert ((Export -SelectedScope 'src-other').findings.Count -eq 0) 'Same-prefix unrelated scope matched'
     if([OperatingSystem]::IsWindows()){Assert ((Export -SelectedScope 'SRC/child').findings.Count -eq 1) 'Windows scope case mismatch'}
     Assert ((Export -SelectedScope '../unknown').findingCoverage -eq 'INCOMPLETE') 'Unknown scope silently excluded findings'
     $report=Export -Current
     Assert (@($report.latest|Where-Object currentInputs -ne MATCH).Count -eq 0) 'Current input comparison missing'
+    Assert ($report.preparation.observedInputDigest -eq $report.latest[0].inputDigest) 'Observed input digest lost'
     [IO.File]::WriteAllText((Join-Path $workspace 'src/input.txt'),'after')
     $report=Export -Current
     Assert (@($report.latest|Where-Object currentInputs -ne STALE).Count -eq 0) 'Stale input not detected'
+    Assert ($report.preparation.hints -contains 'STALE_BATCHES_REQUIRE_REVIEW') 'Preparation hid stale results'
     Assert ((Get-FileHash $taskPath).Hash -eq $before) 'Read-only export changed task'
     $manifest=Get-AiSopInputManifestPath $workspace $ref
     [IO.File]::WriteAllText($manifest,'{}')

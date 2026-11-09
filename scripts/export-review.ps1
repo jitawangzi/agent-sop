@@ -120,4 +120,19 @@ $result=[ordered]@{schemaVersion='1.0';derived=$true;blocking=$false;feature=$Fe
     currentInputCheck=if($CheckCurrent){if($current){'PERFORMED'}else{'UNAVAILABLE'}}else{'NOT_REQUESTED'};
     repositories=$repositories;latest=$latest;history=$runs;findings=$findings;findingCoverage=if(@($diagnostics|Where-Object {$_ -like 'FINDING_*' -or $_ -like 'SCOPE_*'}).Count){'INCOMPLETE'}else{'DECLARED_PATH_SCOPE_ONLY'};unverifiedScope=@{status=if($supplement.ContainsKey('limitations')){'CONSULT_SOURCE'}else{'NOT_RECORDED'};source=$evidence};cleanup=@{status=if($supplement.ContainsKey('cleanup')){'RECORDED_NOT_REVIEWED'}else{'NOT_RECORDED'};value=$cleanupSummary;source=$evidence};
     diagnostics=$diagnostics.ToArray();limits=@('No task, owner, finding or evidence state is changed.','Digest equality does not prove test semantics or review approval.','Commands, environment values and raw logs are not copied.','Nested repositories without a recorded baseline are not presented as a complete task diff.','Missing supplementary cleanup/scope facts remain unknown; inspect the source evidence.')}
+$hints=[Collections.Generic.List[string]]::new()
+if(-not $CheckCurrent){$hints.Add('CHECK_CURRENT_INPUTS_BEFORE_SELECTING_VERIFICATION')}
+elseif(-not $current){$hints.Add('CURRENT_INPUTS_UNAVAILABLE')}
+if(@($latest|Where-Object currentInputs -eq 'STALE').Count){$hints.Add('STALE_BATCHES_REQUIRE_REVIEW')}
+if(@($latest|Where-Object {$_.outcome -ne 'PASSED' -or -not $_.inputsStable}).Count){$hints.Add('LATEST_FAILED_OR_UNSTABLE_BATCHES_REMAIN_VISIBLE')}
+if(-not $task.syncReview){$hints.Add('RECORD_DOCUMENTATION_AND_TEST_SYNC_BEFORE_COMPLETE')}
+if($task.status -eq 'ACTIVE'){$hints.Add('FINISH_DOCUMENTATION_FINDINGS_AND_REVIEW_RECORDS_BEFORE_COMPLETE')}
+if(@($repositories|Where-Object status -ne 'AVAILABLE').Count){$hints.Add('REPOSITORY_INVENTORY_INCOMPLETE')}
+$result.preparation=[ordered]@{
+    derived=$true;blocking=$false;observedAt=[DateTimeOffset]::UtcNow.ToString('o');
+    observedInputDigest=if($current){$current.digest}else{$null};
+    latestRunIds=@($latest.runId);hints=$hints.ToArray();
+    sequence=@('Finish targeted regressions, static review and documentation before full verification.','Observe the final inputs and repository differences; any later input change must remain visible.','Record findings, review and evidence references before Complete.','After Complete, use the task record, Git commits and read-only delivery checks; do not rewrite historical evidence.');
+    limits=@('An observed digest is not a filesystem lock.','This section neither authorizes reruns nor reuses old results.','Input equality does not check command definitions, case scope or test semantics.','Repository changes include unrelated work; this is not an automatic staging list.')
+}
 $result|ConvertTo-Json -Depth 24

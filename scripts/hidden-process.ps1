@@ -16,7 +16,7 @@ namespace AiSop {
     }
     public static class ProcessCleanup {
         public static Task<CleanupResult> Begin(Process process, bool started, bool terminate,
-            CancellationTokenSource cancellation, Task[] copies, IDisposable[] resources) {
+            CancellationTokenSource cancellation, Task[] copies, IDisposable[] resources, bool attached = false) {
             var completion = new TaskCompletionSource<CleanupResult>(TaskCreationOptions.RunContinuationsAsynchronously);
             var thread = new Thread(() => {
                 var result = new CleanupResult();
@@ -34,7 +34,7 @@ namespace AiSop {
                 });
                 if (cancellation != null) attempt(() => cancellation.Cancel());
                 // Pending readers and Process.Dispose are also inside this boundary.
-                if (started) {
+                if (started && !attached) {
                     attempt(() => { if (process.StartInfo.RedirectStandardOutput) process.StandardOutput.Dispose(); });
                     attempt(() => { if (process.StartInfo.RedirectStandardError) process.StandardError.Dispose(); });
                 }
@@ -67,9 +67,11 @@ function Invoke-AiSopProcessCleanup {
         [Diagnostics.Process]$Process, [bool]$Started=$true, [bool]$Terminate=$true,
         [Threading.CancellationTokenSource]$Cancellation,
         [Threading.Tasks.Task[]]$Copies=@(), [IDisposable[]]$Resources=@(),
-        [ValidateRange(1,10000)][int]$BudgetMilliseconds=5000
+        [ValidateRange(1,10000)][int]$BudgetMilliseconds=5000,
+        [switch]$Attached
     )
-    $pending=[AiSop.ProcessCleanup]::Begin($Process,$Started,$Terminate,$Cancellation,$Copies,$Resources)
+    # Attached handles own no redirected streams; StartInfo cannot be queried.
+    $pending=[AiSop.ProcessCleanup]::Begin($Process,$Started,$Terminate,$Cancellation,$Copies,$Resources,$Attached.IsPresent)
     if (-not $pending.Wait($BudgetMilliseconds)) {
         return @{confirmed=$false;exited=$false;exitCode=$null;diagnostic="PROCESS_CLEANUP_TIMED_OUT: exceeded $($BudgetMilliseconds)ms; background cleanup and descendant exit unconfirmed";pending=$pending}
     }

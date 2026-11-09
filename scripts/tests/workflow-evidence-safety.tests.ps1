@@ -10,7 +10,9 @@ $root=Join-Path ([IO.Path]::GetTempPath()) ('sop-evidence-safety-' + [guid]::New
 $workspace=Join-Path $root 'workspace'
 $spec=Join-Path $workspace '.ai-workspace/specs/features/Example'
 $pwsh=(@(Get-Command pwsh -CommandType Application)[0]).Source
-$saved=@{}; $runner=$null; $heldLock=$null
+$saved=@{}; $runner=$null; $heldLock=$null; $managedChild=$null; $managedCleanup=$null; $managedChildId=$null
+. (Join-Path $PSScriptRoot 'fixtures/retained-fixture.ps1')
+$suiteSucceeded=$false; $suiteFailure=''
 foreach ($key in @('AI_SOP_OWNER_REGISTRY','AI_SOP_SESSION_REGISTRY','AI_SOP_COMMAND_GRANT_REGISTRY','AI_SOP_TRANSACTION_REGISTRY','SERVER_NEW_WORKFLOW_OWNER_DEADLINE_MS','CODEX_SESSION_ID','ANTIGRAVITY_SESSION_ID','AI_SESSION_ID','SESSION_ID','PATH')) { $saved[$key]=[Environment]::GetEnvironmentVariable($key) }
 function Assert($condition, $message) { if (-not $condition) { throw $message } }
 function Fails([scriptblock]$action, [string]$pattern) {
@@ -36,26 +38,40 @@ function Read-LiveLog([string]$path) {
 function Wait-Until([scriptblock]$condition, [string]$message) {
     $deadline=[DateTimeOffset]::UtcNow.AddSeconds(40)
     while ([DateTimeOffset]::UtcNow -lt $deadline) {
+        if($runner){[void]$runner.Poll()}
         if (& $condition) { return }
         [Threading.Thread]::Sleep(100)
     }
     throw $message
 }
 function Launch-Runner([string]$id, [string]$child) {
-    $p=[Diagnostics.Process]::new()
-    $p.StartInfo.FileName=$pwsh; $p.StartInfo.UseShellExecute=$false; $p.StartInfo.CreateNoWindow=$true
-    $p.StartInfo.RedirectStandardOutput=$true; $p.StartInfo.RedirectStandardError=$true
-    $p.StartInfo.Environment['SERVER_NEW_WORKFLOW_OWNER_DEADLINE_MS']='5000'
+    $script:managedChild=$null; $script:managedCleanup=$null; $script:managedChildId=$null
     # Pass array arguments through a saved wrapper: native -File cannot bind a
     # PowerShell array containing switches to a script's string[] parameter.
     $wrapper=Join-Path $root "$id-runner.ps1"
     $quoted=@($entry,$workspace,$id,$pwsh,$child) | ForEach-Object { "'" + $_.Replace("'","''") + "'" }
     [IO.File]::WriteAllText($wrapper, "& $($quoted[0]) -Operation Run -WorkspacePath $($quoted[1]) -Feature Example -TaskId $($quoted[2]) -Kind compile -Executable $($quoted[3]) -Arguments @('-NoProfile','-File',$($quoted[4])); exit `$LASTEXITCODE")
-    $p.StartInfo.ArgumentList.Clear()
-    foreach ($arg in @('-NoProfile','-File',$wrapper)) { $p.StartInfo.ArgumentList.Add($arg) }
-    Assert ($p.Start()) 'Runner did not start'
-    $script:runnerOut=$p.StandardOutput.ReadToEndAsync(); $script:runnerErr=$p.StandardError.ReadToEndAsync()
-    return $p
+    $script:runnerOutPath=Join-Path $root "$id.runner.stdout.log"
+    $script:runnerErrPath=Join-Path $root "$id.runner.stderr.log"
+    return Start-AiSopHiddenProcess -FilePath $pwsh -ArgumentList @('-NoProfile','-File',$wrapper) -Environment @{SERVER_NEW_WORKFLOW_OWNER_DEADLINE_MS='5000'} -RedirectStandardOutput $runnerOutPath -RedirectStandardError $runnerErrPath -TimeoutSeconds 180 -PassThru
+}
+function Save-RunnerResult {
+    # Never serialize a pending cleanup Task: reading Task.Result can block.
+    $cleanup=@{confirmed=$runner.Cleanup.confirmed;exited=$runner.Cleanup.exited;exitCode=$runner.Cleanup.exitCode;diagnostic=$runner.Cleanup.diagnostic;
+        pendingIncomplete=($null -ne $runner.Cleanup.pending -and -not $runner.Cleanup.pending.IsCompleted)}
+    @{exitCode=$runner.ExitCode;rawExitCode=$runner.RawExitCode;failureCode=$runner.FailureCode;diagnostic=$runner.Diagnostic;cleanup=$cleanup} |
+        ConvertTo-Json -Depth 8 | Set-Content -LiteralPath (Join-Path $root "$scenario.runner-result.json")
+}
+function Close-ManagedChild {
+    # Keep the real child handle independently: its wrapper can exit first.
+    if(-not $managedCleanup){
+        if(-not $managedChild){throw 'CHILD_IDENTITY_UNAVAILABLE'}
+        $script:managedCleanup=Invoke-AiSopProcessCleanup -Process $managedChild -Attached -Terminate $true -BudgetMilliseconds 2000
+    }
+    @{pid=$managedChildId;confirmed=$managedCleanup.confirmed;exited=$managedCleanup.exited;exitCode=$managedCleanup.exitCode;diagnostic=$managedCleanup.diagnostic;
+        pendingIncomplete=($null -ne $managedCleanup.pending -and -not $managedCleanup.pending.IsCompleted)} |
+        ConvertTo-Json | Set-Content -LiteralPath (Join-Path $root "$scenario.child-cleanup.json")
+    Assert ($managedCleanup.confirmed -and $managedCleanup.exited) 'MANAGED_CHILD_CLEANUP_UNCONFIRMED'
 }
 try {
     foreach ($kind in @('OWNER','SESSION','COMMAND_GRANT','TRANSACTION')) { [Environment]::SetEnvironmentVariable("AI_SOP_${kind}_REGISTRY", (Join-Path $root $kind)) }
@@ -160,6 +176,14 @@ try {
         [IO.File]::WriteAllText($child, "[IO.File]::WriteAllText('$readyLiteral','once'); while (-not [IO.File]::Exists('$finishLiteral')) { Start-Sleep -Milliseconds 50 }; exit 0")
         $runner=Launch-Runner $scenario $child
         Wait-Until { [IO.File]::Exists($ready) -and (Read-AiSopTask $spec $scenario).verifications[-1].context.childPid } "Child did not start: $scenario"
+        $childContext=(Read-AiSopTask $spec $scenario).verifications[-1].context
+        $managedChildId=[int]$childContext.childPid
+        $candidate=[Diagnostics.Process]::GetProcessById($managedChildId)
+        try{
+            [void]$candidate.Handle
+            Assert ($candidate.StartTime.ToUniversalTime().Ticks -eq [DateTimeOffset]::Parse($childContext.childStartedAt).UtcTicks) 'CHILD_IDENTITY_UNAVAILABLE'
+            $managedChild=$candidate;$candidate=$null
+        }finally{if($candidate){$candidate.Dispose()}}
         $boundOwner=Owner
         $sessionPath=Get-AiSopWorkflowSessionPath -SessionKey $boundOwner.sessionBinding.sessionKey -WorkspacePath $workspace
         $sessionBefore=Read-AiSopWorkflowSessionRecord -SessionPath $sessionPath
@@ -183,7 +207,7 @@ try {
                 $heldLock=Enter-AiSopWorkflowFileLock -LockPath ($leaseOwnerPath + '.lock') -DeadlineUtc ([DateTimeOffset]::UtcNow.AddSeconds(5))
                 $runLog=Get-AiSopRunLogPath (Read-AiSopTask $spec $scenario).verifications[-1] $workspace $spec $scenario
                 Wait-Until {
-                    if ($runner.HasExited) { throw "Runner exited before retry ($scenario): $($runnerOut.GetAwaiter().GetResult()) $($runnerErr.GetAwaiter().GetResult())" }
+                    if ($runner.HasExited) { throw "Runner exited before retry ($scenario): $(Read-LiveLog $runnerOutPath) $(Read-LiveLog $runnerErrPath)" }
                     (Read-LiveLog $runLog) -match 'RUN_LEASE_RETRY:'
                 } "Lock contention was not retried: $scenario; log=$runLog"
                 Assert (-not $runner.HasExited) 'Transient contention killed the running verification'
@@ -201,10 +225,15 @@ try {
             $heldLock=Enter-AiSopWorkflowFileLock -LockPath ((Join-Path $env:AI_SOP_OWNER_REGISTRY 'example.json') + '.lock') -DeadlineUtc ([DateTimeOffset]::UtcNow.AddSeconds(5))
         }
         if ($scenario -notin @('expired','revoked')) { [IO.File]::WriteAllText($finish,'finish') }
-        Wait-Until { $runner.HasExited } "Runner did not finish: $scenario"
+        Wait-Until { $runner.Completed } "Runner did not finish: $scenario"
         if ($heldLock) { $heldLock.Dispose(); $heldLock=$null }
-        $output=$runnerOut.GetAwaiter().GetResult() + $runnerErr.GetAwaiter().GetResult()
-        $exit=$runner.ExitCode; $runner.Dispose(); $runner=$null
+        $output=(Read-LiveLog $runnerOutPath) + (Read-LiveLog $runnerErrPath)
+        $exit=$runner.ExitCode; $runner.Dispose()
+        Save-RunnerResult
+        Assert $managedChild.HasExited 'Child survived completed runner before test cleanup'
+        Close-ManagedChild
+        Assert ($runner.Cleanup.confirmed -and -not $runner.FailureCode) ('RUNNER_CAPTURE_OR_CLEANUP_UNCONFIRMED: '+$runner.Diagnostic)
+        $runner=$null
         if ($scenario -eq 'ended') {
             Invoke-AiSopWorkflowSession -Operation End -Agent CODEX -NativeSessionId $env:CODEX_SESSION_ID -WorkspacePath $workspace -AcceptedAt ([DateTimeOffset]::UtcNow) | Out-Null
         }
@@ -241,15 +270,16 @@ try {
         Task Complete $scenario | Out-Null
     }
     Write-Output 'PASS: input boundaries, evidence forgery, batch identity, session fencing, recovery, lease renewal and durable retry'
+    $suiteSucceeded=$true
 } catch {
+    $suiteFailure=$_.ToString()+[Environment]::NewLine+$_.ScriptStackTrace
     Write-Output $_.ScriptStackTrace
     throw
 } finally {
-    if ($heldLock) { $heldLock.Dispose() }
-    if ($runner) { if (-not $runner.HasExited) { $runner.Kill($true); $runner.WaitForExit(5000) | Out-Null }; $runner.Dispose() }
-    foreach ($key in $saved.Keys) { [Environment]::SetEnvironmentVariable($key,$saved[$key]) }
-    $resolved=[IO.Path]::GetFullPath($root)
-    $prefix=[IO.Path]::GetFullPath([IO.Path]::GetTempPath()).TrimEnd('\','/') + [IO.Path]::DirectorySeparatorChar
-    if (-not $resolved.StartsWith($prefix,[StringComparison]::OrdinalIgnoreCase) -or [IO.Path]::GetFileName($resolved) -notlike 'sop-evidence-safety-*') { throw 'Unsafe test cleanup path' }
-    Remove-Item -LiteralPath $resolved -Recurse -Force -ErrorAction SilentlyContinue
+    Complete-AiSopTestFixture -Root $root -Prefix 'sop-evidence-safety-' -Succeeded $suiteSucceeded -Failure $suiteFailure -Cleanup @(
+        {if($heldLock){$heldLock.Dispose()}},
+        {if($runner){$runner.Dispose();[IO.File]::WriteAllText((Join-Path $root runner-exit.txt),[string]$runner.ExitCode);Save-RunnerResult;if(-not $runner.Cleanup.confirmed -or ($runner.FailureCode -and $runner.Diagnostic -ne 'PROCESS_INTERRUPTED')){throw ('RUNNER_CLEANUP_UNCONFIRMED: '+$runner.Diagnostic)}}},
+        {if($runner -or $managedChild){Close-ManagedChild}},
+        {foreach($key in $saved.Keys){[Environment]::SetEnvironmentVariable($key,$saved[$key])}}
+    )
 }

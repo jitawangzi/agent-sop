@@ -108,9 +108,12 @@ function Invoke-AiSopInputTraversal {
         $timer=[Diagnostics.Stopwatch]::StartNew()
         $Diagnostics.entries=[Collections.Generic.List[object]]::new()
         $Diagnostics.readBytes=[long]0; $Diagnostics.scannedEntries=0; $Diagnostics.hashedFiles=0
+        $Diagnostics.pathResolutionMilliseconds=0.0; $Diagnostics.hashMilliseconds=0.0
     }
     $budget=if ($BudgetMilliseconds) { @{timer=[Diagnostics.Stopwatch]::StartNew();milliseconds=$BudgetMilliseconds;remainingBytes=$MaxBytes} } else { $null }
     $root = Resolve-PhysicalPathIdentity $WorkspacePath
+    $rootPrefix=$root.TrimEnd('\','/')+[IO.Path]::DirectorySeparatorChar
+    $pathComparison=if([OperatingSystem]::IsWindows()){[StringComparison]::OrdinalIgnoreCase}else{[StringComparison]::Ordinal}
     $policy = Get-AiSopInputPolicy $root -PolicyPath $PolicyPath
     $excludedDirectories = @('.git', '.svn', '.ai-sop', '.ai-workspace', '.claude', '.agents', '.agent', '.gemini', '.cursor', '.idea', '.vscode', '.superpowers', 'node_modules', '.gradle', '__pycache__')
     $outputDirectories = @('build', 'target', 'bin', 'obj', 'out', 'classes')
@@ -200,9 +203,15 @@ function Invoke-AiSopInputTraversal {
                 continue
             }
             if ($ExplainOnly) { continue }
-            $physical = Resolve-AiSopWorkspaceChild $root $rel
+            # The traversal root is already physical. Resolve every selected
+            # file again (no cross-call cache) and retain physical containment.
+            $phase=if($tracing){[Diagnostics.Stopwatch]::StartNew()}else{$null}
+            $physical = Resolve-PhysicalPathIdentity $item.FullName
+            if(-not $physical.StartsWith($rootPrefix,$pathComparison)){throw "WORKSPACE_PATH_ESCAPE: $rel"}
+            if($tracing){$Diagnostics.pathResolutionMilliseconds+=$phase.Elapsed.TotalMilliseconds;$phase.Restart()}
             $readBefore=if ($tracing) { $Diagnostics.readBytes } else { 0 }
             $files[$rel] = if ($budget -or $tracing) { Get-AiSopBudgetedFileHash $physical $budget $Diagnostics } else { (Get-FileHash -LiteralPath $physical -Algorithm SHA256).Hash.ToLowerInvariant() }
+            if($tracing){$Diagnostics.hashMilliseconds+=$phase.Elapsed.TotalMilliseconds}
             if ($tracing) { $trace.bytes=$Diagnostics.readBytes-$readBefore; $Diagnostics.hashedFiles++ }
         } } finally { $iterator.Dispose() }
     }

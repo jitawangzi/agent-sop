@@ -117,10 +117,14 @@ function ConvertTo-AiSopWorkflowCanonicalJson {
 function Assert-AiSopWorkflowDeadline {
     param([Nullable[DateTimeOffset]]$DeadlineUtc)
 
+    $observedUtc = [DateTimeOffset]::UtcNow
     if (
         $null -ne $DeadlineUtc -and
-        [DateTimeOffset]::UtcNow -ge ([DateTimeOffset]$DeadlineUtc)
+        $observedUtc -ge ([DateTimeOffset]$DeadlineUtc)
     ) {
+        # 保留实际截止时间及调用位置，不改变错误码或时间预算。
+        try { [Console]::Error.WriteLine(("WORKFLOW_DEADLINE_DIAGNOSTIC: deadline={0:o} observed={1:o} stack={2}" -f ([DateTimeOffset]$DeadlineUtc),$observedUtc,((Get-PSCallStack | Select-Object -First 5 | ForEach-Object { "$($_.FunctionName):$($_.ScriptLineNumber)" }) -join '>'))) } catch { # 诊断失败不能覆盖原错误。
+        }
         throw "WORKFLOW_DEADLINE_EXCEEDED"
     }
 }
@@ -545,6 +549,10 @@ function Enter-AiSopWorkflowFileLock {
         } catch [System.IO.IOException] {
             Start-Sleep -Milliseconds 10
         } catch {
+            # 不把权限/其他 I/O 故障当锁争用重试，保留底层类型用于复现。
+            $cause=$_.Exception.GetBaseException()
+            try { [Console]::Error.WriteLine(("WORKFLOW_LOCK_OPEN_DIAGNOSTIC: type={0} hresult=0x{1:X8}" -f $cause.GetType().FullName,$cause.HResult)) } catch { # 诊断失败不能覆盖原错误。
+            }
             throw "WORKFLOW_REGISTRY_IO_ERROR"
         }
     }

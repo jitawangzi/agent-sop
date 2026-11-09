@@ -156,7 +156,7 @@ AI 编码工具百花齐放（Claude Code、Copilot、Cursor、Antigravity、Pi�
 
 ### 决策9：测试串行默认 + 弹窗抑制（为什么不一味追求并行快）
 
-**问题**：测试套件含时序敏感的 strong-kill 恢复测试（750ms deadline + 文件锁），并行跑时 CPU 争抢导致 deadline 超时、锁竞争 REGISTRY_LOCK_TIMEOUT——flaky 失败，不是真缺陷。且 hook 子进程弹窗影响开发体验。
+**问题**：测试套件含时序敏感的 strong-kill 恢复测试（750ms deadline + 文件锁），并行运行曾出现截止时间、锁与提前退出异常。负载相关性不等于根因，不能直接排除真实缺陷；应保留底层异常、退出输出和失败现场，区分夹具问题、环境约束与引擎缺陷。且 hook 子进程弹窗影响开发体验。
 
 **为什么这么设计**：
 - `run-all-tests.ps1` 默认串行（时序测试安全），`-Parallel` 可选（快但可能 flake）。
@@ -164,11 +164,11 @@ AI 编码工具百花齐放（Claude Code、Copilot、Cursor、Antigravity、Pi�
 - deadline 用 env 可覆盖（`SERVER_NEW_WORKFLOW_TRANSACTION_DEADLINE_MS`、`SERVER_NEW_WORKFLOW_OWNER_DEADLINE_MS`），strong-kill 子进程设宽值。
 
 **考虑过的替代**：
-- 全并行：flaky 严重，CI 不可靠——否决。
+- 默认全并行：同时放大调度与资源干扰，不利于失败定位——未采用。
 - 全串行无并行选项：太慢，开发体验差——保留 `-Parallel`。
 - 放宽所有 deadline：生产语义变松，掩盖真卡死——只对测试子进程放宽。
 
-**价值**：CI 稳定绿（串行），想快可并行（接受 flake）；开发时不被弹窗打扰。
+**价值**：默认串行减少并发干扰，保留按需并行；任何失败都保留诊断，串行通过不证明并行可靠，也不自动关闭历史发现。开发时不被弹窗打扰。
 
 ### 决策10：专家 Skill 自包含；Superpowers 只给控制器调用
 
@@ -352,9 +352,9 @@ AI 编码工具百花齐放（Claude Code、Copilot、Cursor、Antigravity、Pi�
 - 经 owner Claim + 双人工批准。
 
 ### 测试
-- `run-all-tests.ps1`：默认串行（时序敏感测试安全），`-Parallel` 可并行（快但可能 flake）。
+- `run-all-tests.ps1`：默认串行（时序敏感测试安全），`-Parallel` 可并行，失败仍需定位，不能预先归为 flake。
 - 单套件：`run-all-tests.ps1 -Suite <name>`。
-- feature-runtime 环境敏感（需 clean Tomcat）、workflow-transaction 负载 flaky——单独跑更稳。
+- feature-runtime 环境敏感（需 clean Tomcat）、workflow-transaction 曾在负载下失败——定向复现用于定位，不替代完整范围验收。
 
 ## 七、Git/SVN 拓扑
 
@@ -367,7 +367,7 @@ AI 编码工具百花齐放（Claude Code、Copilot、Cursor、Antigravity、Pi�
 ## 八、已知项
 
 - feature-runtime 聚合跑环境敏感（Tomcat JSP 500 + 负载），单独跑 PASS——既有特性。
-- workflow-transaction 负载下偶发 deadline flaky——既有。
+- workflow-transaction 负载下曾有 deadline 失败——既有观察，尚不能仅凭此排除真实缺陷。
 - `.claude` nested checkout（非 absorbed submodule），功能正常，absorbgitdirs 待 worktree 清理后。
 - harness-certification.json BLOCKED 占位，待 P3 真机认证。
 - lock commit 需在 SOP 改动后重新 finalize（installer finalize 循环）。

@@ -7,11 +7,13 @@ param(
     [Parameter(Mandatory)][string]$TaskId,
     [string[]]$Scope=@(),
     [string[]]$RepositoryPaths=@('.','.ai-workspace','.ai-workspace/specs'),
+    [string]$DeliveryManifest='',
     [switch]$CheckCurrent
 )
 $ErrorActionPreference='Stop'
 . (Join-Path $PSScriptRoot 'task-context.ps1')
 . (Join-Path $PSScriptRoot 'review-paths.ps1')
+. (Join-Path $PSScriptRoot 'review-delivery.ps1')
 $WorkspacePath=Resolve-PhysicalPathIdentity $WorkspacePath
 $spec=Resolve-AiSopReviewChild $WorkspacePath ".ai-workspace/specs/features/$Feature"
 $null=Resolve-AiSopReviewChild $WorkspacePath ".ai-workspace/specs/features/$Feature/tasks/$TaskId/task.json"
@@ -59,17 +61,19 @@ $latest=@($runs|Group-Object kind,batch|ForEach-Object {$_.Group[-1]})
 $repositories=@(foreach($relative in $RepositoryPaths){
     try {
         $path=if($relative -eq '.'){$WorkspacePath}else{Resolve-AiSopReviewChild $WorkspacePath $relative}
-        $top=& git --no-optional-locks -c core.fsmonitor=false -C $path rev-parse --show-toplevel 2>$null
-        if($LASTEXITCODE -ne 0 -or (Resolve-PhysicalPathIdentity $top) -cne $path){throw 'NOT_A_REPOSITORY_ROOT'}
-        $head=& git --no-optional-locks -c core.fsmonitor=false -C $path rev-parse HEAD
-        $changes=@(& git --no-optional-locks -c core.fsmonitor=false -C $path status --porcelain=v1 --untracked-files=all)
+        $top=(Get-AiSopDeliveryText $path @('rev-parse','--show-toplevel')).Trim()
+        if((Resolve-PhysicalPathIdentity $top) -cne $path){throw 'NOT_A_REPOSITORY_ROOT'}
+        $head=(Get-AiSopDeliveryText $path @('rev-parse','--verify','HEAD^{commit}')).Trim()
+        $changes=@(Get-AiSopReadOnlyWorkingChanges $path)
         $base=if($relative -eq '.'){$task.baseline.revision}elseif($task.verifications.Count -and $relative -eq '.ai-workspace'){$task.verifications[0].context.contextGitRevision}elseif($task.verifications.Count -and $relative -eq '.ai-workspace/specs'){$task.verifications[0].context.specGitRevision}else{$null}
         $delta=@();$deltaState='BASELINE_UNAVAILABLE'
         if($base -match '^[0-9a-f]{40,64}$'){
-            $delta=@(& git --no-optional-locks -c core.fsmonitor=false -C $path diff --no-ext-diff --no-textconv --name-status $base HEAD --)
-            $deltaState=if($LASTEXITCODE -eq 0){'TRACKED_COMMIT_DIFF_INDEX'}else{'BASELINE_UNAVAILABLE'}
+            try{
+                $delta=@((Get-AiSopDeliveryText $path @('diff','--no-ext-diff','--no-textconv','--name-status',$base,$head,'--')) -split '\r?\n'|Where-Object {$_})
+                $deltaState='TRACKED_COMMIT_DIFF_INDEX'
+            }catch{$deltaState='BASELINE_UNAVAILABLE'}
         }
-        @{path=$relative;revision=$head;baseline=$base;baselineBasis=if($relative -eq '.'){'TASK_BASELINE'}else{'FIRST_RUN_RECORDED_REVISION_NOT_TASK_START'};committedDifference=$delta;differenceStatus=$deltaState;workingChanges=$changes;status='AVAILABLE'}
+        @{path=$relative;revision=$head;baseline=$base;baselineBasis=if($relative -eq '.'){'TASK_BASELINE'}else{'FIRST_RUN_RECORDED_REVISION_NOT_TASK_START'};committedDifference=$delta;differenceStatus=$deltaState;workingChanges=$changes;workingChangesBasis='EXTERNAL_FILTERS_DISABLED_SUBMODULE_WORKTREES_OMITTED';status='AVAILABLE'}
     } catch {@{path=$relative;status='UNAVAILABLE'}}
 })
 $findings=@()
@@ -109,7 +113,10 @@ if($evidence.status -eq 'PRESENT_UNBOUND'){
 }
 $cleanupSummary=@{}
 if($supplement.cleanup.outcome -in @('PASSED','FAILED','UNKNOWN','NOT_RUN')){$cleanupSummary.outcome=$supplement.cleanup.outcome}
+$delivery=@{status='UNAVAILABLE';blocking=$false;coverage='INCOMPLETE';items=@();diagnostics=@('DELIVERY_CHECK_UNAVAILABLE')}
+try{$delivery=Get-AiSopDeliveryReview $WorkspacePath $DeliveryManifest}catch{$diagnostics.Add('DELIVERY_CHECK_UNAVAILABLE')}
 $result=[ordered]@{schemaVersion='1.0';derived=$true;blocking=$false;feature=$Feature;taskId=$TaskId;objective=$task.objective;tier=$task.tier;taskStatus=$task.status;
+    delivery=$delivery;
     currentInputCheck=if($CheckCurrent){if($current){'PERFORMED'}else{'UNAVAILABLE'}}else{'NOT_REQUESTED'};
     repositories=$repositories;latest=$latest;history=$runs;findings=$findings;findingCoverage=if(@($diagnostics|Where-Object {$_ -like 'FINDING_*' -or $_ -like 'SCOPE_*'}).Count){'INCOMPLETE'}else{'DECLARED_PATH_SCOPE_ONLY'};unverifiedScope=@{status=if($supplement.ContainsKey('limitations')){'CONSULT_SOURCE'}else{'NOT_RECORDED'};source=$evidence};cleanup=@{status=if($supplement.ContainsKey('cleanup')){'RECORDED_NOT_REVIEWED'}else{'NOT_RECORDED'};value=$cleanupSummary;source=$evidence};
     diagnostics=$diagnostics.ToArray();limits=@('No task, owner, finding or evidence state is changed.','Digest equality does not prove test semantics or review approval.','Commands, environment values and raw logs are not copied.','Nested repositories without a recorded baseline are not presented as a complete task diff.','Missing supplementary cleanup/scope facts remain unknown; inspect the source evidence.')}

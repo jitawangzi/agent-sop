@@ -8,7 +8,7 @@ $entry=Join-Path $scripts 'workflow-task.ps1'
 $root=Join-Path ([IO.Path]::GetTempPath()) ('sop-task-recovery-' + [guid]::NewGuid().ToString('N'))
 $workspace=Join-Path $root 'workspace'
 $spec=Join-Path $workspace '.ai-workspace/specs/features/Example'
-$saved=@{}; $runner=$null
+$saved=@{}; $runner=$null; $stdout=$null; $stderr=$null; $suitePassed=$false
 foreach ($key in @('AI_SOP_OWNER_REGISTRY','AI_SOP_SESSION_REGISTRY','AI_SOP_COMMAND_GRANT_REGISTRY','AI_SOP_TRANSACTION_REGISTRY','SERVER_NEW_WORKFLOW_OWNER_DEADLINE_MS','CODEX_SESSION_ID')) { $saved[$key]=[Environment]::GetEnvironmentVariable($key) }
 function Assert($condition, $message) { if (-not $condition) { throw $message } }
 function Task([string]$op, [hashtable]$extra=@{}) {
@@ -368,10 +368,37 @@ exit 0
     Fails { Task Verify } 'Task Verify failed'
     Task Run @{Profile='check'; Reason='Restore normal regression after interruption'} | Out-Null
     Task Complete | Out-Null
+    $suitePassed=$true
     Write-Output 'PASS: recovery, status consistency, project profiles, timeout, streaming, abrupt termination'
+} catch {
+    # 失败诊断不得覆盖原异常，也不能等待未关闭的输出管道。
+    Write-Output "RECOVERY_FAILURE_STACK:$($_.ScriptStackTrace)"
+    foreach ($capture in @(@{name='stdout';task=$stdout},@{name='stderr';task=$stderr})) {
+        try {
+            if ($capture.task -and $capture.task.IsCompleted) { Write-Output "RUNNER_$($capture.name):$($capture.task.GetAwaiter().GetResult())" }
+        } catch { Write-Warning "RUNNER_DIAGNOSTIC_UNAVAILABLE:$($_.Exception.Message)" }
+    }
+    try { if ($runner -and $runner.HasExited) { Write-Output "RUNNER_EXIT_CODE:$($runner.ExitCode)" } } catch { Write-Warning "RUNNER_EXIT_UNAVAILABLE:$($_.Exception.Message)" }
+    Write-Output "RETAINED_FIXTURE:$root"
+    throw
 } finally {
-    if ($runner) { if (-not $runner.HasExited) { $runner.Kill($true); $runner.WaitForExit(5000) | Out-Null }; $runner.Dispose() }
-    foreach ($key in $saved.Keys) { [Environment]::SetEnvironmentVariable($key,$saved[$key]) }
+    try {
+        if ($runner) { if (-not $runner.HasExited) { $runner.Kill($true); $runner.WaitForExit(5000) | Out-Null }; $runner.Dispose() }
+    } catch {
+        # 清理异常不能盖掉已有失败，成功路径则不能隐瞒清理失败。
+        if ($suitePassed) { throw }
+        Write-Warning "FIXTURE_CLEANUP_FAILED:$($_.Exception.Message)"
+    } finally {
+        if (-not $suitePassed) {
+            foreach ($capture in @(@{name='stdout';task=$stdout},@{name='stderr';task=$stderr})) {
+                try {
+                    if ($capture.task -and $capture.task.IsCompleted) { Write-Output "FINAL_RUNNER_$($capture.name):$($capture.task.GetAwaiter().GetResult())" }
+                    elseif ($capture.task) { Write-Output "CAPTURE_INCOMPLETE:$($capture.name)" }
+                } catch { Write-Warning "FINAL_CAPTURE_FAILED:$($_.Exception.Message)" }
+            }
+        }
+        foreach ($key in $saved.Keys) { [Environment]::SetEnvironmentVariable($key,$saved[$key]) }
+    }
     $resolved=[IO.Path]::GetFullPath($root)
-    if ($resolved.StartsWith([IO.Path]::GetFullPath([IO.Path]::GetTempPath()),[StringComparison]::OrdinalIgnoreCase)) { Remove-Item -LiteralPath $resolved -Recurse -Force -ErrorAction SilentlyContinue }
+    if ($suitePassed -and $resolved.StartsWith([IO.Path]::GetFullPath([IO.Path]::GetTempPath()),[StringComparison]::OrdinalIgnoreCase)) { Remove-Item -LiteralPath $resolved -Recurse -Force -ErrorAction SilentlyContinue }
 }

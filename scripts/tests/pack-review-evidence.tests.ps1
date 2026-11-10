@@ -43,7 +43,11 @@ try{
     Assert ($extra.status -eq 'COPIED' -and $extra.observationMatch -eq 'MATCH' -and (Get-Content (Join-Path $attachedOutput $extra.path) -Raw) -eq 'attachment') 'Explicit attachment missing or changed'
     Assert (($attached.items|Where-Object source -eq missing.log).status -eq 'UNAVAILABLE') 'Missing attachment hidden'
     Assert (($attached.items|Where-Object source -eq attachments.json).status -eq 'COPIED') 'Attachment declaration omitted'
-    foreach($invalid in @('null','{}','"extra.log"','[null]','["../escape"]','["C:/escape"]')){
+    # 绝对路径由当前平台生成；Unix上的 C:/escape 是合法相对路径。
+    $absolutePath=[IO.Path]::GetFullPath((Join-Path $root escape))
+    Assert ([IO.Path]::IsPathRooted($absolutePath)) 'Absolute-path fixture is not rooted on this platform'
+    $absoluteDeclaration=ConvertTo-Json -InputObject @($absolutePath) -Compress
+    foreach($invalid in @('null','{}','"extra.log"','[null]','["../escape"]',$absoluteDeclaration)){
         $invalid|Set-Content $attachmentList
         $badOutput=Join-Path $root ([guid]::NewGuid().ToString('N'));$rejected=$false
         try{& (Join-Path $scripts pack-review-evidence.ps1) -WorkspacePath $ws -Feature Example -TaskId change -OutputPath $badOutput -AttachmentsManifest attachments.json|Out-Null}catch{$rejected=$true}

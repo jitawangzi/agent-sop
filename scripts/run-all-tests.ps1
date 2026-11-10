@@ -106,7 +106,7 @@ if($Parallel -and $DurationReport){
         if($history -isnot [System.Collections.IList]){throw 'Expected results array'}
         $durations=[Collections.Generic.Dictionary[string,double]]::new([StringComparer]::Ordinal)
         foreach($record in $history){
-            if($record -isnot [System.Collections.IDictionary] -or $record.Name -isnot [string] -or $record.DurationMs -isnot [ValueType]){throw 'Invalid duration entry'}
+            if($record -isnot [System.Collections.IDictionary] -or $record.Name -isnot [string] -or $record.DurationMs -isnot [ValueType] -or $record.DurationMs -is [bool]){throw 'Invalid duration entry'}
             $duration=[double]$record.DurationMs
             if(-not [double]::IsFinite($duration) -or $duration -lt 0){throw 'Invalid duration value'}
             if(-not $durations.ContainsKey($record.Name) -or $duration -gt $durations[$record.Name]){$durations[$record.Name]=$duration}

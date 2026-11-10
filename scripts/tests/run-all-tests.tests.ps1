@@ -183,10 +183,12 @@ try {
     if($schedule.policy -ne 'LONGEST_FIRST' -or $schedule.files.Count -ne 3){throw 'Schedule not recorded'}
     $observed=Invoke-ObservedRunner -Extra @('-Serial','-DurationReport',$timings)
     if(($observed.records.Name -join ',') -ne 'aaa-new.tests,bbb-fast.tests,zzz-slow.tests'){throw 'Timing history changed serial order'}
-    foreach($invalid in @('null','{}','[{"Name":"zzz-slow.tests","DurationMs":-1}]')){
+    foreach($invalid in @('null','{}','[{"Name":"zzz-slow.tests","DurationMs":-1}]','[{"Name":"zzz-slow.tests","DurationMs":true}]','[{"Name":"zzz-slow.tests","DurationMs":false}]')){
         $invalid|Set-Content $timings
         $observed=Invoke-ObservedRunner -Extra @('-Parallel','-MaxParallel','1','-DurationReport',$timings)
         if(($observed.records.Name -join ',') -ne 'aaa-new.tests,bbb-fast.tests,zzz-slow.tests' -or $observed.output -notmatch 'DURATION_REPORT_IGNORED'){throw 'Invalid timing history changed default execution'}
+        $fallback=Get-Content (Join-Path (Split-Path $observed.report) schedule.json) -Raw|ConvertFrom-Json
+        if($fallback.policy -ne 'NAME' -or $fallback.diagnostic -notmatch 'DURATION_REPORT_IGNORED' -or $observed.exitCode -eq 0){throw 'Invalid timing history hid diagnostic or real test failure'}
     }
 
     if ([OperatingSystem]::IsWindows()) {

@@ -31,6 +31,8 @@ try {
     $report=Export
     Assert ($report.incremental.status -eq 'NOT_REQUESTED') 'Incremental review became mandatory'
     Assert ($report.finalization.documents -eq 'NOT_REQUESTED' -and $report.finalization.remote -eq 'NOT_CHECKED') 'Optional finalization became a gate or invented remote facts'
+    Assert ($report.finalization.attention.items.code -contains 'CLEANUP_FAILED' -and $report.finalization.attention.items.code -contains 'RELATED_FINDINGS_UNRESOLVED' -and -not $report.finalization.attention.blocking) 'Summary hid unresolved finding/cleanup or added a gate'
+    Assert ($report.finalization.attention.items.code -contains 'RUN_EVIDENCE_NOT_RECORDED') 'Unrecorded run evidence omitted from summary'
     $manifestRelative='.ai-workspace/specs/features/Example/tasks/change/attachments.json'
     '["missing-review.md"]'|Set-Content (Join-Path $workspace $manifestRelative)
     $withHints=Export -Attachments $manifestRelative
@@ -56,6 +58,7 @@ try {
         [IO.File]::WriteAllText($evidencePath,$invalid)
         $invalidHash=(Get-FileHash $evidencePath).Hash
         $partial=Export
+        Assert ($partial.finalization.attention.items.code -contains 'SUPPLEMENTAL_EVIDENCE_UNREADABLE' -and $partial.finalization.attention.items.code -contains 'CLEANUP_UNCONFIRMED') 'Summary hid malformed supplement'
         Assert ($partial.diagnostics -contains 'SUPPLEMENTAL_EVIDENCE_UNREADABLE') 'Invalid supplement diagnostic missing'
         Assert ($partial.cleanup.source.status -eq 'UNAVAILABLE' -and $partial.unverifiedScope.source.status -eq 'UNAVAILABLE') 'Invalid supplement presented as available'
         Assert ($partial.cleanup.status -eq 'NOT_RECORDED' -and $partial.unverifiedScope.status -eq 'NOT_RECORDED' -and -not $partial.cleanup.value.outcome) 'Invalid supplement invented facts'
@@ -86,6 +89,8 @@ try {
     JsonFile (Join-Path $workspace '.ai-workspace/specs/features/Example/findings/CHECK-1.json') $finding
     $report=Export
     Assert (@($report.diagnostics|Where-Object {$_ -like 'FINDING_UNREADABLE:*'}).Count -eq 1) 'Unsupported closure hidden'
+    Assert ($report.finalization.tests -eq 'RECORDED_PASSES' -and $report.finalization.attention.items.code -contains 'FINDING_UNREADABLE' -and $report.finalization.attention.items.code -contains 'FINDING_COVERAGE_INCOMPLETE') 'Passing tests concealed unreadable closure'
+    Assert ($report.finalization.attention.items.code -contains 'PACKAGE_NOT_CONFIRMED' -and $report.finalization.attention.items.code -contains 'REMOTE_NOT_CONFIRMED') 'Summary invented package/remote verification'
     $failed=$false
     try {& (Join-Path $scripts 'export-review.ps1') -WorkspacePath $workspace -Feature Example -TaskId '../escape'|Out-Null}catch{$failed=$true}
     Assert $failed 'Task path escape accepted'

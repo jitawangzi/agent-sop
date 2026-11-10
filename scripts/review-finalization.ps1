@@ -63,3 +63,44 @@ function Get-AiSopFinalizationReview([string]$Workspace,[string]$AttachmentsMani
     }catch{$result.documents='UNAVAILABLE';$result.diagnostics+=,$_.Exception.Message}
     return $result
 }
+
+# 从本次导出的原字段派生，区分已知问题与未核对项；不产生整体 PASS。
+function Get-AiSopReviewAttention($Report) {
+    $items=[Collections.Generic.List[object]]::new()
+    function AddAttention([string]$Category,[string]$Code,[string]$Source,[string]$Observation){
+        $items.Add(@{category=$Category;code=$Code;source=$Source;observation=$Observation})
+    }
+    if($Report.findingCoverage -eq 'INCOMPLETE'){AddAttention 'ATTENTION' 'FINDING_COVERAGE_INCOMPLETE' 'findingCoverage' $Report.findingCoverage}
+    for($i=0;$i -lt @($Report.diagnostics).Count;$i++){
+        $code=([string]$Report.diagnostics[$i] -split ':',2)[0]
+        # 自由文本只保留原字段引用，不复制未知内容。
+        AddAttention 'ATTENTION' $code "diagnostics[$i]" 'CONSULT_SOURCE'
+    }
+    $open=@($Report.findings|Where-Object declaredStatus -in @('OPEN','IN_REVIEW'))
+    if($open.Count){AddAttention 'ATTENTION' 'RELATED_FINDINGS_UNRESOLVED' 'findings' ([string]$open.Count)}
+    $cleanup=$Report.cleanup.value.outcome
+    if($cleanup -eq 'FAILED'){AddAttention 'ATTENTION' 'CLEANUP_FAILED' 'cleanup' 'FAILED'}
+    elseif($cleanup -ne 'PASSED'){AddAttention 'UNVERIFIED' 'CLEANUP_UNCONFIRMED' 'cleanup' 'NOT_CONFIRMED'}
+    if($Report.cleanup.source.status -ne 'PRESENT_UNBOUND'){AddAttention 'UNVERIFIED' 'SUPPLEMENTAL_EVIDENCE_UNAVAILABLE' 'cleanup.source' 'NOT_CONFIRMED'}
+    if($Report.unverifiedScope.status -eq 'NOT_RECORDED'){AddAttention 'UNVERIFIED' 'LIMITATIONS_NOT_RECORDED' 'unverifiedScope' 'NOT_RECORDED'}
+    if($Report.finalization.tests -ne 'RECORDED_PASSES'){AddAttention 'ATTENTION' 'TEST_RECORDS_NEED_REVIEW' 'finalization.tests' $Report.finalization.tests}
+    if($Report.currentInputCheck -eq 'NOT_REQUESTED'){AddAttention 'UNVERIFIED' 'CURRENT_INPUTS_NOT_CHECKED' 'currentInputCheck' 'NOT_REQUESTED'}
+    elseif($Report.finalization.currentInputs -ne 'MATCH'){AddAttention 'ATTENTION' 'CURRENT_INPUTS_NOT_CONFIRMED' 'latest' 'NOT_CONFIRMED'}
+    if(@($Report.latest|Where-Object inputIntegrity -eq 'UNAVAILABLE').Count){AddAttention 'ATTENTION' 'INPUT_EVIDENCE_UNAVAILABLE' 'latest' 'UNAVAILABLE'}
+    $missingEvidence=@(foreach($run in $Report.latest){
+        foreach($ref in @($run.log)+@($run.reports)){if($ref -and $ref.status -in @('MISSING','UNAVAILABLE','CHANGED')){$ref}}
+    })
+    if(@($Report.latest|Where-Object {-not $_.log -and -not @($_.reports).Count}).Count){AddAttention 'UNVERIFIED' 'RUN_EVIDENCE_NOT_RECORDED' 'latest' 'NOT_RECORDED'}
+    if($missingEvidence.Count){AddAttention 'ATTENTION' 'RUN_EVIDENCE_UNAVAILABLE' 'latest' ([string]$missingEvidence.Count)}
+    if(@($Report.repositories|Where-Object status -ne AVAILABLE).Count){AddAttention 'UNVERIFIED' 'REPOSITORY_INVENTORY_INCOMPLETE' 'repositories' 'NOT_CONFIRMED'}
+    foreach($name in @('documents','committedBytes','package','remote')){
+        $value=[string]$Report.finalization[$name]
+        if($value -in @('NEEDS_ATTENTION','UNAVAILABLE')){AddAttention 'ATTENTION' ($name.ToUpperInvariant()+'_NEEDS_REVIEW') ("finalization.$name") $value}
+        elseif($value -in @('NOT_REQUESTED','NOT_CHECKED','NOT_CONFIRMED')){AddAttention 'UNVERIFIED' ($name.ToUpperInvariant()+'_NOT_CONFIRMED') ("finalization.$name") $value}
+    }
+    if($Report.delivery.status -ne 'NOT_REQUESTED' -and ($Report.delivery.coverage -ne 'COMPLETE' -or @($Report.delivery.items|Where-Object status -ne COMMITTED).Count)){
+        AddAttention 'ATTENTION' 'DELIVERY_NEEDS_REVIEW' 'delivery' 'CONSULT_SOURCE'
+    }
+    return @{derived=$true;blocking=$false;items=$items.ToArray();attentionCount=@($items|Where-Object category -eq ATTENTION).Count;unverifiedCount=@($items|Where-Object category -eq UNVERIFIED).Count;
+        limits=@('Counts summarize this export only; zero does not mean acceptance or approval.','Unresolved findings are selected by declared path scope; unknown coverage remains explicit.','Unavailable or unrequested checks do not create completion requirements.','Inspect referenced original records; this section is not a new authority.')}
+}

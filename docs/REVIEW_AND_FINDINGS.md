@@ -15,6 +15,30 @@
 
 开始修改时按实际范围查看相关未关闭发现；未知范围标为未判断。路径匹配只是提示，重命名、跨模块耦合仍由执行者判断。无关历史发现不阻塞当前任务。已有 FollowUp 继续管理文档、用例及验证待办，不把源码缺陷伪装成 verification 待办。
 
+### 规范写入（按需）
+
+`write-finding.ps1` 复用当前 finding Schema 和两阶段事务，不新增任务状态或完成条件。创建/更新/显式关闭统一生成必填结构，原 history 仅追加；任务通过、字段合法或导出成功均不会自动关闭发现。仍须在当前任务已有写入授权下使用。
+
+在宿主根调用，DraftPath 为工作区相对 JSON 对象路径，建议放本任务证据目录。创建草稿只需 severity/title/scope/trigger/impact/source；id、schemaVersion、初始 OPEN 和 history 由入口生成：
+
+```powershell
+pwsh -NoProfile -File ./.ai-sop/scripts/write-finding.ps1 -WorkspacePath . -Feature Example -Id CHECK-1 -Operation Create -Reason '已复现问题' -DraftPath .ai-workspace/specs/features/Example/tasks/change-one/finding-draft.json
+```
+
+修改前读取目标文件并保存其 SHA256，Update/Close/Dismiss/Reopen 都带 `-ExpectedSha256 <读取时的64位摘要>`；不要在不了解新内容时自动刷新摘要重试。Update 草稿仅覆盖指定文本字段，可显式设置 OPEN/IN_REVIEW；不能通过草稿篡改编号、历史或直接切成终态。已关闭/驳回记录须先显式 Reopen。来源与已有修复信息保留，Git 和 history 保存历次轨迹；不自动修改旧发现或历史任务。
+
+关闭草稿提供 `closure` 对象（reason、evidence 必填，reviewers/result/limits 等按实际证据填写），另显式选择修复任务、提交及回归记录：
+
+```powershell
+# 在 PowerShell 内用数组传多个真实提交/runId；替换示例中的占位值。
+$selection=@{RepairFeature='Example';RepairTaskId='repair-one';Commits=@('<完整提交>');RegressionRunIds=@('<真实回归runId>')}
+& ./.ai-sop/scripts/write-finding.ps1 -WorkspacePath . -Feature Example -Id CHECK-1 -Operation Close -Reason '修复与回归已审核' -ExpectedSha256 '<读取时摘要>' -DraftPath .ai-workspace/specs/features/Example/tasks/change-one/closure-draft.json @selection
+```
+
+入口从所选 task.json 生成 repair.feature/taskId，验证显式 runId 唯一存在且为 PASSED、输入稳定的 test 记录，再生成 regressionRunIds；不自行选择最新 PASS，不从当前 HEAD 猜修复提交。它只核对结构及引用，不证明提交内容、日志真实性、回归覆盖或审核批准，控制器仍须核对原始证据。跨输入批次允许分别引用，不能伪造一个共同 inputDigest；可在 closure.limits 说明。Dismiss 也须新提供 closure，不需要虚构修复提交或回归。
+
+坏草稿、非法引用、重复创建、过期摘要均不写记录；事务在同一文件锁内再比较旧快照，避免两个执行者互相覆盖。已有记录不符合 Schema 时明确拒绝，保留原材料，需依据实际证据修正后再使用，不自动猜缺失字段。沿用事务恢复语义：PREPARED 且目标未全部写入时恢复旧快照；已全部写入或 COMMITTED 时恢复新快照；沿用工作区隔离恢复目录。路径拒绝上级越界与链接后代。新旧引擎不要同时写同一工作区；旧引擎不理解新增 FINDING 事务类型，未决记录应由本版或更新版本恢复。
+
 ## 只读导出
 
 宿主项目根运行：
@@ -44,6 +68,8 @@ Feature/taskId 替换为实际任务；省略 CheckCurrent 只展示已记录事
 ## 减少验证和收尾返工
 
 定稿前可给现有 `export-review.ps1` 加 `-AttachmentsManifest <工作区相对附件清单>`，复用打包所需的JSON文件路径数组。finalization只派生最新验证记录、当前输入是否已确认、所声明材料是否观察到提交字节匹配，以及显式文件/简单Markdown本地链接是否缺失。正文内联链接会检查，代码示例、外部链接、引用式链接和复杂Markdown不作为完整扫描范围；单份Markdown超过1MiB记为不可检查。缺失或异常逐项提示，不中断完整审查导出、不新增Complete门禁，也不把文档存在当作审核批准。
+
+`finalization.attention` 从本次导出的现有字段统一汇总：发现覆盖不完整/不可读、相关未关闭发现、清理失败或未知、补充材料缺失、验证证据缺失、交付未确认等。每项给 code 和原字段 source；ATTENTION 表示需检查的观察结果，UNVERIFIED 表示尚未核实或未请求，计数不合成为整体 PASS。即使 tests=RECORDED_PASSES、currentInputs=MATCH，也必须保留 FINDING_UNREADABLE 等诊断。package/remote 未检查仍为未检查，不把可选检查变成必做项；无关历史发现不阻塞当前任务。这个汇总不回写记录，不证明读到的证据内容正确。
 
 本地链接包括相对路径、本机绝对路径及无主机名的本地 `file:///` URI；Windows 的 `C:/...`、`C:\...` 和 `/C:/...` 不作为网址跳过。相对路径以文档所在目录为基准，绝对路径直接解析，仍只检查工作区内且不经过链接后代的目标。缺失记 MISSING，越界、网络共享、带主机名的file URI（包括localhost）和非 Windows 上的 Windows 绝对路径记 UNAVAILABLE；不访问网络共享。路径中的空格等字符须按链接语法编码。网页协议与锚点继续跳过，提示仍非阻断。这不扩展为完整 Markdown 语法或跨平台实跑承诺。
 

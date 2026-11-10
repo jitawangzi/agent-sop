@@ -141,4 +141,5 @@ $result.preparation=[ordered]@{
 }
 $result.incremental=Get-AiSopIncrementalReview -Workspace $WorkspacePath -PreviousReport $PreviousReview -Repositories $repositories -Latest $latest
 $result.finalization=Get-AiSopFinalizationReview $WorkspacePath $AttachmentsManifest $latest $delivery
+$result.finalization.attention=Get-AiSopReviewAttention $result
 $result|ConvertTo-Json -Depth 24

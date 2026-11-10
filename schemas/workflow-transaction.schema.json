@@ -34,7 +34,8 @@
         "SUSPEND",
         "CANCEL",
         "CHECKPOINT",
-        "RECOVER"
+        "RECOVER",
+        "WRITE_FINDING"
       ]
     },
     "phase": {
@@ -204,7 +205,8 @@
             "SESSION",
             "OWNER",
             "COMMAND_GRANT",
-            "TASK"
+            "TASK",
+            "FINDING"
           ]
         },
         "schemaId": {
@@ -212,7 +214,8 @@
             "SESSION",
             "OWNER",
             "COMMAND_GRANT",
-            "TASK"
+            "TASK",
+            "FINDING"
           ]
         },
         "before": {

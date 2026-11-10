@@ -69,7 +69,7 @@ Feature/taskId 替换为实际任务；省略 CheckCurrent 只展示已记录事
 
 定稿前可给现有 `export-review.ps1` 加 `-AttachmentsManifest <工作区相对附件清单>`，复用打包所需的JSON文件路径数组。finalization只派生最新验证记录、当前输入是否已确认、所声明材料是否观察到提交字节匹配，以及显式文件/简单Markdown本地链接是否缺失。正文内联链接会检查，代码示例、外部链接、引用式链接和复杂Markdown不作为完整扫描范围；单份Markdown超过1MiB记为不可检查。缺失或异常逐项提示，不中断完整审查导出、不新增Complete门禁，也不把文档存在当作审核批准。
 
-`finalization.attention` 从本次导出的现有字段统一汇总：发现覆盖不完整/不可读、相关未关闭发现、清理失败或未知、补充材料缺失、验证证据缺失、交付未确认等。每项给 code 和原字段 source；ATTENTION 表示需检查的观察结果，UNVERIFIED 表示尚未核实或未请求，计数不合成为整体 PASS。即使 tests=RECORDED_PASSES、currentInputs=MATCH，也必须保留 FINDING_UNREADABLE 等诊断。package/remote 未检查仍为未检查，不把可选检查变成必做项；无关历史发现不阻塞当前任务。这个汇总不回写记录，不证明读到的证据内容正确。
+`finalization.attention` 从本次导出的现有字段统一汇总：发现覆盖不完整/不可读、相关未关闭发现、清理失败或未知、补充材料缺失、验证证据缺失、交付未确认等。每项给 code 和原字段 source；ATTENTION 表示需检查的观察结果，UNVERIFIED 表示尚未核实或未请求，计数不合成为整体 PASS。即使 tests=RECORDED_PASSES、currentInputs=MATCH，也必须保留 FINDING_UNREADABLE 等诊断。逐一核对 `latest` 中所有验证批次，编译和测试均适用：非 PASSED、非零退出码或输入不稳定时加入 `LATEST_VERIFICATION_NEEDS_REVIEW`，source 精确指向 `latest[序号]` 的原始批次。`tests` 仍只表示测试结果，不能解释成编译通过；同批后续成功时，旧失败保留在 history，不再当作最新失败提示。package/remote 未检查仍为未检查，不把可选检查变成必做项；无关历史发现不阻塞当前任务。这个汇总不回写记录，不证明读到的证据内容正确。
 
 本地链接包括相对路径、本机绝对路径及无主机名的本地 `file:///` URI；Windows 的 `C:/...`、`C:\...` 和 `/C:/...` 不作为网址跳过。相对路径以文档所在目录为基准，绝对路径直接解析，仍只检查工作区内且不经过链接后代的目标。缺失记 MISSING，越界、网络共享、带主机名的file URI（包括localhost）和非 Windows 上的 Windows 绝对路径记 UNAVAILABLE；不访问网络共享。路径中的空格等字符须按链接语法编码。网页协议与锚点继续跳过，提示仍非阻断。这不扩展为完整 Markdown 语法或跨平台实跑承诺。
 

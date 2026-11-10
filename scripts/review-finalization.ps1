@@ -84,6 +84,13 @@ function Get-AiSopReviewAttention($Report) {
     if($Report.cleanup.source.status -ne 'PRESENT_UNBOUND'){AddAttention 'UNVERIFIED' 'SUPPLEMENTAL_EVIDENCE_UNAVAILABLE' 'cleanup.source' 'NOT_CONFIRMED'}
     if($Report.unverifiedScope.status -eq 'NOT_RECORDED'){AddAttention 'UNVERIFIED' 'LIMITATIONS_NOT_RECORDED' 'unverifiedScope' 'NOT_RECORDED'}
     if($Report.finalization.tests -ne 'RECORDED_PASSES'){AddAttention 'ATTENTION' 'TEST_RECORDS_NEED_REVIEW' 'finalization.tests' $Report.finalization.tests}
+    # tests 字段只概括测试；逐一引用所有最新批次，避免编译失败被测试 PASS 掩盖。
+    for($i=0;$i -lt @($Report.latest).Count;$i++){
+        $run=$Report.latest[$i]
+        if($run.outcome -ne 'PASSED' -or $run.exitCode -ne 0 -or $run.inputsStable -ne $true){
+            AddAttention 'ATTENTION' 'LATEST_VERIFICATION_NEEDS_REVIEW' "latest[$i]" 'CONSULT_SOURCE'
+        }
+    }
     if($Report.currentInputCheck -eq 'NOT_REQUESTED'){AddAttention 'UNVERIFIED' 'CURRENT_INPUTS_NOT_CHECKED' 'currentInputCheck' 'NOT_REQUESTED'}
     elseif($Report.finalization.currentInputs -ne 'MATCH'){AddAttention 'ATTENTION' 'CURRENT_INPUTS_NOT_CONFIRMED' 'latest' 'NOT_CONFIRMED'}
     if(@($Report.latest|Where-Object inputIntegrity -eq 'UNAVAILABLE').Count){AddAttention 'ATTENTION' 'INPUT_EVIDENCE_UNAVAILABLE' 'latest' 'UNAVAILABLE'}

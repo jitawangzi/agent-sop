@@ -76,6 +76,51 @@ try {
     $report=Export -Current
     Assert (@($report.latest|Where-Object currentInputs -ne MATCH).Count -eq 0) 'Current input comparison missing'
     Assert ($report.preparation.observedInputDigest -eq $report.latest[0].inputDigest) 'Observed input digest lost'
+    # 隔离其他关注项，真实导出必须显示所有最新批次异常，不能由测试 PASS 掩盖编译失败。
+    $originalTask=[IO.File]::ReadAllText($taskPath)
+    $originalSupplement=[IO.File]::ReadAllText($evidencePath)
+    try{
+        JsonFile $evidencePath @{limitations=@('fixture');cleanup=@{outcome='PASSED'}}
+        $cases=@(
+            @{kind='compile';outcome='FAILED';exitCode=1;stable=$true},
+            @{kind='compile';outcome='TIMED_OUT';exitCode=124;stable=$true},
+            @{kind='compile';outcome='INTERRUPTED';exitCode=130;stable=$true},
+            @{kind='compile';outcome='PASSED';exitCode=0;stable=$false},
+            @{kind='compile';outcome='PASSED';exitCode=1;stable=$true},
+            @{kind='test';outcome='FAILED';exitCode=1;stable=$true}
+        )
+        foreach($case in $cases){
+            $bad=$compile.Clone();$bad.kind=$case.kind;$bad.batch='affected';$bad.runId='4'*32
+            $bad.outcome=$case.outcome;$bad.exitCode=$case.exitCode;$bad.inputsStable=$case.stable
+            $task.verifications=@($run,$pass,$compile,$bad)
+            JsonFile $taskPath $task
+            $hash=(Get-FileHash $taskPath).Hash
+            $attentionReport=Export -Current -SelectedScope unrelated
+            Assert ($attentionReport.finalization.currentInputs -eq 'MATCH') 'Failure fixture inputs must match'
+            if($case.kind -eq 'compile'){Assert ($attentionReport.finalization.tests -eq 'RECORDED_PASSES') 'Compile fixture must retain passing tests'}
+            $items=@($attentionReport.finalization.attention.items|Where-Object code -eq 'LATEST_VERIFICATION_NEEDS_REVIEW')
+            Assert ($items.Count -eq 1 -and $attentionReport.finalization.attention.attentionCount -gt 0) 'Latest abnormal verification missing from attention summary'
+            Assert ($items[0].source -match '^latest\[(\d+)\]$') 'Attention lacks an exact original batch reference'
+            Assert ($attentionReport.latest[[int]$Matches[1]].runId -eq $bad.runId) 'Attention points at the wrong batch'
+            Assert (-not $attentionReport.finalization.attention.blocking -and $attentionReport.history.Count -eq 4 -and (Get-FileHash $taskPath).Hash -eq $hash) 'Attention changed state, history or blocking policy'
+        }
+        # 同一批次后来恢复成功：旧失败保留在 history，不把它误当最新失败。
+        $bad=$compile.Clone();$bad.runId='5'*32;$bad.outcome='FAILED';$bad.exitCode=1
+        $task.verifications=@($bad,$run,$pass,$compile)
+        JsonFile $taskPath $task
+        $recovered=Export -Current -SelectedScope unrelated
+        Assert ($recovered.finalization.attention.attentionCount -eq 0 -and $recovered.history.Count -eq 4) 'Historical failure treated as latest failure or history lost'
+        # 两个不同失败批次均须可定位，不能只保留一个聚合成功状态。
+        $other=$bad.Clone();$other.runId='6'*32;$other.batch='second-compile'
+        $task.verifications=@($run,$pass,$bad,$other)
+        JsonFile $taskPath $task
+        $multiple=Export -Current -SelectedScope unrelated
+        Assert (@($multiple.finalization.attention.items|Where-Object code -eq 'LATEST_VERIFICATION_NEEDS_REVIEW').Count -eq 2) 'Independent latest failed batches collapsed'
+    }finally{
+        [IO.File]::WriteAllText($taskPath,$originalTask)
+        [IO.File]::WriteAllText($evidencePath,$originalSupplement)
+        $task=ConvertFrom-AiSopWorkflowJson $originalTask -AsHashtable
+    }
     [IO.File]::WriteAllText((Join-Path $workspace 'src/input.txt'),'after')
     $report=Export -Current
     Assert (@($report.latest|Where-Object currentInputs -ne STALE).Count -eq 0) 'Stale input not detected'

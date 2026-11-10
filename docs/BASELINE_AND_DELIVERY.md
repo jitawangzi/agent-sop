@@ -42,6 +42,10 @@ T1/T2 Start 默认仍为 500ms、8MiB。项目可在 `.ai-workspace/context/star
 
 结果目录的 `environment.json` 记录 pwsh/git/node/rg/svn/svnadmin 的实际路径和版本观察。默认测试目录探测版本；自定义夹具目录仅解析路径，版本标 NOT_OBSERVED。找不到工具标 MISSING，版本读取失败标 UNAVAILABLE；解析或版本成功都不代表依赖功能已经验收。Git 安装用例及 SVN 起点用例缺依赖会真实失败，不再静默跳过。清单仅含这些工具的路径和版本，不采集其他环境变量；本机路径随证据归档前仍须核对范围。
 
+版本探测沿用每次10秒执行及原输出排空/清理预算。`environment.json` 的每个已执行探测保留最终有效退出码、父进程原始退出码、原始诊断、PID、尽力采集的启动时间及输出路径；另存 `<工具>.version.probe.json`，原生失败记录保留在 `<工具>.version.failure.json`，不以摘要覆盖。身份采集不完整会明确标记，不能按裸 PID 或工具名称终止未知进程。最终观察在 Dispose 之后生成，收尾抛错或输出排空超时都保留为清理未确认，即使父进程退出0或 Cleanup.confirmed 为真。
+
+启动异常附带是否已启动、可得身份及最终清理事实；未启动或已确认清理的启动失败仍仅记版本 UNAVAILABLE，缺少清理事实不能推断安全。普通非零退出、空版本且清理已确认时，仍仅记版本 UNAVAILABLE；缺少工具继续由实际依赖测试判断。清理未确认是本次运行器执行失败：仍运行全部发现的套件，`results.json` 及 summary 的 passed/failed 保留真实套件结果，summary 的 `outcome=FAILED`、`environmentCleanupUnconfirmed` 和运行器退出1单独表达准备阶段未收尾。Quiet 模式也输出此诊断及报告路径。套件全通过不能覆盖准备阶段清理未知；这不增加 T2 完成门禁、不自动安装工具或终止身份未知的后代。
+
 慢套件 native-harness-adapters 在并行入口中最多预留两个现有执行名额，其他套件每套一个；总名额不超过 MaxParallel。默认串行和 MaxParallel=1 仍逐项执行。Hook用例分为Cursor链与其余客户端链两组，每组使用独立临时目录及全部独立注册表，各组内部保持串行、重放及生命周期顺序。默认串行仍使用原all链顺序；并行时两组不共享权限、文件或任务状态。每例仍启动真实冷进程，保留全部断言及25秒/900秒原限制；不缓存权限或复用业务进程。任一并行回调失败便停止领取排队项，等待已启动回调结束后抛原错误。Hook超时或stdin故障先请求终止，再等待close才报告收尾确认；最多额外2秒仅用于清理，不延长25秒执行限制。清理无法确认时报告原故障、PID和未知状态，不再派发、不删除夹具，并尝试保存cleanup-unconfirmed.json供恢复；已有错误不变为成功。
 
 HOOK_PROCESS_METRICS 增加 group 与 peakCalls，HOOK_GROUPS_COMPLETE 记录实际分组与 workers；results.json 记录套件预留 Workers。比较性能时核对原 hook/task/command 调用次数和断言保留，再分别报告阶段与总耗时。预留额度可能减少其他套件的重叠，负载差异也影响耗时；不能把单次总耗时变化全部归因于此优化。

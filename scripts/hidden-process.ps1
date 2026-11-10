@@ -195,9 +195,25 @@ function Start-AiSopHiddenProcess {
         if ($outStream) { $copies.Add($proc.StandardOutput.BaseStream.CopyToAsync($outStream, 81920, $cancellation.Token)) }
         if ($errStream) { $copies.Add($proc.StandardError.BaseStream.CopyToAsync($errStream, 81920, $cancellation.Token)) }
     } catch {
-        $cleanup=Invoke-AiSopProcessCleanup -Process $proc -Started $started -Cancellation $cancellation -Copies $copies.ToArray() -Resources $streams.ToArray() -BudgetMilliseconds $CleanupTimeoutMilliseconds
-        if ($cleanup.diagnostic) { Write-Warning $cleanup.diagnostic }
-        throw
+        $startError=$_
+        $observation=@{started=$started;pid=$null;startedAt=$null;cleanupConfirmed=$false;diagnostic='PROCESS_START_FAILED: '+$startError.Exception.Message;cleanupDiagnostic='';rawExitCode=$null}
+        if($started){
+            try{$observation.pid=$proc.Id;$observation.startedAt=$proc.StartTime.ToUniversalTime().ToString('o')}catch{}
+        }
+        # Preserve the original failure before cleanup; attach facts even when no handle can be returned.
+        $failureHandle=@{FailurePath=$FailurePath;FailureCode=125;ProcessId=$observation.pid;Diagnostic=$observation.diagnostic}
+        Write-AiSopHiddenProcessFailure $failureHandle
+        try{
+            $cleanup=Invoke-AiSopProcessCleanup -Process $proc -Started $started -Cancellation $cancellation -Copies $copies.ToArray() -Resources $streams.ToArray() -BudgetMilliseconds $CleanupTimeoutMilliseconds
+            $observation.cleanupConfirmed=($cleanup.confirmed -eq $true -and (-not $started -or $cleanup.exited -eq $true))
+            $observation.cleanupDiagnostic=$cleanup.diagnostic;$observation.rawExitCode=$cleanup.exitCode
+        }catch{$observation.cleanupDiagnostic='PROCESS_CLEANUP_FAILED: '+$_.Exception.Message}
+        if($observation.cleanupDiagnostic){Write-Warning $observation.cleanupDiagnostic -WarningAction Continue}
+        $failureHandle.Diagnostic=(@($failureHandle.Diagnostic,$observation.cleanupDiagnostic)|Where-Object {$_}) -join '; '
+        Write-AiSopHiddenProcessFailure $failureHandle
+        $observation.diagnostic=$failureHandle.Diagnostic
+        $startError.Exception.Data['AiSop.ProcessStartObservation']=$observation
+        $PSCmdlet.ThrowTerminatingError($startError)
     }
     $handle=[pscustomobject]@{
         PSTypeName='AiSopHiddenProcess'; Inner=$proc; CopyTasks=$copies; Streams=$streams; CopyCancellation=$cancellation

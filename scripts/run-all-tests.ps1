@@ -133,7 +133,7 @@ foreach ($file in $allFiles) { $queue.Enqueue($file) }
 $capacity=if (-not $Parallel) { 1 } elseif ($MaxParallel -gt 0) { $MaxParallel } else { 4 }
 # 全量默认入口探测版本；显式夹具目录只解析路径，避免嵌套运行器重复启动版本进程。
 $testEnvironment=Get-AiSopTestEnvironment -ToolDirectory $ToolDirectory -ReportDirectory $script:LogRoot -ReadVersions:($TestsRoot -eq $defaultTestRoot)
-@{tools=$testEnvironment.tools;limits=$testEnvironment.limits}|ConvertTo-Json -Depth 6|Set-Content (Join-Path $script:LogRoot environment.json)
+@{tools=$testEnvironment.tools;cleanupUnconfirmed=$testEnvironment.cleanupUnconfirmed;limits=$testEnvironment.limits}|ConvertTo-Json -Depth 6|Set-Content (Join-Path $script:LogRoot environment.json)
 @{policy=$schedule;diagnostic=$scheduleDiagnostic;maxParallel=$capacity;suiteTimeoutSeconds=$SuiteTimeoutSeconds;files=@($allFiles.FullName)}|ConvertTo-Json -Depth 5|Set-Content (Join-Path $script:LogRoot schedule.json)
 if (-not $Quiet) {
     Write-Host "Running $($allFiles.Count) test suite(s), max concurrent=$capacity; per-suite limit=$($SuiteTimeoutSeconds)s" -ForegroundColor Cyan
@@ -177,10 +177,14 @@ try {
     # Also runs on interruption/runner error; Dispose never waits indefinitely.
     foreach ($job in $jobs) { if ($job.process) { $job.process.Dispose() } }
 }
+$environmentFailed=$testEnvironment.cleanupUnconfirmed -gt 0
 $failed=@($script:Results | Where-Object { -not $_.Passed }).Count
 $passed=$script:Results.Count - $failed
-@{elapsedMs=$wallClock.ElapsedMilliseconds;discovered=$allFiles.Count;executed=$script:Results.Count;passed=$passed;failed=$failed;schedule=$schedule;maxParallel=$capacity}|ConvertTo-Json|Set-Content (Join-Path $script:LogRoot summary.json)
-if (-not $Quiet -or $failed) {
+@{outcome=if($failed -or $environmentFailed){'FAILED'}else{'PASSED'};environmentCleanupUnconfirmed=$testEnvironment.cleanupUnconfirmed;environmentReport=(Join-Path $script:LogRoot environment.json);elapsedMs=$wallClock.ElapsedMilliseconds;discovered=$allFiles.Count;executed=$script:Results.Count;passed=$passed;failed=$failed;schedule=$schedule;maxParallel=$capacity}|ConvertTo-Json|Set-Content (Join-Path $script:LogRoot summary.json)
+if (-not $Quiet -or $failed -or $environmentFailed) {
     Write-Host "$passed/$($script:Results.Count) checks passed; results: $(Join-Path $script:LogRoot 'results.json')"
 }
-if ($failed) { exit 1 } else { exit 0 }
+if($environmentFailed){
+    Write-Host "ENVIRONMENT_CLEANUP_UNCONFIRMED: $($testEnvironment.cleanupUnconfirmed) version probe(s); run FAILED despite individual suite outcomes. Inspect $(Join-Path $script:LogRoot environment.json)" -ForegroundColor Red
+}
+if ($failed -or $environmentFailed) { exit 1 } else { exit 0 }

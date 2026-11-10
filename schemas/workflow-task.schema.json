@@ -653,6 +653,14 @@
         "mode"
       ],
       "properties": {
+        "budget": {
+          "type": "object", "additionalProperties": false,
+          "required": ["BudgetMilliseconds", "MaxBytes"],
+          "properties": {
+            "BudgetMilliseconds": {"type": "integer", "minimum": 1, "maximum": 60000},
+            "MaxBytes": {"type": "integer", "minimum": 1}
+          }
+        },
         "status": {
           "enum": [
             "CAPTURED",

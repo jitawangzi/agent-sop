@@ -27,6 +27,7 @@ try{
         $fault='[IO.Directory]::CreateDirectory((Join-Path $ResultRoot result.json))|Out-Null; '
         if($reportMode -eq 'primary'){$fault+='@{id=$before.Id;ticks=$before.Inner.StartTime.ToUniversalTime().Ticks}|ConvertTo-Json|Set-Content (Join-Path $ResultRoot rescue-id.json); throw ''INJECTED_PRIMARY_BEFORE_DISPOSE''; '}
         $copy=Join-Path $root "$reportMode.worker.ps1"
+        Copy-Item -LiteralPath (Join-Path $PSScriptRoot fixtures/owned-process.ps1) -Destination (Join-Path $root owned-process.ps1) -Force
         [IO.File]::WriteAllText($copy,$workerSource.Replace($anchor,$fault+$anchor))
         $out=Join-Path $root "$reportMode.stdout.log";$err=Join-Path $root "$reportMode.stderr.log"
         $worker=Start-AiSopHiddenProcess -FilePath (Get-Process -Id $PID).Path -ArgumentList @('-NoProfile','-File',$copy,'-Legacy',$legacy,'-Current',(Join-Path $scripts hidden-process.ps1),'-Mode','six','-ResultRoot',(Join-Path $root $reportMode)) -RedirectStandardOutput $out -RedirectStandardError $err -TimeoutSeconds 90 -PassThru

@@ -2,27 +2,12 @@
 param([string]$Legacy,[string]$Current,[ValidateSet('six','seven')][string]$Mode,[string]$ResultRoot)
 $ErrorActionPreference='Stop'
 [IO.Directory]::CreateDirectory($ResultRoot)|Out-Null
-$owned=[Collections.Generic.List[Diagnostics.Process]]::new()
+. (Join-Path $PSScriptRoot 'owned-process.ps1')
+$owned=New-AiSopTestProcesses
 $checks=[Collections.Generic.List[string]]::new()
 $primary='';$cleanupErrors=[Collections.Generic.List[string]]::new()
 function Assert($ok,[string]$message){if(-not $ok){throw $message}}
-function Track($handle){
-    $process=$null
-    try{
-        if($handle.Inner.HasExited){return}
-        try{$process=[Diagnostics.Process]::GetProcessById($handle.Id);[void]$process.Handle}
-        catch{if($handle.Inner.HasExited){return};throw}
-        Assert ($process.StartTime.ToUniversalTime().Ticks -eq $handle.Inner.StartTime.ToUniversalTime().Ticks) 'Fixture identity mismatch'
-        $owned.Add($process);$process=$null
-    }catch{
-        $registrationFailure=$_
-        # The child was started by this exact Process object. A failed lookup
-        # must not lose it or authorize killing the unmatched candidate PID.
-        try{if(-not $handle.Inner.HasExited){$handle.Inner.Kill($true);Assert ($handle.Inner.WaitForExit(3000)) 'Unregistered fixture rescue timed out'};$handle.Dispose()}
-        catch{$cleanupErrors.Add('UNREGISTERED_RESCUE_FAILED: '+$_.ToString())}
-        throw $registrationFailure
-    }finally{if($process){try{$process.Dispose()}catch{$cleanupErrors.Add('CANDIDATE_DISPOSE_FAILED: '+$_.ToString())}}}
-}
+function Track($handle){ Register-AiSopTestProcess -Handle $handle -Owned $owned }
 function Sleeper([string]$name){
     $handle=Start-AiSopHiddenProcess -FilePath (Get-Process -Id $PID).Path -ArgumentList @('-NoProfile','-Command','Start-Sleep 120') -RedirectStandardOutput (Join-Path $ResultRoot "$name.out") -RedirectStandardError (Join-Path $ResultRoot "$name.err") -PassThru
     Track $handle
@@ -95,10 +80,8 @@ try{
 }catch{$primary=$_.ToString()+[Environment]::NewLine+$_.ScriptStackTrace;throw}
 finally{
     # Separate real handles ensure a broken helper cannot leak probe children.
-    foreach($process in $owned){
-        try{if(-not $process.HasExited){$process.Kill($true);Assert ($process.WaitForExit(3000)) 'Fixture rescue timed out'};$process.Dispose()}
-        catch{$cleanupErrors.Add($_.ToString())}
-    }
+    $rescue=Close-AiSopTestProcesses -Owned $owned
+    foreach($diagnostic in $rescue.diagnostics){$cleanupErrors.Add($diagnostic)}
     try{@{mode=$Mode;checks=@($checks.ToArray());failure=$primary;rescueConfirmed=($cleanupErrors.Count -eq 0);cleanupErrors=@($cleanupErrors.ToArray())}|ConvertTo-Json -Depth 5|Set-Content (Join-Path $ResultRoot result.json)}
     catch{$cleanupErrors.Add('UPGRADE_REPORT_UNAVAILABLE: '+$_.ToString())}
     if($cleanupErrors.Count){Write-Warning ($cleanupErrors -join '; ');if(-not $primary){throw 'UPGRADE_FIXTURE_CLEANUP_FAILED'}}

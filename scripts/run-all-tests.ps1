@@ -26,7 +26,8 @@ function Start-Suite {
     $job=[pscustomobject]@{name=$Name;file=$File;process=$null;outFile=$outFile;errFile=$errFile;failureFile=$failureFile;diagnostic='';limit=$Limit}
     try {
         $heartbeat=if ($Quiet) { 0 } else { $HeartbeatSeconds }
-        $job.process=Start-AiSopHiddenProcess -FilePath (Get-Process -Id $PID).Path -ArgumentList (@('-NoProfile','-File',$File)+$ExtraArguments) -RedirectStandardOutput $outFile -RedirectStandardError $errFile -FailurePath $failureFile -TimeoutSeconds $Limit -HeartbeatSeconds $heartbeat -Label $Name -CloseStandardInput -PassThru
+        # 每套夹具自行建立会话；父任务临时注入的调用标识不能覆盖夹具身份。
+        $job.process=Start-AiSopHiddenProcess -FilePath (Get-Process -Id $PID).Path -ArgumentList (@('-NoProfile','-File',$File)+$ExtraArguments) -Environment @{AI_SOP_INVOCATION_SESSION_ID=$null} -RedirectStandardOutput $outFile -RedirectStandardError $errFile -FailurePath $failureFile -TimeoutSeconds $Limit -HeartbeatSeconds $heartbeat -Label $Name -CloseStandardInput -PassThru
         if (-not $Quiet) { Write-Host "START $Name pid=$($job.process.Id) limit=$($Limit)s" -ForegroundColor Cyan }
     } catch { $job.diagnostic="PROCESS_START_FAILED: $($_.Exception.Message)" }
     return $job

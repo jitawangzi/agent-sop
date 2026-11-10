@@ -83,6 +83,12 @@ function Invoke-ObservedRunner {
 
 try {
     [System.IO.Directory]::CreateDirectory($TestsDir) | Out-Null
+    $savedInvocation=[Environment]::GetEnvironmentVariable('AI_SOP_INVOCATION_SESSION_ID')
+    try {
+        $env:AI_SOP_INVOCATION_SESSION_ID='foreign-controller'
+        New-FakeSuite 'session-isolation' 'if($env:AI_SOP_INVOCATION_SESSION_ID){throw "Parent invocation leaked into fixture"}'
+        if((Invoke-Runner -SuiteFilter session-isolation) -ne 0){throw 'Fixture session isolation failed'}
+    } finally {[Environment]::SetEnvironmentVariable('AI_SOP_INVOCATION_SESSION_ID',$savedInvocation);Clear-FakeSuites}
 
     # 1. 单个通过的 suite -> exit 0
     Clear-FakeSuites

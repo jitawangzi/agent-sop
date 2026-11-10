@@ -39,7 +39,20 @@ function Initialize-AiSopTaskStart {
         transactionId=$TransactionId; mode=$(if ($full) { 'FULL' } else { 'BOUNDED' })
     }
     try {
-        $snapshot=if ($full) { Get-AiSopInputSnapshot $WorkspacePath } else { Get-AiSopInputSnapshot $WorkspacePath -BudgetMilliseconds 500 -MaxBytes 8MB }
+        $budget=@{BudgetMilliseconds=500;MaxBytes=8MB}
+        if (-not $full) {
+            $configPath=Resolve-AiSopWorkspaceChild $WorkspacePath '.ai-workspace/context/start-inputs.json'
+            if (Test-Path -LiteralPath $configPath) {
+                $config=ConvertFrom-Json -InputObject ([IO.File]::ReadAllText($configPath)) -AsHashtable
+                if ($config -isnot [Collections.IDictionary] -or $config.Count -ne 2 -or
+                    $config.budgetMilliseconds -isnot [long] -and $config.budgetMilliseconds -isnot [int] -or
+                    $config.maxBytes -isnot [long] -and $config.maxBytes -isnot [int] -or
+                    $config.budgetMilliseconds -lt 1 -or $config.budgetMilliseconds -gt 60000 -or $config.maxBytes -lt 1) { throw 'START_INPUTS_CONFIG_INVALID' }
+                $budget=@{BudgetMilliseconds=$config.budgetMilliseconds;MaxBytes=$config.maxBytes}
+            }
+            $origin['budget']=$budget
+        }
+        $snapshot=if ($full) { Get-AiSopInputSnapshot $WorkspacePath } else { Get-AiSopInputSnapshot $WorkspacePath @budget }
         $origin.inputsRef=Save-AiSopInputManifest $snapshot $WorkspacePath
         $origin.inputDigest=$snapshot.digest; $origin.status='CAPTURED'
     } catch {

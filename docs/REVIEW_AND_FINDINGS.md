@@ -81,3 +81,6 @@ Complete前写完发现关闭依据、审核记录、文档和材料索引。Com
 每个实际最近仓库固定一次 HEAD，支持嵌套仓库与 linked worktree，不用暂存区代替已提交内容。按原始 blob 字节比较，不运行 filters/textconv；已提交的符号链接和 gitlink 不当普通材料。结束时发现 HEAD 漂移会标为未知。清单摘要绑定原始字节（包括 UTF-8 BOM），解析使用同一份读取；顶层异常只影响 delivery，坏条目保留其他有效结果并标 coverage=INCOMPLETE。
 
 Git 子进程关闭输入、有10秒执行及2秒输出排空预算，清理复用有界后台入口；单个blob超过64MiB或清理无法确认时保留缺口，不继续解释为完整交付。仓库 workingChanges 禁用配置中的外部 clean/smudge/process 过滤器，标注 EXTERNAL_FILTERS_DISABLED_SUBMODULE_WORKTREES_OMITTED；不递归检查子模块工作树的脏内容（仍保留 gitlink 提交差异），需要时通过显式 RepositoryPaths 或交付条目分别检查实际子仓；使用转换过滤器的工程应结合原始差异解释该观察，不把它等同于普通 Git 命令启用过滤器后的状态。
+# 大型项目采集与交付包
+
+按需使用 [起点配置与交付材料](BASELINE_AND_DELIVERY.md)：项目预算、测试进程复用夹具及 pack-review-evidence 入口均不增加完成门禁。

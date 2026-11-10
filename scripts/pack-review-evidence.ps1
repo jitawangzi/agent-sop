@@ -12,7 +12,7 @@ if(Test-Path -LiteralPath $output){throw 'EVIDENCE_OUTPUT_EXISTS'}
 $destination=$output
 $output=Join-Path (Split-Path -Parent $destination) ('.evidence-pack-'+[guid]::NewGuid().ToString('N'))
 $sources=[Collections.Generic.SortedSet[string]]::new([StringComparer]::Ordinal)
-$expected=@{}
+$expected=[Collections.Generic.Dictionary[string,string]]::new([StringComparer]::Ordinal)
 $taskRelative=".ai-workspace/specs/features/$Feature/tasks/$TaskId/task.json"
 [void]$sources.Add($taskRelative)
 $taskPath=Resolve-AiSopReviewChild $WorkspacePath $taskRelative

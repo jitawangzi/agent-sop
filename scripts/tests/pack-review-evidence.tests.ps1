@@ -32,9 +32,40 @@ try{
     Assert ((Get-FileHash (Join-Path $taskDir task.json)).Hash -eq $before) 'Task changed by packaging'
     $rejected=$false;try{& (Join-Path $scripts pack-review-evidence.ps1) -WorkspacePath $ws -Feature Example -TaskId change -OutputPath $output|Out-Null}catch{$rejected=$_.Exception.Message -eq 'EVIDENCE_OUTPUT_EXISTS'}
     Assert $rejected 'Existing output overwritten'
+    # 直接提取文档中的输出位置，防止示例悄悄回到会污染验证输入的目录。
+    $guide=Get-Content (Join-Path (Split-Path $scripts) docs/BASELINE_AND_DELIVERY.md) -Raw
+    Assert ($guide -match '(?m)^& .*pack-review-evidence\.ps1 .* -OutputPath (\S+)') 'Documented package command missing'
+    $documentedOutput=Join-Path $ws $Matches[1]
+    $beforePackage=(Get-AiSopInputSnapshot $ws).digest
+    & (Join-Path $scripts pack-review-evidence.ps1) -WorkspacePath $ws -Feature Example -TaskId change -OutputPath $documentedOutput|Out-Null
+    Assert ((Get-AiSopInputSnapshot $ws).digest -ceq $beforePackage) 'Documented packaging invalidated verification inputs'
+    & (Join-Path $scripts pack-review-evidence.ps1) -WorkspacePath $ws -Feature Example -TaskId change -OutputPath (Join-Path $ws unsafe-root-package)|Out-Null
+    Assert ((Get-AiSopInputSnapshot $ws).digest -cne $beforePackage) 'Negative control did not detect root package contamination'
     # 在隔离脚本中确定性注入发布竞争及观察后变更，不依赖调度碰运气。
     $source=[IO.File]::ReadAllText((Join-Path $scripts pack-review-evidence.ps1)).Replace('$PSScriptRoot',("'"+$scripts.Replace("'","''")+"'"))
     $copy=Join-Path $root injected.ps1
+    # Windows通过精确路径映射模拟大小写敏感文件系统，执行实际打包器两次观察。
+    foreach($name in @('Case.log','case.log')){
+        $task.verifications+=@{kind='test';batch=$name;command='fixture';exitCode=0;executedAt='2026-01-01T00:00:00Z';inputDigest=$task.startInputs.inputDigest;inputsRef=$ref;inputsStable=$true;caseIds=@();runId=([guid]::NewGuid().ToString('N'));outcome='PASSED';context=@{logPath=$name}}
+    }
+    $task|ConvertTo-Json -Depth 20|Set-Content (Join-Path $taskDir task.json)
+    [IO.File]::WriteAllText((Join-Path $ws upper.txt),'upper');[IO.File]::WriteAllText((Join-Path $ws lower.txt),'lower')
+    $mapping=@'
+function Resolve-AiSopReviewChild([string]$Root,[string]$RelativePath){
+    if($RelativePath -ceq 'Case.log'){return Join-Path $Root upper.txt}
+    if($RelativePath -ceq 'case.log'){return Join-Path $Root lower.txt}
+    return Resolve-AiSopWorkspaceChild $Root $RelativePath
+}
+'@
+    $mapped=$source.Replace('$expected=', $mapping+"`n"+'$expected=')
+    $mapped=$mapped.Replace('$review=(& (Join-Path', $mapping+"`n"+'$review=(& (Join-Path')
+    # export-review的点加载可能覆盖路径函数，因此在复制前再次装入同一映射。
+    $mapped=$mapped.Replace('[IO.Directory]::CreateDirectory($output)|Out-Null',$mapping+"`n"+'[IO.Directory]::CreateDirectory($output)|Out-Null')
+    [IO.File]::WriteAllText($copy,$mapped)
+    $caseOutput=Join-Path $root case-map
+    & $copy -WorkspacePath $ws -Feature Example -TaskId change -OutputPath $caseOutput|Out-Null
+    $cases=(Get-Content (Join-Path $caseOutput index.json) -Raw|ConvertFrom-Json).items|Where-Object {$_.source -cin @('Case.log','case.log')}
+    Assert (@($cases).Count -eq 2 -and @($cases|Where-Object observationMatch -ne MATCH).Count -eq 0 -and @($cases.sha256|Sort-Object -Unique).Count -eq 2) 'Case-sensitive source observations collided'
     $anchor='[IO.Directory]::Move($output,$destination)'
     Assert ($source.Split($anchor).Count -eq 2) 'Publish anchor changed'
     [IO.File]::WriteAllText($copy,$source.Replace($anchor,'[IO.Directory]::CreateDirectory($destination)|Out-Null; [IO.File]::WriteAllText((Join-Path $destination marker),''winner''); '+$anchor))

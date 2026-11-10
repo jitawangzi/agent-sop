@@ -22,9 +22,17 @@ function Close-AiSopTestProcesses {
     $errors=[Collections.Generic.List[string]]::new()
     foreach($entry in @($Owned.entries.ToArray())){
         try {
+            if($entry.uncertainty){throw $entry.uncertainty}
             $process=$entry.process
             if(-not $entry.exited -and -not $process.HasExited){$process.Kill($true);if(-not $process.WaitForExit(3000)){throw 'TEST_RESCUE_TIMEOUT'}}
+            # 让运行器完成有界输出排空判定，不能用 Dispose 的取消掩盖继承管道。
+            if(-not $entry.handle.Completed){$entry.handle.WaitForExit()}
             $entry.handle.Dispose()
+            if($entry.handle.Diagnostic -match 'OUTPUT_DRAIN_TIMED_OUT'){
+                # 本地句柄释放成功不能证明已被重新托管的后代退出，保留诊断和登记。
+                $entry.uncertainty=[string]$entry.handle.Diagnostic
+                throw $entry.uncertainty
+            }
             if(-not $entry.handle.Cleanup.confirmed){throw 'TEST_HANDLE_CLEANUP_UNCONFIRMED'}
             $process.Dispose();[void]$Owned.entries.Remove($entry)
         }catch{$errors.Add($_.ToString())}

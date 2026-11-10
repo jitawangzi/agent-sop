@@ -1,9 +1,11 @@
 import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
-import { mkdtemp, mkdir, cp, copyFile, writeFile, readFile, readdir, rm, realpath } from 'node:fs/promises';
+import { mkdtemp, mkdir, copyFile, writeFile, readFile, readdir, rm, realpath } from 'node:fs/promises';
 import { tmpdir, homedir } from 'node:os';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { performance } from 'node:perf_hooks';
+import { copyRuntime } from './fixtures/runtime-copy.mjs';
 
 const source = fileURLToPath(new URL('../../', import.meta.url));
 const root = await mkdtemp(join(tmpdir(), 'sop-hook-process-'));
@@ -15,7 +17,9 @@ env.SERVER_NEW_HOOK_DEDUP_REGISTRY = join(root, 'dedup');
 env.SERVER_NEW_HOOK_CORRELATION_REGISTRY = join(root, 'correlation');
 const session = 'real-process-fixture';
 const utf8 = new TextDecoder('utf-8', { fatal: true });
-function run(args, input = Buffer.alloc(0)) {
+const metrics = { preparationMs: 0, cleanupMs: 0, calls: {} };
+function run(args, input = Buffer.alloc(0), kind = 'command') {
+  const started = performance.now();
   return new Promise((resolve, reject) => {
     const p = spawn('pwsh', args, { cwd: workspace, env, windowsHide: true, stdio: ['pipe', 'pipe', 'pipe'] });
     const stdout = [], stderr = [];
@@ -29,6 +33,9 @@ function run(args, input = Buffer.alloc(0)) {
       catch (e) { reject(new Error(args.join(' ') + ': ' + e.message)); }
     });
     p.stdin.end(input);
+  }).finally(() => {
+    const value = metrics.calls[kind] ??= { count: 0, elapsedMs: 0 };
+    value.count++; value.elapsedMs += performance.now() - started;
   });
 }
 async function hook(adapter, event, payload, bom = false, hint = '') {
@@ -37,7 +44,7 @@ async function hook(adapter, event, payload, bom = false, hint = '') {
   // 模拟 Windows 客户端继承本地代码页；wrapper 必须自行恢复协议编码。
   const wrapper = join(workspace, adapter, 'hook-wrapper.ps1').replaceAll("'", "''");
   const command = `[Console]::InputEncoding=[Text.Encoding]::GetEncoding(936); [Console]::OutputEncoding=[Text.Encoding]::GetEncoding(936); & '${wrapper}' -EventHint ${event} ${hint ? '-AgentHint ' + hint : ''}; exit $LASTEXITCODE`;
-  const r = await run(['-NoProfile', '-Command', command], bytes);
+  const r = await run(['-NoProfile', '-Command', command], bytes, 'hook');
   const value = JSON.parse(r.stdout);
   assert(!r.stdout.includes('\ufffd'), r.stdout);
   return { ...r, value };
@@ -58,7 +65,7 @@ async function task(op, agent = 'CURSOR', nativeSession = session, extra = []) {
   const argumentIndex = args.slice(2).indexOf('-Arguments');
   if (argumentIndex >= 0) parts.splice(argumentIndex, 4, '-Arguments', "@('-NoProfile','-Command','exit 0')");
   const command = "$ErrorActionPreference='Stop'; [Console]::OutputEncoding=[Text.UTF8Encoding]::new($false); try { & " + parts.join(' ') + '; exit $LASTEXITCODE } catch { [Console]::Error.WriteLine($_.ToString() + [Environment]::NewLine + $_.ScriptStackTrace); exit 1 }';
-  const r = await run(['-NoProfile', '-Command', command]); assert.equal(r.code, 0, r.stdout + r.stderr);
+  const r = await run(['-NoProfile', '-Command', command], Buffer.alloc(0), 'task'); assert.equal(r.code, 0, r.stdout + r.stderr);
 }
 // 只比较权限及任务的持久记录，关联/去重缓存不代表授权。
 async function authoritySnapshot() {
@@ -78,9 +85,11 @@ async function authoritySnapshot() {
   return records;
 }
 try {
+  const preparationStarted = performance.now();
   await mkdir(workspace);
   await copyFile(join(source, 'distribution/templates/root/ai-sop.ps1'), join(workspace, 'ai-sop.ps1'));
-  for (const dir of ['scripts', 'schemas', 'config']) await cp(join(source, dir), join(workspace, '.ai-sop', dir), { recursive: true });
+  // Hook运行时不依赖测试源码；仅并发独立文件复制，不增加测试进程并发。
+  await copyRuntime(source, join(workspace, '.ai-sop'));
   for (const adapter of ['.cursor', '.agents', '.claude', '.pi', '.codex']) {
     await mkdir(join(workspace, adapter));
     await copyFile(join(source, 'distribution/templates/hooks/hook-wrapper.ps1'), join(workspace, adapter, 'hook-wrapper.ps1'));
@@ -88,6 +97,8 @@ try {
   await mkdir(join(workspace, '.ai-workspace/specs/features/Probe'), { recursive: true });
   await mkdir(join(workspace, 'src'));
   const file = join(workspace, 'src/中文.txt'); await writeFile(file, 'BEFORE');
+  assert(!(await readdir(join(workspace, '.ai-sop/scripts'))).includes('tests'), 'Fixture copied test sources');
+  metrics.preparationMs = performance.now() - preparationStarted;
   const start = await hook('.cursor', 'SESSION_START', { session_id: session, conversation_id: session,
     generation_id: 'generation-1', is_background_agent: false, composer_mode: 'agent', hook_event_name: 'sessionStart',
     workspace_roots: roots, cursor_version: '3.15.19', model: 'fixture', model_id: 'fixture', model_params: [] }, true);
@@ -419,8 +430,11 @@ try {
   assert.equal(await readFile(file, 'utf8'), 'BEFORE');
   console.log('PASS: real wrapper processes, UTF-8/BOM/Chinese, Cursor T3 parent/child readonly isolation and path rejection, Pi/Codex task lifecycle, safe readonly command replay and write rejection');
 } finally {
+  const cleanupStarted = performance.now();
   const physical = await realpath(root);
   assert.equal(dirname(physical), await realpath(tmpdir()));
   assert.match(physical.split(/[\\/]/).at(-1), /^sop-hook-process-/);
   await rm(physical, { recursive: true, force: true });
+  metrics.cleanupMs = performance.now() - cleanupStarted;
+  console.log('HOOK_PROCESS_METRICS:' + JSON.stringify(metrics));
 }

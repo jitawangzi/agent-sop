@@ -3,6 +3,7 @@ $ErrorActionPreference='Stop'
 $scripts=Split-Path $PSScriptRoot
 . (Join-Path $scripts task-context.ps1)
 . (Join-Path $PSScriptRoot fixtures/retained-fixture.ps1)
+. (Join-Path $PSScriptRoot fixtures/boundary-cases.ps1)
 $root=Join-Path ([IO.Path]::GetTempPath()) ('pack-evidence-'+[guid]::NewGuid().ToString('N'))
 $ws=Join-Path $root workspace;$taskDir=Join-Path $ws '.ai-workspace/specs/features/Example/tasks/change'
 [IO.Directory]::CreateDirectory($taskDir)|Out-Null
@@ -43,11 +44,8 @@ try{
     Assert ($extra.status -eq 'COPIED' -and $extra.observationMatch -eq 'MATCH' -and (Get-Content (Join-Path $attachedOutput $extra.path) -Raw) -eq 'attachment') 'Explicit attachment missing or changed'
     Assert (($attached.items|Where-Object source -eq missing.log).status -eq 'UNAVAILABLE') 'Missing attachment hidden'
     Assert (($attached.items|Where-Object source -eq attachments.json).status -eq 'COPIED') 'Attachment declaration omitted'
-    # 绝对路径由当前平台生成；Unix上的 C:/escape 是合法相对路径。
-    $absolutePath=[IO.Path]::GetFullPath((Join-Path $root escape))
-    Assert ([IO.Path]::IsPathRooted($absolutePath)) 'Absolute-path fixture is not rooted on this platform'
-    $absoluteDeclaration=ConvertTo-Json -InputObject @($absolutePath) -Compress
-    foreach($invalid in @('null','{}','"extra.log"','[null]','["../escape"]',$absoluteDeclaration)){
+    $invalidPaths=@(Get-AiSopInvalidPathDeclarations $root)
+    foreach($invalid in (@('null','{}','"extra.log"','[null]')+@($invalidPaths.json))){
         $invalid|Set-Content $attachmentList
         $badOutput=Join-Path $root ([guid]::NewGuid().ToString('N'));$rejected=$false
         try{& (Join-Path $scripts pack-review-evidence.ps1) -WorkspacePath $ws -Feature Example -TaskId change -OutputPath $badOutput -AttachmentsManifest attachments.json|Out-Null}catch{$rejected=$true}

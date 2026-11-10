@@ -1,5 +1,6 @@
 #requires -Version 7.0
 $ErrorActionPreference='Stop'
+. (Join-Path $PSScriptRoot fixtures/boundary-cases.ps1)
 $scripts=Split-Path -Parent $PSScriptRoot
 . (Join-Path $scripts 'task-context.ps1')
 . (Join-Path $scripts 'review-paths.ps1')
@@ -7,8 +8,8 @@ $root=Join-Path ([IO.Path]::GetTempPath()) ('review-quality-'+[guid]::NewGuid().
 [IO.Directory]::CreateDirectory($root)|Out-Null
 function Assert($Condition,[string]$Message){if(-not $Condition){throw $Message}}
 function JsonFile([string]$Path,$Value){[IO.Directory]::CreateDirectory((Split-Path -Parent $Path))|Out-Null;[IO.File]::WriteAllText($Path,($Value|ConvertTo-Json -Depth 30))}
-function Export([switch]$Current,[string]$SelectedScope='src'){
-    $raw=& (Join-Path $scripts 'export-review.ps1') -WorkspacePath $workspace -Feature Example -TaskId change -RepositoryPaths @('.') -Scope $SelectedScope -CheckCurrent:$Current
+function Export([switch]$Current,[string]$SelectedScope='src',[string]$Previous=''){
+    $raw=& (Join-Path $scripts 'export-review.ps1') -WorkspacePath $workspace -Feature Example -TaskId change -RepositoryPaths @('.') -Scope $SelectedScope -CheckCurrent:$Current -PreviousReview $Previous
     $text=$raw|Out-String
     Assert (-not $text.Contains('TOP_SECRET_TEST')) 'Command secret leaked'
     return ($text|ConvertFrom-Json)
@@ -28,12 +29,18 @@ try {
     JsonFile (Join-Path (Split-Path -Parent $taskPath) evidence.json) @{scope=@{rawLog='TOP_SECRET_TEST'};limitations=@{command='TOP_SECRET_TEST'};cleanup=@{outcome='FAILED';environment=@{password='TOP_SECRET_TEST'}}}
     $before=(Get-FileHash $taskPath).Hash
     $report=Export
+    Assert ($report.incremental.status -eq 'NOT_REQUESTED') 'Incremental review became mandatory'
+    $priorRelative='.ai-workspace/specs/features/Example/tasks/change/invalid-prior.json'
+    'null'|Set-Content (Join-Path $workspace $priorRelative)
+    $partial=Export -Previous $priorRelative
+    Assert ($partial.incremental.status -eq 'UNAVAILABLE' -and $partial.history.Count -eq 3 -and $partial.findings.Count -eq 1) 'Bad previous review interrupted full export'
     Assert ($report.latest.Count -eq 2 -and $report.history.Count -eq 3) 'Batch histories collapsed'
     Assert ($report.findings[0].declaredStatus -eq 'OPEN' -and $report.taskStatus -eq 'DONE') 'Task PASS closed finding'
     Assert ($report.cleanup.value.outcome -eq 'FAILED') 'Cleanup failure hidden'
     $evidencePath=Join-Path (Split-Path -Parent $taskPath) evidence.json
     $originalEvidence=[IO.File]::ReadAllText($evidencePath)
-    foreach($invalid in @('null','[]','[{"cleanup":{"outcome":"PASSED"}}]','"text"','42','true','{"broken":')){
+    $invalidObjects=@(Get-AiSopJsonBoundaryCases Object|Where-Object {-not $_.accepted}|Select-Object -ExpandProperty json)
+    foreach($invalid in (@('[{"cleanup":{"outcome":"PASSED"}}]','"text"','42','{"broken":')+$invalidObjects)){
         [IO.File]::WriteAllText($evidencePath,$invalid)
         $invalidHash=(Get-FileHash $evidencePath).Hash
         $partial=Export

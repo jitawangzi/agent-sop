@@ -29,3 +29,5 @@ T1/T2 Start 默认仍为 500ms、8MiB。项目可在 `.ai-workspace/context/star
 `run-all-tests.ps1 -Parallel -MaxParallel 4 -DurationReport <已有results.json>` 使用既有 DurationMs 把耗时较长的套件提前排队。未记录的新套件仍执行，旧报告中的已删除套件不会重新执行；相同名称重复记录取最大时长。历史仅为调度提示，不作为验证证据，不复用PASS，不改变断言、并发上限或每套默认900秒超时。DurationMs 不接受布尔值；true/false 不能转为 1/0 毫秒。报告损坏或含无效时长时提示并恢复名称顺序；串行执行保持原顺序。
 
 结果目录新增 schedule.json（实际队列、并发及超时）和 summary.json（总耗时、发现/执行/通过数），原 results.json 与逐套输出不变。跨版本或跨机器的历史时长只能作为提示；收益需在实际环境测量，不保证每次加速。native-harness-adapters 输出各适配器和两个Node阶段的耗时，便于后续准确定位重复准备成本；全部生命周期断言、20次性能样本及原阈值保持。
+
+真实 Hook 测试的隔离运行目录只复制运行所需 scripts/schemas/config，排除 scripts/tests 源码。三个独立目录复制并发执行，任何复制失败均等待其余写入结束再抛原错误，避免与清理竞争；不增加测试子进程并发。HOOK_PROCESS_METRICS 输出准备、清理及 hook/task/其他命令调用次数和累计耗时。所有真实 pwsh 进程、断言、每个调用25秒及整套900秒预算保留；准备优化只减少复制/删除成本，不能解释为整个慢套件都会显著提速。衡量时分别报告准备阶段和全套耗时，注明单次观测与负载差异。

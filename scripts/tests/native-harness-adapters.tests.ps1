@@ -1,6 +1,8 @@
 #requires -Version 7.0
 $ErrorActionPreference='Stop'
 $root=Split-Path -Parent (Split-Path -Parent $PSScriptRoot)
+& node (Join-Path $PSScriptRoot 'runtime-copy.test.mjs')
+if ($LASTEXITCODE -ne 0) { throw 'Runtime preparation regression failed' }
 $claude=Get-Content -LiteralPath (Join-Path $root 'distribution/templates/hooks/claude-settings.json') -Raw | ConvertFrom-Json
 if ($claude.hooks.PreToolUse[0].hooks[0].onFailure -ne 'block') { throw 'Claude 写前 Hook 异常必须阻断' }
 foreach ($agent in @('ANTIGRAVITY','CURSOR','PI','CLAUDE_CODE','CODEX')) {

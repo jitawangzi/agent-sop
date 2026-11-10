@@ -4,6 +4,7 @@
 param()
 
 $ErrorActionPreference = "Stop"
+. (Join-Path $PSScriptRoot fixtures/boundary-cases.ps1)
 
 $ScriptsRoot = Split-Path -Parent $PSScriptRoot
 $RunnerScript = Join-Path $ScriptsRoot "run-all-tests.ps1"
@@ -183,7 +184,14 @@ try {
     if($schedule.policy -ne 'LONGEST_FIRST' -or $schedule.files.Count -ne 3){throw 'Schedule not recorded'}
     $observed=Invoke-ObservedRunner -Extra @('-Serial','-DurationReport',$timings)
     if(($observed.records.Name -join ',') -ne 'aaa-new.tests,bbb-fast.tests,zzz-slow.tests'){throw 'Timing history changed serial order'}
-    foreach($invalid in @('null','{}','[{"Name":"zzz-slow.tests","DurationMs":-1}]','[{"Name":"zzz-slow.tests","DurationMs":true}]','[{"Name":"zzz-slow.tests","DurationMs":false}]')){
+    foreach($case in @(Get-AiSopJsonBoundaryCases NonnegativeNumber|Where-Object accepted)){
+        ('[{"Name":"zzz-slow.tests","DurationMs":'+$case.json+'}]')|Set-Content $timings
+        $observed=Invoke-ObservedRunner -Extra @('-Parallel','-MaxParallel','1','-DurationReport',$timings)
+        $accepted=Get-Content (Join-Path (Split-Path $observed.report) schedule.json) -Raw|ConvertFrom-Json
+        if($accepted.policy -ne 'LONGEST_FIRST' -or $observed.records.Count -ne 3 -or $observed.exitCode -eq 0){throw "Valid numeric boundary lost execution or failure: $($case.id)"}
+    }
+    $invalidDurations=@(Get-AiSopJsonBoundaryCases NonnegativeNumber|Where-Object {-not $_.accepted}|ForEach-Object {'[{"Name":"zzz-slow.tests","DurationMs":'+$_.json+'}]'})
+    foreach($invalid in (@('null','{}')+$invalidDurations)){
         $invalid|Set-Content $timings
         $observed=Invoke-ObservedRunner -Extra @('-Parallel','-MaxParallel','1','-DurationReport',$timings)
         if(($observed.records.Name -join ',') -ne 'aaa-new.tests,bbb-fast.tests,zzz-slow.tests' -or $observed.output -notmatch 'DURATION_REPORT_IGNORED'){throw 'Invalid timing history changed default execution'}

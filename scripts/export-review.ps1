@@ -8,12 +8,14 @@ param(
     [string[]]$Scope=@(),
     [string[]]$RepositoryPaths=@('.','.ai-workspace','.ai-workspace/specs'),
     [string]$DeliveryManifest='',
+    [string]$PreviousReview='',
     [switch]$CheckCurrent
 )
 $ErrorActionPreference='Stop'
 . (Join-Path $PSScriptRoot 'task-context.ps1')
 . (Join-Path $PSScriptRoot 'review-paths.ps1')
 . (Join-Path $PSScriptRoot 'review-delivery.ps1')
+. (Join-Path $PSScriptRoot 'review-incremental.ps1')
 $WorkspacePath=Resolve-PhysicalPathIdentity $WorkspacePath
 $spec=Resolve-AiSopReviewChild $WorkspacePath ".ai-workspace/specs/features/$Feature"
 $null=Resolve-AiSopReviewChild $WorkspacePath ".ai-workspace/specs/features/$Feature/tasks/$TaskId/task.json"
@@ -135,4 +137,5 @@ $result.preparation=[ordered]@{
     sequence=@('Finish targeted regressions, static review and documentation before full verification.','Observe the final inputs and repository differences; any later input change must remain visible.','Record findings, review and evidence references before Complete.','After Complete, use the task record, Git commits and read-only delivery checks; do not rewrite historical evidence.');
     limits=@('An observed digest is not a filesystem lock.','This section neither authorizes reruns nor reuses old results.','Input equality does not check command definitions, case scope or test semantics.','Repository changes include unrelated work; this is not an automatic staging list.')
 }
+$result.incremental=Get-AiSopIncrementalReview -Workspace $WorkspacePath -PreviousReport $PreviousReview -Repositories $repositories -Latest $latest
 $result|ConvertTo-Json -Depth 24

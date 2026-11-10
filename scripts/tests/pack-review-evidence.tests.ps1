@@ -11,11 +11,19 @@ function Assert($ok,$message){if(-not $ok){throw $message}}
 try{
     $ref=Save-AiSopInputManifest (Get-AiSopInputSnapshot $ws) $ws
     $task=@{schemaVersion='1.0';taskId='change';feature='Example';ownerId='fixture';tier='T2';objective='Packaging';status='DONE';nextAction='';notes='';createdAt='2026-01-01T00:00:00Z';updatedAt='2026-01-01T00:00:00Z';requiredCaseIds=@();verifications=@();startInputs=@{status='CAPTURED';taskId='change';feature='Example';createdAt='2026-01-01T00:00:00Z';transactionId=('claim-'+('1'*32));mode='FULL';inputsRef=$ref;inputDigest=(Get-AiSopInputSnapshot $ws).digest}}
+    foreach($size in @(0,1)){
+        $relative="log-$size.log";[IO.File]::WriteAllBytes((Join-Path $ws $relative),[byte[]]::new($size))
+        $task.verifications+=@{kind='test';batch="log-$size";command='fixture';exitCode=0;executedAt='2026-01-01T00:00:00Z';inputDigest=$task.startInputs.inputDigest;inputsRef=$ref;inputsStable=$true;caseIds=@();runId=([string]($size+1)*32);outcome='PASSED';context=@{logPath=$relative}}
+    }
     $task|ConvertTo-Json -Depth 20|Set-Content (Join-Path $taskDir task.json)
     $before=(Get-FileHash (Join-Path $taskDir task.json)).Hash
     $output=Join-Path $root package
     & (Join-Path $scripts pack-review-evidence.ps1) -WorkspacePath $ws -Feature Example -TaskId change -OutputPath $output|Out-Null
     $index=Get-Content (Join-Path $output index.json) -Raw|ConvertFrom-Json
+    foreach($size in @(0,1)){
+        $entry=@($index.items|Where-Object source -eq "log-$size.log")[0]
+        Assert ($entry.status -eq 'COPIED' -and (Get-Item (Join-Path $output $entry.path)).Length -eq $size) 'Empty or single-byte log lost array identity'
+    }
     Assert (@($index.items|Where-Object source -like '*/inputs/*').Count -eq 1) 'Original baseline omitted'
     Assert (@($index.items|Where-Object {$_.source -like '*/evidence.json' -and $_.status -eq 'UNAVAILABLE'}).Count -eq 1) 'Missing supplement hidden'
     $manifest=Get-Content (Join-Path $output manifest.json) -Raw|ConvertFrom-Json

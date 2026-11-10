@@ -38,7 +38,8 @@ foreach($source in $sources){
     $entry=[ordered]@{source=$source;status='UNAVAILABLE';path=$null;sha256=$null;observationMatch='UNBOUND';diagnostic=$null}
     try {
         $path=Resolve-AiSopReviewChild $WorkspacePath $source
-        $bytes=if($source -ceq $taskRelative){$taskBytes}else{[IO.File]::ReadAllBytes($path)}
+        # 不从条件块的输出管道接收字节数组，空文件和单字节文件都须保持 byte[]。
+        if($source -ceq $taskRelative){$bytes=$taskBytes}else{$bytes=[IO.File]::ReadAllBytes($path)}
         $hash=[Convert]::ToHexString([Security.Cryptography.SHA256]::HashData($bytes)).ToLowerInvariant()
         $name='objects/'+$hash
         [IO.Directory]::CreateDirectory((Join-Path $output objects))|Out-Null

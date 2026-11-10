@@ -39,12 +39,24 @@ function Get-AiSopFinalizationReview([string]$Workspace,[string]$AttachmentsMani
                         $text=[regex]::Replace(($lines -join "`n"),'(?s)(?<!`)(`+)(?!`).*?(?<!`)\1(?!`)','')
                         $ref.links=@(foreach($match in [regex]::Matches($text,'\[[^\]\r\n]+\]\(([^()\s]+)\)')){
                             $link=$match.Groups[1].Value
-                            if($link.StartsWith('#') -or $link -match '^[a-zA-Z][a-zA-Z0-9+.-]*:'){continue}
+                            # 先识别盘符与 file URI，不能把 Windows 绝对本地路径当作网址协议跳过。
+                            if($link.StartsWith('#')){continue}
+                            if($link -match '^[a-zA-Z][a-zA-Z0-9+.-]*:' -and $link -notmatch '^[a-zA-Z]:[/\\]' -and $link -notmatch '^file:'){continue}
                             $target=($link -split '[#?]',2)[0]
                             $item=@{target=$link;status='UNAVAILABLE'}
                             try{
-                                $target=[Uri]::UnescapeDataString($target)
-                                $candidate=[IO.Path]::GetFullPath((Join-Path (Split-Path $file) $target))
+                                if($target -match '^file:'){
+                                    $uri=[Uri]::new($target,[UriKind]::Absolute)
+                                    if(-not $uri.IsFile -or $uri.IsUnc -or $uri.Host){throw 'REVIEW_NETWORK_PATH_UNSUPPORTED'}
+                                    $target=$uri.LocalPath
+                                }else{$target=[Uri]::UnescapeDataString($target)}
+                                if($target -match '^[/\\]{2}'){throw 'REVIEW_NETWORK_PATH_UNSUPPORTED'}
+                                if($target -match '^/?[a-zA-Z]:[/\\]'){
+                                    if(-not [OperatingSystem]::IsWindows()){throw 'REVIEW_FOREIGN_ABSOLUTE_PATH_UNSUPPORTED'}
+                                    $target=$target.TrimStart('/')
+                                }
+                                # 本机绝对目标直接解析；相对目标绑定文档目录，随后仍验证工作区边界。
+                                $candidate=[IO.Path]::GetFullPath($target,(Split-Path $file))
                                 $relative=[IO.Path]::GetRelativePath($Workspace,$candidate).Replace('\','/')
                                 $resolved=Resolve-AiSopReviewChild $Workspace $relative
                                 $item.status=if(Test-Path -LiteralPath $resolved){'PRESENT'}else{'MISSING'}

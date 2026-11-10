@@ -34,6 +34,48 @@ try{
     'reviewed'|Set-Content (Join-Path $root final-review.md)
     $r=Get-AiSopFinalizationReview $root attachments.json $latest @{coverage='COMPLETE';items=@(@{status='COMMITTED'})}
     Assert ($r.documents -eq 'DECLARED_REFERENCES_PRESENT' -and $r.committedBytes -eq 'OBSERVED_MATCH') 'Actual facts not exposed'
+    # 使用本机真实绝对路径，防止盘符被当成协议，也防止绝对目标被拼到文档目录下。
+    [IO.Directory]::CreateDirectory((Join-Path $root docs))|Out-Null
+    '["docs/absolute-links.md"]'|Set-Content (Join-Path $root attachments.json)
+    $present=Join-Path $root 'final review.md'
+    'reviewed'|Set-Content -LiteralPath $present
+    $missing=Join-Path $root 'missing review.md'
+    $outside=Join-Path (Split-Path $root) ('outside-'+[guid]::NewGuid().ToString('N')+'.md')
+    $cases=@(
+        @{target=$present.Replace('\','/');status='PRESENT'},
+        @{target=$missing.Replace('\','/');status='MISSING'},
+        @{target=$outside.Replace('\','/');status='UNAVAILABLE'},
+        @{target=([Uri]::new($present,[UriKind]::Absolute)).AbsoluteUri;status='PRESENT'},
+        @{target=([Uri]::new($missing,[UriKind]::Absolute)).AbsoluteUri;status='MISSING'},
+        @{target=([Uri]::new($outside,[UriKind]::Absolute)).AbsoluteUri;status='UNAVAILABLE'},
+        @{target='file://unreachable.invalid/share/review.md';status='UNAVAILABLE'},
+        @{target='file://localhost/share/review.md';status='UNAVAILABLE'},
+        @{target='\\unreachable.invalid\share\review.md';status='UNAVAILABLE'}
+    )
+    if([OperatingSystem]::IsWindows()){
+        $cases+=@(
+            @{target=$present;status='PRESENT'},
+            @{target=$missing;status='MISSING'},
+            @{target=('/'+$present.Replace('\','/'));status='PRESENT'},
+            @{target=('/'+$missing.Replace('\','/'));status='MISSING'}
+        )
+    }else{
+        $cases+=@{target='C:/foreign-platform/review.md';status='UNAVAILABLE'}
+    }
+    foreach($case in $cases){
+        # 裸路径先编码 Markdown 分隔字符；file URI 已由 Uri 编码，不能重复转义。
+        $target=$case.target
+        if($target -notmatch '^file:'){$target=$target.Replace('%','%25').Replace(' ','%20').Replace('#','%23').Replace('?','%3F')}
+        ('[local]('+ $target +')')|Set-Content (Join-Path $root docs/absolute-links.md)
+        $r=Get-AiSopFinalizationReview $root attachments.json $latest @{}
+        Assert ($r.references[0].links.Count -eq 1) ('Local absolute link was skipped: '+$case.target)
+        Assert ($r.references[0].links[0].status -eq $case.status) ('Wrong local absolute link status: '+$case.target)
+        Assert ($r.documents -eq $(if($case.status -eq 'PRESENT'){'DECLARED_REFERENCES_PRESENT'}else{'NEEDS_ATTENTION'}) -and -not $r.blocking) 'Local link changed aggregate facts or added gate'
+    }
+    '[web](https://example.invalid) [mail](mailto:test@example.invalid) [custom](vscode://file/example) [anchor](#section)'|Set-Content (Join-Path $root docs/absolute-links.md)
+    $r=Get-AiSopFinalizationReview $root attachments.json $latest @{}
+    Assert ($r.references[0].links.Count -eq 0 -and $r.documents -eq 'DECLARED_REFERENCES_PRESENT') 'External links or anchors became local checks'
+    '["validation.md","final-review.md"]'|Set-Content (Join-Path $root attachments.json)
     $latest[0].currentInputs='STALE';$latest[0].outcome='FAILED'
     $r=Get-AiSopFinalizationReview $root attachments.json $latest @{coverage='COMPLETE';items=@()}
     Assert ($r.currentInputs -eq 'NOT_CONFIRMED' -and $r.tests -eq 'NEEDS_REVIEW' -and $r.committedBytes -eq 'NOT_CONFIRMED') 'Stale/failed/empty evidence exaggerated'

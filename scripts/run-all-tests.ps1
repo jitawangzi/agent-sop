@@ -8,6 +8,7 @@ param(
     [switch]$Quiet,
     [switch]$Serial,
     [switch]$Parallel,
+    [string]$DurationReport='',
     [ValidateRange(0,64)][int]$MaxParallel=0,
     [ValidateRange(1,86400)][int]$SuiteTimeoutSeconds=900,
     [ValidateRange(1,86400)][int]$CompileTimeoutSeconds=1800,
@@ -97,16 +98,36 @@ if ($Suite) {
     })
 }
 
+# 历史时长只影响并行启动次序，不参与发现、通过判定或超时预算。
+$schedule='NAME';$scheduleDiagnostic=''
+if($Parallel -and $DurationReport){
+    try{
+        $history=Get-Content -LiteralPath $DurationReport -Raw|ConvertFrom-Json -AsHashtable -NoEnumerate
+        if($history -isnot [System.Collections.IList]){throw 'Expected results array'}
+        $durations=[Collections.Generic.Dictionary[string,double]]::new([StringComparer]::Ordinal)
+        foreach($record in $history){
+            if($record -isnot [System.Collections.IDictionary] -or $record.Name -isnot [string] -or $record.DurationMs -isnot [ValueType]){throw 'Invalid duration entry'}
+            $duration=[double]$record.DurationMs
+            if(-not [double]::IsFinite($duration) -or $duration -lt 0){throw 'Invalid duration value'}
+            if(-not $durations.ContainsKey($record.Name) -or $duration -gt $durations[$record.Name]){$durations[$record.Name]=$duration}
+        }
+        $allFiles=@($allFiles|Sort-Object @{Expression={if($durations.ContainsKey($_.BaseName)){$durations[$_.BaseName]}else{0}};Descending=$true},Name)
+        $schedule='LONGEST_FIRST'
+    }catch{$scheduleDiagnostic='DURATION_REPORT_IGNORED: '+$_.Exception.Message;Write-Warning $scheduleDiagnostic}
+}
+
 
 $script:LogRoot=Join-Path ([IO.Path]::GetTempPath()) ('ai-sop-tests-' + [guid]::NewGuid().ToString('N'))
 [IO.Directory]::CreateDirectory($script:LogRoot) | Out-Null
 [IO.File]::WriteAllText((Join-Path $script:LogRoot 'results.json'), '[]')
 $script:NextIndex=0
+$wallClock=[Diagnostics.Stopwatch]::StartNew()
 $script:Results=[Collections.Generic.List[object]]::new()
 $jobs=[Collections.Generic.List[object]]::new()
 $queue=[Collections.Generic.Queue[object]]::new()
 foreach ($file in $allFiles) { $queue.Enqueue($file) }
 $capacity=if (-not $Parallel) { 1 } elseif ($MaxParallel -gt 0) { $MaxParallel } else { 4 }
+@{policy=$schedule;diagnostic=$scheduleDiagnostic;maxParallel=$capacity;suiteTimeoutSeconds=$SuiteTimeoutSeconds;files=@($allFiles.FullName)}|ConvertTo-Json -Depth 5|Set-Content (Join-Path $script:LogRoot schedule.json)
 if (-not $Quiet) {
     Write-Host "Running $($allFiles.Count) test suite(s), max concurrent=$capacity; per-suite limit=$($SuiteTimeoutSeconds)s" -ForegroundColor Cyan
     Write-Host "Test logs: $script:LogRoot"
@@ -148,6 +169,7 @@ try {
 }
 $failed=@($script:Results | Where-Object { -not $_.Passed }).Count
 $passed=$script:Results.Count - $failed
+@{elapsedMs=$wallClock.ElapsedMilliseconds;discovered=$allFiles.Count;executed=$script:Results.Count;passed=$passed;failed=$failed;schedule=$schedule;maxParallel=$capacity}|ConvertTo-Json|Set-Content (Join-Path $script:LogRoot summary.json)
 if (-not $Quiet -or $failed) {
     Write-Host "$passed/$($script:Results.Count) checks passed; results: $(Join-Path $script:LogRoot 'results.json')"
 }

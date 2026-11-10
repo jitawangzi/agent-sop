@@ -17,3 +17,15 @@ T1/T2 Start 默认仍为 500ms、8MiB。项目可在 `.ai-workspace/context/star
 输出排空超时表示后代退出未确认，即使本地句柄的 Cleanup.confirmed 为真，共用测试清理仍保留登记和原始诊断。再次清理不能消除此未知结论；测试须独立回收有可信身份的探针，不按裸 PID 或程序名称终止未知进程。
 
 使用已有 export-review.ps1 -DeliveryManifest 对包内 manifest.json 检查实际 Git 入库情况；未跟踪、忽略、字节变化仍是非阻断诊断。复制字节一致不代表报告语义正确、推送完成或资源已清理。原始记录仍是权威来源。
+
+## 显式补充附件
+
+需要一起交付全量测试、干净检出等补充报告时，添加可选 `-AttachmentsManifest <工作区相对清单路径>`。清单为 JSON 字符串数组，逐项列出工作区相对文件，例如 `[".ai-workspace/specs/features/Example/tasks/change/evidence/full/results.json"]`。在运行验证前后已有的原始报告仍是权威来源；清单只描述复制范围，不证明测试有效。
+
+清单读取一次，按同一份字节解析和归档；相同来源去重，大小写保持区分。不接受绝对路径、上级越界、链接后代或无效JSON结构；不递归扫描目录或补充对象里的任意字段。缺失或不可读文件逐项记 UNAVAILABLE，其他材料继续输出。清单自身与附件纳入同一 index/manifest，可复用交付字节检查。输出仍使用本任务 evidence 目录；工具不自动暂存、提交或上传。
+
+## 全量并行调度
+
+`run-all-tests.ps1 -Parallel -MaxParallel 4 -DurationReport <已有results.json>` 使用既有 DurationMs 把耗时较长的套件提前排队。未记录的新套件仍执行，旧报告中的已删除套件不会重新执行；相同名称重复记录取最大时长。历史仅为调度提示，不作为验证证据，不复用PASS，不改变断言、并发上限或每套默认900秒超时。报告损坏时提示并恢复名称顺序；串行执行保持原顺序。
+
+结果目录新增 schedule.json（实际队列、并发及超时）和 summary.json（总耗时、发现/执行/通过数），原 results.json 与逐套输出不变。跨版本或跨机器的历史时长只能作为提示；收益需在实际环境测量，不保证每次加速。native-harness-adapters 输出各适配器和两个Node阶段的耗时，便于后续准确定位重复准备成本；全部生命周期断言、20次性能样本及原阈值保持。

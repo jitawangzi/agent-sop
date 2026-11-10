@@ -32,6 +32,27 @@ try{
     Assert ((Get-FileHash (Join-Path $taskDir task.json)).Hash -eq $before) 'Task changed by packaging'
     $rejected=$false;try{& (Join-Path $scripts pack-review-evidence.ps1) -WorkspacePath $ws -Feature Example -TaskId change -OutputPath $output|Out-Null}catch{$rejected=$_.Exception.Message -eq 'EVIDENCE_OUTPUT_EXISTS'}
     Assert $rejected 'Existing output overwritten'
+    $attachmentList=Join-Path $ws attachments.json
+    [IO.File]::WriteAllText((Join-Path $ws extra.log),'attachment')
+    '["extra.log","./extra.log","missing.log","log-0.log","log-1.log"]'|Set-Content $attachmentList
+    $attachedOutput=Join-Path $root attached
+    & (Join-Path $scripts pack-review-evidence.ps1) -WorkspacePath $ws -Feature Example -TaskId change -OutputPath $attachedOutput -AttachmentsManifest attachments.json|Out-Null
+    $attached=Get-Content (Join-Path $attachedOutput index.json) -Raw|ConvertFrom-Json
+    Assert (@($attached.items|Where-Object source -eq extra.log).Count -eq 1) 'Duplicate attachment not deduplicated'
+    $extra=$attached.items|Where-Object source -eq extra.log
+    Assert ($extra.status -eq 'COPIED' -and $extra.observationMatch -eq 'MATCH' -and (Get-Content (Join-Path $attachedOutput $extra.path) -Raw) -eq 'attachment') 'Explicit attachment missing or changed'
+    Assert (($attached.items|Where-Object source -eq missing.log).status -eq 'UNAVAILABLE') 'Missing attachment hidden'
+    Assert (($attached.items|Where-Object source -eq attachments.json).status -eq 'COPIED') 'Attachment declaration omitted'
+    foreach($invalid in @('null','{}','"extra.log"','[null]','["../escape"]','["C:/escape"]')){
+        $invalid|Set-Content $attachmentList
+        $badOutput=Join-Path $root ([guid]::NewGuid().ToString('N'));$rejected=$false
+        try{& (Join-Path $scripts pack-review-evidence.ps1) -WorkspacePath $ws -Feature Example -TaskId change -OutputPath $badOutput -AttachmentsManifest attachments.json|Out-Null}catch{$rejected=$true}
+        Assert ($rejected -and -not(Test-Path $badOutput)) 'Invalid attachment declaration published output'
+    }
+    foreach($valid in @('[]','["extra.log"]')){
+        $valid|Set-Content $attachmentList
+        & (Join-Path $scripts pack-review-evidence.ps1) -WorkspacePath $ws -Feature Example -TaskId change -OutputPath (Join-Path $root ([guid]::NewGuid().ToString('N'))) -AttachmentsManifest attachments.json|Out-Null
+    }
     # 直接提取文档中的输出位置，防止示例悄悄回到会污染验证输入的目录。
     $guide=Get-Content (Join-Path (Split-Path $scripts) docs/BASELINE_AND_DELIVERY.md) -Raw
     Assert ($guide -match '(?m)^& .*pack-review-evidence\.ps1 .* -OutputPath (\S+)') 'Documented package command missing'
@@ -44,6 +65,17 @@ try{
     # 在隔离脚本中确定性注入发布竞争及观察后变更，不依赖调度碰运气。
     $source=[IO.File]::ReadAllText((Join-Path $scripts pack-review-evidence.ps1)).Replace('$PSScriptRoot',("'"+$scripts.Replace("'","''")+"'"))
     $copy=Join-Path $root injected.ps1
+    '["./attachments.json","extra.log"]'|Set-Content $attachmentList
+    $declarationHash=(Get-FileHash $attachmentList).Hash.ToLowerInvariant()
+    $snapshotAnchor='foreach($source in $sources){'
+    Assert ($source.Split($snapshotAnchor).Count -eq 3) 'Manifest mutation anchor changed'
+    $mutation='[IO.File]::WriteAllText((Join-Path $WorkspacePath attachments.json),''["missing.log"]''); '
+    [IO.File]::WriteAllText($copy,$source.Replace($snapshotAnchor,$mutation+$snapshotAnchor))
+    $selfOutput=Join-Path $root self-reference
+    & $copy -WorkspacePath $ws -Feature Example -TaskId change -OutputPath $selfOutput -AttachmentsManifest ./attachments.json|Out-Null
+    $self=(Get-Content (Join-Path $selfOutput index.json) -Raw|ConvertFrom-Json).items
+    $declaration=@($self|Where-Object source -eq attachments.json)
+    Assert ($declaration.Count -eq 1 -and $declaration[0].sha256 -ceq $declarationHash -and 'extra.log' -in $self.source -and 'missing.log' -notin $self.source) 'Self-reference re-read changed declaration or duplicated alias'
     # Windows通过精确路径映射模拟大小写敏感文件系统，执行实际打包器两次观察。
     foreach($name in @('Case.log','case.log')){
         $task.verifications+=@{kind='test';batch=$name;command='fixture';exitCode=0;executedAt='2026-01-01T00:00:00Z';inputDigest=$task.startInputs.inputDigest;inputsRef=$ref;inputsStable=$true;caseIds=@();runId=([guid]::NewGuid().ToString('N'));outcome='PASSED';context=@{logPath=$name}}

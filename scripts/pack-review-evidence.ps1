@@ -2,7 +2,8 @@
 <# 从现有任务记录复制明确引用的报告；输出仅是派生交付材料，不修改任务或 Git。 #>
 [CmdletBinding()]
 param([Parameter(Mandatory)][string]$WorkspacePath,[Parameter(Mandatory)][string]$Feature,
-    [Parameter(Mandatory)][string]$TaskId,[Parameter(Mandatory)][string]$OutputPath)
+    [Parameter(Mandatory)][string]$TaskId,[Parameter(Mandatory)][string]$OutputPath,
+    [string]$AttachmentsManifest='')
 $ErrorActionPreference='Stop'
 . (Join-Path $PSScriptRoot task-context.ps1)
 . (Join-Path $PSScriptRoot review-paths.ps1)
@@ -13,6 +14,24 @@ $destination=$output
 $output=Join-Path (Split-Path -Parent $destination) ('.evidence-pack-'+[guid]::NewGuid().ToString('N'))
 $sources=[Collections.Generic.SortedSet[string]]::new([StringComparer]::Ordinal)
 $expected=[Collections.Generic.Dictionary[string,string]]::new([StringComparer]::Ordinal)
+$snapshots=[Collections.Generic.Dictionary[string,byte[]]]::new([StringComparer]::Ordinal)
+# 清单只接受显式文件；从同一份字节解析并归档，禁止递归猜测附件。
+if($AttachmentsManifest){
+    $attachmentPath=Resolve-AiSopReviewChild $WorkspacePath $AttachmentsManifest
+    $AttachmentsManifest=ConvertTo-AiSopReviewScope $AttachmentsManifest
+    $attachmentBytes=[IO.File]::ReadAllBytes($attachmentPath)
+    $attachments=[Text.Encoding]::UTF8.GetString($attachmentBytes).TrimStart([char]0xFEFF)|ConvertFrom-Json -AsHashtable -NoEnumerate
+    if($attachments -isnot [System.Collections.IList]){throw 'ATTACHMENTS_MANIFEST_INVALID'}
+    foreach($attachment in $attachments){
+        if($attachment -isnot [string] -or [string]::IsNullOrWhiteSpace($attachment)){throw 'ATTACHMENT_PATH_INVALID'}
+        # 先验证全部路径，再创建输出；缺失文件在逐项复制时报告。
+        $null=Resolve-AiSopReviewChild $WorkspacePath $attachment
+        [void]$sources.Add((ConvertTo-AiSopReviewScope $attachment))
+    }
+    [void]$sources.Add($AttachmentsManifest)
+    $snapshots[$AttachmentsManifest]=$attachmentBytes
+    $expected[$AttachmentsManifest]=[Convert]::ToHexString([Security.Cryptography.SHA256]::HashData($attachmentBytes)).ToLowerInvariant()
+}
 $taskRelative=".ai-workspace/specs/features/$Feature/tasks/$TaskId/task.json"
 [void]$sources.Add($taskRelative)
 $taskPath=Resolve-AiSopReviewChild $WorkspacePath $taskRelative
@@ -27,6 +46,11 @@ foreach($run in $task.verifications){
     foreach($report in $run.reportEvidence.reports){if($report.path){[void]$sources.Add($report.path)}}
     if($run.inputsRef){[void]$sources.Add('.ai-workspace/specs/.artifacts/inputs/'+$run.inputsRef+'.json')}
 }
+# 旧任务中的不可用引用仍逐项报告；合法引用统一 ./ 和分隔符写法。
+foreach($source in @($sources)){
+    try{$normalized=ConvertTo-AiSopReviewScope $source}catch{continue}
+    if($normalized -cne $source){[void]$sources.Remove($source);[void]$sources.Add($normalized)}
+}
 foreach($source in $sources){
     if($expected.ContainsKey($source)){continue}
     try{$expected[$source]=(Get-FileHash -LiteralPath (Resolve-AiSopReviewChild $WorkspacePath $source)).Hash.ToLowerInvariant()}catch{}
@@ -39,7 +63,7 @@ foreach($source in $sources){
     try {
         $path=Resolve-AiSopReviewChild $WorkspacePath $source
         # 不从条件块的输出管道接收字节数组，空文件和单字节文件都须保持 byte[]。
-        if($source -ceq $taskRelative){$bytes=$taskBytes}else{$bytes=[IO.File]::ReadAllBytes($path)}
+        if($source -ceq $taskRelative){$bytes=$taskBytes}elseif($snapshots.ContainsKey($source)){$bytes=$snapshots[$source]}else{$bytes=[IO.File]::ReadAllBytes($path)}
         $hash=[Convert]::ToHexString([Security.Cryptography.SHA256]::HashData($bytes)).ToLowerInvariant()
         $name='objects/'+$hash
         [IO.Directory]::CreateDirectory((Join-Path $output objects))|Out-Null
@@ -51,7 +75,7 @@ foreach($source in $sources){
     $items.Add($entry)
 }
 if((Get-FileHash -LiteralPath $taskPath).Hash.ToLowerInvariant() -cne $expected[$taskRelative]){throw 'EVIDENCE_TASK_CHANGED_DURING_PACK'}
-@{schemaVersion='1';authoritative=$false;items=@($items.ToArray());review=$review;limits=@('Only task record references are copied; supplemental attachments require separate explicit packaging.','Hashes prove copied bytes, not test correctness or remote delivery.','ObservationMatch compares export-time bytes; report validity remains in review.history.reports.')}|
+@{schemaVersion='1';authoritative=$false;attachmentsManifest=$AttachmentsManifest;items=@($items.ToArray());review=$review;limits=@('Only task references and explicitly listed attachment files are copied; no recursive discovery.','Hashes prove copied bytes, not test correctness or remote delivery.','ObservationMatch compares export-time bytes; report validity remains in review.history.reports.')}|
     ConvertTo-Json -Depth 60|Set-Content -LiteralPath (Join-Path $output index.json)
 $declarations.Add(@{path='index.json';sha256=(Get-FileHash -LiteralPath (Join-Path $output index.json)).Hash.ToLowerInvariant()})
 ConvertTo-Json -InputObject @($declarations.ToArray()) -Depth 5|Set-Content -LiteralPath (Join-Path $output manifest.json)

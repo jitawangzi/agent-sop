@@ -170,6 +170,25 @@ try {
     $observed=Invoke-ObservedRunner -Extra @('-Parallel','-MaxParallel','1','-SuiteTimeoutSeconds','10')
     if ($observed.exitCode -ne 0) { throw 'MaxParallel did not limit live suite processes' }
 
+    # 时长报告仅调整排队顺序，未知套件、失败和原超时均必须保留。
+    Clear-FakeSuites
+    New-FakeSuite 'aaa-new' 'exit 0'
+    New-FakeSuite 'bbb-fast' 'exit 7'
+    New-FakeSuite 'zzz-slow' 'exit 0'
+    $timings=Join-Path $TestRoot durations.json
+    '[{"Name":"zzz-slow.tests","DurationMs":50},{"Name":"zzz-slow.tests","DurationMs":0},{"Name":"bbb-fast.tests","DurationMs":1},{"Name":"absent.tests","DurationMs":999}]'|Set-Content $timings
+    $observed=Invoke-ObservedRunner -Extra @('-Parallel','-MaxParallel','1','-DurationReport',$timings,'-SuiteTimeoutSeconds','10')
+    if($observed.exitCode -eq 0 -or ($observed.records.Name -join ',') -ne 'zzz-slow.tests,bbb-fast.tests,aaa-new.tests' -or @($observed.records|Where-Object TimeoutSeconds -ne 10).Count){throw 'Duration scheduling changed coverage, outcome or timeout'}
+    $schedule=Get-Content (Join-Path (Split-Path $observed.report) schedule.json) -Raw|ConvertFrom-Json
+    if($schedule.policy -ne 'LONGEST_FIRST' -or $schedule.files.Count -ne 3){throw 'Schedule not recorded'}
+    $observed=Invoke-ObservedRunner -Extra @('-Serial','-DurationReport',$timings)
+    if(($observed.records.Name -join ',') -ne 'aaa-new.tests,bbb-fast.tests,zzz-slow.tests'){throw 'Timing history changed serial order'}
+    foreach($invalid in @('null','{}','[{"Name":"zzz-slow.tests","DurationMs":-1}]')){
+        $invalid|Set-Content $timings
+        $observed=Invoke-ObservedRunner -Extra @('-Parallel','-MaxParallel','1','-DurationReport',$timings)
+        if(($observed.records.Name -join ',') -ne 'aaa-new.tests,bbb-fast.tests,zzz-slow.tests' -or $observed.output -notmatch 'DURATION_REPORT_IGNORED'){throw 'Invalid timing history changed default execution'}
+    }
+
     if ([OperatingSystem]::IsWindows()) {
         # Installed-layout optional compile also needs a deadline, including
         # the batch launcher and its own pwsh grandchild.

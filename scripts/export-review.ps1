@@ -128,7 +128,7 @@ $hints=[Collections.Generic.List[string]]::new()
 if(-not $CheckCurrent){$hints.Add('CHECK_CURRENT_INPUTS_BEFORE_SELECTING_VERIFICATION')}
 elseif(-not $current){$hints.Add('CURRENT_INPUTS_UNAVAILABLE')}
 if(@($latest|Where-Object currentInputs -eq 'STALE').Count){$hints.Add('STALE_BATCHES_REQUIRE_REVIEW')}
-if(@($latest|Where-Object {$_.outcome -ne 'PASSED' -or -not $_.inputsStable}).Count){$hints.Add('LATEST_FAILED_OR_UNSTABLE_BATCHES_REMAIN_VISIBLE')}
+if(@($latest|Where-Object {-not (Get-AiSopVerificationFacts $_).recordedPass}).Count){$hints.Add('LATEST_FAILED_OR_UNSTABLE_BATCHES_REMAIN_VISIBLE')}
 if(-not $task.syncReview){$hints.Add('RECORD_DOCUMENTATION_AND_TEST_SYNC_BEFORE_COMPLETE')}
 if($task.status -eq 'ACTIVE'){$hints.Add('FINISH_DOCUMENTATION_FINDINGS_AND_REVIEW_RECORDS_BEFORE_COMPLETE')}
 if(@($repositories|Where-Object status -ne 'AVAILABLE').Count){$hints.Add('REPOSITORY_INVENTORY_INCOMPLETE')}

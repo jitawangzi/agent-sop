@@ -1,6 +1,10 @@
 #requires -Version 7.0
 $ErrorActionPreference='Stop'
 $root=Split-Path -Parent (Split-Path -Parent $PSScriptRoot)
+& node (Join-Path $PSScriptRoot 'hook-command.test.mjs')
+if ($LASTEXITCODE -ne 0) { throw 'Real Hook process cleanup regression failed' }
+& node (Join-Path $PSScriptRoot 'bounded-map.test.mjs')
+if ($LASTEXITCODE -ne 0) { throw 'Bounded scheduling regression failed' }
 & node (Join-Path $PSScriptRoot 'runtime-copy.test.mjs')
 if ($LASTEXITCODE -ne 0) { throw 'Runtime preparation regression failed' }
 $claude=Get-Content -LiteralPath (Join-Path $root 'distribution/templates/hooks/claude-settings.json') -Raw | ConvertFrom-Json
@@ -19,6 +23,6 @@ $stageClock=[Diagnostics.Stopwatch]::StartNew()
 if ($LASTEXITCODE -ne 0) { throw 'Pi extension bridge tests failed' }
 Write-Output "STAGE_MS pi-extension $($stageClock.ElapsedMilliseconds)"
 $stageClock=[Diagnostics.Stopwatch]::StartNew()
-& node (Join-Path $PSScriptRoot 'hook-process.test.mjs')
+& node (Join-Path $PSScriptRoot 'run-hook-process.mjs')
 if ($LASTEXITCODE -ne 0) { throw '真实 Hook 子进程测试失败' }
 Write-Output "STAGE_MS hook-process $($stageClock.ElapsedMilliseconds)"

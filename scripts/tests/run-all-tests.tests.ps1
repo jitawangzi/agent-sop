@@ -206,7 +206,7 @@ try {
         $hostRoot=Join-Path $TestRoot 'compile host'
         $installed=Join-Path $hostRoot '.ai-sop/scripts'
         [IO.Directory]::CreateDirectory($installed) | Out-Null
-        Copy-Item -LiteralPath $RunnerScript,(Join-Path $ScriptsRoot 'hidden-process.ps1') -Destination $installed
+        Copy-Item -LiteralPath $RunnerScript,(Join-Path $ScriptsRoot 'hidden-process.ps1'),(Join-Path $ScriptsRoot 'test-execution-environment.ps1') -Destination $installed
         [IO.File]::WriteAllText((Join-Path $hostRoot 'gradlew.bat'), "@echo off`r`npwsh -NoProfile -Command `"Write-Output compile-start; Start-Sleep 60`"`r`nexit /b %ERRORLEVEL%`r`n")
         $observed=Invoke-ObservedRunner -Entry (Join-Path $installed 'run-all-tests.ps1') -Extra @('-IncludeCompile','-CompileTimeoutSeconds','3','-Quiet')
         if ($observed.exitCode -eq 0 -or $observed.records.Count -ne 1 -or $observed.records[0].Name -ne 'compileJava' -or $observed.records[0].Outcome -ne 'TIMED_OUT') { throw 'Optional compile escaped deadline/failure summary' }

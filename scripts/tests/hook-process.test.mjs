@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { spawn } from 'node:child_process';
+import { runHookCommand } from './fixtures/hook-command.mjs';
 import { mkdtemp, mkdir, copyFile, writeFile, readFile, readdir, rm, realpath } from 'node:fs/promises';
 import { tmpdir, homedir } from 'node:os';
 import { join, dirname } from 'node:path';
@@ -7,6 +7,8 @@ import { fileURLToPath } from 'node:url';
 import { performance } from 'node:perf_hooks';
 import { copyRuntime } from './fixtures/runtime-copy.mjs';
 
+const group = process.argv[2] || 'all';
+assert(['all', 'cursor', 'other'].includes(group), 'Unknown Hook group');
 const source = fileURLToPath(new URL('../../', import.meta.url));
 const root = await mkdtemp(join(tmpdir(), 'sop-hook-process-'));
 const workspace = join(root, '中文 workspace');
@@ -16,24 +18,16 @@ env.AI_SOP_SKIP_OWNER_GUARD = '0'; env.SERVER_NEW_SKIP_OWNER_GUARD = '0';
 env.SERVER_NEW_HOOK_DEDUP_REGISTRY = join(root, 'dedup');
 env.SERVER_NEW_HOOK_CORRELATION_REGISTRY = join(root, 'correlation');
 const session = 'real-process-fixture';
-const utf8 = new TextDecoder('utf-8', { fatal: true });
-const metrics = { preparationMs: 0, cleanupMs: 0, calls: {} };
+const metrics = { preparationMs: 0, cleanupMs: 0, group, peakCalls: 0, unconfirmedProcesses: [], calls: {} };
+let activeCalls = 0;
 function run(args, input = Buffer.alloc(0), kind = 'command') {
   const started = performance.now();
-  return new Promise((resolve, reject) => {
-    const p = spawn('pwsh', args, { cwd: workspace, env, windowsHide: true, stdio: ['pipe', 'pipe', 'pipe'] });
-    const stdout = [], stderr = [];
-    const timer = setTimeout(() => { p.kill(); reject(new Error('Hook process exceeded 25 seconds')); }, 25000);
-    p.on('error', e => { clearTimeout(timer); reject(e); });
-    p.stdin.on('error', e => { clearTimeout(timer); p.kill(); reject(e); });
-    p.stdout.on('data', x => stdout.push(x)); p.stderr.on('data', x => stderr.push(x));
-    p.on('close', code => {
-      clearTimeout(timer);
-      try { resolve({ code, stdout: utf8.decode(Buffer.concat(stdout)), stderr: utf8.decode(Buffer.concat(stderr)) }); }
-      catch (e) { reject(new Error(args.join(' ') + ': ' + e.message)); }
-    });
-    p.stdin.end(input);
+  metrics.peakCalls = Math.max(metrics.peakCalls, ++activeCalls);
+  return runHookCommand('pwsh', args, { cwd: workspace, env, input }).catch(error => {
+    if (error.terminationUnconfirmed) metrics.unconfirmedProcesses.push({ pid: error.pid, diagnostic: error.message });
+    throw error;
   }).finally(() => {
+    activeCalls--;
     const value = metrics.calls[kind] ??= { count: 0, elapsedMs: 0 };
     value.count++; value.elapsedMs += performance.now() - started;
   });
@@ -99,6 +93,8 @@ try {
   const file = join(workspace, 'src/中文.txt'); await writeFile(file, 'BEFORE');
   assert(!(await readdir(join(workspace, '.ai-sop/scripts'))).includes('tests'), 'Fixture copied test sources');
   metrics.preparationMs = performance.now() - preparationStarted;
+  let visibleSession;
+  if (group === 'all' || group === 'cursor') {
   const start = await hook('.cursor', 'SESSION_START', { session_id: session, conversation_id: session,
     generation_id: 'generation-1', is_background_agent: false, composer_mode: 'agent', hook_event_name: 'sessionStart',
     workspace_roots: roots, cursor_version: '3.15.19', model: 'fixture', model_id: 'fixture', model_params: [] }, true);
@@ -109,7 +105,7 @@ try {
   assert.equal(denied.value.user_message, denied.value.agent_message);
   assert.match(denied.value.user_message, /AI_SOP_GUARD_SESSION_BINDING_INVALID/);
   // 只使用客户端实际展示的通道取回会话，再验证正常启动入口。
-  const visibleSession = /-Agent CURSOR -NativeSessionId '([^']+)'/.exec(denied.value.user_message)?.[1];
+  visibleSession = /-Agent CURSOR -NativeSessionId '([^']+)'/.exec(denied.value.user_message)?.[1];
   assert.equal(visibleSession, session);
   const imported = await hook('.claude', 'PRE_TOOL_USE', edit);
   assert.equal(imported.value.permission, 'deny'); assert.equal(imported.value.agent_message, denied.value.agent_message);
@@ -143,6 +139,8 @@ try {
     const bad = await hook(adapter, 'PRE_TOOL_USE', '{broken');
     assert(bad.code === 2 || bad.value.permission === 'deny', JSON.stringify(bad));
   }
+  }
+  if (group === 'all' || group === 'other') {
   const ag = await hook('.agents', 'PRE_TOOL_USE', { conversationId: 'ag-native-fixture', workspacePaths: [workspace],
     stepIdx: 1, toolCall: { name: 'replace_file_content', args: { TargetFile: file, TargetContent: 'BEFORE', ReplacementContent: '修改' } } });
   assert.equal(ag.value.decision, 'deny'); assert.match(ag.value.reason, /写入前/);
@@ -215,6 +213,8 @@ try {
   for (const path of [join(appData, 'brain/other-session/upload.png'), join(appData, 'credentials.json')]) {
     assert.equal((await hook('.agents', 'PRE_TOOL_USE', agTool('read_file', { Path: path }))).value.decision, 'deny');
   }
+  }
+  if (group === 'all' || group === 'cursor') {
   const bootstrapCommand = "pwsh -NoProfile -File './.ai-sop/scripts/workflow-task.ps1' -Operation Start -Feature Probe -TaskId process-test -Agent CURSOR -NativeSessionId '" + visibleSession + "' -Objective '真实进程验收'";
   const bootstrap = await hook('.cursor', 'PRE_TOOL_USE', cursor('Shell', { command: bootstrapCommand, cwd: '', timeout: 30000 }, { cwd: '' }));
   assert.equal(bootstrap.value.permission, 'allow', JSON.stringify(bootstrap));
@@ -313,6 +313,8 @@ try {
   await writeFile(file, 'BEFORE');
   await task('Cancel');
   assert.equal((await hook('.cursor', 'PRE_TOOL_USE', cursor('Write', { file_path: file, content: '修改' }))).value.permission, 'deny');
+  }
+  if (group === 'all' || group === 'other') {
   const piSession = 'pi-process-fixture';
   // Claude 实际子 Agent 载荷共用 session_id，用 agent_id 区分执行者。
   const claudeParent = 'claude-native-parent';
@@ -427,14 +429,22 @@ try {
   await task('Cancel', 'CODEX', codexSession);
   assert.equal((await codexHook(readPayload)).value.hookSpecificOutput.permissionDecision, 'allow');
   assert.equal((await codexHook(codexPayload('Bash', { command: writeCommand }))).value.hookSpecificOutput.permissionDecision, 'deny');
+  }
   assert.equal(await readFile(file, 'utf8'), 'BEFORE');
-  console.log('PASS: real wrapper processes, UTF-8/BOM/Chinese, Cursor T3 parent/child readonly isolation and path rejection, Pi/Codex task lifecycle, safe readonly command replay and write rejection');
+  console.log('PASS: real wrapper group ' + group + '; executed calls reported in HOOK_PROCESS_METRICS');
 } finally {
   const cleanupStarted = performance.now();
   const physical = await realpath(root);
   assert.equal(dirname(physical), await realpath(tmpdir()));
   assert.match(physical.split(/[\\/]/).at(-1), /^sop-hook-process-/);
-  await rm(physical, { recursive: true, force: true });
+  if (metrics.unconfirmedProcesses.length) {
+    // 未确认退出不删除恢复现场；主故障继续向上传播。
+    try { await writeFile(join(physical, 'cleanup-unconfirmed.json'), JSON.stringify(metrics.unconfirmedProcesses, null, 2)); }
+    catch (error) { console.error('CLEANUP_RECORD_FAILED:' + error.message); }
+    console.error('RETAINED_FIXTURE:' + physical);
+  } else {
+    await rm(physical, { recursive: true, force: true });
+  }
   metrics.cleanupMs = performance.now() - cleanupStarted;
   console.log('HOOK_PROCESS_METRICS:' + JSON.stringify(metrics));
 }

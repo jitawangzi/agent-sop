@@ -47,3 +47,16 @@ function Get-AiSopEquivalentLocalLinkCases {
     }
     [pscustomobject]@{id='file-uri';target=([Uri]::new($target,[UriKind]::Absolute)).AbsoluteUri.Replace('(','%28').Replace(')','%29')}
 }
+
+# 声明预期，不调用生产解释器；所有消费者复用同一组记录反例。
+function Get-AiSopVerificationRecordCases {
+    @(
+        @{id='passed';outcome='PASSED';exitCode=0;inputsStable=$true;expectedPass=$true},
+        @{id='failed';outcome='FAILED';exitCode=1;inputsStable=$true;expectedPass=$false},
+        @{id='timeout';outcome='TIMED_OUT';exitCode=124;inputsStable=$true;expectedPass=$false},
+        @{id='interrupted';outcome='INTERRUPTED';exitCode=130;inputsStable=$true;expectedPass=$false},
+        @{id='running';outcome='RUNNING';exitCode=-2;inputsStable=$false;expectedPass=$false},
+        @{id='unstable';outcome='PASSED';exitCode=0;inputsStable=$false;expectedPass=$false},
+        @{id='nonzero';outcome='PASSED';exitCode=1;inputsStable=$true;expectedPass=$false}
+    )
+}

@@ -55,7 +55,8 @@ try {
     & git -C $unborn init -b main --quiet
     $emptyBaseline=New-AiSopTaskBaseline $unborn
     Assert ($emptyBaseline.vcs -eq 'git' -and $emptyBaseline.revision -eq '0') 'Legitimate unborn repository was treated as a probe failure'
-    if (Get-Command svn -CommandType Application -ErrorAction SilentlyContinue) {
+    if (-not (Get-Command svn -CommandType Application -ErrorAction SilentlyContinue)) { throw 'TEST_DEPENDENCY_MISSING:svn' }
+    & {
         $svnFixture=Join-Path $workspace '.svn'
         [IO.Directory]::CreateDirectory($svnFixture) | Out-Null
         try {

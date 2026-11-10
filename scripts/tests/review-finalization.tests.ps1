@@ -11,9 +11,18 @@ $root=Join-Path ([IO.Path]::GetTempPath()) ('finalization-review-'+[guid]::NewGu
 [IO.Directory]::CreateDirectory($root)|Out-Null
 $ok=$false;$failure=''
 try{
-    $latest=@(@{kind='test';outcome='PASSED';inputsStable=$true;currentInputs='MATCH'})
+    $latest=@(@{kind='test';outcome='PASSED';exitCode=0;inputsStable=$true;currentInputs='MATCH'})
     Assert ((Get-AiSopFinalizationReview $root '' @() @{}).tests -eq 'NOT_RECORDED') 'Empty test history became PASS'
-    Assert ((Get-AiSopFinalizationReview $root '' @(@{kind='compile';outcome='PASSED';inputsStable=$true}) @{}).tests -eq 'NOT_RECORDED') 'Compile-only history became test evidence'
+    Assert ((Get-AiSopFinalizationReview $root '' @(@{kind='compile';outcome='PASSED';exitCode=0;inputsStable=$true}) @{}).tests -eq 'NOT_RECORDED') 'Compile-only history became test evidence'
+    foreach($case in Get-AiSopVerificationRecordCases){
+        $record=$case.Clone();$record.kind='test'
+        $expected=if($case.expectedPass){'RECORDED_PASSES'}else{'NEEDS_REVIEW'}
+        Assert ((Get-AiSopFinalizationReview $root '' @($record) @{}).tests -eq $expected) "Record case lost: $($case.id)"
+    }
+    foreach($override in @(@{exitCode=$null},@{exitCode=$false},@{exitCode='0'},@{exitCode=0.5},@{exitCode=[char]0},@{exitCode=[double]::NaN},@{exitCode=[double]::PositiveInfinity},@{inputsStable='true'},@{inputsStable=1},@{outcome='passed'})){
+        $record=$latest[0].Clone();foreach($key in $override.Keys){$record[$key]=$override[$key]}
+        Assert ((Get-AiSopFinalizationReview $root '' @($record) @{}).tests -eq 'NEEDS_REVIEW') 'Malformed fields became recorded pass'
+    }
     $doc=@'
 [required](final-review.md)
 [external](https://example.invalid)

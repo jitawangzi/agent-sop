@@ -35,3 +35,13 @@ T1/T2 Start 默认仍为 500ms、8MiB。项目可在 `.ai-workspace/context/star
 真实 Hook 测试的隔离运行目录只复制运行所需 scripts/schemas/config，排除 scripts/tests 源码。三个独立目录复制并发执行，任何复制失败均等待其余写入结束再抛原错误，避免与清理竞争；不增加测试子进程并发。HOOK_PROCESS_METRICS 输出准备、清理及 hook/task/其他命令调用次数和累计耗时。所有真实 pwsh 进程、断言、每个调用25秒及整套900秒预算保留；准备优化只减少复制/删除成本，不能解释为整个慢套件都会显著提速。衡量时分别报告准备阶段和全套耗时，注明单次观测与负载差异。
 
 原客户端探针与Hook进程链仍保留在同一native-harness-adapters套件，共享原900秒外层限制，单次Hook仍为25秒。可信AgentHint存在时只省去会被其覆盖的身份猜测，完整载荷、身份一致性及权限检查保持。Windows的PhysicalPath和AtomicFile原生代码移入scripts/native，源码逻辑不变，冷进程中一次编译；已有其中一个类型时只编译缺少部分，Unix不加载Win32代码。不持久化编译制品、不跨进程缓存状态；部分安装缺少原生文件时仍拒绝写入并允许修复会话。减少编译/解析次数不等于已经证明整套耗时缩短，必须结合本机测量及负载限制报告。
+
+### 测试依赖环境与只读 Hook 并行
+
+已有工具未在 PATH 时，可在原入口传 `-ToolDirectory <本机已有工具目录>`；多个目录在 PowerShell 内以参数数组传入。相对目录按调用者 PowerShell 位置解析，带空格目录也作为单独参数传递。入口固定当前 pwsh 所在目录，再加入显式目录和原 PATH，传给套件及其子进程，不安装工具、不下载、不修改机器或调用者的 PATH。
+
+结果目录的 `environment.json` 记录 pwsh/git/node/rg/svn/svnadmin 的实际路径和版本观察。默认测试目录探测版本；自定义夹具目录仅解析路径，版本标 NOT_OBSERVED。找不到工具标 MISSING，版本读取失败标 UNAVAILABLE；解析或版本成功都不代表依赖功能已经验收。Git 安装用例及 SVN 起点用例缺依赖会真实失败，不再静默跳过。清单仅含这些工具的路径和版本，不采集其他环境变量；本机路径随证据归档前仍须核对范围。
+
+慢套件 native-harness-adapters 在并行入口中最多预留两个现有执行名额，其他套件每套一个；总名额不超过 MaxParallel。默认串行和 MaxParallel=1 仍逐项执行。Hook用例分为Cursor链与其余客户端链两组，每组使用独立临时目录及全部独立注册表，各组内部保持串行、重放及生命周期顺序。默认串行仍使用原all链顺序；并行时两组不共享权限、文件或任务状态。每例仍启动真实冷进程，保留全部断言及25秒/900秒原限制；不缓存权限或复用业务进程。任一并行回调失败便停止领取排队项，等待已启动回调结束后抛原错误。Hook超时或stdin故障先请求终止，再等待close才报告收尾确认；最多额外2秒仅用于清理，不延长25秒执行限制。清理无法确认时报告原故障、PID和未知状态，不再派发、不删除夹具，并尝试保存cleanup-unconfirmed.json供恢复；已有错误不变为成功。
+
+HOOK_PROCESS_METRICS 增加 group 与 peakCalls，HOOK_GROUPS_COMPLETE 记录实际分组与 workers；results.json 记录套件预留 Workers。比较性能时核对原 hook/task/command 调用次数和断言保留，再分别报告阶段与总耗时。预留额度可能减少其他套件的重叠，负载差异也影响耗时；不能把单次总耗时变化全部归因于此优化。

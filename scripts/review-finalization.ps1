@@ -1,9 +1,10 @@
 . (Join-Path $PSScriptRoot 'review-links.ps1')
+. (Join-Path $PSScriptRoot 'verification-facts.ps1')
 # 收尾仅派生观察事实；清单复用打包附件清单，不形成第二份任务状态。
 function Get-AiSopFinalizationReview([string]$Workspace,[string]$AttachmentsManifest,$Latest,$Delivery) {
     $tests=@($Latest|Where-Object kind -eq 'test')
     $result=@{derived=$true;blocking=$false;references=@();diagnostics=@();documents='NOT_REQUESTED';
-        tests=if(-not $tests.Count){'NOT_RECORDED'}elseif(@($tests|Where-Object {$_.outcome -ne 'PASSED' -or -not $_.inputsStable}).Count){'NEEDS_REVIEW'}else{'RECORDED_PASSES'};
+        tests=if(-not $tests.Count){'NOT_RECORDED'}elseif(@($tests|Where-Object {-not (Get-AiSopVerificationFacts $_).recordedPass}).Count){'NEEDS_REVIEW'}else{'RECORDED_PASSES'};
         currentInputs=if(@($Latest).Count -and -not @($Latest|Where-Object currentInputs -ne MATCH).Count){'MATCH'}else{'NOT_CONFIRMED'};
         committedBytes=if($Delivery.coverage -eq 'COMPLETE' -and @($Delivery.items).Count -and -not @($Delivery.items|Where-Object status -ne COMMITTED).Count){'OBSERVED_MATCH'}else{'NOT_CONFIRMED'};
         package='NOT_CHECKED';remote='NOT_CHECKED';
@@ -87,7 +88,7 @@ function Get-AiSopReviewAttention($Report) {
     # tests 字段只概括测试；逐一引用所有最新批次，避免编译失败被测试 PASS 掩盖。
     for($i=0;$i -lt @($Report.latest).Count;$i++){
         $run=$Report.latest[$i]
-        if($run.outcome -ne 'PASSED' -or $run.exitCode -ne 0 -or $run.inputsStable -ne $true){
+        if(-not (Get-AiSopVerificationFacts $run).recordedPass){
             AddAttention 'ATTENTION' 'LATEST_VERIFICATION_NEEDS_REVIEW' "latest[$i]" 'CONSULT_SOURCE'
         }
     }

@@ -9,6 +9,7 @@ param(
     [switch]$Serial,
     [switch]$Parallel,
     [string]$DurationReport='',
+    [string[]]$ToolDirectory=@(),
     [ValidateRange(0,64)][int]$MaxParallel=0,
     [ValidateRange(1,86400)][int]$SuiteTimeoutSeconds=900,
     [ValidateRange(1,86400)][int]$CompileTimeoutSeconds=1800,
@@ -16,19 +17,22 @@ param(
 )
 $ErrorActionPreference='Stop'
 . (Join-Path $PSScriptRoot 'hidden-process.ps1')
+. (Join-Path $PSScriptRoot 'test-execution-environment.ps1')
 if ($Serial -and $Parallel) { throw 'Specify either -Serial or -Parallel, not both.' }
 
 function Start-Suite {
     param([string]$File, [string]$Name, [string[]]$ExtraArguments=@(), [int]$Limit=$SuiteTimeoutSeconds)
+    $workers=Get-AiSopSuiteWorkers $File (Join-Path $PSScriptRoot 'tests/native-harness-adapters.tests.ps1') $capacity
+    $environment=$testEnvironment.environment.Clone();$environment.AI_SOP_TEST_WORKERS=[string]$workers
     $index=$script:NextIndex; $script:NextIndex++
     $outFile=Join-Path $script:LogRoot "$index.stdout.log"
     $errFile=Join-Path $script:LogRoot "$index.stderr.log"
     $failureFile=Join-Path $script:LogRoot "$index.failure.json"
-    $job=[pscustomobject]@{name=$Name;file=$File;process=$null;outFile=$outFile;errFile=$errFile;failureFile=$failureFile;diagnostic='';limit=$Limit}
+    $job=[pscustomobject]@{name=$Name;file=$File;process=$null;outFile=$outFile;errFile=$errFile;failureFile=$failureFile;diagnostic='';limit=$Limit;workers=$workers}
     try {
         $heartbeat=if ($Quiet) { 0 } else { $HeartbeatSeconds }
         # 每套夹具自行建立会话；父任务临时注入的调用标识不能覆盖夹具身份。
-        $job.process=Start-AiSopHiddenProcess -FilePath (Get-Process -Id $PID).Path -ArgumentList (@('-NoProfile','-File',$File)+$ExtraArguments) -Environment @{AI_SOP_INVOCATION_SESSION_ID=$null} -RedirectStandardOutput $outFile -RedirectStandardError $errFile -FailurePath $failureFile -TimeoutSeconds $Limit -HeartbeatSeconds $heartbeat -Label $Name -CloseStandardInput -PassThru
+        $job.process=Start-AiSopHiddenProcess -FilePath (Get-Process -Id $PID).Path -ArgumentList (@('-NoProfile','-File',$File)+$ExtraArguments) -Environment $environment -RedirectStandardOutput $outFile -RedirectStandardError $errFile -FailurePath $failureFile -TimeoutSeconds $Limit -HeartbeatSeconds $heartbeat -Label $Name -CloseStandardInput -PassThru
         if (-not $Quiet) { Write-Host "START $Name pid=$($job.process.Id) limit=$($Limit)s" -ForegroundColor Cyan }
     } catch { $job.diagnostic="PROCESS_START_FAILED: $($_.Exception.Message)" }
     return $job
@@ -44,7 +48,7 @@ function Complete-Suite {
     $outcome=if ($code -eq 0) { 'PASSED' } elseif ($code -eq 124 -and $diagnostic -like 'PROCESS_TIMED_OUT:*') { 'TIMED_OUT' } else { 'FAILED' }
     $result=[pscustomobject]@{
         Name=$Job.name; File=$Job.file; ExitCode=$code; Passed=($code -eq 0); Outcome=$outcome
-        DurationMs=$duration; TimeoutSeconds=$Job.limit; Diagnostic=$diagnostic; OutFile=$Job.outFile; ErrFile=$Job.errFile; FailureFile=$Job.failureFile
+        DurationMs=$duration; TimeoutSeconds=$Job.limit; Workers=$Job.workers; Diagnostic=$diagnostic; OutFile=$Job.outFile; ErrFile=$Job.errFile; FailureFile=$Job.failureFile
     }
     if ($Job.process) { $Job.process.Dispose() }
     $script:Results.Add($result)
@@ -127,6 +131,9 @@ $jobs=[Collections.Generic.List[object]]::new()
 $queue=[Collections.Generic.Queue[object]]::new()
 foreach ($file in $allFiles) { $queue.Enqueue($file) }
 $capacity=if (-not $Parallel) { 1 } elseif ($MaxParallel -gt 0) { $MaxParallel } else { 4 }
+# 全量默认入口探测版本；显式夹具目录只解析路径，避免嵌套运行器重复启动版本进程。
+$testEnvironment=Get-AiSopTestEnvironment -ToolDirectory $ToolDirectory -ReportDirectory $script:LogRoot -ReadVersions:($TestsRoot -eq $defaultTestRoot)
+@{tools=$testEnvironment.tools;limits=$testEnvironment.limits}|ConvertTo-Json -Depth 6|Set-Content (Join-Path $script:LogRoot environment.json)
 @{policy=$schedule;diagnostic=$scheduleDiagnostic;maxParallel=$capacity;suiteTimeoutSeconds=$SuiteTimeoutSeconds;files=@($allFiles.FullName)}|ConvertTo-Json -Depth 5|Set-Content (Join-Path $script:LogRoot schedule.json)
 if (-not $Quiet) {
     Write-Host "Running $($allFiles.Count) test suite(s), max concurrent=$capacity; per-suite limit=$($SuiteTimeoutSeconds)s" -ForegroundColor Cyan
@@ -134,7 +141,10 @@ if (-not $Quiet) {
 }
 try {
     while ($queue.Count -or $jobs.Count) {
-        while ($queue.Count -and $jobs.Count -lt $capacity) {
+        while ($queue.Count) {
+            $used=0;foreach($active in $jobs){$used+=$active.workers}
+            $required=Get-AiSopSuiteWorkers $queue.Peek().FullName (Join-Path $PSScriptRoot 'tests/native-harness-adapters.tests.ps1') $capacity
+            if($used+$required -gt $capacity){break}
             $file=$queue.Dequeue()
             $jobs.Add((Start-Suite -File $file.FullName -Name $file.BaseName))
         }

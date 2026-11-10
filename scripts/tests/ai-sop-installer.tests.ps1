@@ -190,7 +190,7 @@ Invoke-Test "Root bootstrap reports BOOTSTRAP_MISSING without .claude" {
 
 # --- Git blob hash via real local bare repo (DC-004) ---
 Invoke-Test "Get-AiSopGitBlobSha256 hashes real blob bytes" {
-    if (-not (Get-Command git -ErrorAction SilentlyContinue)) { return }
+    if (-not (Get-Command git -CommandType Application -ErrorAction SilentlyContinue)) { throw 'TEST_DEPENDENCY_MISSING:git' }
     $tmp = Join-Path ([System.IO.Path]::GetTempPath()) ("aisop-blob-" + [guid]::NewGuid().ToString("N").Substring(0,8))
     New-Item -ItemType Directory -Path $tmp | Out-Null
     try {
@@ -216,7 +216,7 @@ Invoke-Test "Get-AiSopGitBlobSha256 hashes real blob bytes" {
 
 # --- SVN Install algorithm (DC-012): clone + rename + transaction ---
 Invoke-Test "Invoke-AiSopSvnInstall clones+renames .claude and writes PREPARED journal" {
-    if (-not (Get-Command git -ErrorAction SilentlyContinue)) { return }
+    if (-not (Get-Command git -CommandType Application -ErrorAction SilentlyContinue)) { throw 'TEST_DEPENDENCY_MISSING:git' }
     $tmp = Join-Path ([System.IO.Path]::GetTempPath()) ("aisop-svn-" + [guid]::NewGuid().ToString("N").Substring(0,8))
     New-Item -ItemType Directory -Path $tmp | Out-Null
     try {
@@ -253,7 +253,7 @@ Invoke-Test "Invoke-AiSopSvnInstall clones+renames .claude and writes PREPARED j
 }
 
 Invoke-Test "Invoke-AiSopSvnRollback restores .claude from backup" {
-    if (-not (Get-Command git -ErrorAction SilentlyContinue)) { return }
+    if (-not (Get-Command git -CommandType Application -ErrorAction SilentlyContinue)) { throw 'TEST_DEPENDENCY_MISSING:git' }
     $tmp = Join-Path ([System.IO.Path]::GetTempPath()) ("aisop-rb-" + [guid]::NewGuid().ToString("N").Substring(0,8))
     New-Item -ItemType Directory -Path $tmp | Out-Null
     try {

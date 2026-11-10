@@ -81,28 +81,39 @@ try {
     $originalSupplement=[IO.File]::ReadAllText($evidencePath)
     try{
         JsonFile $evidencePath @{limitations=@('fixture');cleanup=@{outcome='PASSED'}}
-        $cases=@(
-            @{kind='compile';outcome='FAILED';exitCode=1;stable=$true},
-            @{kind='compile';outcome='TIMED_OUT';exitCode=124;stable=$true},
-            @{kind='compile';outcome='INTERRUPTED';exitCode=130;stable=$true},
-            @{kind='compile';outcome='PASSED';exitCode=0;stable=$false},
-            @{kind='compile';outcome='PASSED';exitCode=1;stable=$true},
-            @{kind='test';outcome='FAILED';exitCode=1;stable=$true}
-        )
-        foreach($case in $cases){
-            $bad=$compile.Clone();$bad.kind=$case.kind;$bad.batch='affected';$bad.runId='4'*32
-            $bad.outcome=$case.outcome;$bad.exitCode=$case.exitCode;$bad.inputsStable=$case.stable
+        foreach($kind in @('compile','test')){
+        foreach($case in Get-AiSopVerificationRecordCases){
+            $bad=$compile.Clone();$bad.kind=$kind;$bad.batch='affected';$bad.runId='4'*32
+            $bad.outcome=$case.outcome;$bad.exitCode=$case.exitCode;$bad.inputsStable=$case.inputsStable
             $task.verifications=@($run,$pass,$compile,$bad)
             JsonFile $taskPath $task
             $hash=(Get-FileHash $taskPath).Hash
             $attentionReport=Export -Current -SelectedScope unrelated
             Assert ($attentionReport.finalization.currentInputs -eq 'MATCH') 'Failure fixture inputs must match'
-            if($case.kind -eq 'compile'){Assert ($attentionReport.finalization.tests -eq 'RECORDED_PASSES') 'Compile fixture must retain passing tests'}
+            $expectedTests=if($kind -eq 'compile' -or $case.expectedPass){'RECORDED_PASSES'}else{'NEEDS_REVIEW'}
+            Assert ($attentionReport.finalization.tests -eq $expectedTests) "Test summary disagrees: $kind/$($case.id)"
+            $hint=$attentionReport.preparation.hints -contains 'LATEST_FAILED_OR_UNSTABLE_BATCHES_REMAIN_VISIBLE'
+            Assert ($hint -eq (-not $case.expectedPass)) "Preparation disagrees: $kind/$($case.id)"
             $items=@($attentionReport.finalization.attention.items|Where-Object code -eq 'LATEST_VERIFICATION_NEEDS_REVIEW')
-            Assert ($items.Count -eq 1 -and $attentionReport.finalization.attention.attentionCount -gt 0) 'Latest abnormal verification missing from attention summary'
-            Assert ($items[0].source -match '^latest\[(\d+)\]$') 'Attention lacks an exact original batch reference'
-            Assert ($attentionReport.latest[[int]$Matches[1]].runId -eq $bad.runId) 'Attention points at the wrong batch'
+            Assert ($items.Count -eq [int](-not $case.expectedPass)) "Attention disagrees: $kind/$($case.id)"
+            if(-not $case.expectedPass){
+                Assert ($items[0].source -match '^latest\[(\d+)\]$') 'Attention lacks an exact original batch reference'
+                Assert ($attentionReport.latest[[int]$Matches[1]].runId -eq $bad.runId) 'Attention points at the wrong batch'
+            }
             Assert (-not $attentionReport.finalization.attention.blocking -and $attentionReport.history.Count -eq 4 -and (Get-FileHash $taskPath).Hash -eq $hash) 'Attention changed state, history or blocking policy'
+        }
+        }
+        # JSON Schema integer 按数值判断，合法的零不能因 CLR 浮点类型而误报。
+        foreach($zero in @('0.0','0e0','-0.0')){
+            $task.verifications=@($pass,$compile)
+            $raw=$task|ConvertTo-Json -Depth 30
+            $raw=$raw -replace '"exitCode": 0([,\s])',('"exitCode": '+$zero+'$1')
+            Assert ($raw.Contains('"exitCode": '+$zero)) 'Numeric fixture literal was not written'
+            Assert (Test-Json -Json $raw -SchemaFile (Join-Path (Split-Path $scripts) 'schemas/workflow-task.schema.json')) 'Valid numeric zero rejected by task schema'
+            [IO.File]::WriteAllText($taskPath,$raw)
+            $numeric=Export -Current -SelectedScope unrelated
+            Assert ($numeric.finalization.tests -eq 'RECORDED_PASSES' -and $numeric.finalization.attention.attentionCount -eq 0) "Valid numeric zero falsely failed: $zero"
+            Assert ($numeric.preparation.hints -notcontains 'LATEST_FAILED_OR_UNSTABLE_BATCHES_REMAIN_VISIBLE') 'Numeric zero preparation disagreement'
         }
         # 同一批次后来恢复成功：旧失败保留在 history，不把它误当最新失败。
         $bad=$compile.Clone();$bad.runId='5'*32;$bad.outcome='FAILED';$bad.exitCode=1

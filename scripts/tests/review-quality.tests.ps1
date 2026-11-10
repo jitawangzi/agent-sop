@@ -8,8 +8,8 @@ $root=Join-Path ([IO.Path]::GetTempPath()) ('review-quality-'+[guid]::NewGuid().
 [IO.Directory]::CreateDirectory($root)|Out-Null
 function Assert($Condition,[string]$Message){if(-not $Condition){throw $Message}}
 function JsonFile([string]$Path,$Value){[IO.Directory]::CreateDirectory((Split-Path -Parent $Path))|Out-Null;[IO.File]::WriteAllText($Path,($Value|ConvertTo-Json -Depth 30))}
-function Export([switch]$Current,[string]$SelectedScope='src',[string]$Previous=''){
-    $raw=& (Join-Path $scripts 'export-review.ps1') -WorkspacePath $workspace -Feature Example -TaskId change -RepositoryPaths @('.') -Scope $SelectedScope -CheckCurrent:$Current -PreviousReview $Previous
+function Export([switch]$Current,[string]$SelectedScope='src',[string]$Previous='',[string]$Attachments=''){
+    $raw=& (Join-Path $scripts 'export-review.ps1') -WorkspacePath $workspace -Feature Example -TaskId change -RepositoryPaths @('.') -Scope $SelectedScope -CheckCurrent:$Current -PreviousReview $Previous -AttachmentsManifest $Attachments
     $text=$raw|Out-String
     Assert (-not $text.Contains('TOP_SECRET_TEST')) 'Command secret leaked'
     return ($text|ConvertFrom-Json)
@@ -30,6 +30,11 @@ try {
     $before=(Get-FileHash $taskPath).Hash
     $report=Export
     Assert ($report.incremental.status -eq 'NOT_REQUESTED') 'Incremental review became mandatory'
+    Assert ($report.finalization.documents -eq 'NOT_REQUESTED' -and $report.finalization.remote -eq 'NOT_CHECKED') 'Optional finalization became a gate or invented remote facts'
+    $manifestRelative='.ai-workspace/specs/features/Example/tasks/change/attachments.json'
+    '["missing-review.md"]'|Set-Content (Join-Path $workspace $manifestRelative)
+    $withHints=Export -Attachments $manifestRelative
+    Assert ($withHints.finalization.documents -eq 'NEEDS_ATTENTION' -and $withHints.history.Count -eq 3 -and -not $withHints.blocking) 'Missing document interrupted full export'
     $priorRelative='.ai-workspace/specs/features/Example/tasks/change/invalid-prior.json'
     'null'|Set-Content (Join-Path $workspace $priorRelative)
     $partial=Export -Previous $priorRelative

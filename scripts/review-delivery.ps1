@@ -1,9 +1,10 @@
 #requires -Version 7.0
 # 显式声明的交付材料只读检查：HEAD 原始字节与工作树、声明分别比较。
 . (Join-Path $PSScriptRoot 'hidden-process.ps1')
-function Invoke-AiSopDeliveryGit([string]$Repository,[string[]]$Arguments) {
+. (Join-Path $PSScriptRoot 'review-delivery-batch.ps1')
+function Invoke-AiSopDeliveryGit([string]$Repository,[string[]]$Arguments,[string]$InputText='') {
     $process=[Diagnostics.Process]::new();$memory=[IO.MemoryStream]::new();$started=$false
-    $copy=$null;$errorRead=$null;$primary=$null;$cancellation=[Threading.CancellationTokenSource]::new()
+    $copy=$null;$errorRead=$null;$write=$null;$primary=$null;$cancellation=[Threading.CancellationTokenSource]::new()
     try {
         $process.StartInfo.FileName=(@(Get-Command git -CommandType Application -ErrorAction Stop)[0]).Source
         $process.StartInfo.UseShellExecute=$false;$process.StartInfo.CreateNoWindow=$true
@@ -15,16 +16,19 @@ function Invoke-AiSopDeliveryGit([string]$Repository,[string[]]$Arguments) {
         $process.StartInfo.Environment['GIT_TERMINAL_PROMPT']='0'
         foreach($arg in (@('--no-optional-locks','--literal-pathspecs','-c','core.fsmonitor=false','-C',$Repository)+$Arguments)){[void]$process.StartInfo.ArgumentList.Add($arg)}
         if(-not $process.Start()){throw 'DELIVERY_GIT_START_FAILED'}
-        $started=$true
-        $process.StandardInput.Close()
+        $started=$true;$clock=[Diagnostics.Stopwatch]::StartNew()
+        $write=$null
+        if($InputText){$write=$process.StandardInput.WriteAsync($InputText)}
         $copy=$process.StandardOutput.BaseStream.CopyToAsync($memory,$cancellation.Token);$errorRead=$process.StandardError.ReadToEndAsync()
-        if(-not $process.WaitForExit(10000)){throw 'DELIVERY_GIT_TIMEOUT'}
+        if($write -and -not $write.Wait(1000)){throw 'DELIVERY_GIT_INPUT_TIMEOUT'}
+        $process.StandardInput.Close()
+        if(-not $process.WaitForExit([Math]::Max(0,10000-[int]$clock.ElapsedMilliseconds))){throw 'DELIVERY_GIT_TIMEOUT'}
         if(-not [Threading.Tasks.Task]::WaitAll([Threading.Tasks.Task[]]@($copy,$errorRead),2000)){throw 'DELIVERY_GIT_OUTPUT_INCOMPLETE'}
         if($process.ExitCode -ne 0){throw ('DELIVERY_GIT_EXIT_'+$process.ExitCode)}
         return @{bytes=$memory.ToArray()}
     } catch {$primary=$_;throw} finally {
         # 管道、取消和 Dispose 也可能阻塞，沿用有界后台清理，不再同步重复关闭。
-        $copies=@();if($copy){$copies+=,$copy};if($errorRead){$copies+=,$errorRead}
+        $copies=@();if($copy){$copies+=,$copy};if($errorRead){$copies+=,$errorRead};if($write){$copies+=,$write}
         try {
             $cleanup=Invoke-AiSopProcessCleanup -Process $process -Started $started -Terminate $true -Cancellation $cancellation -Copies $copies -Resources @($memory) -BudgetMilliseconds 2000
             if(-not $cleanup.confirmed){throw 'DELIVERY_GIT_CLEANUP_UNCONFIRMED'}
@@ -93,26 +97,19 @@ function Get-AiSopDeliveryReview([string]$Workspace,[string]$Manifest) {
                 if(-not $comparison.Equals((Resolve-PhysicalPathIdentity $top),(Resolve-PhysicalPathIdentity $repository))){throw 'DELIVERY_REPOSITORY_MISMATCH'}
                 $head=(Get-AiSopDeliveryText $repository @('rev-parse','--verify','HEAD^{commit}')).Trim()
                 if($head -notmatch '^[0-9a-f]{40,64}$'){throw 'DELIVERY_HEAD_INVALID'}
-                $repositories[$repository]=@{head=$head}
+                $repositories[$repository]=@{head=$head;requests=[Collections.Generic.List[object]]::new()}
             }
             $commit=$repositories[$repository].head
             $item.git.repository=[IO.Path]::GetRelativePath($Workspace,$repository).Replace('\','/');$item.git.commit=$commit
             $repoPath=[IO.Path]::GetRelativePath($repository,$path).Replace('\','/')
-            $tree=Get-AiSopDeliveryText $repository @('ls-tree','-z',$commit,'--',$repoPath)
-            if(-not $tree){$item.git.status='NOT_IN_HEAD'}
-            else {
-                if($tree -notmatch '(?s)^(100644|100755) blob ([0-9a-f]{40,64})\t(.*)\x00$' -or $Matches[3] -cne $repoPath){throw 'DELIVERY_UNSUPPORTED_GIT_OBJECT'}
-                $oid=$Matches[2];$item.git.blobOid=$oid
-                $size=[long](Get-AiSopDeliveryText $repository @('cat-file','-s',$oid)).Trim()
-                if($size -gt 67108864){throw 'DELIVERY_BLOB_SIZE_LIMIT'}
-                $blob=(Invoke-AiSopDeliveryGit $repository @('cat-file','blob',$oid)).bytes
-                if($blob.Length -ne $size){throw 'DELIVERY_BLOB_SIZE_MISMATCH'}
-                $item.git.sha256=[Convert]::ToHexString([Security.Cryptography.SHA256]::HashData($blob)).ToLowerInvariant()
-                $item.git.status=if($item.git.sha256 -ceq $item.declaredSha256){'MATCH'}else{'DIFFERENT'}
-            }
+            $repositories[$repository].requests.Add(@{path=$repoPath;item=$item})
         } catch {$item.diagnostics+=,$_.Exception.Message;$complete=$false}
-        $item.status=if($item.local.status -eq 'MISSING'){'MISSING'}elseif($item.local.status -eq 'CHANGED'){'CHANGED'}elseif($item.local.status -eq 'MATCH' -and $item.git.status -eq 'MATCH'){'COMMITTED'}elseif($item.local.status -eq 'MATCH' -and $item.git.status -in @('DIFFERENT','NOT_IN_HEAD')){'LOCAL'}else{'UNKNOWN'}
         $items.Add($item)
+    }
+    foreach($repository in $repositories.Keys){Set-AiSopDeliveryBatchFacts $repository $repositories[$repository].head $repositories[$repository].requests.ToArray()}
+    foreach($item in $items){
+        if($item.diagnostics.Count){$complete=$false}
+        $item.status=if($item.local.status -eq 'MISSING'){'MISSING'}elseif($item.local.status -eq 'CHANGED'){'CHANGED'}elseif($item.local.status -eq 'MATCH' -and $item.git.status -eq 'MATCH'){'COMMITTED'}elseif($item.local.status -eq 'MATCH' -and $item.git.status -in @('DIFFERENT','NOT_IN_HEAD')){'LOCAL'}else{'UNKNOWN'}
     }
     # 仓库引用在导出期间漂移时，保留观察到的提交但不再给出已提交结论。
     foreach($repository in $repositories.Keys){

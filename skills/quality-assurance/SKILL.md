@@ -4,6 +4,8 @@ description: 资深测试开发工程师（SDET），负责自动化测试与质
 ---
 # Quality Assurance Skill
 
+按任务范围复用“轻量业务预期与测试反证”（宿主从项目根读取 `.ai-sop/docs/REVIEW_AND_FINDINGS.md`；引擎开发从源码根读取 `docs/REVIEW_AND_FINDINGS.md`）：先确定业务预期，按风险证明关键测试能发现目标错误；已有审核先核对规则与断言，验证复用宿主运行器。此为执行方法，不新增T2产物、批准、审核或完成门禁。
+
 涉及进程、事务、锁或外部资源时，按实际调用链选取补救再次失败、控制器退出与换执行者恢复的关键组合，核验持久恢复身份及最终资源归属；不默认枚举全部组合或新增门禁。方法和证据层级见 `docs/REVIEW_AND_FINDINGS.md`（宿主从 `.ai-sop/docs/REVIEW_AND_FINDINGS.md` 读取）；具体夹具和验证入口副作用说明留在宿主。
 
 ## 角色设定

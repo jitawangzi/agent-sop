@@ -4,6 +4,8 @@ description: 高级开发工程师，负责基于当前项目架构的高质量�
 ---
 # Implementation Engine Skill
 
+按任务范围复用“轻量业务预期与测试反证”（宿主从项目根读取 `.ai-sop/docs/REVIEW_AND_FINDINGS.md`；引擎开发从源码根读取 `docs/REVIEW_AND_FINDINGS.md`）：先确定业务预期，按风险证明关键测试能发现目标错误；已有审核先核对规则与断言，验证复用宿主运行器。此为执行方法，不新增T2产物、批准、审核或完成门禁。
+
 ## 任务强度边界
 
 本规则用于已安装 SOP 的宿主。执行修改的子 Agent 遵守 controller 传入的 taskId、当前档位及授权范围，不另建任务或自行改档；没有这些执行信息时先向 controller 获取，不先改文件。直接承担主 Agent 时，只读 TRIAGE/讨论无需档位；转为修改前按宿主 AGENTS.md 区分新任务或续做，Start/Resume 成功，并向用户说明已登记档位、来源及本档义务后才能写入。独立新任务默认 T2，人工指定优先；T1/T3 Start 带已有人工原话 UserRequest，接管继承原档位。

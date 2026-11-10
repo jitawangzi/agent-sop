@@ -30,6 +30,10 @@ try{
     '["validation.md","final-review.md"]'|Set-Content (Join-Path $root attachments.json)
     $r=Get-AiSopFinalizationReview $root attachments.json $latest @{}
     Assert ($r.documents -eq 'NEEDS_ATTENTION' -and $r.references[0].links.Count -eq 1 -and $r.references[0].links[0].status -eq 'MISSING') 'Missing actual review lost or code examples treated as references'
+    $coverage=$r.references[0].linkCoverage
+    Assert ($coverage.checkedLinks -eq 1 -and $coverage.skippedLinks -eq 5 -and $coverage.recognizedCandidates -eq 6) 'Candidate counts do not describe the checked subset'
+    Assert ($coverage.skippedByReason.EXTERNAL_SCHEME -eq 1 -and $coverage.skippedByReason.INLINE_CODE -eq 3 -and $coverage.skippedByReason.FENCED_CODE -eq 1) 'Skip reasons lost'
+    Assert ($r.references[0].links[0].line -eq 1 -and ($r.references[0].skippedLinks.line -join ',') -eq '2,3,4,6,9') 'Code masking changed original line positions'
     Assert ($r.tests -eq 'RECORDED_PASSES' -and $r.remote -eq 'NOT_CHECKED' -and $r.package -eq 'NOT_CHECKED' -and $r.committedBytes -eq 'NOT_CONFIRMED' -and -not $r.blocking) 'Invented delivery facts or gate'
     'reviewed'|Set-Content (Join-Path $root final-review.md)
     $r=Get-AiSopFinalizationReview $root attachments.json $latest @{coverage='COMPLETE';items=@(@{status='COMMITTED'})}
@@ -75,6 +79,36 @@ try{
     '[web](https://example.invalid) [mail](mailto:test@example.invalid) [custom](vscode://file/example) [anchor](#section)'|Set-Content (Join-Path $root docs/absolute-links.md)
     $r=Get-AiSopFinalizationReview $root attachments.json $latest @{}
     Assert ($r.references[0].links.Count -eq 0 -and $r.documents -eq 'DECLARED_REFERENCES_PRESENT') 'External links or anchors became local checks'
+    Assert ($r.references[0].linkCoverage.status -eq 'NO_SUPPORTED_LOCAL_LINKS' -and $r.references[0].linkCoverage.skippedLinks -eq 4) 'Skipped-only document implied local link verification'
+    foreach($newline in @("`n","`r`n")){
+        @('prose','[title](missing.md "title")','[reference][id]','[bad](path(nested).md)','   [actual](missing.md)') -join $newline|Set-Content (Join-Path $root docs/absolute-links.md)
+        $r=Get-AiSopFinalizationReview $root attachments.json $latest @{}
+        Assert ($r.references[0].linkCoverage.checkedLinks -eq 1 -and $r.references[0].linkCoverage.skippedByReason.UNSUPPORTED_SYNTAX -eq 3) 'Unsupported syntax hidden or treated as a checked target'
+        Assert ($r.references[0].links[0].line -eq 5 -and $r.references[0].links[0].column -eq 4 -and $r.references[0].links[0].status -eq 'MISSING') 'Diagnostic position does not point to original source'
+    }
+    'plain prose'|Set-Content (Join-Path $root docs/absolute-links.md)
+    $r=Get-AiSopFinalizationReview $root attachments.json $latest @{}
+    Assert ($r.references[0].linkCoverage.status -eq 'NO_SUPPORTED_LOCAL_LINKS' -and $r.references[0].linkCoverage.recognizedCandidates -eq 0 -and -not $r.blocking) 'Empty recognized scope inflated coverage or added gate'
+    '["validation.md","final-review.md"]'|Set-Content (Join-Path $root attachments.json)
+    # 同一目标经历缺失、创建、删除，各种写法必须保持相同事实；旧单点反例继续保留。
+    $familyTarget=Join-Path $root 'same file % # (节点).md'
+    $documentDirectory=Join-Path $root docs
+    '["docs/absolute-links.md"]'|Set-Content (Join-Path $root attachments.json)
+    $family=@(Get-AiSopEquivalentLocalLinkCases -DocumentDirectory $documentDirectory -TargetPath $familyTarget)
+    foreach($state in @('MISSING','PRESENT','MISSING')){
+        if($state -eq 'PRESENT'){'created'|Set-Content -LiteralPath $familyTarget}
+        elseif(Test-Path -LiteralPath $familyTarget){Remove-Item -LiteralPath $familyTarget}
+        foreach($case in $family){
+            ('[same]('+ $case.target +')')|Set-Content (Join-Path $documentDirectory absolute-links.md)
+            $r=Get-AiSopFinalizationReview $root attachments.json $latest @{}
+            Assert ($r.references[0].links.Count -eq 1 -and $r.references[0].links[0].status -eq $state) ("Equivalent link mismatch: $($case.id) $state")
+        }
+    }
+    foreach($case in @(Get-AiSopEquivalentLocalLinkCases -DocumentDirectory $documentDirectory -TargetPath $outside)){
+        ('[outside]('+ $case.target +')')|Set-Content (Join-Path $documentDirectory absolute-links.md)
+        $r=Get-AiSopFinalizationReview $root attachments.json $latest @{}
+        Assert ($r.references[0].links.Count -eq 1 -and $r.references[0].links[0].status -eq 'UNAVAILABLE') ('Equivalent outside link escaped: '+$case.id)
+    }
     '["validation.md","final-review.md"]'|Set-Content (Join-Path $root attachments.json)
     $latest[0].currentInputs='STALE';$latest[0].outcome='FAILED'
     $r=Get-AiSopFinalizationReview $root attachments.json $latest @{coverage='COMPLETE';items=@()}

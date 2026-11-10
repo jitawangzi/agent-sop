@@ -1216,12 +1216,27 @@ try {
     Get-ChildItem -LiteralPath (Split-Path -Parent $DispatcherScript) -File -Filter '*.ps1' |
         Where-Object Name -ne 'atomic-file.ps1' |
         Copy-Item -Destination $missingDepsDir
+    Copy-Item -LiteralPath (Join-Path (Split-Path -Parent $DispatcherScript) native) -Destination $missingDepsDir -Recurse
     $deny = Invoke-HiddenHookScript -File $missingDispatcher -EventHint PRE_TOOL_USE -OutName missing-atomic-deny
     Assert-Equal $deny.ExitCode 2 'Missing atomic helper must deny writes'
     Assert-True ($deny.Output -match 'SOP_DEGRADED_MISSING_DEPS') 'Missing atomic helper lost structured reason'
     $allow = Invoke-HiddenHookScript -File $missingDispatcher -EventHint SESSION_START -OutName missing-atomic-allow
     Assert-Equal $allow.ExitCode 0 'Missing atomic helper blocked repair session'
     Assert-True ($allow.Output -match '"decision"\s*:\s*"ALLOW"') 'Missing atomic helper must allow repair session'
+
+    # 新原生源文件的部分安装仍保留同一拒写/修复会话契约。
+    Copy-Item -LiteralPath (Join-Path (Split-Path -Parent $DispatcherScript) atomic-file.ps1) -Destination $missingDepsDir
+    foreach($dependency in @('native-types.ps1','native/PhysicalPath.cs','native/AtomicFile.cs')){
+        $dependencyPath=Join-Path $missingDepsDir $dependency
+        Move-Item -LiteralPath $dependencyPath -Destination ($dependencyPath+'.held')
+        try{
+            $deny=Invoke-HiddenHookScript -File $missingDispatcher -EventHint PRE_TOOL_USE -OutName ('missing-native-'+[IO.Path]::GetFileName($dependency))
+            Assert-Equal $deny.ExitCode 2 'Missing native dependency must deny writes'
+            Assert-True ($deny.Output -match 'SOP_DEGRADED_MISSING_DEPS') 'Missing native dependency lost structured reason'
+            $allow=Invoke-HiddenHookScript -File $missingDispatcher -EventHint SESSION_START -OutName ('repair-native-'+[IO.Path]::GetFileName($dependency))
+            Assert-Equal $allow.ExitCode 0 'Missing native dependency blocked repair session'
+        }finally{Move-Item -LiteralPath ($dependencyPath+'.held') -Destination $dependencyPath}
+    }
 
     $wrapRoot = Join-Path $TestRoot "wrapper-ws"
     [System.IO.Directory]::CreateDirectory((Join-Path $wrapRoot ".agents")) | Out-Null

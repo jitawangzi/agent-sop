@@ -443,6 +443,8 @@ Invoke-Test "SVN upgrade verifies before commit and isolates its pending transac
         }
         New-Item -ItemType Directory -Path (Join-Path $source 'scripts') | Out-Null
         Copy-Item -LiteralPath (Join-Path $ClaudeRoot 'scripts/path-identity.ps1') -Destination (Join-Path $source 'scripts')
+        Copy-Item -LiteralPath (Join-Path $ClaudeRoot 'scripts/native-types.ps1') -Destination (Join-Path $source 'scripts')
+        Copy-Item -LiteralPath (Join-Path $ClaudeRoot 'scripts/native') -Destination (Join-Path $source 'scripts') -Recurse
         Copy-Item -LiteralPath (Join-Path $ClaudeRoot 'scripts/hidden-process.ps1') -Destination (Join-Path $source 'scripts')
         Copy-Item -LiteralPath (Join-Path $ClaudeRoot '.gitattributes') -Destination $source
         git -C $source init --quiet

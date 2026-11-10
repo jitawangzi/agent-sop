@@ -1,3 +1,4 @@
+. (Join-Path $PSScriptRoot 'review-links.ps1')
 # 收尾仅派生观察事实；清单复用打包附件清单，不形成第二份任务状态。
 function Get-AiSopFinalizationReview([string]$Workspace,[string]$AttachmentsManifest,$Latest,$Delivery) {
     $tests=@($Latest|Where-Object kind -eq 'test')
@@ -26,24 +27,13 @@ function Get-AiSopFinalizationReview([string]$Workspace,[string]$AttachmentsMani
                     if([IO.Path]::GetExtension($file) -ieq '.md'){
                         if((Get-Item -LiteralPath $file).Length -gt 1048576){throw 'DOCUMENT_SCAN_SIZE_LIMIT'}
                         $text=[IO.File]::ReadAllText($file)
-                        # 示例代码不是实际引用；只提示正文中的简单内联链接。
-                        $lines=[Collections.Generic.List[string]]::new();$fence=''
-                        foreach($line in ($text -split '\r?\n')){
-                            if($line -match '^\s*(`{3,}|~{3,})'){
-                                $mark=$Matches[1]
-                                if(-not $fence){$fence=$mark}elseif($mark[0] -eq $fence[0] -and $mark.Length -ge $fence.Length){$fence=''}
-                                continue
-                            }
-                            if(-not $fence){$lines.Add($line)}
-                        }
-                        $text=[regex]::Replace(($lines -join "`n"),'(?s)(?<!`)(`+)(?!`).*?(?<!`)\1(?!`)','')
-                        $ref.links=@(foreach($match in [regex]::Matches($text,'\[[^\]\r\n]+\]\(([^()\s]+)\)')){
-                            $link=$match.Groups[1].Value
-                            # 先识别盘符与 file URI，不能把 Windows 绝对本地路径当作网址协议跳过。
-                            if($link.StartsWith('#')){continue}
-                            if($link -match '^[a-zA-Z][a-zA-Z0-9+.-]*:' -and $link -notmatch '^[a-zA-Z]:[/\\]' -and $link -notmatch '^file:'){continue}
+                        $scan=Get-AiSopMarkdownLinkScan $text
+                        $ref.linkCoverage=$scan.coverage
+                        $ref.skippedLinks=$scan.skipped
+                        $ref.links=@(foreach($candidate in $scan.links){
+                            $link=$candidate.target
                             $target=($link -split '[#?]',2)[0]
-                            $item=@{target=$link;status='UNAVAILABLE'}
+                            $item=@{target=$link;line=$candidate.line;column=$candidate.column;status='UNAVAILABLE'}
                             try{
                                 if($target -match '^file:'){
                                     $uri=[Uri]::new($target,[UriKind]::Absolute)

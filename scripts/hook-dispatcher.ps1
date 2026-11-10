@@ -32,6 +32,9 @@ $script:DispatcherWorkspaceRoot = Split-Path -Parent (
 $script:DispatcherMissingDeps = [System.Collections.Generic.List[string]]::new()
 foreach ($dependency in @(
     'atomic-file.ps1',
+    'native-types.ps1',
+    'native/PhysicalPath.cs',
+    'native/AtomicFile.cs',
     "hook-event-normalizer.ps1",
     "hook-dedup.ps1",
     "workflow-transaction.ps1",
@@ -1013,8 +1016,8 @@ function Invoke-AiSopHookDispatcher {
     )
 
     $watch = [System.Diagnostics.Stopwatch]::StartNew()
-    $agent = Get-AiSopDispatcherInferredAgent -RawPayload $RawPayload
-    if ($AgentHint) { $agent=$AgentHint }
+    # 已知入口身份时不重复解析仅用于猜测身份的载荷；后续完整载荷校验及身份一致性检查保持。
+    $agent = if ($AgentHint) { $AgentHint } else { Get-AiSopDispatcherInferredAgent -RawPayload $RawPayload }
     try {
         $originalRawPayload=$RawPayload
         # 客户端身份来自安装的入口参数，不能由工具载荷声明或覆盖。

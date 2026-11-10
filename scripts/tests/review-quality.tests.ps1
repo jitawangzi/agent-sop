@@ -35,6 +35,13 @@ try {
     '["missing-review.md"]'|Set-Content (Join-Path $workspace $manifestRelative)
     $withHints=Export -Attachments $manifestRelative
     Assert ($withHints.finalization.documents -eq 'NEEDS_ATTENTION' -and $withHints.history.Count -eq 3 -and -not $withHints.blocking) 'Missing document interrupted full export'
+    $documentRelative='.ai-workspace/specs/features/Example/tasks/change/coverage.md'
+    "[outside](https://example.invalid/?TOP_SECRET_TEST)`n[missing](missing.md)"|Set-Content (Join-Path $workspace $documentRelative)
+    ConvertTo-Json -InputObject @($documentRelative)|Set-Content (Join-Path $workspace $manifestRelative)
+    $withCoverage=Export -Attachments $manifestRelative
+    $observed=$withCoverage.finalization.references[0]
+    Assert ($observed.linkCoverage.checkedLinks -eq 1 -and $observed.linkCoverage.skippedByReason.EXTERNAL_SCHEME -eq 1 -and $observed.links[0].line -eq 2) 'Full export lost link coverage or original location'
+    Assert ($withCoverage.history.Count -eq 3 -and -not $withCoverage.blocking) 'Coverage summary changed histories or completion policy'
     $priorRelative='.ai-workspace/specs/features/Example/tasks/change/invalid-prior.json'
     'null'|Set-Content (Join-Path $workspace $priorRelative)
     $partial=Export -Previous $priorRelative

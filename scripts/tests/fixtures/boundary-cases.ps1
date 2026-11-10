@@ -26,3 +26,24 @@ function Get-AiSopInvalidPathDeclarations {
         [pscustomobject]@{path=$path;json=(ConvertTo-Json -InputObject @($path) -Compress)}
     }
 }
+
+# 同一个目标的链接写法；是否允许越界由真实消费者决定，夹具不预设权限结论。
+function Get-AiSopEquivalentLocalLinkCases {
+    param([Parameter(Mandatory)][string]$DocumentDirectory,[Parameter(Mandatory)][string]$TargetPath)
+    $target=[IO.Path]::GetFullPath($TargetPath)
+    $relative=[IO.Path]::GetRelativePath([IO.Path]::GetFullPath($DocumentDirectory),$target).Replace('\','/')
+    $cases=@(
+        @{id='relative';target=$relative},
+        @{id='absolute';target=$target.Replace('\','/')}
+    )
+    if(-not [IO.Path]::IsPathRooted($relative)){$cases+=@{id='relative-dot';target='./'+$relative}}
+    if([OperatingSystem]::IsWindows()){
+        $cases+=@{id='windows-separator';target=$target}
+        if($target -match '^[a-zA-Z]:'){$cases+=@{id='windows-leading-slash';target='/'+$target.Replace('\','/')}}
+    }
+    foreach($case in $cases){
+        $case.target=$case.target.Replace('%','%25').Replace(' ','%20').Replace('#','%23').Replace('?','%3F').Replace('(','%28').Replace(')','%29')
+        [pscustomobject]$case
+    }
+    [pscustomobject]@{id='file-uri';target=([Uri]::new($target,[UriKind]::Absolute)).AbsoluteUri.Replace('(','%28').Replace(')','%29')}
+}

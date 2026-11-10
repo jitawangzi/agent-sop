@@ -130,6 +130,7 @@ try {
     Get-ChildItem -LiteralPath $SourceScripts -Filter '*.ps1' -File | ForEach-Object {
         Copy-Item -LiteralPath $_.FullName -Destination (Join-Path $ProbeEngine 'scripts')
     }
+    Copy-Item -LiteralPath (Join-Path $SourceScripts native) -Destination (Join-Path $ProbeEngine scripts) -Recurse
     foreach ($directory in @('schemas','config')) {
         Copy-Item -LiteralPath (Join-Path $SourceEngine $directory) -Destination $ProbeEngine -Recurse
     }

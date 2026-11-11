@@ -16,7 +16,7 @@ if($Probe){
     . (Join-Path $scripts atomic-file.ps1)
     . (Join-Path $scripts path-identity.ps1)
     if($script:compilations -ne $(if([OperatingSystem]::IsWindows()){1}else{0})){throw 'Native helpers compiled repeatedly'}
-    if([OperatingSystem]::IsWindows() -and $Probe -eq 'cold' -and [AiSop.PhysicalPath].Assembly -ne [AiSop.AtomicFile].Assembly){throw 'Cold helpers were not compiled together'}
+    if([OperatingSystem]::IsWindows() -and $Probe -eq 'cold' -and [AiSop.PhysicalPathV2].Assembly -ne [AiSop.AtomicFile].Assembly){throw 'Cold helpers were not compiled together'}
     $source=Join-Path $Fixture source.txt;$target=Join-Path $Fixture target.txt
     [IO.File]::WriteAllText($source,'new');[IO.File]::WriteAllText($target,'old')
     Move-AiSopWorkflowFileAtomic $source $target

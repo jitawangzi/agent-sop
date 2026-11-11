@@ -2094,6 +2094,19 @@ try {
             -Result INVALID -RecommendedPhase DONE
     )
 
+    function Test-OwnerLockBusy([string]$LockPath) {
+        $probe=$null
+        try{$probe=[IO.File]::Open($LockPath,[IO.FileMode]::Open,[IO.FileAccess]::ReadWrite,[IO.FileShare]::None);return $false}
+        catch [IO.FileNotFoundException]{return $false}
+        catch [IO.IOException]{if(($_.Exception.GetBaseException().HResult -band 0xffff) -in @(11,32,33)){return $true};throw}
+        finally{if($probe){$probe.Dispose()}}
+    }
+    $ownerLockPath=Join-Path $env:SERVER_NEW_WORKFLOW_REGISTRY 'example.json.lock'
+    $staleLock=[IO.File]::Open($ownerLockPath,[IO.FileMode]::OpenOrCreate,[IO.FileAccess]::ReadWrite,[IO.FileShare]::None);$staleLock.Dispose()
+    if(Test-OwnerLockBusy $ownerLockPath){throw 'An existing unheld lock was reported busy'}
+    $heldProbe=[IO.File]::Open($ownerLockPath,[IO.FileMode]::Open,[IO.FileAccess]::ReadWrite,[IO.FileShare]::None)
+    try{if(-not (Test-OwnerLockBusy $ownerLockPath)){throw 'An exclusively held lock was reported free'}}finally{$heldProbe.Dispose()}
+    if(Test-OwnerLockBusy $ownerLockPath){throw 'A released lock was reported busy'}
     $approvalLockPath = $ApprovalPath + ".lock"
     $heldApprovalLock = [System.IO.File]::Open(
         $approvalLockPath,
@@ -2129,7 +2142,8 @@ try {
         $ownerLockPath = Join-Path $env:SERVER_NEW_WORKFLOW_REGISTRY "example.json.lock"
         $ownerLockObserved = $false
         for ($attempt = 0; $attempt -lt 100; $attempt++) {
-            if (Test-Path -LiteralPath $ownerLockPath) {
+            if ($stateRaceProcess.HasExited) { throw "State mutation exited before acquiring lock: $($stateRaceProcess.ExitCode)" }
+            if (Test-OwnerLockBusy $ownerLockPath) {
                 $ownerLockObserved = $true
                 break
             }

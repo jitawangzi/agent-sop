@@ -49,3 +49,13 @@ T1/T2 Start 默认仍为 500ms、8MiB。项目可在 `.ai-workspace/context/star
 慢套件 native-harness-adapters 在并行入口中最多预留两个现有执行名额，其他套件每套一个；总名额不超过 MaxParallel。默认串行和 MaxParallel=1 仍逐项执行。Hook用例分为Cursor链与其余客户端链两组，每组使用独立临时目录及全部独立注册表，各组内部保持串行、重放及生命周期顺序。默认串行仍使用原all链顺序；并行时两组不共享权限、文件或任务状态。每例仍启动真实冷进程，保留全部断言及25秒/900秒原限制；不缓存权限或复用业务进程。任一并行回调失败便停止领取排队项，等待已启动回调结束后抛原错误。Hook超时或stdin故障先请求终止，再等待close才报告收尾确认；最多额外2秒仅用于清理，不延长25秒执行限制。清理无法确认时报告原故障、PID和未知状态，不再派发、不删除夹具，并尝试保存cleanup-unconfirmed.json供恢复；已有错误不变为成功。
 
 HOOK_PROCESS_METRICS 增加 group 与 peakCalls，HOOK_GROUPS_COMPLETE 记录实际分组与 workers；results.json 记录套件预留 Workers。比较性能时核对原 hook/task/command 调用次数和断言保留，再分别报告阶段与总耗时。预留额度可能减少其他套件的重叠，负载差异也影响耗时；不能把单次总耗时变化全部归因于此优化。
+
+### 终态事实与交付衔接
+
+Get-AiSopProcessFacts 只读取已完成收尾后的标量事实，不等待、不终止进程、不修改句柄；不序列化pending Task。版本观察与测试运行器共享事实解释，各自保留对非零退出的策略。共享契约预期独立声明，真实后代/异常回归继续执行。
+
+pack-review-evidence 的结果增加 deliveryCheck：工作区内的包提供 available=true 和可直接传给 export-review.ps1 的 arguments（WorkspacePath、Feature、TaskId、DeliveryManifest），pathBase=manifest-directory。包外输出仍支持，但 available=false 并说明不可从该工作区检查；不生成误导性参数。待材料实际提交后运行检查，未提交仍显示LOCAL；摘要不证明语义或远端推送。现有JSON数组清单格式兼容，附件路径仍相对工作区，包内manifest路径相对清单目录。
+
+失败现场保留回归的隔离副本只复制运行脚本、schemas、所需安全套件及fixtures，省去其他套件源码复制；所有原有前置断言、七种真实故障路径、120秒子进程和900秒套件预算保留。RETAINED_PREPARE_MS及RETAINED_SCENARIO_MS用于区分复制和场景耗时；阶段计时不表示整体性能保证。
+
+本轮全量发现的并发反例也纳入回归：状态机测试以真实互斥冲突判断就绪，保留空锁文件不能作为持锁证明。Windows物理路径解析在原子替换后可能读到已退休文件的系统删除路径；V2类型比较旧句柄与当前名字对应的文件身份，仅身份变化时最多重试三次，持续变化明确失败，真实链接越界继续拒绝。V2与同进程旧类型隔离，POSIX行为不因此扩大。本轮相关验证不延长原等待或测试超时。

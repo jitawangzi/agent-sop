@@ -74,7 +74,7 @@ function Resolve-PhysicalPathIdentity {
         $existingPath = $parent
     }
 
-    $resolvedPath = [AiSop.PhysicalPath]::Resolve($existingPath)
+    $resolvedPath = [AiSop.PhysicalPathV2]::Resolve($existingPath)
     foreach ($segment in $missingSegments) {
         $resolvedPath = Join-Path $resolvedPath $segment
     }

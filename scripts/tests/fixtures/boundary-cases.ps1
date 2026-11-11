@@ -60,3 +60,16 @@ function Get-AiSopVerificationRecordCases {
         @{id='nonzero';outcome='PASSED';exitCode=1;inputsStable=$true;expectedPass=$false}
     )
 }
+
+# Expectations are declared independently of the production fact reader.
+function Get-AiSopProcessContractCases {
+    @(
+        @{id='zero';code=0;diagnostic='';completed=$true;disposed=$true;confirmed=$true;pending=$false;expected=$true},
+        @{id='nonzero';code=23;diagnostic='';completed=$true;disposed=$true;confirmed=$true;pending=$false;expected=$true},
+        @{id='running';code=0;diagnostic='';completed=$false;disposed=$false;confirmed=$false;pending=$false;expected=$false},
+        @{id='not-disposed';code=0;diagnostic='';completed=$true;disposed=$false;confirmed=$true;pending=$false;expected=$false},
+        @{id='drain';code=125;diagnostic='OUTPUT_DRAIN_TIMED_OUT';completed=$true;disposed=$true;confirmed=$true;pending=$false;expected=$false},
+        @{id='cleanup';code=125;diagnostic='PROCESS_CLEANUP_FAILED';completed=$true;disposed=$true;confirmed=$false;pending=$false;expected=$false},
+        @{id='pending';code=0;diagnostic='';completed=$true;disposed=$true;confirmed=$true;pending=$true;expected=$false}
+    )
+}

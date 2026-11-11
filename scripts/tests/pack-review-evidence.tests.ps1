@@ -9,6 +9,34 @@ $ws=Join-Path $root workspace;$taskDir=Join-Path $ws '.ai-workspace/specs/featur
 [IO.Directory]::CreateDirectory($taskDir)|Out-Null
 $ok=$false;$failure=''
 function Assert($ok,$message){if(-not $ok){throw $message}}
+$gitWorker=Join-Path $root git-worker.ps1
+@'
+param([string]$Repository,[string]$Encoded)
+$ErrorActionPreference='Stop'
+foreach($key in @(Get-ChildItem Env:|Where-Object Name -like 'GIT_*')){Remove-Item -LiteralPath ('Env:'+$key.Name)}
+$env:GIT_CONFIG_NOSYSTEM='1';$env:GIT_CONFIG_GLOBAL=if([OperatingSystem]::IsWindows()){'NUL'}else{'/dev/null'}
+$env:GIT_TERMINAL_PROMPT='0'
+$empty=Join-Path $PSScriptRoot empty-git-policy;[IO.Directory]::CreateDirectory($empty)|Out-Null
+$arguments=@(ConvertFrom-Json ([Text.Encoding]::UTF8.GetString([Convert]::FromBase64String($Encoded))))
+$options=@('-c',('core.hooksPath='+$empty),'-c',('init.templateDir='+$empty),'-c','commit.gpgsign=false','-c','core.fsmonitor=false','-c','user.name=Fixture','-c','user.email=fixture@example.invalid','-C',$Repository)
+if($arguments[0] -ne 'init'){
+    $actual=& git @options rev-parse --show-toplevel
+    $comparison=if([OperatingSystem]::IsWindows()){[StringComparison]::OrdinalIgnoreCase}else{[StringComparison]::Ordinal}
+    if($LASTEXITCODE -ne 0 -or -not [IO.Path]::GetFullPath($actual).Equals($Repository,$comparison)){throw 'FIXTURE_REPOSITORY_MISMATCH'}
+}
+& git @options @arguments
+exit $LASTEXITCODE
+'@|Set-Content $gitWorker
+function FixtureGit([string]$Repository,[string[]]$Arguments){
+    $full=[IO.Path]::GetFullPath($Repository);$physical=[IO.Path]::GetPathRoot($full)
+    foreach($segment in [IO.Path]::GetRelativePath($physical,$full).Split([IO.Path]::DirectorySeparatorChar,[StringSplitOptions]::RemoveEmptyEntries)){$physical=Resolve-PhysicalPathIdentity (Join-Path $physical $segment)}
+    $Repository=$physical
+    $encoded=[Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes((ConvertTo-Json -InputObject $Arguments -Compress)))
+    $out=Join-Path $root ([guid]::NewGuid().ToString('N')+'.git.out');$err=$out+'.err'
+    $child=Start-AiSopHiddenProcess -FilePath (Get-Process -Id $PID).Path -ArgumentList @('-NoProfile','-File',$gitWorker,$Repository,$encoded) -RedirectStandardOutput $out -RedirectStandardError $err -TimeoutSeconds 30 -PassThru
+    try{$child.WaitForExit();$child.Dispose();if($child.ExitCode -ne 0 -or $child.Diagnostic){throw ('FIXTURE_GIT_FAILED: '+[IO.File]::ReadAllText($err))}}finally{$child.Dispose()}
+}
+function ForeignBytes([string]$Path){return (@(Get-ChildItem -LiteralPath $Path -Force -Recurse -File|Sort-Object FullName|ForEach-Object {$_.FullName+':'+(Get-FileHash -LiteralPath $_.FullName).Hash}) -join ';')}
 try{
     $ref=Save-AiSopInputManifest (Get-AiSopInputSnapshot $ws) $ws
     $task=@{schemaVersion='1.0';taskId='change';feature='Example';ownerId='fixture';tier='T2';objective='Packaging';status='DONE';nextAction='';notes='';createdAt='2026-01-01T00:00:00Z';updatedAt='2026-01-01T00:00:00Z';requiredCaseIds=@();verifications=@();startInputs=@{status='CAPTURED';taskId='change';feature='Example';createdAt='2026-01-01T00:00:00Z';transactionId=('claim-'+('1'*32));mode='FULL';inputsRef=$ref;inputDigest=(Get-AiSopInputSnapshot $ws).digest}}
@@ -60,8 +88,36 @@ try{
     Assert ($guide -match '(?m)^& .*pack-review-evidence\.ps1 .* -OutputPath (\S+)') 'Documented package command missing'
     $documentedOutput=Join-Path $ws $Matches[1]
     $beforePackage=(Get-AiSopInputSnapshot $ws).digest
-    & (Join-Path $scripts pack-review-evidence.ps1) -WorkspacePath $ws -Feature Example -TaskId change -OutputPath $documentedOutput|Out-Null
+    $bridge=(& (Join-Path $scripts pack-review-evidence.ps1) -WorkspacePath $ws -Feature Example -TaskId change -OutputPath $documentedOutput)|ConvertFrom-Json -AsHashtable
     Assert ((Get-AiSopInputSnapshot $ws).digest -ceq $beforePackage) 'Documented packaging invalidated verification inputs'
+    Assert ($bridge.deliveryCheck.available -and $bridge.deliveryCheck.pathBase -eq 'manifest-directory') 'Package did not expose usable byte-check arguments'
+    $foreign=Join-Path $root foreign;[IO.Directory]::CreateDirectory($foreign)|Out-Null
+    FixtureGit $foreign @('init','-q')
+    'original'|Set-Content (Join-Path $foreign original.txt)
+    FixtureGit $foreign @('add','.')
+    FixtureGit $foreign @('commit','-qm','original')
+    'uncommitted'|Set-Content (Join-Path $foreign staged.txt)
+    FixtureGit $foreign @('add','staged.txt')
+    $foreignBefore=ForeignBytes $foreign
+    $poison=@{GIT_DIR=(Join-Path $foreign .git);GIT_WORK_TREE=$foreign;GIT_INDEX_FILE=(Join-Path $foreign '.git/index');GIT_CONFIG_COUNT='1';GIT_CONFIG_KEY_0='core.hooksPath';GIT_CONFIG_VALUE_0=(Join-Path $foreign hooks);GIT_TEMPLATE_DIR=$foreign}
+    $savedGit=@{}
+    try{
+        foreach($key in $poison.Keys){$savedGit[$key]=@{present=(Test-Path ("Env:"+$key));value=[Environment]::GetEnvironmentVariable($key)};[Environment]::SetEnvironmentVariable($key,$poison[$key])}
+        FixtureGit $ws @('init','-q')
+        '* -text'|Set-Content (Join-Path $ws .gitattributes)
+        $alias=Join-Path $root 'linked workspace'
+        if([OperatingSystem]::IsWindows()){New-Item -ItemType Junction -Path $alias -Value $root|Out-Null}
+        else{[IO.Directory]::CreateSymbolicLink($alias,$root)|Out-Null}
+        try{FixtureGit (Join-Path $alias workspace) @('add','.')}
+        finally{Remove-Item -LiteralPath $alias -Force}
+        FixtureGit $ws @('commit','-qm','fixture')
+        $checkArgs=$bridge.deliveryCheck.arguments
+        $checked=(& (Join-Path $scripts export-review.ps1) @checkArgs)|ConvertFrom-Json
+        Assert ($checked.delivery.coverage -eq 'COMPLETE' -and @($checked.delivery.items).Count -gt 0 -and @($checked.delivery.items|Where-Object status -ne COMMITTED).Count -eq 0) 'Returned arguments did not verify real committed bytes'
+        Assert ((ForeignBytes $foreign) -ceq $foreignBefore) 'Fixture Git changed external HEAD/index/config/worktree'
+        foreach($key in $poison.Keys){Assert ([Environment]::GetEnvironmentVariable($key) -ceq $poison[$key]) 'Child Git changed caller environment'}
+    }finally{foreach($key in $savedGit.Keys){if($savedGit[$key].present){[Environment]::SetEnvironmentVariable($key,$savedGit[$key].value)}else{Remove-Item -LiteralPath ('Env:'+$key) -ErrorAction SilentlyContinue}}}
+    Write-Output 'PASS: real package byte-check bridge under redirected Git environment; external repository and caller preserved'
     & (Join-Path $scripts pack-review-evidence.ps1) -WorkspacePath $ws -Feature Example -TaskId change -OutputPath (Join-Path $ws unsafe-root-package)|Out-Null
     Assert ((Get-AiSopInputSnapshot $ws).digest -cne $beforePackage) 'Negative control did not detect root package contamination'
     # 在隔离脚本中确定性注入发布竞争及观察后变更，不依赖调度碰运气。

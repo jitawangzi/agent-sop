@@ -42,15 +42,17 @@ function Complete-Suite {
     param($Job)
     $code=-1; $duration=0; $diagnostic=$Job.diagnostic
     if ($Job.process) {
-        $code=$Job.process.ExitCode; $duration=$Job.process.Clock.ElapsedMilliseconds
-        $diagnostic=$Job.process.Diagnostic
+        $disposeError='';try{$Job.process.Dispose()}catch{$disposeError=$_.Exception.Message}
+        $facts=Get-AiSopProcessFacts $Job.process -DisposeError $disposeError
+        $code=$facts.exitCode; $duration=$Job.process.Clock.ElapsedMilliseconds
+        $diagnostic=(@($facts.diagnostic,$facts.resultError,$facts.cleanupDiagnostic)|Where-Object {$_}) -join '; '
+        if(-not $facts.cleanupConfirmed -or $facts.resultError){$code=125;if(-not $diagnostic){$diagnostic='PROCESS_CLEANUP_UNCONFIRMED'}}
     }
     $outcome=if ($code -eq 0) { 'PASSED' } elseif ($code -eq 124 -and $diagnostic -like 'PROCESS_TIMED_OUT:*') { 'TIMED_OUT' } else { 'FAILED' }
     $result=[pscustomobject]@{
         Name=$Job.name; File=$Job.file; ExitCode=$code; Passed=($code -eq 0); Outcome=$outcome
         DurationMs=$duration; TimeoutSeconds=$Job.limit; Workers=$Job.workers; Diagnostic=$diagnostic; OutFile=$Job.outFile; ErrFile=$Job.errFile; FailureFile=$Job.failureFile
     }
-    if ($Job.process) { $Job.process.Dispose() }
     $script:Results.Add($result)
     # Incremental diagnostic report, not workflow evidence. Preserve on failure.
     [IO.File]::WriteAllText((Join-Path $script:LogRoot 'results.json'), (ConvertTo-Json -InputObject @($script:Results.ToArray()) -Depth 5))

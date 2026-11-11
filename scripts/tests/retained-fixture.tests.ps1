@@ -27,7 +27,15 @@ Write-Output 'PASS: failure preservation, independent cleanup, failed compensati
 # Inject only into an isolated copy; production tests have no failure bypass.
 $copy=New-Fixture
 $engine=Split-Path -Parent (Split-Path -Parent $PSScriptRoot)
-foreach($dir in @('scripts','schemas')){Copy-Item -LiteralPath (Join-Path $engine $dir) -Destination $copy -Recurse}
+$prepareClock=[Diagnostics.Stopwatch]::StartNew()
+# Only runtime scripts plus this suite and its fixtures are needed in the isolated copy.
+[IO.Directory]::CreateDirectory((Join-Path $copy 'scripts/tests'))|Out-Null
+Get-ChildItem (Join-Path $engine scripts) -Force|Where-Object Name -ne tests|ForEach-Object {Copy-Item -LiteralPath $_.FullName -Destination (Join-Path $copy scripts) -Recurse}
+Copy-Item -LiteralPath (Join-Path $engine schemas) -Destination $copy -Recurse
+Copy-Item -LiteralPath (Join-Path $PSScriptRoot fixtures) -Destination (Join-Path $copy 'scripts/tests') -Recurse
+Copy-Item -LiteralPath (Join-Path $PSScriptRoot workflow-evidence-safety.tests.ps1) -Destination (Join-Path $copy 'scripts/tests')
+Write-Output "RETAINED_PREPARE_MS=$($prepareClock.ElapsedMilliseconds)"
+$scenarioClock=[Diagnostics.Stopwatch]::StartNew()
 $testPath=Join-Path $copy 'scripts/tests/workflow-evidence-safety.tests.ps1'
 $source=[IO.File]::ReadAllText($testPath)
 foreach($failureMode in @('active','wrapper-exited')){
@@ -47,6 +55,7 @@ $out=Join-Path $copy "$failureMode.stdout.log";$err=Join-Path $copy "$failureMod
 $process=Start-AiSopHiddenProcess -FilePath (Get-Process -Id $PID).Path -ArgumentList @('-NoProfile','-File',$testPath) -RedirectStandardOutput $out -RedirectStandardError $err -TimeoutSeconds 120 -PassThru
 try{
     $process.WaitForExit()
+    Write-Output "RETAINED_SCENARIO_MS=$($scenarioClock.ElapsedMilliseconds)";$scenarioClock.Restart()
     Assert ($process.ExitCode -ne 0 -and $process.Cleanup.confirmed) 'Injected failure passed or outer cleanup unconfirmed'
     $output=[IO.File]::ReadAllText($out)
     Assert ($output -match 'RETAINED_FIXTURE:([^\r\n]+)') 'Real failed suite did not report its retained fixture'
@@ -78,6 +87,7 @@ foreach($mode in @('cleanup','drain','pending')){
     $process=Start-AiSopHiddenProcess -FilePath (Get-Process -Id $PID).Path -ArgumentList @('-NoProfile','-File',$testPath) -RedirectStandardOutput $out -RedirectStandardError $err -TimeoutSeconds 120 -PassThru
     try{
         $process.WaitForExit()
+    Write-Output "RETAINED_SCENARIO_MS=$($scenarioClock.ElapsedMilliseconds)";$scenarioClock.Restart()
         Assert ($process.ExitCode -ne 0 -and $process.Cleanup.confirmed) 'Completed runner fault falsely passed'
         $output=[IO.File]::ReadAllText($out)
         Assert ($output -match 'RETAINED_FIXTURE:([^\r\n]+)') 'Completed runner fault lost fixture'
@@ -108,6 +118,7 @@ foreach($mode in @('identity-mismatch','survivor')){
         $out=Join-Path $copy "$mode.stdout.log";$err=Join-Path $copy "$mode.stderr.log"
         $process=Start-AiSopHiddenProcess -FilePath (Get-Process -Id $PID).Path -ArgumentList @('-NoProfile','-File',$testPath) -RedirectStandardOutput $out -RedirectStandardError $err -TimeoutSeconds 120 -PassThru
         $process.WaitForExit()
+    Write-Output "RETAINED_SCENARIO_MS=$($scenarioClock.ElapsedMilliseconds)";$scenarioClock.Restart()
         Assert ($process.ExitCode -ne 0 -and $process.FailureCode -eq 0) 'Identity/survivor regression passed or timed out'
         $output=[IO.File]::ReadAllText($out)
         Assert ($output -match 'RETAINED_FIXTURE:([^\r\n]+)') 'Identity/survivor failure lost fixture'

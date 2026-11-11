@@ -264,3 +264,16 @@ function Invoke-AiSopMetadataProbe {
         Remove-Item -LiteralPath $outFile,$errFile -Force -ErrorAction SilentlyContinue
     }
 }
+
+# Read-only scalar observation. Callers dispose first and retain their own failure policy.
+function Get-AiSopProcessFacts {
+    param($Handle,[string]$DisposeError='')
+    $code=$null;$readError=''
+    try{$code=$Handle.ExitCode}catch{$readError=$_.Exception.Message}
+    $diagnostic=[string]$Handle.Diagnostic
+    $pending=($null -ne $Handle.Cleanup.pending -and -not $Handle.Cleanup.pending.IsCompleted)
+    $confirmed=($Handle.Completed -eq $true -and $Handle.Disposed -eq $true -and $Handle.Cleanup.confirmed -eq $true -and -not $pending -and -not $DisposeError -and $diagnostic -notmatch 'OUTPUT_DRAIN_TIMED_OUT|PROCESS_CLEANUP_')
+    return @{exitCode=$code;rawExitCode=$Handle.RawExitCode;diagnostic=$diagnostic;resultError=$readError;
+        cleanupConfirmed=$confirmed;cleanupDiagnostic=(@($Handle.Cleanup.diagnostic,$DisposeError)|Where-Object {$_}) -join '; ';
+        pendingIncomplete=$pending;completed=($Handle.Completed -eq $true);disposed=($Handle.Disposed -eq $true)}
+}

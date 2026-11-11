@@ -6,7 +6,7 @@ using Microsoft.Win32.SafeHandles;
 
 namespace AiSop
 {
-    public static class PhysicalPath
+    public static class PhysicalPathV2
     {
         private const uint FileReadAttributes = 0x80;
         private const uint FileShareRead = 0x1;
@@ -34,8 +34,23 @@ namespace AiSop
             uint flags
         );
 
+        [StructLayout(LayoutKind.Sequential)]
+        private struct FileIdentity {
+            public uint Attributes;
+            public System.Runtime.InteropServices.ComTypes.FILETIME Creation, Access, Write;
+            public uint Volume, SizeHigh, SizeLow, Links, IndexHigh, IndexLow;
+        }
+        [DllImport("kernel32.dll", SetLastError=true)]
+        private static extern bool GetFileInformationByHandle(SafeFileHandle handle, out FileIdentity identity);
+        private static bool SameFile(SafeFileHandle first, SafeFileHandle second) {
+            FileIdentity a, b;
+            if (!GetFileInformationByHandle(first, out a) || !GetFileInformationByHandle(second, out b))
+                throw new Win32Exception(Marshal.GetLastWin32Error());
+            return a.Volume == b.Volume && a.IndexHigh == b.IndexHigh && a.IndexLow == b.IndexLow;
+        }
         public static string Resolve(string path)
         {
+            for (int attempt = 0; attempt < 3; attempt++) {
             using (SafeFileHandle handle = CreateFileW(
                 path,
                 FileReadAttributes,
@@ -62,6 +77,14 @@ namespace AiSop
                     }
                     if (length < capacity)
                     {
+                        // An atomic replacement can retire this handle into $Extend/$Deleted.
+                        // Retry only when a fresh handle proves a different file identity.
+                        using (SafeFileHandle current = CreateFileW(path, FileReadAttributes,
+                            FileShareRead | FileShareWrite | FileShareDelete, IntPtr.Zero,
+                            OpenExisting, FileFlagBackupSemantics, IntPtr.Zero)) {
+                            if (current.IsInvalid) throw new Win32Exception(Marshal.GetLastWin32Error());
+                            if (!SameFile(handle, current)) break;
+                        }
                         string resolved = result.ToString();
                         if (resolved.StartsWith(@"\\?\UNC\", StringComparison.OrdinalIgnoreCase))
                         {
@@ -76,6 +99,8 @@ namespace AiSop
                     capacity = length + 1;
                 }
             }
+            }
+            throw new System.IO.IOException("PHYSICAL_PATH_CHANGED: file identity changed during all three observations");
         }
     }
 }

@@ -56,13 +56,12 @@ function Get-AiSopTestEnvironment {
                     }
                     # 只在最终收尾后采集结果；父进程退出不等于持管道的后代已经退出。
                     if($process){
-                        try{$probe.exitCode=$process.ExitCode}catch{$probe.error=(@($probe.error,('RESULT_UNAVAILABLE: '+$_.Exception.Message))|Where-Object {$_}) -join '; '}
-                        $probe.rawExitCode=$process.RawExitCode
-                        $probe.diagnostic=$process.Diagnostic;$probe.cleanupDiagnostic=$process.Cleanup.diagnostic
-                        if($process.Completed -and $process.Disposed -and $process.Cleanup.confirmed -eq $true -and
-                            $process.Diagnostic -notmatch 'OUTPUT_DRAIN_TIMED_OUT|PROCESS_CLEANUP_' -and -not $disposeError){$probe.cleanupStatus='CONFIRMED'}
+                        $facts=Get-AiSopProcessFacts $process -DisposeError $disposeError
+                        $probe.exitCode=$facts.exitCode;$probe.rawExitCode=$facts.rawExitCode
+                        if($facts.resultError){$probe.error=(@($probe.error,('RESULT_UNAVAILABLE: '+$facts.resultError))|Where-Object {$_}) -join '; '}
+                        $probe.diagnostic=$facts.diagnostic;$probe.cleanupDiagnostic=$facts.cleanupDiagnostic
+                        if($facts.cleanupConfirmed){$probe.cleanupStatus='CONFIRMED'}
                     }
-                    if($disposeError){$probe.cleanupDiagnostic=(@($probe.cleanupDiagnostic,$disposeError)|Where-Object {$_}) -join '; '}
                     $record.versionStatus='UNAVAILABLE'
                     if($candidate -and -not $probe.error -and $probe.exitCode -eq 0 -and -not $probe.diagnostic -and $probe.cleanupStatus -eq 'CONFIRMED'){
                         $record.version=($candidate -split '\r?\n')[0];$record.versionStatus='OBSERVED'

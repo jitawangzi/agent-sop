@@ -82,4 +82,10 @@ ConvertTo-Json -InputObject @($declarations.ToArray()) -Depth 5|Set-Content -Lit
 # 同目录原子发布；另一调用抢先发布时保留此临时包，不覆盖对方材料。
 [IO.Directory]::Move($output,$destination)
 $output=$destination
-@{output=$output;copied=@($items|Where-Object status -eq COPIED).Count;unavailable=@($items|Where-Object status -ne COPIED).Count;blocking=$false}|ConvertTo-Json
+$check=@{available=$false;pathBase='manifest-directory';arguments=$null;diagnostic='PACKAGE_OUTSIDE_WORKSPACE'}
+$manifestRelative=[IO.Path]::GetRelativePath($WorkspacePath,(Join-Path $output manifest.json)).Replace('\','/')
+try{
+    $null=Resolve-AiSopReviewChild $WorkspacePath $manifestRelative
+    $check.available=$true;$check.diagnostic='';$check.arguments=@{WorkspacePath=$WorkspacePath;Feature=$Feature;TaskId=$TaskId;DeliveryManifest=$manifestRelative}
+}catch{}
+@{output=$output;copied=@($items|Where-Object status -eq COPIED).Count;unavailable=@($items|Where-Object status -ne COPIED).Count;blocking=$false;deliveryCheck=$check}|ConvertTo-Json -Depth 6

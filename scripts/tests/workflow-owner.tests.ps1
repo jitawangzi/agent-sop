@@ -1,4 +1,4 @@
-#requires -Version 7.0
+﻿#requires -Version 7.0
 
 [CmdletBinding()]
 param()
@@ -1456,6 +1456,199 @@ try {
     New-Grant -Feature $autoFeature -Session $autoSession -Operation Validate -Agent ANTIGRAVITY -OwnerId "auto-owner-1" -Suffix "autoinfer-val" | Out-Null
     $valOut = & $OwnerScript -Operation Validate -Feature "AutoInferFeat" -SpecDirectory $autoFeature.Spec
     Assert-Equal ($valOut | Out-String).Trim() "VALID" "Validate with auto-inferred parameters must succeed and return VALID"
+
+    # Concurrent session heartbeat (Touch) and observational grant metadata update
+    # during Complete / Checkpoint must not trigger WORKFLOW_TRANSACTION_PRECONDITION_FAILED,
+    # must preserve newer session timestamps/grant metadata, and must still reject Session End.
+    $hbFeature = New-TestFeature "HeartbeatRaceComplete"
+    $hbOwnerId = "owner-hb-race"
+    $hbStatePath = Join-Path $hbFeature.Spec "feature-state.json"
+    [System.IO.File]::WriteAllText(
+        $hbStatePath,
+        ([ordered]@{
+            schemaVersion = "1.0"
+            feature = $hbFeature.Feature
+            tier = "T2"
+            phase = "IMPLEMENTING"
+            ownerSession = [ordered]@{ agent = "CURSOR"; ownerId = $hbOwnerId }
+            updatedAt = [DateTimeOffset]::UtcNow.ToString("o")
+        } | ConvertTo-Json -Depth 10),
+        $Utf8NoBom
+    )
+    $savedInvSessionId = $env:AI_SOP_INVOCATION_SESSION_ID
+    $env:AI_SOP_INVOCATION_SESSION_ID = "native-hb-race"
+    try {
+    $hbSessionT0 = [DateTimeOffset]::UtcNow.AddSeconds(-5)
+    $hbSession = New-Session -Feature $hbFeature -Agent CURSOR -NativeSessionId "native-hb-race" -AcceptedAt $hbSessionT0
+    New-Grant -Feature $hbFeature -Session $hbSession -Operation Claim -Agent CURSOR -OwnerId $hbOwnerId -Suffix "hb-claim" | Out-Null
+    & $OwnerScript `
+        -Operation Claim `
+        -SpecDirectory $hbFeature.Spec `
+        -Feature $hbFeature.Feature `
+        -Workflow SUPERPOWERS `
+        -Agent CURSOR `
+        -OwnerId $hbOwnerId `
+        -TaskId "task-hb-1" `
+        -Objective "Heartbeat concurrency regression" `
+        -UserRequest "test heartbeat concurrency" | Out-Null
+
+    function Invoke-PausedOwnerAction {
+        param(
+            [object]$TargetFeature,
+            [string]$Operation,
+            [string]$OwnerId,
+            [string]$Tag,
+            [scriptblock]$WhilePaused
+        )
+
+        $marker = Join-Path $TestRoot "pause-$Tag.marker"
+        $release = Join-Path $TestRoot "pause-$Tag.release"
+        $outPath = Join-Path $TestRoot "pause-$Tag.out"
+        $errPath = Join-Path $TestRoot "pause-$Tag.err"
+        $savedPoint = $env:SERVER_NEW_WORKFLOW_OWNER_PAUSE_POINT
+        $savedMarker = $env:SERVER_NEW_WORKFLOW_OWNER_PAUSE_MARKER
+        $savedRelease = $env:SERVER_NEW_WORKFLOW_OWNER_PAUSE_RELEASE
+        $env:SERVER_NEW_WORKFLOW_OWNER_PAUSE_POINT = "BEFORE_OWNER_FINAL_LOCK"
+        $env:SERVER_NEW_WORKFLOW_OWNER_PAUSE_MARKER = $marker
+        $env:SERVER_NEW_WORKFLOW_OWNER_PAUSE_RELEASE = $release
+        try {
+            $proc = Start-AiSopHiddenProcess -FilePath (Get-Process -Id $PID).Path `
+                -ArgumentList @(
+                    "-NoProfile",
+                    "-File",
+                    $OwnerScript,
+                    "-Operation",
+                    $Operation,
+                    "-SpecDirectory",
+                    $TargetFeature.Spec,
+                    "-Feature",
+                    $TargetFeature.Feature,
+                    "-Workflow",
+                    "SUPERPOWERS",
+                    "-Agent",
+                    "CURSOR",
+                    "-OwnerId",
+                    $OwnerId
+                ) `
+                -RedirectStandardOutput $outPath `
+                -RedirectStandardError $errPath `
+                -PassThru
+            $limit = [DateTimeOffset]::UtcNow.AddSeconds(10)
+            while (-not (Test-Path -LiteralPath $marker) -and -not $proc.HasExited -and [DateTimeOffset]::UtcNow -lt $limit) {
+                Start-Sleep -Milliseconds 10
+                $proc.Refresh()
+            }
+            if (-not (Test-Path -LiteralPath $marker)) {
+                $earlyErr = if (Test-Path -LiteralPath $errPath) { [System.IO.File]::ReadAllText($errPath) } else { "" }
+                $earlyOut = if (Test-Path -LiteralPath $outPath) { [System.IO.File]::ReadAllText($outPath) } else { "" }
+                throw "Owner $Operation did not reach BEFORE_OWNER_FINAL_LOCK ($Tag). exit=$($proc.ExitCode); err=$earlyErr; out=$earlyOut"
+            }
+            & $WhilePaused
+            [System.IO.File]::WriteAllText($release, "release", $Utf8NoBom)
+            $proc.WaitForExit()
+            $errText = if (Test-Path -LiteralPath $errPath) { [System.IO.File]::ReadAllText($errPath) } else { "" }
+            return [pscustomobject]@{
+                ExitCode = $proc.ExitCode
+                Stderr = $errText
+            }
+        } finally {
+            foreach ($entry in @(
+                @("SERVER_NEW_WORKFLOW_OWNER_PAUSE_POINT", $savedPoint),
+                @("SERVER_NEW_WORKFLOW_OWNER_PAUSE_MARKER", $savedMarker),
+                @("SERVER_NEW_WORKFLOW_OWNER_PAUSE_RELEASE", $savedRelease)
+            )) {
+                if ($null -eq $entry[1]) {
+                    Remove-Item "Env:$($entry[0])" -ErrorAction SilentlyContinue
+                } else {
+                    Set-Item "Env:$($entry[0])" -Value $entry[1]
+                }
+            }
+        }
+    }
+
+    # 1) Checkpoint paused while concurrent Touch advances lastSeenAt/expiresAt
+    $hbCheckpointSession = Get-AiSopWorkflowSession -SessionKey $hbSession.Record.sessionKey
+    New-Grant -Feature $hbFeature -Session $hbCheckpointSession -Operation Checkpoint -Agent CURSOR -OwnerId $hbOwnerId -Suffix "hb-checkpoint" | Out-Null
+    $cpTouchAt = [DateTimeOffset]::UtcNow.AddSeconds(1)
+    $cpResult = Invoke-PausedOwnerAction -TargetFeature $hbFeature -Operation Checkpoint -OwnerId $hbOwnerId -Tag "cp-touch" -WhilePaused {
+        Invoke-AiSopWorkflowSession `
+            -Operation Touch `
+            -Agent CURSOR `
+            -NativeSessionId "native-hb-race" `
+            -WorkspacePath $hbFeature.Workspace `
+            -AcceptedAt $cpTouchAt | Out-Null
+    }
+    Assert-Equal $cpResult.ExitCode 0 "Checkpoint failed during concurrent Touch: $($cpResult.Stderr)"
+    $afterCpSession = Get-AiSopWorkflowSession -SessionKey $hbSession.Record.sessionKey
+    Assert-Equal $afterCpSession.Record.lastSeenAt ($cpTouchAt.ToUniversalTime().ToString("o")) "Checkpoint regressed concurrent Touch lastSeenAt."
+    Assert-Equal $afterCpSession.Record.expiresAt ($cpTouchAt.AddMinutes(30).ToUniversalTime().ToString("o")) "Checkpoint regressed concurrent Touch expiresAt."
+
+    # 2) Complete paused while concurrent Touch + unrelated Grant Issue update session metadata
+    $taskScript = Join-Path $ScriptsRoot "workflow-task.ps1"
+    & $taskScript -Operation SetApplicability -WorkspacePath $hbFeature.Workspace -Feature $hbFeature.Feature -TaskId "task-hb-1" -Kind compile -Applicability NOT_APPLICABLE -Reason "test fixture" -Agent CURSOR -NativeSessionId "native-hb-race" | Out-Null
+    & $taskScript -Operation SetApplicability -WorkspacePath $hbFeature.Workspace -Feature $hbFeature.Feature -TaskId "task-hb-1" -Kind test -Applicability NOT_APPLICABLE -Reason "test fixture" -Agent CURSOR -NativeSessionId "native-hb-race" | Out-Null
+    & $taskScript -Operation RecordSync -WorkspacePath $hbFeature.Workspace -Feature $hbFeature.Feature -TaskId "task-hb-1" -Documentation UNCHANGED -Tests NOT_APPLICABLE -Summary "test fixture" -Agent CURSOR -NativeSessionId "native-hb-race" | Out-Null
+    $afterSyncSession = Get-AiSopWorkflowSession -SessionKey $hbSession.Record.sessionKey
+    New-Grant -Feature $hbFeature -Session $afterSyncSession -Operation Complete -Agent CURSOR -OwnerId $hbOwnerId -Suffix "hb-complete" | Out-Null
+    $completeTouchAt = $cpTouchAt.AddSeconds(5)
+    $script:concurrentGrant = $null
+    $completeResult = Invoke-PausedOwnerAction -TargetFeature $hbFeature -Operation Complete -OwnerId $hbOwnerId -Tag "complete-touch" -WhilePaused {
+        Invoke-AiSopWorkflowSession `
+            -Operation Touch `
+            -Agent CURSOR `
+            -NativeSessionId "native-hb-race" `
+            -WorkspacePath $hbFeature.Workspace `
+            -AcceptedAt $completeTouchAt | Out-Null
+        $freshSess = Get-AiSopWorkflowSession -SessionKey $hbSession.Record.sessionKey
+        $script:concurrentGrant = New-Grant -Feature $hbFeature -Session $freshSess -Operation Validate -Agent CURSOR -OwnerId $hbOwnerId -Suffix "hb-side-grant"
+    }
+    Assert-Equal $completeResult.ExitCode 0 "Complete failed during concurrent Touch/Grant Issue: $($completeResult.Stderr)"
+    Assert-Equal (Read-OwnerRecord $hbFeature.Feature).status "COMPLETE" "Complete did not transition owner to COMPLETE."
+    $afterCompleteSession = Get-AiSopWorkflowSession -SessionKey $hbSession.Record.sessionKey
+    Assert-Equal $afterCompleteSession.Record.boundFeature "" "Complete did not clear boundFeature."
+    Assert-Equal $afterCompleteSession.Record.lastSeenAt ($completeTouchAt.ToUniversalTime().ToString("o")) "Complete regressed concurrent Touch lastSeenAt."
+    Assert-Equal $afterCompleteSession.Record.expiresAt ($completeTouchAt.AddMinutes(30).ToUniversalTime().ToString("o")) "Complete regressed concurrent Touch expiresAt."
+    Assert-Equal $afterCompleteSession.Record.lastGrantId $script:concurrentGrant.Record.grantId "Complete regressed concurrent lastGrantId."
+
+    # 3) Negative control: Complete paused while concurrent Session End occurs MUST still fail
+    $env:AI_SOP_INVOCATION_SESSION_ID = "native-hb-end"
+    $endFeature = New-TestFeature "HeartbeatRaceSessionEnd"
+    $endOwnerId = "owner-hb-end"
+    [System.IO.File]::WriteAllText(
+        (Join-Path $endFeature.Spec "feature-state.json"),
+        ([ordered]@{
+            schemaVersion = "1.0"
+            feature = $endFeature.Feature
+            tier = "T2"
+            phase = "IMPLEMENTING"
+            ownerSession = [ordered]@{ agent = "CURSOR"; ownerId = $endOwnerId }
+            updatedAt = [DateTimeOffset]::UtcNow.ToString("o")
+        } | ConvertTo-Json -Depth 10),
+        $Utf8NoBom
+    )
+    $endSession = New-Session -Feature $endFeature -Agent CURSOR -NativeSessionId "native-hb-end"
+    New-Grant -Feature $endFeature -Session $endSession -Operation Claim -Agent CURSOR -OwnerId $endOwnerId -Suffix "end-claim" | Out-Null
+    Invoke-Owner -Feature $endFeature -Operation Claim -Workflow SUPERPOWERS -Agent CURSOR -OwnerId $endOwnerId | Out-Null
+    $endBoundSession = Get-AiSopWorkflowSession -SessionKey $endSession.Record.sessionKey
+    $endCompleteGrant = New-Grant -Feature $endFeature -Session $endBoundSession -Operation Complete -Agent CURSOR -OwnerId $endOwnerId -Suffix "end-complete"
+    $endResult = Invoke-PausedOwnerAction -TargetFeature $endFeature -Operation Complete -OwnerId $endOwnerId -Tag "complete-end" -WhilePaused {
+        Invoke-AiSopWorkflowSession `
+            -Operation End `
+            -Agent CURSOR `
+            -NativeSessionId "native-hb-end" `
+            -WorkspacePath $endFeature.Workspace `
+            -AcceptedAt ([DateTimeOffset]::UtcNow) | Out-Null
+    }
+    Assert-True ($endResult.ExitCode -ne 0) "Complete succeeded after concurrent Session End!"
+    Assert-Equal (Read-OwnerRecord $endFeature.Feature).status "ACTIVE" "Failed Complete after Session End mutated owner."
+    Assert-Equal ((Get-Content -LiteralPath $endCompleteGrant.GrantPath -Raw | ConvertFrom-Json).status) "ISSUED" "Failed Complete after Session End consumed grant."
+    } finally {
+        if ($null -eq $savedInvSessionId) {
+            Remove-Item Env:AI_SOP_INVOCATION_SESSION_ID -ErrorAction SilentlyContinue
+        } else {
+            $env:AI_SOP_INVOCATION_SESSION_ID = $savedInvSessionId
+        }
+    }
 
     Write-Output "All workflow owner tests passed."
 } finally {

@@ -1,4 +1,4 @@
-#requires -Version 7.0
+﻿#requires -Version 7.0
 
 [CmdletBinding()]
 param(
@@ -1019,9 +1019,41 @@ if ($Operation -in @('ForceRelease','Recover')) {
     if ($null -ne $DeadlineUtc -and $DeadlineUtc -lt $WorkflowDeadlineUtc) { $WorkflowDeadlineUtc = [DateTimeOffset]$DeadlineUtc }
     $recoveryLocks = Enter-AiSopWorkflowTransactionLocks -SessionKeys $sessionKeys -OwnerPath $OwnerPath -Targets $targets -DeadlineUtc $WorkflowDeadlineUtc -WorkspacePath $ownerWs
     try {
-        # Absence is checked while holding the owner lock as well as task CAS.
-        if (-not $existingOwner -and (Test-Path -LiteralPath $OwnerPath)) { throw 'WORKFLOW_TRANSACTION_PRECONDITION_FAILED' }
-        Invoke-AiSopWorkflowTransaction -Operation RECOVER -Feature $Feature -OwnerPath $OwnerPath -SessionKeys $sessionKeys -Targets $targets -TransactionId $transactionId -DeadlineUtc $WorkflowDeadlineUtc -WorkspacePath $ownerWs -LocksAlreadyHeld | Out-Null
+        # 持锁后重核所有者/任务业务态并重读会话，避免并发心跳导致快照前置校验误报失败。
+        $lockedOwner = Read-Owner -AllowMissing
+        if (-not $existingOwner) {
+            if ($null -ne $lockedOwner -or (Test-Path -LiteralPath $OwnerPath)) { throw 'WORKFLOW_TRANSACTION_PRECONDITION_FAILED' }
+        } else {
+            if ($null -eq $lockedOwner -or (ConvertTo-AiSopWorkflowCanonicalJson $lockedOwner) -cne (ConvertTo-AiSopWorkflowCanonicalJson $existingOwner)) {
+                throw 'WORKFLOW_TRANSACTION_PRECONDITION_FAILED'
+            }
+        }
+        if ($TaskId) {
+            $lockedTask = Read-AiSopTask $ResolvedSpecDirectory $TaskId
+            if ((ConvertTo-AiSopWorkflowCanonicalJson $lockedTask) -cne (ConvertTo-AiSopWorkflowCanonicalJson $recoveryTask)) {
+                throw 'WORKFLOW_TRANSACTION_PRECONDITION_FAILED'
+            }
+        }
+        $lockedNow = [DateTimeOffset]::UtcNow
+        $lockedRecoveryTargets = @()
+        foreach ($recoveryTarget in $targets) {
+            if ($recoveryTarget.kind -ceq 'SESSION') {
+                $lockedBound = Read-AiSopWorkflowSessionRecord -SessionPath $recoveryTarget.path
+                if ($lockedBound.workspacePath -cne $ownerWs -or $lockedBound.boundFeature -cne $Feature -or $lockedBound.boundOwnerId -cne $OwnerId) {
+                    throw 'WORKFLOW_TRANSACTION_PRECONDITION_FAILED'
+                }
+                $lockedEffective = Get-AiSopWorkflowSessionEffectiveStatus -Record $lockedBound -AcceptedAt $lockedNow
+                if ($lockedEffective -in @('ACTIVE','IDLE') -and -not $forced) {
+                    throw 'SESSION_MAY_BE_ACTIVE: confirm handoff or use ForceRecovery after stopping the old agent'
+                }
+                $lockedSessionAfter = Copy-WorkflowRecord $lockedBound
+                Clear-SessionBoundTuple -Session $lockedSessionAfter -TransactionId $transactionId
+                $lockedRecoveryTargets += New-OwnerTarget -Path $recoveryTarget.path -Kind SESSION -SchemaId SESSION -After $lockedSessionAfter -BeforeExists $true -Before $lockedBound
+            } else {
+                $lockedRecoveryTargets += $recoveryTarget
+            }
+        }
+        Invoke-AiSopWorkflowTransaction -Operation RECOVER -Feature $Feature -OwnerPath $OwnerPath -SessionKeys $sessionKeys -Targets $lockedRecoveryTargets -TransactionId $transactionId -DeadlineUtc $WorkflowDeadlineUtc -WorkspacePath $ownerWs -LocksAlreadyHeld | Out-Null
     } finally { Exit-AiSopWorkflowLocks $recoveryLocks.Locks }
     foreach ($entry in $quarantined) {
         $original=Resolve-AiSopWorkspaceChild $ownerWs $entry.originalPath
@@ -1763,6 +1795,250 @@ foreach ($transition in @(
         -Before $transition.Before
 }
 
+function Assert-LockedActiveOwnerSession {
+    param(
+        [System.Collections.IDictionary]$Record,
+        [string]$ExpectedEpochId,
+        [DateTimeOffset]$NowUtc
+    )
+
+    $effective = Get-AiSopWorkflowSessionEffectiveStatus -Record $Record -AcceptedAt $NowUtc
+    if (
+        [string]$effective -cne "ACTIVE" -or
+        [string]$Record.lifecycleProof -cne "CONFIRMED" -or
+        -not [string]::IsNullOrEmpty([string]$Record.endedAt) -or
+        [string]$Record.sessionEpochId -cne $ExpectedEpochId -or
+        [string]$Record.agent -cne $Agent -or
+        -not ([string]$Record.workspacePath).Equals((Get-OwnerWorkspacePath), [System.StringComparison]::OrdinalIgnoreCase)
+    ) {
+        throw "WORKFLOW_OWNER_SESSION_MISMATCH"
+    }
+}
+
+function New-LockedOwnerTransactionTargets {
+    param(
+        [bool]$IsDelegate,
+        [string]$ParentPath,
+        [string]$ChildPath,
+        [string]$ChildKey,
+        [AllowNull()][object]$PreLockChild,
+        [AllowNull()][object]$RelatedTaskTarget
+    )
+
+    # 持锁后重核所有者、任务与授权，并基于最新会话状态重装快照，
+    # 防止并发心跳或命令元数据推进触发误判 Precondition Failed，同时禁止语义冲突越过门禁。
+    $lockedNow = [DateTimeOffset]::UtcNow
+    $lockedOwner = Read-Owner -AllowMissing
+    if ($null -eq $existingOwner) {
+        if ($null -ne $lockedOwner) {
+            if ([string]$lockedOwner.status -eq "ACTIVE") { throw "WORKFLOW_OWNER_ALREADY_ACTIVE" }
+            throw "WORKFLOW_TRANSACTION_PRECONDITION_FAILED"
+        }
+    } else {
+        if ($null -eq $lockedOwner) { throw "WORKFLOW_TRANSACTION_PRECONDITION_FAILED" }
+        if ($Operation -in @("Complete", "Suspend", "Cancel", "Checkpoint", "Transfer") -and ([string]$lockedOwner.schemaVersion -ne "1.1" -or [string]$lockedOwner.status -ne "ACTIVE")) {
+            throw "WORKFLOW_OWNER_NOT_ACTIVE"
+        }
+        if ($Operation -eq "BindSession" -and ([string]$lockedOwner.schemaVersion -ne "1.0" -or [string]$lockedOwner.status -ne "ACTIVE" -or [string]$lockedOwner.workflow -ne "SUPERPOWERS")) {
+            throw "WORKFLOW_OWNER_BIND_DENIED"
+        }
+        if ($Operation -eq "RebindSession" -and ([string]$lockedOwner.schemaVersion -ne "1.1" -or [string]$lockedOwner.status -ne "ACTIVE")) {
+            throw "WORKFLOW_OWNER_REBIND_DENIED"
+        }
+        if ($Operation -eq "Claim" -and [string]$lockedOwner.status -eq "ACTIVE") {
+            throw "WORKFLOW_OWNER_ALREADY_ACTIVE"
+        }
+        if ((ConvertTo-AiSopWorkflowCanonicalJson $lockedOwner) -cne (ConvertTo-AiSopWorkflowCanonicalJson $existingOwner)) {
+            throw "WORKFLOW_TRANSACTION_PRECONDITION_FAILED"
+        }
+    }
+
+    if ($TaskId) {
+        if ($null -ne $taskBefore) {
+            $lockedTaskBefore = Read-AiSopTask $ResolvedSpecDirectory $TaskId
+            if ((ConvertTo-AiSopWorkflowCanonicalJson $lockedTaskBefore) -cne (ConvertTo-AiSopWorkflowCanonicalJson $taskBefore)) {
+                throw "WORKFLOW_TRANSACTION_PRECONDITION_FAILED"
+            }
+        } elseif ([System.IO.File]::Exists($taskPath)) {
+            throw "WORKFLOW_TRANSACTION_PRECONDITION_FAILED"
+        }
+    }
+    if ($null -ne $RelatedTaskTarget) {
+        $lockedRelatedBefore = ConvertFrom-AiSopWorkflowJson (Read-AiSopWorkflowText $RelatedTaskTarget.path) -AsHashtable
+        if ((ConvertTo-AiSopWorkflowCanonicalJson $lockedRelatedBefore) -cne (ConvertTo-AiSopWorkflowCanonicalJson $RelatedTaskTarget.before)) {
+            throw "WORKFLOW_TRANSACTION_PRECONDITION_FAILED"
+        }
+    }
+
+    $lockedGrant = Read-AiSopWorkflowCommandGrantRecord -GrantPath $grant.GrantPath -ExpectedGrantId ([string]$grant.Record.grantId)
+    $lockedGrantExpiresAt = [DateTimeOffset]::Parse([string]$lockedGrant.expiresAt, [System.Globalization.CultureInfo]::InvariantCulture)
+    if (
+        [string]$lockedGrant.status -cne "ISSUED" -or
+        $lockedNow -ge $lockedGrantExpiresAt -or
+        [string]$lockedGrant.sessionKey -cne [string]$grant.Record.sessionKey -or
+        [string]$lockedGrant.sessionEpochId -cne [string]$grant.Record.sessionEpochId
+    ) {
+        throw "WORKFLOW_OWNER_SESSION_MISMATCH"
+    }
+    $lockedGrantAfter = New-AiSopWorkflowCommandGrantAfterConsume `
+        -Grant $lockedGrant `
+        -AcceptedAt $AcceptedAt `
+        -TransactionId $transactionId
+
+    $lockedTargets = @()
+    switch ($Operation) {
+        { $_ -in @("Claim", "BindSession") } {
+            $lockedSession = Read-AiSopWorkflowSessionRecord -SessionPath $session.SessionPath -ExpectedSessionKey ([string]$lockedGrant.sessionKey)
+            Assert-LockedActiveOwnerSession -Record $lockedSession -ExpectedEpochId ([string]$lockedGrant.sessionEpochId) -NowUtc $lockedNow
+            if (-not [string]::IsNullOrEmpty([string]$lockedSession.boundFeature)) { throw "SESSION_ALREADY_BOUND" }
+            $lockedSessionAfter = Copy-WorkflowRecord $lockedSession
+            Set-SessionBoundTuple -Session $lockedSessionAfter -SessionEpochId ([string]$lockedGrant.sessionEpochId) -TransactionId $transactionId
+            $lockedTargets += New-OwnerTarget -Path $session.SessionPath -Kind SESSION -SchemaId SESSION -After $lockedSessionAfter -BeforeExists $true -Before $lockedSession
+        }
+        "RebindSession" {
+            $lockedOldSession = Read-AiSopWorkflowSessionRecord -SessionPath $oldSession.SessionPath -ExpectedSessionKey ([string]$lockedOwner.sessionBinding.sessionKey)
+            $lockedOldEffective = Get-AiSopWorkflowSessionEffectiveStatus -Record $lockedOldSession -AcceptedAt $lockedNow
+            if (
+                [string]$lockedOldSession.sessionEpochId -cne [string]$lockedOwner.sessionBinding.sessionEpochId -or
+                [string]$lockedOldSession.boundFeature -cne [string]$lockedOwner.feature -or
+                [string]$lockedOldSession.boundWorkflow -cne [string]$lockedOwner.workflow -or
+                [string]$lockedOldSession.boundOwnerId -cne [string]$lockedOwner.ownerId -or
+                [string]$lockedOldSession.boundSessionEpochId -cne [string]$lockedOwner.sessionBinding.sessionEpochId -or
+                [string]$lockedOldEffective -notin @("ENDED", "EXPIRED")
+            ) {
+                throw "WORKFLOW_OWNER_REBIND_DENIED"
+            }
+            if ([string]$lockedOldSession.sessionKey -ceq [string]$session.Record.sessionKey) {
+                if ([string]$lockedGrant.sessionEpochId -ceq [string]$lockedOldSession.sessionEpochId) {
+                    throw "WORKFLOW_OWNER_REBIND_DENIED"
+                }
+                $lockedNewSessionAfter = Copy-WorkflowRecord $lockedOldSession
+                $lockedNewSessionAfter.sessionEpochId = [string]$lockedGrant.sessionEpochId
+                $lockedNewSessionAfter.lifecycleProof = "CONFIRMED"
+                $lockedNewSessionAfter.status = "ACTIVE"
+                $lockedNewSessionAfter.firstSeenAt = $AcceptedAt.ToUniversalTime().ToString("o")
+                $lockedNewSessionAfter.lastSeenAt = $AcceptedAt.ToUniversalTime().ToString("o")
+                $lockedNewSessionAfter.stateChangedAt = $AcceptedAt.ToUniversalTime().ToString("o")
+                $lockedNewSessionAfter.expiresAt = $AcceptedAt.AddMinutes(30).ToUniversalTime().ToString("o")
+                $lockedNewSessionAfter.endedAt = ""
+                Set-SessionBoundTuple -Session $lockedNewSessionAfter -SessionEpochId ([string]$lockedGrant.sessionEpochId) -TransactionId $transactionId
+                $lockedTargets += New-OwnerTarget -Path $oldSession.SessionPath -Kind SESSION -SchemaId SESSION -After $lockedNewSessionAfter -BeforeExists $true -Before $lockedOldSession
+            } else {
+                $lockedSession = Read-AiSopWorkflowSessionRecord -SessionPath $session.SessionPath -ExpectedSessionKey ([string]$lockedGrant.sessionKey)
+                Assert-LockedActiveOwnerSession -Record $lockedSession -ExpectedEpochId ([string]$lockedGrant.sessionEpochId) -NowUtc $lockedNow
+                if (-not [string]::IsNullOrEmpty([string]$lockedSession.boundFeature)) { throw "SESSION_ALREADY_BOUND" }
+                $lockedOldAfter = Copy-WorkflowRecord $lockedOldSession
+                Clear-SessionBoundTuple -Session $lockedOldAfter -TransactionId $transactionId
+                $lockedNewAfter = Copy-WorkflowRecord $lockedSession
+                Set-SessionBoundTuple -Session $lockedNewAfter -SessionEpochId ([string]$lockedGrant.sessionEpochId) -TransactionId $transactionId
+                $lockedTargets += New-OwnerTarget -Path $oldSession.SessionPath -Kind SESSION -SchemaId SESSION -After $lockedOldAfter -BeforeExists $true -Before $lockedOldSession
+                $lockedTargets += New-OwnerTarget -Path $session.SessionPath -Kind SESSION -SchemaId SESSION -After $lockedNewAfter -BeforeExists $true -Before $lockedSession
+            }
+        }
+        "Transfer" {
+            $lockedSession = Read-AiSopWorkflowSessionRecord -SessionPath $session.SessionPath -ExpectedSessionKey ([string]$lockedGrant.sessionKey)
+            Assert-LockedActiveOwnerSession -Record $lockedSession -ExpectedEpochId ([string]$lockedGrant.sessionEpochId) -NowUtc $lockedNow
+            $lockedSameTransfer = [string]$lockedOwner.sessionBinding.sessionKey -ceq [string]$lockedSession.sessionKey
+            if ($lockedSameTransfer) {
+                if (
+                    [string]$lockedSession.boundFeature -cne $Feature -or
+                    [string]$lockedSession.boundOwnerId -cne $OwnerId -or
+                    [string]$lockedSession.boundSessionEpochId -cne [string]$lockedSession.sessionEpochId
+                ) {
+                    throw "WORKFLOW_OWNER_SESSION_MISMATCH"
+                }
+            } else {
+                if (-not [string]::IsNullOrEmpty([string]$lockedSession.boundFeature)) { throw "SESSION_ALREADY_BOUND" }
+                $lockedOldPath = Get-AiSopWorkflowSessionPath -SessionKey ([string]$lockedOwner.sessionBinding.sessionKey) -WorkspacePath (Get-OwnerWorkspacePath)
+                if (Test-Path -LiteralPath $lockedOldPath) {
+                    $lockedOldRecord = Read-AiSopWorkflowSessionRecord -SessionPath $lockedOldPath -ExpectedSessionKey ([string]$lockedOwner.sessionBinding.sessionKey)
+                    if ((Get-AiSopWorkflowSessionEffectiveStatus -Record $lockedOldRecord -AcceptedAt $lockedNow) -in @('ACTIVE','IDLE') -and -not $ConfirmTakeover) {
+                        throw 'SESSION_MAY_BE_ACTIVE: intentional handoff requires -ConfirmTakeover after confirming the old agent stopped'
+                    }
+                    if ($lockedOldRecord.boundOwnerId -ceq $OwnerId -and $lockedOldRecord.boundFeature -ceq $Feature) {
+                        $lockedOldAfter = Copy-WorkflowRecord $lockedOldRecord
+                        Clear-SessionBoundTuple -Session $lockedOldAfter -TransactionId $transactionId
+                        $lockedTargets += New-OwnerTarget -Path $lockedOldPath -Kind SESSION -SchemaId SESSION -After $lockedOldAfter -BeforeExists $true -Before $lockedOldRecord
+                    }
+                }
+            }
+            $lockedSessionAfter = Copy-WorkflowRecord $lockedSession
+            Set-SessionBoundTuple -Session $lockedSessionAfter -SessionEpochId ([string]$lockedGrant.sessionEpochId) -TransactionId $transactionId
+            $lockedTargets += New-OwnerTarget -Path $session.SessionPath -Kind SESSION -SchemaId SESSION -After $lockedSessionAfter -BeforeExists $true -Before $lockedSession
+        }
+        { $_ -in @("Complete", "Suspend", "Cancel", "Checkpoint") } {
+            $lockedSession = Read-AiSopWorkflowSessionRecord -SessionPath $session.SessionPath -ExpectedSessionKey ([string]$lockedGrant.sessionKey)
+            Assert-LockedActiveOwnerSession -Record $lockedSession -ExpectedEpochId ([string]$lockedGrant.sessionEpochId) -NowUtc $lockedNow
+            $lockedCheckpointBinding = if ($IsDelegate) { $lockedOwner.executionDelegation } else { $lockedOwner.sessionBinding }
+            if (
+                [string]$lockedCheckpointBinding.sessionKey -cne [string]$lockedSession.sessionKey -or
+                [string]$lockedCheckpointBinding.sessionEpochId -cne [string]$lockedSession.sessionEpochId -or
+                [string]$lockedSession.boundFeature -cne $Feature -or
+                [string]$lockedSession.boundWorkflow -cne $Workflow -or
+                [string]$lockedSession.boundOwnerId -cne $OwnerId -or
+                [string]$lockedSession.boundSessionEpochId -cne [string]$lockedSession.sessionEpochId
+            ) {
+                throw "WORKFLOW_OWNER_SESSION_MISMATCH"
+            }
+            if ($IsDelegate) {
+                $lockedParentBefore = Read-AiSopWorkflowSessionRecord -SessionPath $ParentPath -ExpectedSessionKey ([string]$lockedOwner.sessionBinding.sessionKey)
+                Assert-AiSopDelegationParent $lockedOwner $lockedParentBefore $lockedNow
+                $lockedParentAfter = Copy-WorkflowRecord $lockedParentBefore
+                if ((Get-AiSopWorkflowSessionEffectiveStatus $lockedParentBefore $AcceptedAt) -in @('ACTIVE','IDLE')) {
+                    [void](Set-AiSopWorkflowSessionHeartbeat $lockedParentAfter $AcceptedAt)
+                }
+                $lockedTargets += New-OwnerTarget -Path $ParentPath -Kind SESSION -SchemaId SESSION -After $lockedParentAfter -BeforeExists $true -Before $lockedParentBefore
+            }
+            $lockedSessionAfter = Copy-WorkflowRecord $lockedSession
+            if ($Operation -ne 'Checkpoint') {
+                Clear-SessionBoundTuple -Session $lockedSessionAfter -TransactionId $transactionId
+            } else {
+                [void](Set-AiSopWorkflowSessionHeartbeat -Record $lockedSessionAfter -AcceptedAt $AcceptedAt)
+            }
+            $lockedTargets += New-OwnerTarget -Path $session.SessionPath -Kind SESSION -SchemaId SESSION -After $lockedSessionAfter -BeforeExists $true -Before $lockedSession
+        }
+    }
+
+    if ($DelegationAction -or $invalidateDelegation) {
+        $lockedChildBefore = Read-AiSopWorkflowSessionRecord -SessionPath $ChildPath -ExpectedSessionKey $ChildKey
+        if ($DelegationAction -eq 'Delegate') {
+            Assert-AiSopWorkflowSessionIdentity -Record $lockedChildBefore -SessionKey $ChildKey -Agent $Agent -NativeSessionIdSha256 (Get-AiSopWorkflowSha256 $ChildNativeSessionId) -WorkspacePath $ownerWs
+            if (
+                (Get-AiSopWorkflowSessionEffectiveStatus $lockedChildBefore $lockedNow) -notin @('ACTIVE','IDLE') -or
+                $lockedChildBefore.lifecycleProof -cne 'CONFIRMED' -or
+                $lockedChildBefore.endedAt -or
+                $lockedChildBefore.boundFeature
+            ) {
+                throw 'DELEGATION_CHILD_NOT_READY: child must Join and remain active or idle, unbound and unexpired'
+            }
+            if ([string]$lockedChildBefore.sessionEpochId -cne [string]$PreLockChild.sessionEpochId) {
+                throw "WORKFLOW_TRANSACTION_PRECONDITION_FAILED"
+            }
+            $lockedChildAfter = Copy-WorkflowRecord $lockedChildBefore
+            Set-SessionBoundTuple -Session $lockedChildAfter -SessionEpochId $lockedChildAfter.sessionEpochId -TransactionId $transactionId
+        } else {
+            $lockedChildAfter = Copy-WorkflowRecord $lockedChildBefore
+            if ($lockedChildAfter.sessionEpochId -ceq $lockedOwner.executionDelegation.sessionEpochId -and $lockedChildAfter.boundOwnerId -ceq $lockedOwner.ownerId) {
+                Clear-SessionBoundTuple -Session $lockedChildAfter -TransactionId $transactionId
+            }
+        }
+        $lockedTargets += New-OwnerTarget -Path $ChildPath -Kind SESSION -SchemaId SESSION -After $lockedChildAfter -BeforeExists $true -Before $lockedChildBefore
+    }
+
+    if ($null -ne $RelatedTaskTarget) {
+        $lockedTargets += New-OwnerTarget -Path $RelatedTaskTarget.path -Kind TASK -SchemaId TASK -After $RelatedTaskTarget.after -BeforeExists $true -Before $RelatedTaskTarget.before
+    }
+    if ($null -ne $taskAfter) {
+        $lockedTargets += New-OwnerTarget -Path $taskPath -Kind TASK -SchemaId TASK -After $taskAfter -BeforeExists ($null -ne $taskBefore) -Before $taskBefore
+    }
+    $lockedTargets += New-OwnerTarget -Path $OwnerPath -Kind OWNER -SchemaId OWNER -After $ownerAfter -BeforeExists ($null -ne $existingOwner) -Before $existingOwner
+    $lockedTargets += New-OwnerTarget -Path $grant.GrantPath -Kind COMMAND_GRANT -SchemaId COMMAND_GRANT -After $lockedGrantAfter -BeforeExists $true -Before $lockedGrant
+    foreach ($transition in @(Get-AiSopWorkflowCommandGrantIndexTransitions -Grant $lockedGrant -Active $false)) {
+        $lockedTargets += New-OwnerTarget -Path $transition.Path -Kind COMMAND_GRANT -SchemaId COMMAND_GRANT -After $transition.After -BeforeExists $true -Before $transition.Before
+    }
+    return $lockedTargets
+}
+
 $transactionOperation = switch ($Operation) {
     "Claim" { "CLAIM" }
     "Validate" { "VALIDATE" }
@@ -1776,32 +2052,37 @@ $transactionOperation = switch ($Operation) {
 }
 if ($TaskId) { $WorkflowDeadlineUtc = [DateTimeOffset]::UtcNow.AddMilliseconds($ownerDeadlineMs) }
 if ($null -ne $DeadlineUtc -and $DeadlineUtc -lt $WorkflowDeadlineUtc) { $WorkflowDeadlineUtc = [DateTimeOffset]$DeadlineUtc }
-$authorityLocks=$null
+Invoke-OwnerPausePoint -Point "BEFORE_OWNER_FINAL_LOCK"
+$authorityLocks = $null
 try {
-    $delegatedCheckpoint=$Operation -eq 'Checkpoint' -and $isDelegate -and $EvidencePath
-    if ($Operation -in @('Claim','BindSession','RebindSession','Transfer') -or ($TaskUpdateJson -and $policyUpdate.operation -eq 'ChangeTier') -or $delegatedCheckpoint) {
-        Invoke-AiSopWorkflowTransactionRecovery -DeadlineUtc $WorkflowDeadlineUtc -WorkspacePath $ownerWs | Out-Null
-        $authorityLocks=Enter-AiSopWorkflowTransactionLocks -SessionKeys $sessionKeys -OwnerPath $OwnerPath -Targets $targets -DeadlineUtc $WorkflowDeadlineUtc -WorkspacePath $ownerWs
-        if ($delegatedCheckpoint) {
-            # 父会话的正常派发会推进心跳/命令元数据；持锁后重读，避免误判为归属变化。
-            $parentBefore=Read-AiSopWorkflowSessionRecord -SessionPath $parentPath -ExpectedSessionKey $existingOwner.sessionBinding.sessionKey
-            Assert-AiSopDelegationParent $existingOwner $parentBefore ([DateTimeOffset]::UtcNow)
-            $parentAfter=Copy-WorkflowRecord $parentBefore
-            if ((Get-AiSopWorkflowSessionEffectiveStatus $parentBefore $AcceptedAt) -in @('ACTIVE','IDLE')) { [void](Set-AiSopWorkflowSessionHeartbeat $parentAfter $AcceptedAt) }
-            $targets=@($targets | Where-Object { $_.path -cne $parentPath })
-            $targets+=New-OwnerTarget -Path $parentPath -Kind SESSION -SchemaId SESSION -After $parentAfter -BeforeExists $true -Before $parentBefore
-        } elseif ($ResolvedSpecDirectory) { Assert-AiSopNoOtherActiveTask $ResolvedSpecDirectory ([string]$ownerAfter.taskId) $ownerWs $taskAfter.tier }
+    $delegatedCheckpoint = $Operation -eq 'Checkpoint' -and $isDelegate -and $EvidencePath
+    Invoke-AiSopWorkflowTransactionRecovery -DeadlineUtc $WorkflowDeadlineUtc -WorkspacePath $ownerWs | Out-Null
+    $authorityLocks = Enter-AiSopWorkflowTransactionLocks `
+        -SessionKeys $sessionKeys `
+        -OwnerPath $OwnerPath `
+        -Targets $targets `
+        -DeadlineUtc $WorkflowDeadlineUtc `
+        -WorkspacePath $ownerWs
+    if (($Operation -in @('Claim','BindSession','RebindSession','Transfer') -or ($TaskUpdateJson -and $policyUpdate.operation -eq 'ChangeTier')) -and -not $delegatedCheckpoint -and $ResolvedSpecDirectory) {
+        Assert-AiSopNoOtherActiveTask $ResolvedSpecDirectory ([string]$ownerAfter.taskId) $ownerWs $taskAfter.tier
     }
+    $lockedTargets = New-LockedOwnerTransactionTargets `
+        -IsDelegate ([bool]$isDelegate) `
+        -ParentPath $parentPath `
+        -ChildPath $childPath `
+        -ChildKey $childKey `
+        -PreLockChild $childBefore `
+        -RelatedTaskTarget $related
     Invoke-AiSopWorkflowTransaction `
         -Operation $transactionOperation `
         -Feature $Feature `
         -OwnerPath $OwnerPath `
         -SessionKeys $sessionKeys `
-        -Targets $targets `
+        -Targets $lockedTargets `
         -TransactionId $transactionId `
         -DeadlineUtc $WorkflowDeadlineUtc `
         -WorkspacePath $ownerWs `
-        -LocksAlreadyHeld:($null -ne $authorityLocks) |
+        -LocksAlreadyHeld |
         Out-Null
 } finally {
     if ($authorityLocks) { Exit-AiSopWorkflowLocks $authorityLocks.Locks }

@@ -187,7 +187,7 @@ try {
       assert.equal(executed.code, 0, executed.stderr);
       assert.match(executed.stdout, /中文.txt/);
     }
-    for (const command of ['rg -n BEFORE src', 'git -C .ai-workspace status --short', 'git remote -v', 'git branch --show-current', 'svn log -l 5']) {
+    for (const command of ['rg -n BEFORE src', 'git -C .ai-workspace status --short', 'git remote -v', 'git branch --show-current', 'svn log -l 5', 'svn log --non-interactive --limit=5 2>&1']) {
       const result = await hook('.agents', 'PRE_TOOL_USE', agTool('run_command', { CommandLine: command, Cwd: workspace, WaitMsBeforeAsync: 1000 }));
       assert.equal(result.value.decision, 'allow', JSON.stringify(result));
       assert.match(result.value.overwrite.CommandLine, /--no-config|--no-optional-locks|--non-interactive/);

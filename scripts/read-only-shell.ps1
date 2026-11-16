@@ -24,8 +24,9 @@ function Get-AiSopReadOnlyShellInput {
         $ToolArguments=[ordered]@{command=$CommandText}
         if ($nativeArguments.Contains('Cwd')) { $ToolArguments.cwd=$nativeArguments.Cwd }
     }
+    $lexicalCheck=[regex]::Replace($CommandText,'(?<=^|\s)2>&1(?=\s|\||;|$)','')
     if ([string]::IsNullOrWhiteSpace($CommandText) -or $CommandText.Length -gt 32768 -or
-        $CommandText -match '[`$&<>%!]' -or $CommandText -match '\\["''\r\n]') { return $null }
+        $lexicalCheck -match '[`$&<>%!]' -or $CommandText -match '\\["''\r\n]') { return $null }
     if (-not $ToolArguments -or @($ToolArguments.Keys | Where-Object { $_ -in @('command','cmd') }).Count -ne 1) { return $null }
     foreach ($key in $ToolArguments.Keys) {
         if ($key -notin @('command','cmd','description','workdir','cwd','shell','login','timeout','timeout_ms','yield_time_ms','max_output_tokens','tty')) { return $null }
@@ -62,19 +63,30 @@ function Get-AiSopReadOnlyShellInput {
         if ($statement -isnot [Management.Automation.Language.PipelineAst] -or $statement.Background) { return $null }
         $pipeline=[Collections.Generic.List[string]]::new()
         foreach ($command in $statement.PipelineElements) {
-            if ($command -isnot [Management.Automation.Language.CommandAst] -or $command.Redirections.Count -or
+            if ($command -isnot [Management.Automation.Language.CommandAst] -or
                 $command.InvocationOperator -ne [Management.Automation.Language.TokenKind]::Unknown) { return $null }
+            $hasStderrToStdout=$false
+            foreach ($redir in $command.Redirections) {
+                if ($redir -isnot [Management.Automation.Language.MergingRedirectionAst] -or
+                    $redir.FromStream -ne [Management.Automation.Language.RedirectionStream]::Error -or
+                    $redir.ToStream -ne [Management.Automation.Language.RedirectionStream]::Output) { return $null }
+                $hasStderrToStdout=$true
+            }
             $parts=@($command.CommandElements); $values=[Collections.Generic.List[string]]::new()
             foreach ($part in $parts) {
                 if ($part -is [Management.Automation.Language.StringConstantExpressionAst]) {
                     # 内嵌单引号在不同 Shell 中转义规则不同，本轮不猜测其语义。
-                    if ($part.Value.Contains("'")) { return $null }
+                    if ($part.Value.Contains("'") -or $part.Value -match '[&>]') { return $null }
                     $values.Add($part.Value)
                 }
-                elseif ($part -is [Management.Automation.Language.CommandParameterAst] -and -not $part.Argument) { $values.Add($part.Extent.Text) }
+                elseif ($part -is [Management.Automation.Language.CommandParameterAst] -and -not $part.Argument) {
+                    if ($part.Extent.Text -match '[&>]') { return $null }
+                    $values.Add($part.Extent.Text)
+                }
                 elseif ($part -is [Management.Automation.Language.ConstantExpressionAst] -and $part.Value -is [int]) { $values.Add([string]$part.Value) }
                 else { return $null }
             }
+            if ($values.Count -eq 0) { return $null }
             $name=$values[0]; $argv=@($values | Select-Object -Skip 1); $isFilter=$pipeline.Count -gt 0
             $render=[Collections.Generic.List[string]]::new()
             if ($name -in @('git','git.exe')) {
@@ -101,7 +113,9 @@ function Get-AiSopReadOnlyShellInput {
                         if ($remoteNames -ne 1) { return $null }
                         foreach ($value in $remaining) { $render.Add((Quote-ReadValue $value)) }
                     } else { return $null }
-                    $pipeline.Add(($render -join ' ')); continue
+                    $rendered=$render -join ' '
+                    if ($hasStderrToStdout) { $rendered += ' 2>&1' }
+                    $pipeline.Add($rendered); continue
                 }
                 if ($verb -cin @('diff','log','show')) { $render.Add('--no-ext-diff --no-textconv') }
                 $flags=switch -CaseSensitive ($verb) {
@@ -142,20 +156,24 @@ function Get-AiSopReadOnlyShellInput {
                     'cat' { 'cat' }
                     { $_ -in @('propget','pg','pget') } { 'propget' }
                     { $_ -in @('proplist','pl','plist') } { 'proplist' }
+                    { $_ -in @('blame','praise','annotate') } { 'blame' }
                     default { '' }
                 }
                 if (-not $verb) { return $null }
                 $render.Add($rawVerb)
-                $flags=switch -CaseSensitive ($verb) {
+                $commonSvnFlags=@('--non-interactive','--no-auth-cache')
+                $verbFlags=switch -CaseSensitive ($verb) {
                     status { @('-v','--verbose','-q','--quiet','-u','--show-updates','-N','--non-recursive','--no-ignore','--ignore-externals','--xml') }
                     diff { @('--summarize','--xml','--no-diff-added','--no-diff-deleted','--ignore-properties','--properties-only','-N','--non-recursive','--internal-diff','--git','--show-copies-as-adds','--notice-ancestry') }
-                    log { @('-v','--verbose','-q','--quiet','--xml','--stop-on-copy','--use-merge-history','-g','--incremental') }
+                    log { @('-v','--verbose','-q','--quiet','--xml','--stop-on-copy','--use-merge-history','-g','--incremental','--with-all-revprops','--with-no-revprops') }
                     info { @('-R','--recursive','--xml') }
                     list { @('-R','--recursive','-v','--verbose','--xml','--incremental') }
                     cat { @() }
                     propget { @('-R','--recursive','-v','--verbose','--strict','--revprop','--xml') }
                     proplist { @('-R','--recursive','-v','--verbose','-q','--quiet','--revprop','--xml') }
+                    blame { @('-v','--verbose','-g','--use-merge-history','--xml','--force') }
                 }
+                $flags=$commonSvnFlags + $verbFlags
                 $revPattern='^(?:\d+|HEAD|BASE|COMMITTED|PREV|\{\d{4}-\d{2}-\d{2}(?:T\d{2}:\d{2}:\d{2}Z?)?\})(?::(?:\d+|HEAD|BASE|COMMITTED|PREV|\{\d{4}-\d{2}-\d{2}(?:T\d{2}:\d{2}:\d{2}Z?)?\}))?$'
                 $paths=$false; $positionals=0; $index=1
                 while ($index -lt $argv.Count) {
@@ -168,42 +186,54 @@ function Get-AiSopReadOnlyShellInput {
                     }
                     elseif ($value -ceq '--') { $paths=$true }
                     elseif ($value -cin $flags) {}
-                    elseif ($verb -cin @('diff','log','info','list','cat','propget','proplist') -and $value -cin @('-r','--revision')) {
+                    elseif ($verb -cin @('diff','log','info','list','cat','propget','proplist','blame') -and $value -cin @('-r','--revision')) {
                         if ($index -ge $argv.Count -or $argv[$index] -cnotmatch $revPattern) { return $null }
                         $render.Add((Quote-ReadValue $value)); $value=$argv[$index++]
                     }
-                    elseif ($verb -cin @('diff','log','info','list','cat','propget','proplist') -and $value -cmatch '^-r(.+)$') {
+                    elseif ($verb -cin @('diff','log','info','list','cat','propget','proplist','blame') -and $value -cmatch '^(?:-r|--revision=)(.+)$') {
                         if ($Matches[1] -cnotmatch $revPattern) { return $null }
                     }
                     elseif ($verb -cin @('diff','log') -and $value -cin @('-c','--change')) {
                         if ($index -ge $argv.Count -or $argv[$index] -notmatch '^-?\d+(?:,-?\d+)*$') { return $null }
                         $render.Add((Quote-ReadValue $value)); $value=$argv[$index++]
                     }
-                    elseif ($verb -cin @('diff','log') -and $value -cmatch '^-c(.+)$') {
+                    elseif ($verb -cin @('diff','log') -and $value -cmatch '^(?:-c|--change=)(.+)$') {
                         if ($Matches[1] -notmatch '^-?\d+(?:,-?\d+)*$') { return $null }
                     }
                     elseif ($verb -eq 'log' -and $value -cin @('-l','--limit')) {
                         if ($index -ge $argv.Count -or $argv[$index] -notmatch '^\d{1,6}$') { return $null }
                         $render.Add((Quote-ReadValue $value)); $value=$argv[$index++]
                     }
-                    elseif ($verb -eq 'log' -and $value -cmatch '^-l(.+)$') {
+                    elseif ($verb -eq 'log' -and $value -cmatch '^(?:-l|--limit=)(.+)$') {
                         if ($Matches[1] -notmatch '^\d{1,6}$') { return $null }
                     }
                     elseif ($verb -cin @('status','diff','info','list','propget','proplist') -and $value -ceq '--depth') {
                         if ($index -ge $argv.Count -or $argv[$index] -cnotin @('empty','files','immediates','infinity')) { return $null }
                         $render.Add((Quote-ReadValue $value)); $value=$argv[$index++]
                     }
+                    elseif ($verb -cin @('status','diff','info','list','propget','proplist') -and $value -cmatch '^--depth=(.+)$') {
+                        if ($Matches[1] -cnotin @('empty','files','immediates','infinity')) { return $null }
+                    }
                     elseif ($verb -eq 'info' -and $value -ceq '--show-item') {
                         if ($index -ge $argv.Count -or $argv[$index] -cnotmatch '^[a-z-]+$') { return $null }
                         $render.Add((Quote-ReadValue $value)); $value=$argv[$index++]
+                    }
+                    elseif ($verb -eq 'info' -and $value -cmatch '^--show-item=(.+)$') {
+                        if ($Matches[1] -cnotmatch '^[a-z-]+$') { return $null }
                     }
                     elseif ($verb -cin @('status','diff','info','propget','proplist') -and $value -cin @('--changelist','--cl')) {
                         if ($index -ge $argv.Count -or $argv[$index] -cnotmatch '^[A-Za-z0-9._-]+$') { return $null }
                         $render.Add((Quote-ReadValue $value)); $value=$argv[$index++]
                     }
+                    elseif ($verb -cin @('status','diff','info','propget','proplist') -and $value -cmatch '^(?:--changelist|--cl)=(.+)$') {
+                        if ($Matches[1] -cnotmatch '^[A-Za-z0-9._-]+$') { return $null }
+                    }
                     elseif ($verb -eq 'log' -and $value -cin @('--search','--search-and')) {
                         if ($index -ge $argv.Count -or [string]::IsNullOrWhiteSpace($argv[$index]) -or $argv[$index].StartsWith('-')) { return $null }
                         $render.Add((Quote-ReadValue $value)); $value=$argv[$index++]
+                    }
+                    elseif ($verb -eq 'log' -and $value -cmatch '^(?:--search|--search-and)=(.+)$') {
+                        if ([string]::IsNullOrWhiteSpace($Matches[1]) -or $Matches[1].StartsWith('-')) { return $null }
                     }
                     elseif ($value.StartsWith('-')) { return $null }
                     else {
@@ -214,7 +244,7 @@ function Get-AiSopReadOnlyShellInput {
                     }
                     $render.Add((Quote-ReadValue $value))
                 }
-                if (($verb -eq 'cat' -or $verb -eq 'propget') -and $positionals -eq 0) { return $null }
+                if (($verb -in @('cat','propget','blame')) -and $positionals -eq 0) { return $null }
             } elseif ($name -in @('rg','rg.exe')) {
                 # 禁用配置文件中的 --pre 等执行选项；只接受列出的只读选项。
                 $render.Add('rg --no-config'); $positionals=0; $files=$argv -ccontains '--files'; $endOptions=$false
@@ -291,7 +321,9 @@ function Get-AiSopReadOnlyShellInput {
                 if ($pathCount -gt 1 -or ($positionalPath -and $name -ne 'Get-ChildItem' -and $pathCount -ne 1) -or
                     ($name -eq 'Select-String' -and (-not $hasPattern -or (-not $isFilter -and $pathCount -ne 1)))) { return $null }
             }
-            $pipeline.Add(($render -join ' '))
+            $rendered=$render -join ' '
+            if ($hasStderrToStdout) { $rendered += ' 2>&1' }
+            $pipeline.Add($rendered)
         }
         $statements.Add(($pipeline -join ' | '))
     }

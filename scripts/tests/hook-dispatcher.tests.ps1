@@ -402,6 +402,33 @@ try {
     $svnLogResult = Invoke-Dispatch -RawPayload (New-AntigravityPayload -Event PRE_TOOL_USE -SessionId $researchId -ToolName run_command -ToolInput @{CommandLine='svn log -l 5'; Cwd=$Workspace; WaitMsBeforeAsync=1000; IsDaemon=$false}) -EventHint PRE_TOOL_USE -AcceptedAt $now
     Assert-Equal $svnLogResult.Decision 'ALLOW' '无任务时只读 svn log 应免任务放行。'
     Assert-Equal $svnLogResult.ReasonCode 'READ_ONLY_SHELL_COMMAND' '只读 svn log 应走 READ_ONLY_SHELL_COMMAND。'
+    $svnLog2Result = Invoke-Dispatch -RawPayload (New-AntigravityPayload -Event PRE_TOOL_USE -SessionId $researchId -ToolName run_command -ToolInput @{CommandLine='svn log --non-interactive --limit=10 2>&1'; Cwd=$Workspace; WaitMsBeforeAsync=5000; toolSummary='Get recent SVN commits'}) -EventHint PRE_TOOL_USE -AcceptedAt $now
+    Assert-Equal $svnLog2Result.Decision 'ALLOW' '带 --non-interactive/--limit=/2>&1 的只读 svn log 应免任务放行。'
+    Assert-Equal $svnLog2Result.ReasonCode 'READ_ONLY_SHELL_COMMAND' '只读 svn log 复合写法应走 READ_ONLY_SHELL_COMMAND。'
+
+    # 未绑定的已过期 Antigravity 会话在下一轮 PRE_INVOCATION 应自动开启新 epoch；
+    # 已绑定任务的过期会话则绝不可被 PRE_INVOCATION 自动复活。
+    $expiredUnboundId = 'antigravity-expired-unbound'
+    $expiredAt = $now.AddMinutes(31)
+    Invoke-Dispatch -RawPayload (New-AntigravityPayload -Event PRE_INVOCATION -SessionId $expiredUnboundId) -EventHint PRE_INVOCATION -AcceptedAt $now | Out-Null
+    $unboundKey = Get-AiSopWorkflowSessionKey -Agent ANTIGRAVITY -NativeSessionId $expiredUnboundId -WorkspacePath $Workspace
+    $beforeExpiredEpoch = (Get-AiSopWorkflowSession -SessionKey $unboundKey -AcceptedAt $now).Record.sessionEpochId
+    $restartedPre = Invoke-Dispatch -RawPayload (New-AntigravityPayload -Event PRE_INVOCATION -SessionId $expiredUnboundId) -EventHint PRE_INVOCATION -AcceptedAt $expiredAt
+    Assert-Equal $restartedPre.Decision 'ALLOW' '未绑定已过期会话的 PRE_INVOCATION 应开启新会话纪元。'
+    $afterExpiredSession = Get-AiSopWorkflowSession -SessionKey $unboundKey -AcceptedAt $expiredAt
+    Assert-Equal $afterExpiredSession.EffectiveStatus 'ACTIVE' '未绑定已过期会话重开后应恢复 ACTIVE。'
+    Assert-True ($afterExpiredSession.Record.sessionEpochId -cne $beforeExpiredEpoch) '未绑定已过期会话必须产生新的 sessionEpochId。'
+
+    $expiredBoundPath = $afterExpiredSession.SessionPath
+    $expiredBoundRecord = Read-AiSopWorkflowSessionRecord -SessionPath $expiredBoundPath -ExpectedSessionKey $unboundKey
+    $expiredBoundRecord.boundFeature = 'BoundExpiredFeature'
+    $expiredBoundRecord.boundWorkflow = 'SUPERPOWERS'
+    $expiredBoundRecord.boundOwnerId = 'bound-expired-owner'
+    $expiredBoundRecord.boundSessionEpochId = $expiredBoundRecord.sessionEpochId
+    Write-AiSopWorkflowSessionRecord -SessionPath $expiredBoundPath -Record $expiredBoundRecord
+    $boundExpiredPre = Invoke-Dispatch -RawPayload (New-AntigravityPayload -Event PRE_INVOCATION -SessionId $expiredUnboundId) -EventHint PRE_INVOCATION -AcceptedAt $expiredAt.AddMinutes(31)
+    Assert-Equal $boundExpiredPre.Decision 'DENY' '已绑定任务的过期会话不得被 PRE_INVOCATION 自动复活。'
+    Assert-Equal $boundExpiredPre.ReasonCode 'SESSION_INACTIVE' '已绑定过期会话应返回 SESSION_INACTIVE。'
 
     # 没有任务或活动会话时仍能进入受限的 Start/Resume，不开放任意 Shell。
     $entryStart = "pwsh -NoProfile -File './ai-sop.ps1' Task -Operation Start -Feature Bootstrap -TaskId bootstrap -Agent CLAUDE_CODE -Objective '验证引导'"

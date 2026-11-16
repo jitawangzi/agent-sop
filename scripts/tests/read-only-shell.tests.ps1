@@ -28,6 +28,7 @@ try {
         'git status --short',
         'git diff -- src/probe.txt',
         'git log --oneline -n 3',
+        'git log --oneline -n 3 2>&1',
         'git show HEAD:src/probe.txt',
         'git -C . ls-files -- src/probe.txt',
         'git rev-parse --show-toplevel',
@@ -156,15 +157,19 @@ try {
         'svn status',
         'svn st -q src',
         'svn log -l 5',
+        'svn log --non-interactive -l 10 2>&1',
+        'svn log --limit=10 --revision=100:HEAD --with-no-revprops',
         'svn log -v -r 100:200 src/probe.txt',
         'svn log -l10 --stop-on-copy --search fix',
         'svn diff --summarize -r 10:20 src',
         'svn diff -c 42 src/probe.txt',
         'svn info --show-item revision',
+        'svn info --show-item=revision --non-interactive',
         'svn list -R src',
         'svn cat -r HEAD src/probe.txt',
         'svn propget svn:eol-style src/probe.txt',
-        'svn proplist -v src/probe.txt'
+        'svn proplist -v src/probe.txt',
+        'svn blame -r 100 src/probe.txt'
     )
     foreach($text in $svnAllowed) {
         $parsed=Parse $text

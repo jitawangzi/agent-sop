@@ -681,6 +681,13 @@ function Get-AiSopDispatcherLifecyclePlan {
                     -SideEffectKind REGISTER_CONFIRMED
             }
             if ([string]$session.EffectiveStatus -notin @("ACTIVE", "IDLE")) {
+                if ([string]$session.EffectiveStatus -ceq "EXPIRED" -and
+                    [string]::IsNullOrEmpty([string]$session.Record.boundFeature)) {
+                    return New-AiSopDispatcherPlan `
+                        -Decision ALLOW `
+                        -ReasonCode LIFECYCLE_ACCEPTED `
+                        -SideEffectKind REGISTER_CONFIRMED
+                }
                 return New-AiSopDispatcherPlan `
                     -Decision DENY `
                     -ReasonCode SESSION_INACTIVE `

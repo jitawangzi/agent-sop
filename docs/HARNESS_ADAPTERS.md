@@ -48,7 +48,7 @@ Codex 的常用 Shell 只读命令无需活动任务，暂停或取消任务后�
 
 放行时通过 Codex 原生 `updatedInput.command` 返回重新构造的命令：Git 禁用 pager、可选锁、fsmonitor、签名校验及外部 diff/textconv，rg 禁用配置文件，PowerShell 使用模块限定的只读 cmdlet。去重重放仍重验路径并返回安全化命令。任意 Shell、脚本执行和文件写入继续执行任务防护。
 
-Antigravity `run_command` 同样支持这些免任务的字面只读命令，包括 `Get-ChildItem`、`rg`、`git status/log/diff`，以及只读取本地配置的 `git remote -v`、`git remote get-url origin`、`git branch --show-current`。使用原生 `CommandLine`、可选 `Cwd`、非负整数 `WaitMsBeforeAsync` 和字符串 `toolSummary/toolAction`；`IsDaemon/RunPersistent` 仅接受省略或 false，已有终端、未知参数和命令混写不获只读豁免。Hook 通过原生 `overwrite.CommandLine` 返回安全化命令，并将 `overwrite.Cwd` 固定为已检查的目录；不设置 `permissionOverrides`，不使用 `auto_approve`，仍由客户端执行自身权限规则。无任务时不能修改 remote、创建/删除分支或运行任意脚本。
+Antigravity `run_command` 同样支持这些免任务的字面只读命令，包括 `Get-ChildItem`、`rg`、`git status/log/diff`、`svn status/log/diff/info/list/cat`（仅限工作区本地路径、无外部 diff/config 选项），以及只读取本地配置的 `git remote -v`、`git remote get-url origin`、`git branch --show-current`。使用原生 `CommandLine`、可选 `Cwd`、非负整数 `WaitMsBeforeAsync` 和字符串 `toolSummary/toolAction`；`IsDaemon/RunPersistent` 仅接受省略或 false，已有终端、未知参数和命令混写不获只读豁免。Hook 通过原生 `overwrite.CommandLine` 返回安全化命令，并将 `overwrite.Cwd` 固定为已检查的目录；不设置 `permissionOverrides`，不使用 `auto_approve`，仍由客户端执行自身权限规则。无任务时不能修改 remote、创建/删除分支或运行任意脚本。Antigravity 内置只读沙盒子 Agent `invoke_subagent`（`TypeName="research"` 且 `Workspace` 省略或为 `"inherit"`）同样免任务放行；`self`、自定义子 Agent、`define_subagent`、`manage_subagents` 与任意 Python 编排 `run_workflow` 仍归类为 `OWNER_REQUIRED`。
 
 真实进程回归由 `scripts/tests/hook-process.test.mjs` 覆盖：经项目 wrapper 启动 PowerShell，在本地代码页环境下发送 UTF-8/BOM 与中文路径，严格解码返回字节，检查原生拒绝协议及任务生命周期。Cursor 真实载荷允许相同的 conversation_id/session_id、缺省或空 cwd，以及 Windows `/D:/...` 工作区表示；身份不一致和越界路径仍拒绝。Cursor 自动导入 Claude Hook 时，两份有效载荷识别为同一个 Cursor 会话，由已有去重逻辑处理，不停用用户的其他 Hook。自动化通过仍不代表客户端现场认证通过。
 

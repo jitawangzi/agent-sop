@@ -1,4 +1,4 @@
-#requires -Version 7.0
+﻿#requires -Version 7.0
 
 [CmdletBinding()]
 param(
@@ -480,6 +480,59 @@ function New-AiSopDispatcherPlan {
     }
 }
 
+function Test-AiSopReadOnlySubagentCall {
+    param(
+        [string]$ToolName,
+        $Arguments
+    )
+
+    if ($ToolName -cnotin @('invoke_subagent', 'InvokeSubagent')) {
+        return $false
+    }
+    if ($null -eq $Arguments -or $Arguments -isnot [System.Collections.IDictionary]) {
+        return $false
+    }
+    function Test-ResearchEntry([object]$Entry) {
+        if ($null -eq $Entry -or $Entry -isnot [System.Collections.IDictionary]) {
+            return $false
+        }
+        foreach ($key in $Entry.Keys) {
+            if ([string]$key -cnotin @('TypeName', 'Role', 'Prompt', 'Model', 'Workspace')) {
+                return $false
+            }
+        }
+        if (-not $Entry.Contains('TypeName') -or $Entry['TypeName'] -isnot [string] -or $Entry['TypeName'] -cne 'research') {
+            return $false
+        }
+        foreach ($req in @('Role', 'Prompt')) {
+            if (-not $Entry.Contains($req) -or $Entry[$req] -isnot [string] -or [string]::IsNullOrWhiteSpace($Entry[$req])) {
+                return $false
+            }
+        }
+        if ($Entry.Contains('Model') -and ($Entry['Model'] -isnot [string] -or [string]::IsNullOrWhiteSpace($Entry['Model']))) {
+            return $false
+        }
+        if ($Entry.Contains('Workspace') -and ($Entry['Workspace'] -isnot [string] -or $Entry['Workspace'] -cne 'inherit')) {
+            return $false
+        }
+        return $true
+    }
+    if ($Arguments.Contains('Subagents')) {
+        if ($Arguments.Count -ne 1) { return $false }
+        $list = $Arguments['Subagents']
+        if ($null -eq $list -or $list -is [string] -or $list -isnot [System.Collections.IEnumerable]) {
+            return $false
+        }
+        $count = 0
+        foreach ($item in $list) {
+            if (-not (Test-ResearchEntry $item)) { return $false }
+            $count++
+        }
+        return ($count -gt 0)
+    }
+    return (Test-ResearchEntry $Arguments)
+}
+
 function Get-AiSopDispatcherToolPlan {
     param(
         [string]$RawPayload,
@@ -504,6 +557,9 @@ function Get-AiSopDispatcherToolPlan {
                 -WorkspacePath $HookEvent.workspacePath -Cwd $HookEvent.cwd -ToolArguments $entryTool.Arguments)) {
                 return New-AiSopDispatcherPlan -Decision ALLOW -ReasonCode READ_ONLY_SHELL_COMMAND -SideEffectKind NONE
             }
+        }
+        if ($HookEvent.agent -ceq 'ANTIGRAVITY' -and (Test-AiSopReadOnlySubagentCall -ToolName $entryTool.Name -Arguments $entryTool.Arguments)) {
+            return New-AiSopDispatcherPlan -Decision ALLOW -ReasonCode READ_ONLY_SUBAGENT -SideEffectKind NONE
         }
     }
 
@@ -932,7 +988,7 @@ function ConvertFrom-AiSopDispatcherDedupResult {
     # 已登记或恢复任务后，旧拒绝结果同样不能把合法重试永久锁住。
     # 启动/恢复专用命令的授权有独立校验，不在这里阻断无任务的登记入口。
     if ($DedupResult.IsDuplicate -and $DedupResult.Record.state -ceq 'APPLIED' -and
-        $HookEvent.event -ceq 'PRE_TOOL_USE' -and $reason -cnotin @('COMMAND_GRANT_ISSUED', 'TASK_BOOTSTRAP_COMMAND', 'SOP_DIAGNOSTIC_COMMAND', 'READ_ONLY_SHELL_COMMAND') -and
+        $HookEvent.event -ceq 'PRE_TOOL_USE' -and $reason -cnotin @('COMMAND_GRANT_ISSUED', 'TASK_BOOTSTRAP_COMMAND', 'SOP_DIAGNOSTIC_COMMAND', 'READ_ONLY_SHELL_COMMAND', 'READ_ONLY_SUBAGENT') -and
         $HookEvent.toolClass -in @('FILE_EDIT', 'OWNER_REQUIRED')) {
         $current = Get-AiSopGuardDecision -HookEvent $HookEvent -AcceptedAt $AcceptedAt -DeadlineUtc $DeadlineUtc
         $decision = [string]$current.Decision
@@ -943,6 +999,12 @@ function ConvertFrom-AiSopDispatcherDedupResult {
     }
     $grantId = [string]$DedupResult.Record.bootstrapGrantId
     $agent = [string]$HookEvent.agent
+    if ($reason -ceq 'READ_ONLY_SUBAGENT') {
+        $tool = Get-AiSopDispatcherToolContext -RawPayload $RawPayload -HookEvent $HookEvent
+        if ($agent -cne 'ANTIGRAVITY' -or -not (Test-AiSopReadOnlySubagentCall -ToolName $tool.Name -Arguments $tool.Arguments)) {
+            throw 'READ_ONLY_SUBAGENT_CHANGED'
+        }
+    }
     if ($reason -ceq 'SOP_DIAGNOSTIC_COMMAND') {
         # 每次响应都重验入口和路径，去重记录不能永久授权被替换的入口。
         $tool=Get-AiSopDispatcherToolContext -RawPayload $RawPayload -HookEvent $HookEvent

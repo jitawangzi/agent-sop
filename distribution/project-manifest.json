@@ -4,7 +4,7 @@
   "sourceUrl": "https://github.com/jitawangzi/agent-sop.git",
   "toolPolicy": {
     "path": "config/hook-tool-policy.json",
-    "blobSha256": "fad2fc282289f808ac0e024406510aeec853c011e9a9d855ba16258af77b9339"
+    "blobSha256": "82031c7e28476d77737be2acd880570c63235cf4f41f22e9e87ebfc934034f12"
   },
   "certification": {
     "path": "distribution/harness-certification.json",

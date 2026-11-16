@@ -187,11 +187,13 @@ try {
       assert.equal(executed.code, 0, executed.stderr);
       assert.match(executed.stdout, /中文.txt/);
     }
-    for (const command of ['rg -n BEFORE src', 'git -C .ai-workspace status --short', 'git remote -v', 'git branch --show-current']) {
+    for (const command of ['rg -n BEFORE src', 'git -C .ai-workspace status --short', 'git remote -v', 'git branch --show-current', 'svn log -l 5']) {
       const result = await hook('.agents', 'PRE_TOOL_USE', agTool('run_command', { CommandLine: command, Cwd: workspace, WaitMsBeforeAsync: 1000 }));
       assert.equal(result.value.decision, 'allow', JSON.stringify(result));
-      assert.match(result.value.overwrite.CommandLine, /--no-config|--no-optional-locks/);
+      assert.match(result.value.overwrite.CommandLine, /--no-config|--no-optional-locks|--non-interactive/);
     }
+    const researchAllow = await hook('.agents', 'PRE_TOOL_USE', agTool('invoke_subagent', { TypeName: 'research', Role: 'Codebase Researcher', Prompt: 'Inspect commits' }));
+    assert.equal(researchAllow.value.decision, 'allow', JSON.stringify(researchAllow));
     assert.deepEqual(await authoritySnapshot(), beforeRead, `${phase} 读取不能登记、续租、恢复或接管权限`);
   }
   for (const args of [
@@ -201,6 +203,8 @@ try {
   ]) assert.equal((await hook('.agents', 'PRE_TOOL_USE', agTool('read_file', args))).value.decision, 'deny');
   assert.equal((await hook('.agents', 'PRE_TOOL_USE', agTool('write_to_file', { TargetFile: file, CodeContent: 'UNAUTHORIZED', Overwrite: true }))).value.decision, 'deny');
   assert.equal((await hook('.agents', 'PRE_TOOL_USE', agTool('future_read_file', { Path: file }))).value.decision, 'deny');
+  assert.equal((await hook('.agents', 'PRE_TOOL_USE', agTool('invoke_subagent', { TypeName: 'self', Role: 'Helper', Prompt: 'Edit' }))).value.decision, 'deny');
+  assert.equal((await hook('.agents', 'PRE_TOOL_USE', agTool('run_workflow', { Script: 'print(1)', Description: 'Inspect' }))).value.decision, 'deny');
   for (const args of [
     { CommandLine: 'git status', IsDaemon: true }, { CommandLine: 'git status', RunPersistent: true },
     { CommandLine: 'git status', RequestedTerminalID: 'existing' }, { CommandLine: 'git status', Cwd: root },

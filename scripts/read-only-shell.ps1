@@ -1,4 +1,4 @@
-#requires -Version 7.0
+﻿#requires -Version 7.0
 
 # 只解析字面只读命令，不执行待检查的文本；未知语法返回空，继续走原任务防护。
 function Get-AiSopReadOnlyShellInput {
@@ -129,6 +129,92 @@ function Get-AiSopReadOnlyShellInput {
                     elseif ($value -cnotmatch '^[A-Za-z0-9_][A-Za-z0-9_./~^:@{}-]*$') { return $null }
                     $render.Add((Quote-ReadValue $value))
                 }
+            } elseif ($name -in @('svn','svn.exe')) {
+                if ($isFilter -or $argv.Count -eq 0) { return $null }
+                $render.Add('svn --non-interactive')
+                $rawVerb=$argv[0]
+                $verb=switch -CaseSensitive ($rawVerb) {
+                    { $_ -in @('status','st','stat') } { 'status' }
+                    { $_ -in @('diff','di') } { 'diff' }
+                    'log' { 'log' }
+                    'info' { 'info' }
+                    { $_ -in @('list','ls') } { 'list' }
+                    'cat' { 'cat' }
+                    { $_ -in @('propget','pg','pget') } { 'propget' }
+                    { $_ -in @('proplist','pl','plist') } { 'proplist' }
+                    default { '' }
+                }
+                if (-not $verb) { return $null }
+                $render.Add($rawVerb)
+                $flags=switch -CaseSensitive ($verb) {
+                    status { @('-v','--verbose','-q','--quiet','-u','--show-updates','-N','--non-recursive','--no-ignore','--ignore-externals','--xml') }
+                    diff { @('--summarize','--xml','--no-diff-added','--no-diff-deleted','--ignore-properties','--properties-only','-N','--non-recursive','--internal-diff','--git','--show-copies-as-adds','--notice-ancestry') }
+                    log { @('-v','--verbose','-q','--quiet','--xml','--stop-on-copy','--use-merge-history','-g','--incremental') }
+                    info { @('-R','--recursive','--xml') }
+                    list { @('-R','--recursive','-v','--verbose','--xml','--incremental') }
+                    cat { @() }
+                    propget { @('-R','--recursive','-v','--verbose','--strict','--revprop','--xml') }
+                    proplist { @('-R','--recursive','-v','--verbose','-q','--quiet','--revprop','--xml') }
+                }
+                $revPattern='^(?:\d+|HEAD|BASE|COMMITTED|PREV|\{\d{4}-\d{2}-\d{2}(?:T\d{2}:\d{2}:\d{2}Z?)?\})(?::(?:\d+|HEAD|BASE|COMMITTED|PREV|\{\d{4}-\d{2}-\d{2}(?:T\d{2}:\d{2}:\d{2}Z?)?\}))?$'
+                $paths=$false; $positionals=0; $index=1
+                while ($index -lt $argv.Count) {
+                    $value=$argv[$index++]
+                    if ($paths) {
+                        if ($verb -eq 'propget' -and $positionals -eq 0) {
+                            if ($value -cnotmatch '^[A-Za-z0-9._:-]+$') { return $null }
+                        } elseif (-not (Test-ReadPath $value)) { return $null }
+                        $positionals++
+                    }
+                    elseif ($value -ceq '--') { $paths=$true }
+                    elseif ($value -cin $flags) {}
+                    elseif ($verb -cin @('diff','log','info','list','cat','propget','proplist') -and $value -cin @('-r','--revision')) {
+                        if ($index -ge $argv.Count -or $argv[$index] -cnotmatch $revPattern) { return $null }
+                        $render.Add((Quote-ReadValue $value)); $value=$argv[$index++]
+                    }
+                    elseif ($verb -cin @('diff','log','info','list','cat','propget','proplist') -and $value -cmatch '^-r(.+)$') {
+                        if ($Matches[1] -cnotmatch $revPattern) { return $null }
+                    }
+                    elseif ($verb -cin @('diff','log') -and $value -cin @('-c','--change')) {
+                        if ($index -ge $argv.Count -or $argv[$index] -notmatch '^-?\d+(?:,-?\d+)*$') { return $null }
+                        $render.Add((Quote-ReadValue $value)); $value=$argv[$index++]
+                    }
+                    elseif ($verb -cin @('diff','log') -and $value -cmatch '^-c(.+)$') {
+                        if ($Matches[1] -notmatch '^-?\d+(?:,-?\d+)*$') { return $null }
+                    }
+                    elseif ($verb -eq 'log' -and $value -cin @('-l','--limit')) {
+                        if ($index -ge $argv.Count -or $argv[$index] -notmatch '^\d{1,6}$') { return $null }
+                        $render.Add((Quote-ReadValue $value)); $value=$argv[$index++]
+                    }
+                    elseif ($verb -eq 'log' -and $value -cmatch '^-l(.+)$') {
+                        if ($Matches[1] -notmatch '^\d{1,6}$') { return $null }
+                    }
+                    elseif ($verb -cin @('status','diff','info','list','propget','proplist') -and $value -ceq '--depth') {
+                        if ($index -ge $argv.Count -or $argv[$index] -cnotin @('empty','files','immediates','infinity')) { return $null }
+                        $render.Add((Quote-ReadValue $value)); $value=$argv[$index++]
+                    }
+                    elseif ($verb -eq 'info' -and $value -ceq '--show-item') {
+                        if ($index -ge $argv.Count -or $argv[$index] -cnotmatch '^[a-z-]+$') { return $null }
+                        $render.Add((Quote-ReadValue $value)); $value=$argv[$index++]
+                    }
+                    elseif ($verb -cin @('status','diff','info','propget','proplist') -and $value -cin @('--changelist','--cl')) {
+                        if ($index -ge $argv.Count -or $argv[$index] -cnotmatch '^[A-Za-z0-9._-]+$') { return $null }
+                        $render.Add((Quote-ReadValue $value)); $value=$argv[$index++]
+                    }
+                    elseif ($verb -eq 'log' -and $value -cin @('--search','--search-and')) {
+                        if ($index -ge $argv.Count -or [string]::IsNullOrWhiteSpace($argv[$index]) -or $argv[$index].StartsWith('-')) { return $null }
+                        $render.Add((Quote-ReadValue $value)); $value=$argv[$index++]
+                    }
+                    elseif ($value.StartsWith('-')) { return $null }
+                    else {
+                        if ($verb -eq 'propget' -and $positionals -eq 0) {
+                            if ($value -cnotmatch '^[A-Za-z0-9._:-]+$') { return $null }
+                        } elseif (-not (Test-ReadPath $value)) { return $null }
+                        $positionals++
+                    }
+                    $render.Add((Quote-ReadValue $value))
+                }
+                if (($verb -eq 'cat' -or $verb -eq 'propget') -and $positionals -eq 0) { return $null }
             } elseif ($name -in @('rg','rg.exe')) {
                 # 禁用配置文件中的 --pre 等执行选项；只接受列出的只读选项。
                 $render.Add('rg --no-config'); $positionals=0; $files=$argv -ccontains '--files'; $endOptions=$false

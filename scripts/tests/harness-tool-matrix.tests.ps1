@@ -1,4 +1,4 @@
-#requires -Version 7.0
+﻿#requires -Version 7.0
 # Cross-Harness Native Tool Compatibility Matrix Tests
 # Verifies that every supported agent harness (Claude Code, Antigravity, Cursor, Copilot, Pi)
 # has all its native tool names and real argument shapes properly normalized and authorized.
@@ -202,6 +202,11 @@ try {
     Assert-ToolAuthorized "ANTIGRAVITY" "Agent" @{
         prompt = "Review"
     } "OWNER_REQUIRED" "Agent PascalCase"
+
+    Assert-ToolAuthorized "ANTIGRAVITY" "run_workflow" @{
+        Script = "print(1)"
+        Description = "Test workflow"
+    } "OWNER_REQUIRED" "run_workflow"
 
     Write-Host "`n=== 2. Claude Code Native Tool Matrix ===" -ForegroundColor Cyan
     $claudePayload = [ordered]@{

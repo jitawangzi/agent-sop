@@ -1,4 +1,4 @@
-#requires -Version 7.0
+﻿#requires -Version 7.0
 $ErrorActionPreference='Stop'
 . (Join-Path $PSScriptRoot '../path-identity.ps1')
 . (Join-Path $PSScriptRoot '../read-only-shell.ps1')
@@ -151,8 +151,50 @@ try {
             Assert ($LASTEXITCODE -eq 0) "只读命令实际执行失败：$text $output"
             Assert (-not (Test-Path $marker)) "只读命令启动了外部助手：$text"
         }
-    } finally { Set-Location $oldLocation; $env:RIPGREP_CONFIG_PATH=$oldConfig }
-    Write-Output 'PASS: literal reads, safe pipelines, git/rg helper suppression, command injection and physical path rejection'
+        } finally { Set-Location $oldLocation; $env:RIPGREP_CONFIG_PATH=$oldConfig }
+    $svnAllowed=@(
+        'svn status',
+        'svn st -q src',
+        'svn log -l 5',
+        'svn log -v -r 100:200 src/probe.txt',
+        'svn log -l10 --stop-on-copy --search fix',
+        'svn diff --summarize -r 10:20 src',
+        'svn diff -c 42 src/probe.txt',
+        'svn info --show-item revision',
+        'svn list -R src',
+        'svn cat -r HEAD src/probe.txt',
+        'svn propget svn:eol-style src/probe.txt',
+        'svn proplist -v src/probe.txt'
+    )
+    foreach($text in $svnAllowed) {
+        $parsed=Parse $text
+        Assert ($null -ne $parsed -and $parsed.command -like 'svn --non-interactive *') "合法 SVN 只读命令被拒绝：$text"
+        $agSvn=Get-AiSopReadOnlyShellInput -CommandText $text -WorkspacePath $workspace -Cwd $workspace -ToolArguments @{CommandLine=$text;Cwd=$workspace;WaitMsBeforeAsync=1000;IsDaemon=$false} -Agent ANTIGRAVITY
+        Assert ($null -ne $agSvn -and $agSvn.CommandLine -ceq $parsed.command) "Antigravity SVN 只读命令分类失败：$text"
+    }
+    $svnDenied=@(
+        'svn commit -m bad',
+        'svn update',
+        'svn checkout https://example.invalid/repo wc',
+        'svn add src/new.txt',
+        'svn delete src/probe.txt',
+        'svn revert src/probe.txt',
+        'svn diff --diff-cmd helper src/probe.txt',
+        'svn diff --invoke-diff-cmd helper src/probe.txt',
+        'svn log --config-dir .ai-sop',
+        'svn log --config-option config:helpers:diff-cmd=helper',
+        'svn log --targets list.txt',
+        'svn log ../outside',
+        'svn log https://example.invalid/repo',
+        'svn cat',
+        'svn propget svn:eol-style ../outside.txt',
+        'svn log -l 5; svn update'
+    )
+    foreach($text in $svnDenied) {
+        Assert ($null -eq (Parse $text)) "危险或越界 SVN 命令被放行：$text"
+        Assert ($null -eq (Get-AiSopReadOnlyShellInput -CommandText $text -WorkspacePath $workspace -Cwd $workspace -ToolArguments @{CommandLine=$text;Cwd=$workspace} -Agent ANTIGRAVITY)) "Antigravity 危险 SVN 命令被放行：$text"
+    }
+    Write-Output 'PASS: literal reads, safe pipelines, git/svn/rg helper suppression, command injection and physical path rejection'
 } finally {
     $physical=Resolve-PhysicalPathIdentity $fixture
     $temp=(Resolve-PhysicalPathIdentity ([IO.Path]::GetTempPath())).TrimEnd('\','/')+[IO.Path]::DirectorySeparatorChar

@@ -1030,6 +1030,32 @@
     },
     {
       "match": {
+        "kind": "EXACT",
+        "value": "run_workflow"
+      },
+      "nativeShapes": [
+        "ANTIGRAVITY"
+      ],
+      "canonicalName": "WORKFLOW_SCRIPT",
+      "toolClass": "OWNER_REQUIRED",
+      "argumentProfile": "ANY_OBJECT",
+      "targetExtractor": "NONE"
+    },
+    {
+      "match": {
+        "kind": "EXACT",
+        "value": "RunWorkflow"
+      },
+      "nativeShapes": [
+        "ANTIGRAVITY"
+      ],
+      "canonicalName": "WORKFLOW_SCRIPT",
+      "toolClass": "OWNER_REQUIRED",
+      "argumentProfile": "ANY_OBJECT",
+      "targetExtractor": "NONE"
+    },
+    {
+      "match": {
         "value": "PiRead",
         "kind": "EXACT"
       },

@@ -1,4 +1,4 @@
-#requires -Version 7.0
+﻿#requires -Version 7.0
 
 [CmdletBinding()]
 param()
@@ -374,6 +374,34 @@ try {
     # SAFE_NON_EDIT 还包含兼容工具；不能把宽泛 ANY_OBJECT 策略当成已校验读取。
     $unboundAgentCall = Invoke-Dispatch -RawPayload (New-AntigravityPayload -Event PRE_TOOL_USE -SessionId 'unbound-general-tool' -ToolName invoke_subagent -ToolInput @{prompt='review'}) -EventHint PRE_TOOL_USE -AcceptedAt $now
     Assert-Equal $unboundAgentCall.Decision 'DENY' '宽泛工具不能通过只读入口绕过原有会话检查。'
+
+    # Antigravity 内置只读沙盒子 Agent (research) 与只读 svn 命令无需活动任务即可审查；
+    # self / 自定义子 Agent / branch 工作区 / run_workflow 仍受任务归属约束。
+    $researchId = 'antigravity-readonly-research'
+    $researchSessionPath = Get-AiSopWorkflowSessionPath -SessionKey (Get-AiSopWorkflowSessionKey -Agent ANTIGRAVITY -NativeSessionId $researchId -WorkspacePath $Workspace) -WorkspacePath $Workspace
+    $researchPayload = New-AntigravityPayload -Event PRE_TOOL_USE -SessionId $researchId -ToolName invoke_subagent -ToolInput @{TypeName='research'; Role='Codebase Researcher'; Prompt='Review recent changes'}
+    for ($replay = 0; $replay -lt 2; $replay++) {
+        $researchResult = Invoke-Dispatch -RawPayload $researchPayload -EventHint PRE_TOOL_USE -AcceptedAt $now.AddMilliseconds($replay)
+        Assert-Equal $researchResult.Decision 'ALLOW' 'Antigravity 只读 research 子 Agent 应免任务放行。'
+        Assert-Equal $researchResult.ReasonCode 'READ_ONLY_SUBAGENT' '只读 research 子 Agent 须标明 READ_ONLY_SUBAGENT。'
+    }
+    Assert-True (-not [IO.File]::Exists($researchSessionPath)) '只读 research 子 Agent 不得自行登记会话。'
+    $researchBatch = Invoke-Dispatch -RawPayload (New-AntigravityPayload -Event PRE_TOOL_USE -SessionId $researchId -ToolName InvokeSubagent -ToolInput @{Subagents=@(@{TypeName='research'; Role='Reviewer'; Prompt='Inspect'; Workspace='inherit'})}) -EventHint PRE_TOOL_USE -AcceptedAt $now
+    Assert-Equal $researchBatch.Decision 'ALLOW' 'Antigravity 批量只读 research 子 Agent 应免任务放行。'
+    foreach ($deniedSubagent in @(
+        @{TypeName='self'; Role='Implementer'; Prompt='Check'},
+        @{TypeName='implementation-engine'; Role='Impl'; Prompt='Check'},
+        @{TypeName='research'; Role='Reviewer'; Prompt='Check'; Workspace='branch'}
+    )) {
+        $deniedRes = Invoke-Dispatch -RawPayload (New-AntigravityPayload -Event PRE_TOOL_USE -SessionId $researchId -ToolName invoke_subagent -ToolInput $deniedSubagent) -EventHint PRE_TOOL_USE -AcceptedAt $now
+        Assert-Equal $deniedRes.Decision 'DENY' "非只读子 Agent 或派生工作区不得免任务放行：$($deniedSubagent.TypeName)/$($deniedSubagent.Workspace)"
+    }
+    $unboundWorkflow = Invoke-Dispatch -RawPayload (New-AntigravityPayload -Event PRE_TOOL_USE -SessionId 'unbound-workflow-session' -ToolName run_workflow -ToolInput @{Script='print(1)'; Description='Check'}) -EventHint PRE_TOOL_USE -AcceptedAt $now
+    Assert-Equal $unboundWorkflow.Decision 'DENY' 'run_workflow 无任务时不得放行。'
+    Assert-Equal $unboundWorkflow.ReasonCode 'SESSION_NOT_FOUND' 'run_workflow 应进入归属守卫而非 TOOL_UNKNOWN。'
+    $svnLogResult = Invoke-Dispatch -RawPayload (New-AntigravityPayload -Event PRE_TOOL_USE -SessionId $researchId -ToolName run_command -ToolInput @{CommandLine='svn log -l 5'; Cwd=$Workspace; WaitMsBeforeAsync=1000; IsDaemon=$false}) -EventHint PRE_TOOL_USE -AcceptedAt $now
+    Assert-Equal $svnLogResult.Decision 'ALLOW' '无任务时只读 svn log 应免任务放行。'
+    Assert-Equal $svnLogResult.ReasonCode 'READ_ONLY_SHELL_COMMAND' '只读 svn log 应走 READ_ONLY_SHELL_COMMAND。'
 
     # 没有任务或活动会话时仍能进入受限的 Start/Resume，不开放任意 Shell。
     $entryStart = "pwsh -NoProfile -File './ai-sop.ps1' Task -Operation Start -Feature Bootstrap -TaskId bootstrap -Agent CLAUDE_CODE -Objective '验证引导'"

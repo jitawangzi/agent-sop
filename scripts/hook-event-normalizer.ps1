@@ -1,4 +1,4 @@
-#requires -Version 7.0
+﻿#requires -Version 7.0
 
 # Strictly recognizes certified native hook payloads and produces the
 # authorization-neutral HookEvent described by DC-023. This file deliberately
@@ -1481,6 +1481,8 @@ function Test-AiSopToolArgumentProfile {
                 "endLine",
                 "TargetLintErrorIds",
                 "targetLintErrorIds",
+                "ArtifactMetadata",
+                "artifactMetadata",
                 "toolAction",
                 "toolSummary",
                 "tool_action",
@@ -1554,6 +1556,8 @@ function Test-AiSopToolArgumentProfile {
                 "codeContent",
                 "Overwrite",
                 "overwrite",
+                "Append",
+                "append",
                 "Description",
                 "description",
                 "ArtifactMetadata",
@@ -1576,17 +1580,13 @@ function Test-AiSopToolArgumentProfile {
                 return $false
             }
             $contentField = @($contentPresent)[0]
-            if (
-                (Test-MapHasKey $Arguments "Overwrite") -and
-                $Arguments.Overwrite -isnot [bool]
-            ) {
-                return $false
-            }
-            if (
-                (Test-MapHasKey $Arguments "overwrite") -and
-                $Arguments.overwrite -isnot [bool]
-            ) {
-                return $false
+            foreach ($boolField in @("Overwrite", "overwrite", "Append", "append")) {
+                if (
+                    (Test-MapHasKey $Arguments $boolField) -and
+                    $Arguments[$boolField] -isnot [bool]
+                ) {
+                    return $false
+                }
             }
             return (
                 $null -ne $paths -and
@@ -1964,6 +1964,34 @@ function Test-AiSopToolArgumentProfile {
     }
 }
 
+function ConvertTo-AiSopNormalizedToolArguments {
+    <#
+    .SYNOPSIS
+        Normalize PascalCase tool arguments to canonical field names while rejecting alias collisions.
+    #>
+    param(
+        [System.Collections.IDictionary]$Arguments,
+        [hashtable]$AliasMap
+    )
+
+    $normalized = [System.Collections.Specialized.OrderedDictionary]::new(
+        [System.StringComparer]::Ordinal
+    )
+    foreach ($key in $Arguments.Keys) {
+        $canonicalKey = if ($AliasMap.ContainsKey($key)) {
+            [string]$AliasMap[$key]
+        } else {
+            $key
+        }
+        # Reject duplicate aliases (e.g. both Path and path, or Target and old_string) instead of overwriting.
+        if ($normalized.Contains($canonicalKey)) {
+            Throw-AiSopHookError "TOOL_ARGS_INVALID"
+        }
+        $normalized[$canonicalKey] = $Arguments[$key]
+    }
+    return $normalized
+}
+
 function Get-AiSopToolPayload {
     param(
         [System.Collections.IDictionary]$Payload,
@@ -2036,20 +2064,33 @@ function Get-AiSopToolPayload {
                 if ($key -cnotin @('name','args')) { Throw-AiSopHookError 'TOOL_ARGS_INVALID' }
             }
         }
-        if ($Payload.toolCall.name -ceq 'read_file') {
-            # 新版原生读取参数先映射到既有 READ 契约，复用类型和物理路径校验。
-            # 别名冲突必须拒绝，不能丢弃未知字段而把混合操作误判为只读。
-            $arguments = [ordered]@{}
-            foreach ($key in $Payload.toolCall.args.Keys) {
-                $canonicalKey = switch -CaseSensitive ($key) {
-                    'Path' { 'path' }
-                    'StartLine' { 'line_start' }
-                    'EndLine' { 'line_end' }
-                    'ByteOffset' { 'offset' }
-                    default { $key }
-                }
-                if ($arguments.Contains($canonicalKey)) { Throw-AiSopHookError 'TOOL_ARGS_INVALID' }
-                $arguments[$canonicalKey] = $Payload.toolCall.args[$key]
+        $antigravityAliasMaps = @{
+            read_file = [hashtable]::new([System.StringComparer]::Ordinal)
+            write_file = [hashtable]::new([System.StringComparer]::Ordinal)
+            edit_file = [hashtable]::new([System.StringComparer]::Ordinal)
+        }
+        $antigravityAliasMaps.read_file['Path'] = 'path'
+        $antigravityAliasMaps.read_file['StartLine'] = 'line_start'
+        $antigravityAliasMaps.read_file['EndLine'] = 'line_end'
+        $antigravityAliasMaps.read_file['ByteOffset'] = 'offset'
+
+        $antigravityAliasMaps.write_file['Path'] = 'path'
+        $antigravityAliasMaps.write_file['Content'] = 'content'
+        $antigravityAliasMaps.write_file['Overwrite'] = 'overwrite'
+        $antigravityAliasMaps.write_file['Append'] = 'append'
+        $antigravityAliasMaps.write_file['ArtifactMetadata'] = 'artifactMetadata'
+
+        $antigravityAliasMaps.edit_file['Path'] = 'path'
+        $antigravityAliasMaps.edit_file['Target'] = 'old_string'
+        $antigravityAliasMaps.edit_file['Replacement'] = 'new_string'
+        $antigravityAliasMaps.edit_file['ArtifactMetadata'] = 'artifactMetadata'
+
+        foreach ($toolKey in $antigravityAliasMaps.Keys) {
+            if ($Payload.toolCall.name -ceq $toolKey) {
+                $arguments = ConvertTo-AiSopNormalizedToolArguments `
+                    -Arguments $Payload.toolCall.args `
+                    -AliasMap $antigravityAliasMaps[$toolKey]
+                break
             }
         }
         return [pscustomobject]@{
@@ -2549,6 +2590,13 @@ function Get-AiSopCanonicalToolArguments {
                     "CodeContent",
                     "codeContent"
                 )
+                append = if (Test-MapHasKey $Arguments "append") {
+                    [bool]$Arguments.append
+                } elseif (Test-MapHasKey $Arguments "Append") {
+                    [bool]$Arguments.Append
+                } else {
+                    $false
+                }
             }
         }
         "MULTI_EDIT" {

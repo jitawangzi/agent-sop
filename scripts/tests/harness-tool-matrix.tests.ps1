@@ -136,6 +136,21 @@ try {
         EndLine = 2
     } "FILE_EDIT" "Edit PascalCase"
 
+    Assert-ToolAuthorized "ANTIGRAVITY" "write_file" @{
+        Path = $targetFile
+        Content = "# Title"
+        Overwrite = $true
+        Append = $false
+        ArtifactMetadata = @{ Summary = "Spec"; UserFacing = $true; RequestFeedback = $false }
+    } "FILE_EDIT" "write_file with PascalCase args"
+
+    Assert-ToolAuthorized "ANTIGRAVITY" "edit_file" @{
+        Path = $targetFile
+        Target = "old text"
+        Replacement = "new text"
+        ArtifactMetadata = @{ Summary = "Edit"; UserFacing = $false; RequestFeedback = $false }
+    } "FILE_EDIT" "edit_file with PascalCase args"
+
     # Antigravity Safe / Read / Exploration tools
     Assert-ToolAuthorized "ANTIGRAVITY" "finish" @{
         result = @{ text = "完成"; values = @(1, $true, $null) }

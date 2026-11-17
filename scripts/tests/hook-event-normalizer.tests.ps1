@@ -1,4 +1,4 @@
-#requires -Version 7.0
+﻿#requires -Version 7.0
 
 [CmdletBinding()]
 param()
@@ -1504,6 +1504,19 @@ try {
             file_path = (Join-Path $Workspace ".claude\agy-edit.txt")
             old_string = "a"
             new_string = "b"
+        }, 1),
+        @("write_file", [ordered]@{
+            Path = (Join-Path $Workspace ".claude\agy-write-native.txt")
+            Content = "write"
+            Overwrite = $true
+            Append = $false
+            ArtifactMetadata = @{ Summary = "Write"; UserFacing = $false; RequestFeedback = $false }
+        }, 1),
+        @("edit_file", [ordered]@{
+            Path = (Join-Path $Workspace ".claude\agy-edit-native.txt")
+            Target = "a"
+            Replacement = "b"
+            ArtifactMetadata = @{ Summary = "Edit"; UserFacing = $false; RequestFeedback = $false }
         }, 1)
     )) {
         $payload = New-AntigravityToolPayload `
@@ -1516,6 +1529,59 @@ try {
         Assert-Equal `
             (@($event.targetPaths).Count) $case[2] `
             "$($case[0]) target count mismatch."
+    }
+
+    # Verify PascalCase native write_file / edit_file preserve canonical semantic hashes and reject alias conflicts.
+    $nativeWrite = ConvertTo-AiSopHookEvent -RawPayload (ConvertTo-RawPayload (New-AntigravityToolPayload -ToolName "write_file" -Arguments ([ordered]@{
+        Path = (Join-Path $Workspace ".claude\agy-write-parity.txt")
+        Content = "hello"
+        Overwrite = $true
+        Append = $true
+    }) -Workspace $Workspace)) -EventHint "PRE_TOOL_USE" -TrustedWorkspaceRoot $Workspace -AcceptedAt $AcceptedAt
+    $canonicalWrite = ConvertTo-AiSopHookEvent -RawPayload (ConvertTo-RawPayload (New-AntigravityToolPayload -ToolName "write_file" -Arguments ([ordered]@{
+        path = (Join-Path $Workspace ".claude\agy-write-parity.txt")
+        content = "hello"
+        overwrite = $true
+        append = $true
+    }) -Workspace $Workspace)) -EventHint "PRE_TOOL_USE" -TrustedWorkspaceRoot $Workspace -AcceptedAt $AcceptedAt
+    Assert-Equal $nativeWrite.canonicalSemanticArgsSha256 $canonicalWrite.canonicalSemanticArgsSha256 "write_file PascalCase/canonical semantic hash mismatch."
+    $overwriteWrite = ConvertTo-AiSopHookEvent -RawPayload (ConvertTo-RawPayload (New-AntigravityToolPayload -ToolName "write_file" -Arguments ([ordered]@{
+        Path = (Join-Path $Workspace ".claude\agy-write-parity.txt")
+        Content = "hello"
+        Overwrite = $true
+        Append = $false
+    }) -Workspace $Workspace)) -EventHint "PRE_TOOL_USE" -TrustedWorkspaceRoot $Workspace -AcceptedAt $AcceptedAt
+    Assert-True ($nativeWrite.canonicalSemanticArgsSha256 -cne $overwriteWrite.canonicalSemanticArgsSha256) "write_file Append=true must produce distinct semantic hash."
+
+    $nativeEdit = ConvertTo-AiSopHookEvent -RawPayload (ConvertTo-RawPayload (New-AntigravityToolPayload -ToolName "edit_file" -Arguments ([ordered]@{
+        Path = (Join-Path $Workspace ".claude\agy-edit-parity.txt")
+        Target = "old"
+        Replacement = "new"
+    }) -Workspace $Workspace)) -EventHint "PRE_TOOL_USE" -TrustedWorkspaceRoot $Workspace -AcceptedAt $AcceptedAt
+    $canonicalEdit = ConvertTo-AiSopHookEvent -RawPayload (ConvertTo-RawPayload (New-AntigravityToolPayload -ToolName "edit_file" -Arguments ([ordered]@{
+        path = (Join-Path $Workspace ".claude\agy-edit-parity.txt")
+        old_string = "old"
+        new_string = "new"
+    }) -Workspace $Workspace)) -EventHint "PRE_TOOL_USE" -TrustedWorkspaceRoot $Workspace -AcceptedAt $AcceptedAt
+    Assert-Equal $nativeEdit.canonicalSemanticArgsSha256 $canonicalEdit.canonicalSemanticArgsSha256 "edit_file PascalCase/canonical semantic hash mismatch."
+
+    $dupWritePath = [System.Collections.Specialized.OrderedDictionary]::new([System.StringComparer]::Ordinal)
+    $dupWritePath['Path'] = (Join-Path $Workspace ".claude\c.txt")
+    $dupWritePath['path'] = (Join-Path $Workspace ".claude\c.txt")
+    $dupWritePath['Content'] = "x"
+    $dupWriteContent = [System.Collections.Specialized.OrderedDictionary]::new([System.StringComparer]::Ordinal)
+    $dupWriteContent['Path'] = (Join-Path $Workspace ".claude\c.txt")
+    $dupWriteContent['Content'] = "x"
+    $dupWriteContent['content'] = "y"
+    foreach ($conflictCase in @(
+        @("write_file", $dupWritePath),
+        @("write_file", $dupWriteContent),
+        @("edit_file", [ordered]@{ Path = (Join-Path $Workspace ".claude\c.txt"); Target = "a"; old_string = "a"; Replacement = "b" }),
+        @("edit_file", [ordered]@{ Path = (Join-Path $Workspace ".claude\c.txt"); Target = "a"; Replacement = "b"; new_string = "b" })
+    )) {
+        Assert-ThrowsCode -Code TOOL_ARGS_INVALID -Action {
+            ConvertTo-AiSopHookEvent -RawPayload (ConvertTo-RawPayload (New-AntigravityToolPayload -ToolName $conflictCase[0] -Arguments $conflictCase[1] -Workspace $Workspace)) -EventHint "PRE_TOOL_USE" -TrustedWorkspaceRoot $Workspace -AcceptedAt $AcceptedAt
+        } -Message "$($conflictCase[0]) alias conflict must fail."
     }
 
     $negativeTarget = Join-Path $Workspace ".claude\negative.txt"
@@ -1592,9 +1658,13 @@ try {
                 })
             }),
         @("ANTIGRAVITY", "edit_file",
-            [ordered]@{ path = $negativeTarget; new_string = "b" },
-            [ordered]@{ path = $negativeTarget; old_string = 1; new_string = "b" },
-            [ordered]@{ path = $negativeTarget; file_path = $negativeTarget; old_string = "a"; new_string = "b" })
+            [ordered]@{ Path = $negativeTarget; Replacement = "b" },
+            [ordered]@{ Path = $negativeTarget; Target = 1; Replacement = "b" },
+            [ordered]@{ Path = $negativeTarget; file_path = $negativeTarget; Target = "a"; Replacement = "b" }),
+        @("ANTIGRAVITY", "write_file",
+            [ordered]@{ Path = $negativeTarget },
+            [ordered]@{ Path = $negativeTarget; Content = "x"; Append = "yes" },
+            [ordered]@{ Path = $negativeTarget; file_path = $negativeTarget; Content = "x" })
     )
     $negativeAssertionCount = 0
     foreach ($negativeCase in $negativeCases) {
@@ -1640,8 +1710,8 @@ try {
         }
     }
     Assert-Equal `
-        $negativeAssertionCount 36 `
-        "Twelve-family negative matrix did not execute 36 assertions."
+        $negativeAssertionCount ($negativeCases.Count * 3) `
+        "Negative matrix did not execute expected assertions."
 
     $profileTarget = Join-Path $Workspace ".claude\profile.txt"
     $profileTargetTwo = Join-Path $Workspace ".claude\profile-two.txt"

@@ -141,9 +141,15 @@ try {
   }
   }
   if (group === 'all' || group === 'other') {
-  const ag = await hook('.agents', 'PRE_TOOL_USE', { conversationId: 'ag-native-fixture', workspacePaths: [workspace],
-    stepIdx: 1, toolCall: { name: 'replace_file_content', args: { TargetFile: file, TargetContent: 'BEFORE', ReplacementContent: '修改' } } });
-  assert.equal(ag.value.decision, 'deny'); assert.match(ag.value.reason, /写入前/);
+  for (const [name, args] of [
+    ['replace_file_content', { TargetFile: file, TargetContent: 'BEFORE', ReplacementContent: '修改' }],
+    ['write_file', { Path: file, Content: '修改', Overwrite: true, Append: false, ArtifactMetadata: { Summary: 'W', UserFacing: false, RequestFeedback: false } }],
+    ['edit_file', { Path: file, Target: 'BEFORE', Replacement: '修改', ArtifactMetadata: { Summary: 'E', UserFacing: false, RequestFeedback: false } }]
+  ]) {
+    const ag = await hook('.agents', 'PRE_TOOL_USE', { conversationId: 'ag-native-fixture', workspacePaths: [workspace],
+      stepIdx: ++counter, toolCall: { name, args } });
+    assert.equal(ag.value.decision, 'deny'); assert.match(ag.value.reason, /写入前/);
+  }
   // 新版原生读取不登记或恢复会话；实际暂停任务后仍只读，不借任务获取写权限。
   const agReadSession = 'ag-readonly-native';
   const agTool = (name, args) => ({ conversationId: agReadSession, workspacePaths: [workspace],
@@ -217,6 +223,15 @@ try {
   for (const path of [join(appData, 'brain/other-session/upload.png'), join(appData, 'credentials.json')]) {
     assert.equal((await hook('.agents', 'PRE_TOOL_USE', agTool('read_file', { Path: path }))).value.decision, 'deny');
   }
+  await task('Resume', 'ANTIGRAVITY', agReadSession);
+  for (const [name, args] of [
+    ['write_file', { Path: file, Content: '修改', Overwrite: true, Append: false, ArtifactMetadata: { Summary: 'W', UserFacing: false, RequestFeedback: false } }],
+    ['edit_file', { Path: file, Target: 'BEFORE', Replacement: '修改', ArtifactMetadata: { Summary: 'E', UserFacing: false, RequestFeedback: false } }]
+  ]) {
+    const allowed = await hook('.agents', 'PRE_TOOL_USE', agTool(name, args));
+    assert.equal(allowed.value.decision, 'allow', JSON.stringify(allowed));
+  }
+  await task('Suspend', 'ANTIGRAVITY', agReadSession);
   }
   if (group === 'all' || group === 'cursor') {
   const bootstrapCommand = "pwsh -NoProfile -File './.ai-sop/scripts/workflow-task.ps1' -Operation Start -Feature Probe -TaskId process-test -Agent CURSOR -NativeSessionId '" + visibleSession + "' -Objective '真实进程验收'";

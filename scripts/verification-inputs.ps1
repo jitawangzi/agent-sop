@@ -117,7 +117,7 @@ function Invoke-AiSopInputTraversal {
     $policy = Get-AiSopInputPolicy $root -PolicyPath $PolicyPath
     $excludedDirectories = @('.git', '.svn', '.ai-sop', '.ai-workspace', '.claude', '.agents', '.agent', '.gemini', '.cursor', '.idea', '.vscode', '.superpowers', 'node_modules', '.gradle', '__pycache__')
     $outputDirectories = @('build', 'target', 'bin', 'obj', 'out', 'classes')
-    $excludedFiles = @('.git', 'AGENTS.md', 'CLAUDE.md', 'ANTIGRAVITY.md', 'GEMINI.md', 'compile-evidence.json', 'test-evidence.json', '.guard-token.json', '.trusted-siblings.json')
+    $excludedFiles = @('.git', 'AGENTS.md', 'CLAUDE.md', 'ANTIGRAVITY.md', 'GEMINI.md', 'compile-evidence.json', 'test-evidence.json', '.guard-token.json')
     $files = [Collections.Generic.SortedDictionary[string,string]]::new([StringComparer]::Ordinal)
     $pending = [Collections.Generic.Stack[object]]::new(); $pending.Push(@{path=$root; defaultExcludeLength=-1; defaultRule=$null})
     while ($pending.Count) {

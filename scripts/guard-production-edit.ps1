@@ -109,14 +109,18 @@ function Test-AiSopGuardGovernanceSwitchPath {
     $guardRoot = [System.IO.Path]::GetFullPath((Get-AiSopGuardRoot))
     $candidates = @(
         [System.IO.Path]::GetFullPath((Join-Path $guardRoot ".guard-disabled")),
-        [System.IO.Path]::GetFullPath((Join-Path $guardRoot ".guard-token.json")),
-        [System.IO.Path]::GetFullPath((Join-Path $guardRoot ".trusted-siblings.json"))
+        [System.IO.Path]::GetFullPath((Join-Path $guardRoot ".guard-token.json"))
     )
+    $guardParent = Split-Path -Parent $guardRoot
+    if (-not [string]::IsNullOrWhiteSpace($guardParent)) {
+        $candidates += [System.IO.Path]::GetFullPath((Join-Path $guardParent ".ai-workspace/.runtime/trusted-siblings.json"))
+    }
     if (-not [string]::IsNullOrWhiteSpace($WorkspaceRoot)) {
-        $wsSopRoot = Join-Path ([System.IO.Path]::GetFullPath($WorkspaceRoot)) ".ai-sop"
+        $wsFull = [System.IO.Path]::GetFullPath($WorkspaceRoot)
+        $wsSopRoot = Join-Path $wsFull ".ai-sop"
         $candidates += [System.IO.Path]::GetFullPath((Join-Path $wsSopRoot ".guard-disabled"))
         $candidates += [System.IO.Path]::GetFullPath((Join-Path $wsSopRoot ".guard-token.json"))
-        $candidates += [System.IO.Path]::GetFullPath((Join-Path $wsSopRoot ".trusted-siblings.json"))
+        $candidates += [System.IO.Path]::GetFullPath((Join-Path $wsFull ".ai-workspace/.runtime/trusted-siblings.json"))
     }
     $physical = [System.IO.Path]::GetFullPath($Path)
     foreach ($candidate in $candidates) {

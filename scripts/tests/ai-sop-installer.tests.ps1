@@ -1,4 +1,4 @@
-#requires -Version 7.0
+﻿#requires -Version 7.0
 # AI SOP installer tests (DC-014..DC-019, DC-003..DC-005).
 # Unit + local integration tests. Integration tests use temporary local bare
 # Git and svnadmin repositories (no network). Exit 0 on full pass.
@@ -359,6 +359,76 @@ Invoke-Test "json-hooks-merge preserves extra JSON keys and injects SOP hooks" {
             Assert-Equal "AI_SOP_PROJECTION_DRIFT" $_.Exception.Message "missing SOP hooks must be drift"
         }
         Assert-True $threw "settings without SOP hooks must fail json-hooks-merge verify"
+    } finally { Remove-Item -Recurse -Force -LiteralPath $tmp }
+}
+
+Invoke-Test "Invoke-AiSopGenerateProjections overlays custom skills from .ai-workspace/skills" {
+    $tmp = Join-Path ([System.IO.Path]::GetTempPath()) ("aisop-overlay-" + [guid]::NewGuid().ToString("N").Substring(0,8))
+    New-Item -ItemType Directory -Path $tmp | Out-Null
+    try {
+        $sop = Join-Path $tmp "sop"
+        $ws = Join-Path $tmp "ws"
+        $coreSkillDir = Join-Path $sop "skills/core-test"
+        New-Item -ItemType Directory -Path $coreSkillDir -Force | Out-Null
+        Set-Content -LiteralPath (Join-Path $coreSkillDir "SKILL.md") -Value "name: core-test"
+
+        $projSkillDir = Join-Path $ws ".ai-workspace/skills/custom-proj-skill/scripts"
+        New-Item -ItemType Directory -Path $projSkillDir -Force | Out-Null
+        Set-Content -LiteralPath (Join-Path (Split-Path -Parent $projSkillDir) "SKILL.md") -Value "name: custom-proj-skill"
+        Set-Content -LiteralPath (Join-Path $projSkillDir "helper.ps1") -Value "Write-Host 'custom helper'"
+
+        $manifest = @{ projections = @() }
+        $changed = Invoke-AiSopGenerateProjections -WorkspaceRoot $ws -Manifest $manifest -SopRoot $sop
+
+        Assert-True (Test-Path -LiteralPath (Join-Path $ws ".claude/skills/core-test/SKILL.md")) "core skill in .claude/skills"
+        Assert-True (Test-Path -LiteralPath (Join-Path $ws ".agents/skills/core-test/SKILL.md")) "core skill in .agents/skills"
+
+        Assert-True (Test-Path -LiteralPath (Join-Path $ws ".claude/skills/custom-proj-skill/SKILL.md")) "custom skill in .claude/skills"
+        Assert-True (Test-Path -LiteralPath (Join-Path $ws ".claude/skills/custom-proj-skill/scripts/helper.ps1")) "custom skill script in .claude/skills"
+        Assert-True (Test-Path -LiteralPath (Join-Path $ws ".agents/skills/custom-proj-skill/SKILL.md")) "custom skill in .agents/skills"
+        Assert-True (Test-Path -LiteralPath (Join-Path $ws ".agents/skills/custom-proj-skill/scripts/helper.ps1")) "custom skill script in .agents/skills"
+    } finally { Remove-Item -Recurse -Force -LiteralPath $tmp }
+}
+
+Invoke-Test "Invoke-AiSopGenerateProjections rejects custom skill colliding with core skill" {
+    $tmp = Join-Path ([System.IO.Path]::GetTempPath()) ("aisop-overlay-conflict-" + [guid]::NewGuid().ToString("N").Substring(0,8))
+    New-Item -ItemType Directory -Path $tmp | Out-Null
+    try {
+        $sop = Join-Path $tmp "sop"
+        $ws = Join-Path $tmp "ws"
+        $coreSkillDir = Join-Path $sop "skills/Core-Test"
+        New-Item -ItemType Directory -Path $coreSkillDir -Force | Out-Null
+        Set-Content -LiteralPath (Join-Path $coreSkillDir "SKILL.md") -Value "name: core-test"
+
+        $projSkillDir = Join-Path $ws ".ai-workspace/skills/core-test"
+        New-Item -ItemType Directory -Path $projSkillDir -Force | Out-Null
+        Set-Content -LiteralPath (Join-Path $projSkillDir "SKILL.md") -Value "name: conflicting-skill"
+
+        $manifest = @{ projections = @() }
+        $caught = $null
+        try {
+            Invoke-AiSopGenerateProjections -WorkspaceRoot $ws -Manifest $manifest -SopRoot $sop
+        } catch {
+            $caught = $_
+        }
+        Assert-True ($null -ne $caught) "colliding custom skill must throw exception"
+        Assert-Equal "AI_SOP_SKILL_CONFLICT" ([string]$caught.Exception.Data['AiSopCode']) "must throw AI_SOP_SKILL_CONFLICT"
+    } finally { Remove-Item -Recurse -Force -LiteralPath $tmp }
+}
+
+Invoke-Test "Invoke-AiSopGenerateProjections handles absent .ai-workspace gracefully" {
+    $tmp = Join-Path ([System.IO.Path]::GetTempPath()) ("aisop-no-workspace-" + [guid]::NewGuid().ToString("N").Substring(0,8))
+    New-Item -ItemType Directory -Path $tmp | Out-Null
+    try {
+        $sop = Join-Path $tmp "sop"
+        $ws = Join-Path $tmp "ws"
+        $coreSkillDir = Join-Path $sop "skills/core-test"
+        New-Item -ItemType Directory -Path $coreSkillDir -Force | Out-Null
+        Set-Content -LiteralPath (Join-Path $coreSkillDir "SKILL.md") -Value "name: core-test"
+
+        $manifest = @{ projections = @() }
+        $changed = Invoke-AiSopGenerateProjections -WorkspaceRoot $ws -Manifest $manifest -SopRoot $sop
+        Assert-True (Test-Path -LiteralPath (Join-Path $ws ".agents/skills/core-test/SKILL.md")) "core skill projected even without .ai-workspace"
     } finally { Remove-Item -Recurse -Force -LiteralPath $tmp }
 }
 

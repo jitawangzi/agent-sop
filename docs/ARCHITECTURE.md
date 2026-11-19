@@ -52,6 +52,7 @@ AI 编码工具百花齐放（Claude Code、Copilot、Cursor、Antigravity、Pi�
 **问题**：各工具的 skills 发现路径不同（Claude Code 认 `.claude/skills`、Pi/Codex 认 `.agents/skills`、Cursor 认 `.cursor/skills`）。若每工具各维护一份 skills 内容，会漂移——改了一处忘同步另一处，行为不一致。
 
 **为什么这么设计**：单一真源（`.ai-sop/skills`）+ installer 生成投影（`.claude/skills`、`.agents/skills`）。投影是生成的、gitignored、有 hash 校验——手工改投影会被 verify 拒绝。
+对于宿主项目特有的紧贴业务自定义 Skill，其真源保存在项目领域层 `.ai-workspace/skills/`（随 `.ai-workspace.git` 独立版本管理）。Installer 执行时先清空并完整投影通用底座 `.ai-sop/skills/`（杜绝底座升级后残留的僵尸 Skill），再自动将 `.ai-workspace/skills/` 安全叠加（Overlay）到 `.claude/skills` 与 `.agents/skills` 中。若项目 Skill 与底座核心门禁 Skill 重名，安装器将立即报错（`AI_SOP_SKILL_CONFLICT`）阻断，杜绝业务技能对核心治理门禁的越权劫持。
 
 **考虑过的替代**：
 - 每工具一份独立维护：漂移、维护成本高——否决。
@@ -272,11 +273,12 @@ AI 编码工具百花齐放（Claude Code、Copilot、Cursor、Antigravity、Pi�
 │   ├── claude.json commit.cmd Claude Code 专属配置
 │   └── skills/ agents/         投影(installer 生成,gitignored)
 │
-├── .agents/skills/            【跨工具公共投影】pi/Codex/Antigravity 认
+├── .agents/skills/            【跨工具公共投影】pi/Codex/Antigravity 认(底座+项目叠加)
 ├── .cursor/ .github/hooks/    各工具 hooks 投影
 ├── CLAUDE.md AGENTS.md ...    根 md 投影(installer 生成)
 ├── .ai-workspace/             【项目领域层】根 Git(本地漂移)
 │   ├── context/                项目领域知识
+│   ├── skills/ agents/        项目专属自定义技能/Agent真源(installer叠加到投影)
 │   ├── specs/features/        所有功能需求/设计
 │   ├── scripts/                项目部署(feature-runtime/tomcat-*)
 │   └── workflows/ schemas/
@@ -289,9 +291,9 @@ AI 编码工具百花齐放（Claude Code、Copilot、Cursor、Antigravity、Pi�
 | 内容 | 归属 | 判据 |
 |---|---|---|
 | skills/agents/workflows-标准/schemas/scripts-门禁/distribution/config | `.ai-sop`(标准流程) | 跨项目长期演进、git 历史要干净 |
-| context/specs/tomcat 部署/parallel-development/feature-runtime | `.ai-workspace`(项目领域) | 随项目更换失效、本地漂移 |
+| context/specs/skills-项目专属/tomcat 部署/parallel-development/feature-runtime | `.ai-workspace`(项目领域) | 随项目更换失效、本地漂移 |
 
-**核心原则**：`.ai-sop` 是单一可编辑真源；`.claude/skills`、`.agents/skills` 是 installer 生成的投影（gitignored，手工改会被 hash 校验拒绝）。
+**核心原则**：`.ai-sop` 是标准流程唯一真源；`.claude/skills`、`.agents/skills` 是 installer 生成的投影（gitignored，手工改会被 hash 校验拒绝）。项目专属技能真源存放于 `.ai-workspace/skills/`，安装时自动安全叠加至投影目录。
 
 ## 三、换工具的适配方式
 

@@ -487,11 +487,72 @@ function Copy-AiSopDirectoryProjection {
     return (Get-AiSopTreeSha256 -Path $TargetPath)
 }
 
+function Overlay-AiSopDirectoryProjection {
+    # Overlay custom directory items (e.g. project-specific skills/agents from .ai-workspace)
+    # onto an existing projection target without clearing it. Rejects any custom item that
+    # collides with a core SOP item to protect governance boundaries.
+    param(
+        [Parameter(Mandatory)][string]$SourcePath,
+        [Parameter(Mandatory)][string]$TargetPath,
+        [Parameter(Mandatory)][string]$CoreSourcePath,
+        [string]$Kind = "skills"
+    )
+    if (-not (Test-Path -LiteralPath $SourcePath -PathType Container)) { return @() }
+    $enc = [System.Text.UTF8Encoding]::new($false)
+    $overlaid = @()
+
+    $coreNames = @{}
+    if (Test-Path -LiteralPath $CoreSourcePath -PathType Container) {
+        Get-ChildItem -LiteralPath $CoreSourcePath | ForEach-Object {
+            $coreNames[$_.Name.ToLowerInvariant()] = $_.Name
+        }
+    }
+
+    $projectItems = Get-ChildItem -LiteralPath $SourcePath
+    foreach ($item in $projectItems) {
+        $itemNameLower = $item.Name.ToLowerInvariant()
+        if ($coreNames.ContainsKey($itemNameLower)) {
+            $code = "AI_SOP_SKILL_CONFLICT"
+            $ex = [InvalidOperationException]::new("${code}: Custom $Kind '$($item.Name)' conflicts with core SOP $Kind.")
+            $ex.Data['AiSopCode'] = $code
+            throw $ex
+        }
+
+        if ($item.PSIsContainer -or ($item -is [System.IO.DirectoryInfo])) {
+            $destSubDir = Join-Path $TargetPath $item.Name
+            if (-not (Test-Path -LiteralPath $destSubDir)) {
+                New-Item -ItemType Directory -Path $destSubDir -Force | Out-Null
+            }
+            Get-ChildItem -LiteralPath $item.FullName -Recurse -File | ForEach-Object {
+                $rel = $_.FullName.Substring($item.FullName.Length)
+                $destFile = Join-Path $destSubDir $rel
+                $destFileDir = Split-Path -Parent $destFile
+                if (-not (Test-Path -LiteralPath $destFileDir)) {
+                    New-Item -ItemType Directory -Path $destFileDir -Force | Out-Null
+                }
+                $raw = [System.IO.File]::ReadAllText($_.FullName)
+                $lf = $raw -replace "`r`n", "`n"
+                [System.IO.File]::WriteAllBytes($destFile, $enc.GetBytes($lf))
+            }
+            $overlaid += "$Kind/$($item.Name)"
+        } else {
+            $destFile = Join-Path $TargetPath $item.Name
+            $raw = [System.IO.File]::ReadAllText($item.FullName)
+            $lf = $raw -replace "`r`n", "`n"
+            [System.IO.File]::WriteAllBytes($destFile, $enc.GetBytes($lf))
+            $overlaid += "$Kind/$($item.Name)"
+        }
+    }
+    return $overlaid
+}
+
 function Invoke-AiSopGenerateProjections {
     # DC-019: generate all projections from the .ai-sop source.
     #   - manifest single-file projections (root md + hooks) rendered with LF.
     #   - skills/agents directory projections: .ai-sop/skills -> .claude/skills
     #     and .agents/skills; .ai-sop/agents -> .claude/agents.
+    #   - project overlay: .ai-workspace/skills and .ai-workspace/agents safely
+    #     overlaid on top of base projections (rejecting name collisions).
     # Only overwrites when the target is absent or matches an expected/legacy
     # hash; drift is left for verify to report (never force-overwrite unknown).
     param(
@@ -538,6 +599,25 @@ function Invoke-AiSopGenerateProjections {
             }
         }
     }
+
+    # Project-level overlay from .ai-workspace (project-specific skills/agents)
+    $workspaceDomainRoot = Join-Path $WorkspaceRoot ".ai-workspace"
+    foreach ($kind in @("skills", "agents")) {
+        $projDir = Join-Path $workspaceDomainRoot $kind
+        if (Test-Path -LiteralPath $projDir -PathType Container) {
+            $coreDir = Join-Path $SopRoot $kind
+            $overlaidClaude = Overlay-AiSopDirectoryProjection -SourcePath $projDir `
+                -TargetPath (Join-Path $claudeRoot $kind) -CoreSourcePath $coreDir -Kind $kind
+            if ($kind -eq "skills") {
+                $null = Overlay-AiSopDirectoryProjection -SourcePath $projDir `
+                    -TargetPath (Join-Path $agentsRoot "skills") -CoreSourcePath $coreDir -Kind $kind
+            }
+            foreach ($o in $overlaidClaude) {
+                $changed += "$o (overlay)"
+            }
+        }
+    }
+
     return $changed
 }
 

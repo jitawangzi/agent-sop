@@ -22,3 +22,6 @@ settings.local.json
 # OS metadata
 .DS_Store
 Thumbs.db
+
+# game server
+server

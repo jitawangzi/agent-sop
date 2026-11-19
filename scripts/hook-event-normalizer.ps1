@@ -1131,11 +1131,184 @@ function Test-AiSopPathWithinRoot {
     )
 }
 
-function Resolve-AiSopWorkspacePathIdentity {
+function Test-AiSopIsFilesystemRoot {
+    param([string]$Path)
+
+    if ([string]::IsNullOrWhiteSpace($Path)) {
+        return $true
+    }
+    $full = [System.IO.Path]::GetFullPath($Path)
+    $root = [System.IO.Path]::GetPathRoot($full)
+    $trimmedFull = $full.TrimEnd(
+        [System.IO.Path]::DirectorySeparatorChar,
+        [System.IO.Path]::AltDirectorySeparatorChar
+    )
+    $trimmedRoot = $root.TrimEnd(
+        [System.IO.Path]::DirectorySeparatorChar,
+        [System.IO.Path]::AltDirectorySeparatorChar
+    )
+    return $trimmedFull.Equals($trimmedRoot, [System.StringComparison]::OrdinalIgnoreCase)
+}
+
+function Test-AiSopPathsOverlap {
+    param(
+        [string]$FirstPath,
+        [string]$SecondPath
+    )
+
+    return (
+        (Test-AiSopPathWithinRoot $FirstPath $SecondPath) -or
+        (Test-AiSopPathWithinRoot $SecondPath $FirstPath)
+    )
+}
+
+function Get-AiSopTrustedSiblingWorkspaces {
+    param([string]$WorkspaceRoot)
+
+    if ([string]::IsNullOrWhiteSpace($WorkspaceRoot)) {
+        return @()
+    }
+    $workspace = Resolve-PhysicalPathIdentity -Path $WorkspaceRoot
+    $configPath = Join-Path $workspace ".ai-sop/.trusted-siblings.json"
+    if (-not [System.IO.File]::Exists($configPath)) {
+        return @()
+    }
+    try {
+        $configLexical = [System.IO.Path]::GetFullPath($configPath)
+        $configPhysical = Resolve-PhysicalPathIdentity -Path $configLexical
+    } catch {
+        Throw-AiSopHookError "TRUSTED_SIBLINGS_CONFIG_INVALID"
+    }
+    if (
+        -not (Test-AiSopPathWithinRoot $configLexical $workspace) -or
+        -not (Test-AiSopPathWithinRoot $configPhysical $workspace)
+    ) {
+        Throw-AiSopHookError "TRUSTED_SIBLINGS_CONFIG_INVALID"
+    }
+    try {
+        $raw = [System.IO.File]::ReadAllText($configPhysical)
+        $doc = ConvertFrom-AiSopJson -Json $raw
+    } catch {
+        Throw-AiSopHookError "TRUSTED_SIBLINGS_CONFIG_INVALID"
+    }
+    if (
+        $doc -isnot [System.Collections.IDictionary] -or
+        -not (Test-OnlyAllowedFields $doc @("schemaVersion", "siblings")) -or
+        -not (Test-MapHasKey $doc "schemaVersion") -or
+        -not (Test-MapHasKey $doc "siblings") -or
+        $doc.schemaVersion -isnot [string] -or
+        $doc.schemaVersion -cne "1.0" -or
+        -not (Test-ArrayValue $doc.siblings)
+    ) {
+        Throw-AiSopHookError "TRUSTED_SIBLINGS_CONFIG_INVALID"
+    }
+
+    $protectedRoots = @($workspace)
+    foreach ($envName in @(
+        "AI_SOP_GUARD_ROOT",
+        "AI_SOP_REGISTRY_ROOT",
+        "AI_SOP_OWNER_REGISTRY",
+        "AI_SOP_SESSION_REGISTRY",
+        "AI_SOP_COMMAND_GRANT_REGISTRY",
+        "AI_SOP_TRANSACTION_REGISTRY",
+        "SERVER_NEW_WORKFLOW_REGISTRY",
+        "SERVER_NEW_WORKFLOW_SESSION_REGISTRY",
+        "SERVER_NEW_WORKFLOW_COMMAND_GRANT_REGISTRY",
+        "SERVER_NEW_WORKFLOW_TRANSACTION_REGISTRY",
+        "SERVER_NEW_HOOK_DEDUP_REGISTRY",
+        "SERVER_NEW_HOOK_CORRELATION_REGISTRY"
+    )) {
+        $envVal = [Environment]::GetEnvironmentVariable($envName)
+        if ([string]::IsNullOrWhiteSpace($envVal)) { continue }
+        try {
+            $envLex = [System.IO.Path]::GetFullPath($envVal)
+            $protectedRoots += $envLex
+            if ([System.IO.Directory]::Exists($envLex) -or [System.IO.File]::Exists($envLex)) {
+                $protectedRoots += (Resolve-PhysicalPathIdentity -Path $envLex)
+            }
+        } catch {}
+    }
+
+    $result = @()
+    $seenByPhysical = [System.Collections.Generic.Dictionary[string, string]]::new(
+        [System.StringComparer]::OrdinalIgnoreCase
+    )
+    foreach ($entry in @($doc.siblings)) {
+        if (
+            $entry -isnot [System.Collections.IDictionary] -or
+            -not (Test-OnlyAllowedFields $entry @("path", "access")) -or
+            -not (Test-MapHasKey $entry "path") -or
+            -not (Test-MapHasKey $entry "access") -or
+            $entry.path -isnot [string] -or
+            [string]::IsNullOrWhiteSpace($entry.path) -or
+            $entry.access -isnot [string] -or
+            $entry.access -cnotin @("read", "read_write")
+        ) {
+            Throw-AiSopHookError "TRUSTED_SIBLINGS_CONFIG_INVALID"
+        }
+        $rawPath = [string]$entry.path
+        if (-not [System.IO.Path]::IsPathRooted($rawPath)) {
+            Throw-AiSopHookError "TRUSTED_SIBLINGS_CONFIG_INVALID"
+        }
+        try {
+            $lexical = [System.IO.Path]::GetFullPath($rawPath)
+        } catch {
+            Throw-AiSopHookError "TRUSTED_SIBLINGS_CONFIG_INVALID"
+        }
+        if (Test-AiSopIsFilesystemRoot $lexical) {
+            Throw-AiSopHookError "TRUSTED_SIBLINGS_CONFIG_INVALID"
+        }
+        foreach ($protected in $protectedRoots) {
+            if (Test-AiSopPathsOverlap $lexical $protected) {
+                Throw-AiSopHookError "TRUSTED_SIBLINGS_CONFIG_INVALID"
+            }
+        }
+        if (-not [System.IO.Directory]::Exists($lexical)) {
+            continue
+        }
+        try {
+            $physical = Resolve-PhysicalPathIdentity -Path $lexical
+        } catch {
+            Throw-AiSopHookError "TRUSTED_SIBLINGS_CONFIG_INVALID"
+        }
+        if (Test-AiSopIsFilesystemRoot $physical) {
+            Throw-AiSopHookError "TRUSTED_SIBLINGS_CONFIG_INVALID"
+        }
+        foreach ($protected in $protectedRoots) {
+            if (Test-AiSopPathsOverlap $physical $protected) {
+                Throw-AiSopHookError "TRUSTED_SIBLINGS_CONFIG_INVALID"
+            }
+        }
+        if ($seenByPhysical.ContainsKey($physical)) {
+            if ($seenByPhysical[$physical] -cne [string]$entry.access) {
+                Throw-AiSopHookError "TRUSTED_SIBLINGS_CONFIG_INVALID"
+            }
+            continue
+        }
+        foreach ($existing in $result) {
+            if (
+                (Test-AiSopPathsOverlap $lexical $existing.Lexical) -or
+                (Test-AiSopPathsOverlap $physical $existing.Physical)
+            ) {
+                Throw-AiSopHookError "TRUSTED_SIBLINGS_CONFIG_INVALID"
+            }
+        }
+        $seenByPhysical.Add($physical, [string]$entry.access)
+        $result += [pscustomobject]@{
+            Lexical = $lexical
+            Physical = $physical
+            Access = [string]$entry.access
+        }
+    }
+    return @($result)
+}
+
+function Resolve-AiSopAllowedPathIdentity {
     param(
         [string]$Path,
         [string]$WorkspaceRoot,
         [string]$BasePath,
+        [string[]]$AdditionalRoots = @(),
         [string]$OutsideErrorCode = "EDIT_PATH_OUTSIDE_WORKSPACE"
     )
 
@@ -1148,20 +1321,57 @@ function Resolve-AiSopWorkspacePathIdentity {
     } catch {
         Throw-AiSopHookError "EDIT_PATH_AMBIGUOUS"
     }
-    if (-not (Test-AiSopPathWithinRoot $lexical $WorkspaceRoot)) {
-        Throw-AiSopHookError $OutsideErrorCode
-    }
     try {
         $physical = Resolve-PhysicalPathIdentity -Path $lexical
     } catch {
         Throw-AiSopHookError "EDIT_PATH_AMBIGUOUS"
     }
-    if (-not (Test-AiSopPathWithinRoot $physical $WorkspaceRoot)) {
-        Throw-AiSopHookError $OutsideErrorCode
+    if (
+        (Test-AiSopPathWithinRoot $lexical $WorkspaceRoot) -and
+        (Test-AiSopPathWithinRoot $physical $WorkspaceRoot)
+    ) {
+        return [pscustomobject]@{
+            Lexical = $lexical
+            Physical = $physical
+            Root = $WorkspaceRoot
+            IsWorkspace = $true
+        }
     }
+    foreach ($candidate in @($AdditionalRoots)) {
+        if ([string]::IsNullOrWhiteSpace($candidate)) { continue }
+        # 必须词法与物理路径均位于同一个授权额外根内，且不能经链接指回或逃逸到本工作区。
+        if (
+            (Test-AiSopPathWithinRoot $lexical $candidate) -and
+            (Test-AiSopPathWithinRoot $physical $candidate) -and
+            -not (Test-AiSopPathWithinRoot $physical $WorkspaceRoot)
+        ) {
+            return [pscustomobject]@{
+                Lexical = $lexical
+                Physical = $physical
+                Root = $candidate
+                IsWorkspace = $false
+            }
+        }
+    }
+    Throw-AiSopHookError $OutsideErrorCode
+}
+
+function Resolve-AiSopWorkspacePathIdentity {
+    param(
+        [string]$Path,
+        [string]$WorkspaceRoot,
+        [string]$BasePath,
+        [string]$OutsideErrorCode = "EDIT_PATH_OUTSIDE_WORKSPACE"
+    )
+
+    $resolved = Resolve-AiSopAllowedPathIdentity `
+        -Path $Path `
+        -WorkspaceRoot $WorkspaceRoot `
+        -BasePath $BasePath `
+        -OutsideErrorCode $OutsideErrorCode
     return [pscustomobject]@{
-        Lexical = $lexical
-        Physical = $physical
+        Lexical = $resolved.Lexical
+        Physical = $resolved.Physical
     }
 }
 
@@ -1170,14 +1380,16 @@ function Resolve-AiSopWorkspacePath {
         [string]$Path,
         [string]$WorkspaceRoot,
         [string]$BasePath,
+        [string[]]$AdditionalRoots = @(),
         [string]$OutsideErrorCode = "EDIT_PATH_OUTSIDE_WORKSPACE"
     )
 
     return (
-        Resolve-AiSopWorkspacePathIdentity `
+        Resolve-AiSopAllowedPathIdentity `
             -Path $Path `
             -WorkspaceRoot $WorkspaceRoot `
             -BasePath $BasePath `
+            -AdditionalRoots $AdditionalRoots `
             -OutsideErrorCode $OutsideErrorCode
     ).Physical
 }
@@ -1210,13 +1422,25 @@ function Get-AiSopWorkspaceContext {
     } catch {
         Throw-AiSopHookError "EDIT_PATH_AMBIGUOUS"
     }
+    $trustedSiblings = @(Get-AiSopTrustedSiblingWorkspaces -WorkspaceRoot $workspace)
+    $trustedSiblingReadRoots = @($trustedSiblings | ForEach-Object { $_.Physical })
+    $trustedSiblingWriteRoots = @(
+        $trustedSiblings |
+            Where-Object { $_.Access -ceq "read_write" } |
+            ForEach-Object { $_.Physical }
+    )
+
     $cwdCandidate = if ((Test-MapHasKey $Payload "cwd") -and -not ($NativeShape -like 'CURSOR_*' -and [string]::IsNullOrWhiteSpace([string]$Payload.cwd))) {
         [string]$Payload.cwd
     } else {
         $workspace
     }
-    $cwd = Resolve-AiSopWorkspacePath `
-        -Path $cwdCandidate -WorkspaceRoot $workspace -BasePath $workspace
+    $cwdIdentity = Resolve-AiSopAllowedPathIdentity `
+        -Path $cwdCandidate `
+        -WorkspaceRoot $workspace `
+        -BasePath $workspace `
+        -AdditionalRoots $trustedSiblingReadRoots
+    $cwd = $cwdIdentity.Physical
 
     $rootCandidates = @($workspace)
     if ($NativeShape -like 'CURSOR_*' -and (Test-MapHasKey $Payload 'workspace_roots')) {
@@ -1226,6 +1450,7 @@ function Get-AiSopWorkspaceContext {
         $rootCandidates = @($Payload.workspacePaths)
     }
     $roots = @()
+    $matchedTrustedSiblingRoots = @()
     foreach ($rootCandidate in $rootCandidates) {
         # Cursor 在 Windows 上可发送 URI 风格盘符，仍须经过物理路径边界检查。
         $candidateText = [string]$rootCandidate
@@ -1258,13 +1483,28 @@ function Get-AiSopWorkspaceContext {
         ) {
             Throw-AiSopHookError "EDIT_PATH_OUTSIDE_WORKSPACE"
         }
+        foreach ($sibRoot in $trustedSiblingReadRoots) {
+            if (
+                (Test-AiSopPathWithinRoot $lexical $sibRoot) -and
+                (Test-AiSopPathWithinRoot $physical $sibRoot)
+            ) {
+                $matchedTrustedSiblingRoots += $sibRoot
+                break
+            }
+        }
     }
     if ($roots.Count -eq 0) {
-        Throw-AiSopHookError "EDIT_PATH_OUTSIDE_WORKSPACE"
+        if ($matchedTrustedSiblingRoots.Count -gt 0) {
+            # 本机已显式信任该兄弟仓库时，允许旧会话缓存 Hook 或纯兄弟上下文继续受控分流（具体目标路径仍受后续工具级白名单严格校验）。
+            $roots = @($workspace)
+        } else {
+            Throw-AiSopHookError "EDIT_PATH_OUTSIDE_WORKSPACE"
+        }
     }
     $roots = ConvertTo-AiSopUniquePathList $roots
+    $allowedCwdRoots = ConvertTo-AiSopUniquePathList (@($roots) + @($trustedSiblingReadRoots))
     $containingRootCount = @(
-        $roots | Where-Object { Test-AiSopPathWithinRoot $cwd $_ }
+        $allowedCwdRoots | Where-Object { Test-AiSopPathWithinRoot $cwd $_ }
     ).Count
     if ($containingRootCount -ne 1) {
         Throw-AiSopHookError "EDIT_PATH_AMBIGUOUS"
@@ -1273,6 +1513,9 @@ function Get-AiSopWorkspaceContext {
         WorkspacePath = $workspace
         WorkspaceRoots = @($roots)
         Cwd = $cwd
+        TrustedSiblings = @($trustedSiblings)
+        TrustedSiblingReadRoots = @($trustedSiblingReadRoots)
+        TrustedSiblingWriteRoots = @($trustedSiblingWriteRoots)
     }
 }
 
@@ -2381,15 +2624,32 @@ function Resolve-AiSopEditTargets {
 
     $rawTargets = Get-AiSopRawEditTargets `
         -Arguments $Arguments -TargetExtractor $TargetExtractor
+    $siblingWriteRoots = if ($null -ne $WorkspaceContext.TrustedSiblingWriteRoots) {
+        @($WorkspaceContext.TrustedSiblingWriteRoots)
+    } else {
+        @()
+    }
     $lexicalTargets = @()
     $physicalTargets = @()
+    $hasWorkspaceTarget = $false
+    $hasSiblingTarget = $false
     foreach ($rawTarget in $rawTargets) {
-        $identity = Resolve-AiSopWorkspacePathIdentity `
+        $identity = Resolve-AiSopAllowedPathIdentity `
             -Path ([string]$rawTarget) `
             -WorkspaceRoot $WorkspaceContext.WorkspacePath `
-            -BasePath $WorkspaceContext.Cwd
+            -BasePath $WorkspaceContext.Cwd `
+            -AdditionalRoots $siblingWriteRoots
+        if ($identity.IsWorkspace) {
+            $hasWorkspaceTarget = $true
+        } else {
+            $hasSiblingTarget = $true
+        }
         $lexicalTargets += $identity.Lexical
         $physicalTargets += $identity.Physical
+    }
+    # 禁止单次编辑工具同时跨越本 SOP 工作区与可信兄弟仓库，防止混合补丁绕过归属门禁。
+    if ($hasWorkspaceTarget -and $hasSiblingTarget) {
+        Throw-AiSopHookError "EDIT_PATH_OUTSIDE_WORKSPACE"
     }
     $uniquePhysicalTargets = ConvertTo-AiSopUniquePathList $physicalTargets
     return [pscustomobject]@{
@@ -2398,6 +2658,7 @@ function Resolve-AiSopEditTargets {
         HasDuplicatePhysical = (
             @($physicalTargets).Count -ne @($uniquePhysicalTargets).Count
         )
+        AllTargetsInTrustedSibling = ($hasSiblingTarget -and -not $hasWorkspaceTarget)
     }
 }
 
@@ -2443,18 +2704,12 @@ function Get-AiSopCanonicalPath {
     if ($null -eq $paths -or @($paths).Count -ne 1) {
         return ""
     }
-    $root=$WorkspaceContext.WorkspacePath
-    if ($AdditionalReadRoots.Count -and [IO.Path]::IsPathRooted([string]$paths[0])) {
-        $lexical=[IO.Path]::GetFullPath([string]$paths[0])
-        foreach ($candidate in $AdditionalReadRoots) {
-            if (Test-AiSopPathWithinRoot $lexical $candidate) { $root=$candidate; break }
-        }
-    }
     # 根目录自身也不能通过链接指向授权范围以外；词法和物理目标都须位于选中的根内。
     $path = Resolve-AiSopWorkspacePath `
         -Path ([string]$paths[0]) `
-        -WorkspaceRoot $root `
-        -BasePath $WorkspaceContext.Cwd
+        -WorkspaceRoot $WorkspaceContext.WorkspacePath `
+        -BasePath $WorkspaceContext.Cwd `
+        -AdditionalRoots $AdditionalReadRoots
     return $path.ToLowerInvariant()
 }
 
@@ -2477,7 +2732,8 @@ function Get-AiSopCanonicalArgumentPath {
         [System.Collections.IDictionary]$Arguments,
         [object]$WorkspaceContext,
         [AllowEmptyString()]
-        [string]$FallbackPath = ""
+        [string]$FallbackPath = "",
+        [string[]]$AdditionalRoots = @()
     )
 
     $paths = Get-AiSopPathFieldValues $Arguments
@@ -2491,7 +2747,8 @@ function Get-AiSopCanonicalArgumentPath {
         Resolve-AiSopWorkspacePath `
             -Path ([string]@($paths)[0]) `
             -WorkspaceRoot $WorkspaceContext.WorkspacePath `
-            -BasePath $WorkspaceContext.Cwd
+            -BasePath $WorkspaceContext.Cwd `
+            -AdditionalRoots $AdditionalRoots
     ).ToLowerInvariant()
 }
 
@@ -2504,6 +2761,11 @@ function Get-AiSopCanonicalToolArguments {
         [string[]]$AdditionalReadRoots=@()
     )
 
+    $editAdditionalRoots = if ($null -ne $WorkspaceContext.TrustedSiblingWriteRoots) {
+        @($WorkspaceContext.TrustedSiblingWriteRoots)
+    } else {
+        @()
+    }
     switch ($PolicyEntry.ArgumentProfile) {
         "READ" {
             return [ordered]@{
@@ -2534,7 +2796,8 @@ function Get-AiSopCanonicalToolArguments {
                     Resolve-AiSopWorkspacePath `
                         -Path $rawPath `
                         -WorkspaceRoot $WorkspaceContext.WorkspacePath `
-                        -BasePath $WorkspaceContext.Cwd
+                        -BasePath $WorkspaceContext.Cwd `
+                        -AdditionalRoots $AdditionalReadRoots
                 ).ToLowerInvariant()
             } else {
                 $null
@@ -2553,7 +2816,8 @@ function Get-AiSopCanonicalToolArguments {
                     Resolve-AiSopWorkspacePath `
                         -Path $rawPath `
                         -WorkspaceRoot $WorkspaceContext.WorkspacePath `
-                        -BasePath $WorkspaceContext.Cwd
+                        -BasePath $WorkspaceContext.Cwd `
+                        -AdditionalRoots $AdditionalReadRoots
                 ).ToLowerInvariant()
             } else {
                 $null
@@ -2642,14 +2906,16 @@ function Get-AiSopCanonicalToolArguments {
         "MULTI_EDIT" {
             $topPath = Get-AiSopCanonicalArgumentPath `
                 -Arguments $Arguments `
-                -WorkspaceContext $WorkspaceContext
+                -WorkspaceContext $WorkspaceContext `
+                -AdditionalRoots $editAdditionalRoots
             $edits = @(
                 foreach ($edit in @($Arguments.edits)) {
                     [ordered]@{
                         path = Get-AiSopCanonicalArgumentPath `
                             -Arguments $edit `
                             -WorkspaceContext $WorkspaceContext `
-                            -FallbackPath $topPath
+                            -FallbackPath $topPath `
+                            -AdditionalRoots $editAdditionalRoots
                         old = Get-AiSopAliasedValue $edit @(
                             "old_string",
                             "old_str",
@@ -2674,7 +2940,8 @@ function Get-AiSopCanonicalToolArguments {
             return [ordered]@{
                 path = Get-AiSopCanonicalArgumentPath `
                     -Arguments $Arguments `
-                    -WorkspaceContext $WorkspaceContext
+                    -WorkspaceContext $WorkspaceContext `
+                    -AdditionalRoots $editAdditionalRoots
                 cellIndex = $Arguments.cell_idx
                 isNewCell = if (Test-MapHasKey $Arguments "is_new_cell") {
                     [bool]$Arguments.is_new_cell
@@ -2716,7 +2983,8 @@ function Get-AiSopCanonicalToolArguments {
                         Resolve-AiSopWorkspacePath `
                             -Path ([string]$Matches[2]) `
                             -WorkspaceRoot $WorkspaceContext.WorkspacePath `
-                            -BasePath $WorkspaceContext.Cwd
+                            -BasePath $WorkspaceContext.Cwd `
+                            -AdditionalRoots $editAdditionalRoots
                     ).ToLowerInvariant()
                     $current = [ordered]@{
                         operation = $Matches[1].ToUpperInvariant()
@@ -2757,7 +3025,8 @@ function Get-AiSopCanonicalToolArguments {
                 command = $Arguments.command
                 path = Get-AiSopCanonicalArgumentPath `
                     -Arguments $Arguments `
-                    -WorkspaceContext $WorkspaceContext
+                    -WorkspaceContext $WorkspaceContext `
+                    -AdditionalRoots $editAdditionalRoots
             }
             foreach ($semanticField in @(
                 @("fileText", @("file_text")),
@@ -2784,7 +3053,8 @@ function Get-AiSopCanonicalToolArguments {
                         [ordered]@{
                             path = Get-AiSopCanonicalArgumentPath `
                                 -Arguments $replacement `
-                                -WorkspaceContext $WorkspaceContext
+                                -WorkspaceContext $WorkspaceContext `
+                                -AdditionalRoots $editAdditionalRoots
                             old = Get-AiSopAliasedValue $replacement @(
                                 "old_string",
                                 "old_str"
@@ -3462,8 +3732,13 @@ function ConvertTo-AiSopHookEvent {
             $physicalTargetPaths = @($resolvedTargets.Physical)
         }
         $additionalReadRoots=@()
-        if ($shape.Agent -ceq 'ANTIGRAVITY' -and $toolName -ceq 'read_file' -and $policyEntry.ArgumentProfile -ceq 'READ') {
-            $additionalReadRoots=@(Get-AiSopAntigravityReadRoots -NativeSessionId $nativeSessionId)
+        if ($policyEntry.ToolClass -ceq 'SAFE_NON_EDIT' -and $policyEntry.ArgumentProfile -cin @('READ','GLOB','SEARCH')) {
+            if ($null -ne $workspace.TrustedSiblingReadRoots -and @($workspace.TrustedSiblingReadRoots).Count -gt 0) {
+                $additionalReadRoots += @($workspace.TrustedSiblingReadRoots)
+            }
+            if ($shape.Agent -ceq 'ANTIGRAVITY' -and $toolName -ceq 'read_file' -and $policyEntry.ArgumentProfile -ceq 'READ') {
+                $additionalReadRoots += @(Get-AiSopAntigravityReadRoots -NativeSessionId $nativeSessionId)
+            }
         }
         $canonicalArguments = Get-AiSopCanonicalToolArguments `
             -Arguments $toolPayload.Arguments `

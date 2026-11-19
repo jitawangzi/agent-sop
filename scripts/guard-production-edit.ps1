@@ -1,4 +1,4 @@
-#requires -Version 7.0
+﻿#requires -Version 7.0
 
 # Shared Guard policy library. Native payload parsing, transaction recovery,
 # deduplication, lifecycle processing and envelope rendering are owned by
@@ -98,7 +98,10 @@ function Get-AiSopGuardTokenRecord {
 }
 
 function Test-AiSopGuardGovernanceSwitchPath {
-    param([string]$Path)
+    param(
+        [string]$Path,
+        [string]$WorkspaceRoot = ""
+    )
 
     if ([string]::IsNullOrWhiteSpace($Path)) {
         return $false
@@ -106,8 +109,15 @@ function Test-AiSopGuardGovernanceSwitchPath {
     $guardRoot = [System.IO.Path]::GetFullPath((Get-AiSopGuardRoot))
     $candidates = @(
         [System.IO.Path]::GetFullPath((Join-Path $guardRoot ".guard-disabled")),
-        [System.IO.Path]::GetFullPath((Join-Path $guardRoot ".guard-token.json"))
+        [System.IO.Path]::GetFullPath((Join-Path $guardRoot ".guard-token.json")),
+        [System.IO.Path]::GetFullPath((Join-Path $guardRoot ".trusted-siblings.json"))
     )
+    if (-not [string]::IsNullOrWhiteSpace($WorkspaceRoot)) {
+        $wsSopRoot = Join-Path ([System.IO.Path]::GetFullPath($WorkspaceRoot)) ".ai-sop"
+        $candidates += [System.IO.Path]::GetFullPath((Join-Path $wsSopRoot ".guard-disabled"))
+        $candidates += [System.IO.Path]::GetFullPath((Join-Path $wsSopRoot ".guard-token.json"))
+        $candidates += [System.IO.Path]::GetFullPath((Join-Path $wsSopRoot ".trusted-siblings.json"))
+    }
     $physical = [System.IO.Path]::GetFullPath($Path)
     foreach ($candidate in $candidates) {
         if ($physical.Equals($candidate, [System.StringComparison]::OrdinalIgnoreCase)) {
@@ -260,7 +270,7 @@ function Get-AiSopGuardTargetDecision {
         foreach ($target in $targets) {
             $lexical = [System.IO.Path]::GetFullPath([string]$target)
             if (
-                (Test-AiSopGuardGovernanceSwitchPath -Path $lexical) -and
+                (Test-AiSopGuardGovernanceSwitchPath -Path $lexical -WorkspaceRoot $workspace) -and
                 -not (Test-AiSopGuardEnvSkipEnabled)
             ) {
                 return New-AiSopGuardDecision `
@@ -283,7 +293,7 @@ function Get-AiSopGuardTargetDecision {
                 throw "EDIT_PATH_OUTSIDE_WORKSPACE"
             }
             if (
-                (Test-AiSopGuardGovernanceSwitchPath -Path $physical) -and
+                (Test-AiSopGuardGovernanceSwitchPath -Path $physical -WorkspaceRoot $workspace) -and
                 -not (Test-AiSopGuardEnvSkipEnabled)
             ) {
                 return New-AiSopGuardDecision `

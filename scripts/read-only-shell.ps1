@@ -4,7 +4,8 @@
 function Get-AiSopReadOnlyShellInput {
     param([string]$CommandText, [string]$WorkspacePath, [string]$Cwd,
         [System.Collections.IDictionary]$ToolArguments,
-        [ValidateSet('CODEX','ANTIGRAVITY')][string]$Agent='CODEX')
+        [ValidateSet('CODEX','ANTIGRAVITY')][string]$Agent='CODEX',
+        [string[]]$TrustedReadRoots=@())
     $nativeArguments=$ToolArguments
     if ($Agent -ceq 'ANTIGRAVITY') {
         # 原生命令只接受已知的前台执行参数，禁止借已有终端或后台进程绕过检查。
@@ -37,21 +38,41 @@ function Get-AiSopReadOnlyShellInput {
     if ($ToolArguments.Contains('shell')) { $powerShell=[IO.Path]::GetFileName([string]$ToolArguments.shell) -in @('pwsh','pwsh.exe','powershell','powershell.exe') }
     $root=Resolve-PhysicalPathIdentity $WorkspacePath
     $comparison=if ([OperatingSystem]::IsWindows()) { [StringComparison]::OrdinalIgnoreCase } else { [StringComparison]::Ordinal }
-    $prefix=$root.TrimEnd('\','/')+[IO.Path]::DirectorySeparatorChar
-    $working=if ($Cwd) { Resolve-PhysicalPathIdentity $Cwd } else { $root }
+    $allowedRoots=[Collections.Generic.List[string]]::new()
+    $allowedRoots.Add($root)
+    foreach ($extra in @($TrustedReadRoots)) {
+        if ([string]::IsNullOrWhiteSpace($extra) -or -not [IO.Directory]::Exists($extra)) { continue }
+        $extraPhysical=Resolve-PhysicalPathIdentity $extra
+        if (-not ($allowedRoots | Where-Object { $_.Equals($extraPhysical,$comparison) })) {
+            $allowedRoots.Add($extraPhysical)
+        }
+    }
+    function Test-PathWithinAnyAllowedRoot([string]$LexicalPath, [string]$PhysicalPath) {
+        foreach ($candidateRoot in $allowedRoots) {
+            $candidatePrefix=$candidateRoot.TrimEnd('\','/')+[IO.Path]::DirectorySeparatorChar
+            $lexOk=$LexicalPath.Equals($candidateRoot,$comparison) -or $LexicalPath.StartsWith($candidatePrefix,$comparison)
+            $physOk=$PhysicalPath.Equals($candidateRoot,$comparison) -or $PhysicalPath.StartsWith($candidatePrefix,$comparison)
+            if ($lexOk -and $physOk) { return $true }
+        }
+        return $false
+    }
+    $workingLexical=if ($Cwd) { [IO.Path]::GetFullPath($Cwd) } else { $root }
+    $working=if ($Cwd) { Resolve-PhysicalPathIdentity $workingLexical } else { $root }
     foreach ($key in @('cwd','workdir')) {
         if ($ToolArguments.Contains($key)) {
             $value=$ToolArguments[$key]
             if ($value -isnot [string] -or [string]::IsNullOrWhiteSpace($value)) { return $null }
-            $working=Resolve-PhysicalPathIdentity $(if ([IO.Path]::IsPathRooted($value)) { $value } else { Join-Path $working $value })
+            $workingLexical=[IO.Path]::GetFullPath($(if ([IO.Path]::IsPathRooted($value)) { $value } else { Join-Path $working $value }))
+            $working=Resolve-PhysicalPathIdentity $workingLexical
         }
     }
-    if (-not ($working.Equals($root,$comparison) -or $working.StartsWith($prefix,$comparison))) { return $null }
+    if (-not (Test-PathWithinAnyAllowedRoot $workingLexical $working)) { return $null }
     function Test-ReadPath([string]$Value) {
         if ([string]::IsNullOrWhiteSpace($Value) -or $Value -match '[*?\[\]]|^[-~]|::' -or
             $Value -match ':' -and $Value -notmatch '^[A-Za-z]:[/\\][^:]*$') { return $false }
-        $physical=Resolve-PhysicalPathIdentity $(if ([IO.Path]::IsPathRooted($Value)) { $Value } else { Join-Path $working $Value })
-        return $physical.Equals($root,$comparison) -or $physical.StartsWith($prefix,$comparison)
+        $lexical=[IO.Path]::GetFullPath($(if ([IO.Path]::IsPathRooted($Value)) { $Value } else { Join-Path $working $Value }))
+        $physical=Resolve-PhysicalPathIdentity $lexical
+        return Test-PathWithinAnyAllowedRoot $lexical $physical
     }
     function Quote-ReadValue([string]$Value) { return "'"+$Value.Replace("'","''")+"'" }
     $tokens=$null; $errors=$null

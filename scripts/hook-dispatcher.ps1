@@ -134,7 +134,10 @@ function Get-AiSopDispatcherDenyReason {
             return "$prefix 任务身份、路径或档位无效，已拒绝修改。运行 ./ai-sop.ps1 Task -Operation Discover，再用 Task -Operation InspectRecovery 核对本工作区及任务；不要手改 task.json 或停用防护来绕过。"
         }
         'EDIT_PATH_OUTSIDE_WORKSPACE' {
-            return "$prefix 目标路径或工作目录位于当前 SOP 工作区之外，已被安全边界拦截。仅对当前工作区内的路径放行读写；若处于多工作区窗口需要访问其他仓库，请在对应独立工作区窗口中执行，或仅在当前工作区根目录内读写与检索。"
+            return "$prefix 目标路径或工作目录位于当前 SOP 工作区之外，已被安全边界拦截。仅对当前工作区内的路径放行读写；若处于多工作区窗口需要访问其他仓库，请在对应独立工作区窗口中执行，或由人工在本机 .ai-sop/.trusted-siblings.json 显式登记可信兄弟仓库。"
+        }
+        'TRUSTED_SIBLINGS_CONFIG_INVALID' {
+            return "$prefix 本机 .ai-sop/.trusted-siblings.json 格式无效、包含文件系统根或与当前 SOP 工作区/注册表重叠，已按 fail-closed 拦截。请由人工修正或移除该配置后重试，禁止 AI 自动修改治理配置。"
         }
         "WORKFLOW_TRANSACTION_INDETERMINATE" {
             $journalPath = ""
@@ -557,7 +560,8 @@ function Get-AiSopDispatcherToolPlan {
             }
             if (($HookEvent.agent -ceq 'CODEX' -or ($HookEvent.agent -ceq 'ANTIGRAVITY' -and $entryTool.Name -ceq 'run_command')) -and
                 $null -ne (Get-AiSopReadOnlyShellInput -CommandText $entryCommand -Agent $HookEvent.agent `
-                -WorkspacePath $HookEvent.workspacePath -Cwd $HookEvent.cwd -ToolArguments $entryTool.Arguments)) {
+                -WorkspacePath $HookEvent.workspacePath -Cwd $HookEvent.cwd -ToolArguments $entryTool.Arguments `
+                -TrustedReadRoots @(Get-AiSopTrustedSiblingWorkspaces -WorkspaceRoot $HookEvent.workspacePath | ForEach-Object { $_.Physical }))) {
                 return New-AiSopDispatcherPlan -Decision ALLOW -ReasonCode READ_ONLY_SHELL_COMMAND -SideEffectKind NONE
             }
         }
@@ -1038,7 +1042,8 @@ function ConvertFrom-AiSopDispatcherDedupResult {
         $tool=Get-AiSopDispatcherToolContext -RawPayload $RawPayload -HookEvent $HookEvent
         $updated=if ($agent -ceq 'CODEX' -or ($agent -ceq 'ANTIGRAVITY' -and $tool.Name -ceq 'run_command')) { Get-AiSopReadOnlyShellInput -Agent $agent `
             -CommandText (Get-AiSopDispatcherShellCommandText $tool.Arguments) `
-            -WorkspacePath $HookEvent.workspacePath -Cwd $HookEvent.cwd -ToolArguments $tool.Arguments }
+            -WorkspacePath $HookEvent.workspacePath -Cwd $HookEvent.cwd -ToolArguments $tool.Arguments `
+            -TrustedReadRoots @(Get-AiSopTrustedSiblingWorkspaces -WorkspaceRoot $HookEvent.workspacePath | ForEach-Object { $_.Physical }) }
         if ($null -eq $updated) { throw 'READ_ONLY_COMMAND_CHANGED' }
         $native=ConvertFrom-AiSopJson $envelope
         if ($agent -ceq 'ANTIGRAVITY') { $native.overwrite=$updated }
@@ -1062,6 +1067,57 @@ function ConvertFrom-AiSopDispatcherDedupResult {
         -Envelope $envelope `
         -ExitCode $exitCode `
         -DurationMs $DurationMs
+}
+
+function Test-AiSopAllTargetsInTrustedWriteSiblings {
+    param(
+        [string[]]$TargetPaths,
+        [string]$WorkspacePath
+    )
+
+    if ($null -eq $TargetPaths -or $TargetPaths.Count -eq 0 -or [string]::IsNullOrWhiteSpace($WorkspacePath)) {
+        return $false
+    }
+    $workspace = Resolve-PhysicalPathIdentity -Path $WorkspacePath
+    $writeRoots = @(
+        Get-AiSopTrustedSiblingWorkspaces -WorkspaceRoot $workspace |
+            Where-Object { $_.Access -ceq "read_write" } |
+            ForEach-Object { $_.Physical }
+    )
+    if ($writeRoots.Count -eq 0) {
+        return $false
+    }
+    foreach ($target in $TargetPaths) {
+        if ([string]::IsNullOrWhiteSpace($target)) { return $false }
+        try {
+            $lexical = [System.IO.Path]::GetFullPath($target)
+            $physical = Resolve-PhysicalPathIdentity -Path $lexical
+        } catch {
+            return $false
+        }
+        if (
+            (Test-AiSopPathWithinRoot $lexical $workspace) -or
+            (Test-AiSopPathWithinRoot $physical $workspace) -or
+            (Test-AiSopGuardGovernanceSwitchPath -Path $lexical -WorkspaceRoot $workspace) -or
+            (Test-AiSopGuardGovernanceSwitchPath -Path $physical -WorkspaceRoot $workspace)
+        ) {
+            return $false
+        }
+        $matched = $false
+        foreach ($sibRoot in $writeRoots) {
+            if (
+                (Test-AiSopPathWithinRoot $lexical $sibRoot) -and
+                (Test-AiSopPathWithinRoot $physical $sibRoot)
+            ) {
+                $matched = $true
+                break
+            }
+        }
+        if (-not $matched) {
+            return $false
+        }
+    }
+    return $true
 }
 
 function Invoke-AiSopHookDispatcher {
@@ -1134,6 +1190,18 @@ function Invoke-AiSopHookDispatcher {
             $watch.Stop()
             return New-AiSopDispatcherResult -Agent $agent -Decision ALLOW -ReasonCode SAFE_NON_EDIT `
                 -Envelope (ConvertTo-AiSopDispatcherEnvelope -Agent $agent -EventHint $EventHint -Decision ALLOW -ReasonCode SAFE_NON_EDIT) `
+                -ExitCode 0 -DurationMs $watch.ElapsedMilliseconds
+        }
+
+        # 本机显式登记为 read_write 的不相交兄弟仓库：全部显式编辑目标均严格落在该兄弟仓库内时无状态放行，不触碰本工作区会话/任务权限。
+        if (
+            $EventHint -ceq 'PRE_TOOL_USE' -and
+            $hookEvent.toolClass -ceq 'FILE_EDIT' -and
+            (Test-AiSopAllTargetsInTrustedWriteSiblings -TargetPaths @($hookEvent.targetPaths) -WorkspacePath $hookEvent.workspacePath)
+        ) {
+            $watch.Stop()
+            return New-AiSopDispatcherResult -Agent $agent -Decision ALLOW -ReasonCode TRUSTED_SIBLING_EDIT `
+                -Envelope (ConvertTo-AiSopDispatcherEnvelope -Agent $agent -EventHint $EventHint -Decision ALLOW -ReasonCode TRUSTED_SIBLING_EDIT) `
                 -ExitCode 0 -DurationMs $watch.ElapsedMilliseconds
         }
 
@@ -1397,7 +1465,7 @@ function Add-AiSopHarnessSessionContext {
         $nonTaskReasons = @(
             'EDIT_PATH_OUTSIDE_WORKSPACE','EDIT_PATH_AMBIGUOUS','EDIT_PATH_MISSING','EDIT_PATH_INVALID',
             'PAYLOAD_JSON_INVALID','PAYLOAD_SHAPE_INVALID','PAYLOAD_SHAPE_UNKNOWN','PAYLOAD_SHAPE_AMBIGUOUS',
-            'TOOL_ARGS_INVALID','TOOL_UNKNOWN','GOVERNANCE_SWITCH_PROTECTED'
+            'TOOL_ARGS_INVALID','TOOL_UNKNOWN','GOVERNANCE_SWITCH_PROTECTED','TRUSTED_SIBLINGS_CONFIG_INVALID'
         )
         $denyMessage = if ([string]$Result.ReasonCode -in $nonTaskReasons) {
             "当前会话：$sessionId（-Agent $($Result.Agent) -NativeSessionId '$sessionId'）。"

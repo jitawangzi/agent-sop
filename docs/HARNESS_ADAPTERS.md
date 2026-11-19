@@ -58,6 +58,26 @@ Antigravity `read_file` 除当前工作区外，还可读取本机用户目录�
 
 无任务的 Shell 读取仍限定于当前工作区；跨项目审核应在对应项目工作区读取。已有 ACTIVE 任务下的任意 Shell 沿用归属/命令授权策略，并非逐路径安全沙箱；不能以临时 Resume 审核任务来规避只读通道的范围限制。
 
+## 多工作区可信兄弟仓库（本机显式启用）
+
+当多工作区窗口同时挂有已安装 SOP Hook 的宿主与并列兄弟仓库（例如游戏服宿主 + `agent-sop` 引擎仓）时，默认策略仍按 fail-closed 仅放行当前 SOP 工作区内的路径，不信任载荷里的任意 `workspacePaths` 扩权。
+
+确需在同一窗口跨仓协同访问时，可由**人工**在本机宿主目录创建不入库的 `.ai-sop/.trusted-siblings.json`（已纳入 `GOVERNANCE_SWITCH_PROTECTED` 保护，禁止 AI 修改，也不纳入验证输入哈希）：
+
+```json
+{
+  "schemaVersion": "1.0",
+  "siblings": [
+    { "path": "D:/work-all/agent-sop", "access": "read_write" },
+    { "path": "D:/work-all/shared-docs", "access": "read" }
+  ]
+}
+```
+
+- **`read`**：放行严格落在该兄弟仓库内的只读工具（`read_file`/`Read`/`Grep`/`Glob` 及白名单只读 Shell 命令）；目标的词法与物理路径均须位于同一个兄弟仓库内，链接逃逸或指回本工作区仍拒绝。
+- **`read_write`**：在 `read` 基础上，额外无状态放行全部显式目标路径均严格落在该兄弟仓库内的文件编辑工具（`write_file`/`edit_file`/`apply_patch` 等，返回 `TRUSTED_SIBLING_EDIT`），不触碰当前工作区的会话/任务状态；单次编辑同时跨越本工作区与兄弟仓库时直接拒绝。
+- **硬边界**：配置格式无效、指向文件系统根、与当前 SOP 工作区/注册表重叠或声明冲突权限时，按 `TRUSTED_SIBLINGS_CONFIG_INVALID` 拒绝；写入型 Shell 命令（如 `git commit`、脚本执行、重定向）仍不获跨仓豁免，以防经相对路径绕过当前工作区写门禁。
+
 ## 协议依据
 
 - [Codex Hooks](https://learn.chatgpt.com/docs/hooks)：原生 PreToolUse、工具覆盖和信任要求。

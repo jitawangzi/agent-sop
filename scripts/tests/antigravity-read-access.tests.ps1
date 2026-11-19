@@ -1,4 +1,4 @@
-#requires -Version 7.0
+﻿#requires -Version 7.0
 $ErrorActionPreference='Stop'
 . (Join-Path $PSScriptRoot '../hook-event-normalizer.ps1')
 $fixture=Join-Path ([IO.Path]::GetTempPath()) ('sop-antigravity-read-'+[guid]::NewGuid().ToString('N'))
@@ -49,6 +49,28 @@ try {
     $normalAppRoot=$appRoot; $appRoot=$appLink
     try { Denied { Convert-Read (Join-Path $appLink 'builtin/skills/SKILL.md') } }
     finally { $appRoot=$normalAppRoot; Remove-Item -LiteralPath $appLink -Force }
+
+    # Antigravity profile 覆盖 USERPROFILE/HOME 时，真实解析函数必须包含该 profile 下的 .gemini/antigravity。
+    $profileOverride = Join-Path $fixture 'profile-pro1'
+    $profileAppRoot = Join-Path $profileOverride '.gemini/antigravity'
+    [IO.Directory]::CreateDirectory((Join-Path $profileAppRoot 'builtin/skills')) | Out-Null
+    $savedUserProfile = $env:USERPROFILE
+    $savedHome = $env:HOME
+    Set-Item Function:Get-AiSopAntigravityAppDataRoots $originalProvider
+    try {
+        if ([OperatingSystem]::IsWindows()) {
+            $env:USERPROFILE = $profileOverride
+        } else {
+            $env:HOME = $profileOverride
+        }
+        $resolvedRoots = @(Get-AiSopAntigravityAppDataRoots)
+        $expectedProfileAppRoot = Resolve-PhysicalPathIdentity $profileAppRoot
+        Assert ($resolvedRoots -contains $expectedProfileAppRoot) "profile 覆盖目录未包含在 AppDataRoots 中：$($resolvedRoots -join ', ')"
+    } finally {
+        if ($null -eq $savedUserProfile) { Remove-Item Env:USERPROFILE -ErrorAction SilentlyContinue } else { $env:USERPROFILE = $savedUserProfile }
+        if ($null -eq $savedHome) { Remove-Item Env:HOME -ErrorAction SilentlyContinue } else { $env:HOME = $savedHome }
+        function Get-AiSopAntigravityAppDataRoots { $appRoot }
+    }
     Write-Output 'PASS: built-in skills/current-conversation reads, metadata spoofing, other-session access, writes and physical link escapes'
 } finally {
     Set-Item Function:Get-AiSopAntigravityAppDataRoots $originalProvider

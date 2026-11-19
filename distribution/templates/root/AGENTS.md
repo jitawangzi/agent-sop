@@ -1,97 +1,48 @@
 # 项目 Agent 指令（公共入口）
 
-各工具统一遵循本文件；工具调用差异见各自根指令文件，项目知识见 `.ai-workspace/context/README.md`。路径均相对 Agent 启动的项目根：引擎在 `.ai-sop/`，项目上下文在 `.ai-workspace/context/`，功能规格与任务在 `.ai-workspace/specs/features/<FeatureName>/`。
+各工具统一遵循本文件；工具调用差异见各自根指令文件，项目知识按 `.ai-workspace/context/README.md` 按需加载。引擎在 `.ai-sop/`，规格与任务在 `.ai-workspace/specs/features/<FeatureName>/`。
+
+## 首屏路由与红线
+
+- **纯问答 / 解释 / 只读审查**：直接回答并按需读取工作区代码或 `.ai-workspace/context/README.md`；**不读 `.ai-sop/` 下的流程/参考文档，不跑 `Task Discover` / `Start` / `Resume`**。
+- **转为修改源码、测试、配置或文档前**：先确定任务与档位；**主会话**必须 `Task Start` 或 `Resume` 成功后才写入，所有 `Task` 命令携带 Hook 注入的 `-Agent` 与 `-NativeSessionId`（通用 CLI 用稳定 `AI_SESSION_ID`，不借用旧 owner 身份）。
+- **子会话边界**：**只读子 Agent** 只读取并返回报告，不调用 Start/Resume/Recover/ConfirmTakeover；读取失败报告具体路径或载荷错误。**实现子会话**先用自身会话参数 `Task Join` 回报 `nativeSessionId`，由父会话 `Task Delegate` 后执行，禁止 `Resume`/`ConfirmTakeover` 抢占父任务（详见 `.ai-sop/docs/EXECUTION_DELEGATION.md`）。
 
 ## 执行强度：默认 T2，人工显式选择优先
 
-本规则仅适用于已安装本 SOP 的宿主项目，不向普通未安装项目或引擎开发仓库传播。讨论、解释和只读审核无需选择档位、Discover 或认领；转为修改源码、测试、配置或项目文档前，必须先确定本次任务与档位。
-
-档位属于本次任务。接管继承原档位；独立新任务人工指定优先，未指定直接采用 T2，无需确认。“简单改一下”“尽快处理”不等于选择 T1。Agent 判断影响范围并提出建议，**不自行升降档**，不因历史 T3 规格、协议/存储关键词或工具名称强加完整流程。
+仅适用于已安装本 SOP 的宿主项目。接管继承原档位；新任务人工指定优先，未指定直接采用 **T2**，“简单改一下”“尽快处理”不等于 T1。Agent 可建议范围，**不自行升降档**，不因历史 T3 规格或工具能力强加完整流程。
 
 | 档位 | 完成要求 | 流程 |
 |---|---|---|
-| T1 极速 | 完成实现，真实编译/基础检查通过，说明未验证范围；确有延期才记 FollowUp | 无需头脑风暴、正式计划、独立审核；可延期文档与测试同步 |
-| T2 快速（默认） | 明确验收点，完成实现，同步受影响需求/设计/用例，编译与相关测试通过，记录 RecordSync | 不重复批准需求设计，不强制计划或独立审核 |
-| T3 完整 | 当前范围的完整规格、批准、独立审查、覆盖与验证；复用仍有效的成果，不重复已满足步骤 | 执行前必须读取 `.ai-sop/workflows/agent-t3.md` 和 `.ai-sop/workflows/superpowers-adapter.md` |
+| T1 极速 | 完成实现，真实编译/基础检查通过，说明未验证范围；确有延期才记 `AddFollowUp` | 无独立审查；可延期文档与测试同步 |
+| T2 快速（默认） | 明确验收点，完成实现，同步受影响需求/设计/用例，编译与相关测试通过，完成前 `RecordSync` | 不重复批准，不强制计划或独立审查 |
+| T3 完整 | 当前范围的完整规格、批准、**先编译通过再内审**、独立审查、覆盖与验证；复用仍有效成果 | 执行前**必须先读** `.ai-sop/workflows/agent-t3.md` 和 `.ai-sop/workflows/superpowers-adapter.md` |
 
-**T1/T2 无独立代码审核环节**，不依赖 Superpowers 或独立 subagent。已选 T3 却缺少能力时说明缺口，由用户决定切换工具或改档；STRICT 表示具备 T3 能力，不替用户选择档位。
-
-**T1**：协议源文件、生成代码及生效所必需的配置属于实现，不能按“文档后补”延期。恢复既有约定、修改注释等，不自动产生补文档/测试任务。有真实延期才用 AddFollowUp 留下具体范围，不能只写在聊天里。
-
-**T2**：用户已给出的明确需求直接作为依据，只澄清关键歧义。按实际影响修改现有条款、设计段落与测试，不强制新建整套 01/06/05。完成前 `RecordSync`：Documentation=UPDATED/UNCHANGED；Tests=UPDATED/UNCHANGED/NOT_APPLICABLE；Summary 写清同步范围及无需更新的依据。机器检查记录完整性，Agent 核实内容。常规使用相关单元/模拟测试，不默认启动完整业务环境；集成验证缺口如实说明并按任务目标安排。
-
-**改档与适用性**：人工改档使用 ChangeTier，带 Tier、Reason、UserRequest，保留历史失败与待办。纯文档仍用 T1/T2；执行豁免须通过 SetApplicability 校验本任务起点与 Start 前声明的 nonExecutable 路径，不能把源码/构建输入伪装成非执行输入。起点未知则正常验证；测试失败、环境故障不是“不适用”。RecordSync 的 Tests=NOT_APPLICABLE 不豁免测试执行。T3 不使用轻量豁免。
+- **T1/T2 无独立代码审核环节**，不依赖 Superpowers 或独立 subagent；禁止在未明确升级时用 `dispatching-parallel-agents`、`using-git-worktrees`、`executing-plans`、`finishing-a-development-branch` 替代 SOP 编排。
+- 有真实延期才用 `AddFollowUp`（解决后 `CloseFollowUp`），**不因待办升档或阻止完成**。
 
 ## 开始、执行、完成
 
-**只读子 Agent**：审查只读取工作区文件并返回报告，由 controller 保持任务归属和记录门禁。子会话不调用 Start、Resume、Recover 或 ConfirmTakeover，不修改规格、代码及权限记录。读取失败时报告具体路径/载荷错误，不以接管父任务绕过；子会话 ID 不等于写入授权。需要修改时由 controller 执行，或使用单个执行子会话的显式委派，不假定子 Agent 自动继承权限。
-
-**实现子会话**：先用自己的会话参数 `Task Join` 回报 nativeSessionId；父会话 `Task Delegate -ChildNativeSessionId <真实ID> -Reason <原因>` 后再恢复同一子会话。父会话保留归属但暂停编辑/验证，仅子会话执行；结束后父会话 RevokeDelegation 再收尾。子会话不 Resume/ConfirmTakeover，不改档或批准。用法及异常恢复见 `.ai-sop/docs/EXECUTION_DELEGATION.md`。
-
-1. 准备执行修改时，新任务、切换功能/工作区或跨 Agent 接管先 `pwsh -NoProfile -File ./ai-sop.ps1 Task -Operation Discover`，区分独立修改、原任务续做、补收尾。多个候选才询问一次，无需固定接管口令。同会话任务已明确时沿用 taskId，不按文件或回复重复 Discover/Resume。
-2. 独立修改用 Start，继续原修改用 Resume；**操作成功后才能写入**。新 Start 未指定档位为 T2；选择 T1/T3 必须带 `-UserRequest` 保存已有人工原话，不编造或为已明确选择重复确认。沿用现有 FeatureName，独立小任务使用新的 taskId；新功能名使用 PascalCase（`[A-Z][A-Za-z0-9]+`，无连字符）并向用户回显，不为躲避旧任务状态改功能名。
-   首次修改前，依据登记结果向用户简短说明“本次按 **T2（默认）** 执行：修改实现、同步受影响文档和用例，完成编译及相关测试”；人工选择或续做则注明来源及实际档位义务。同一任务不重复播报；接管、新任务或改档时再说明。子 Agent 沿用 controller 的 taskId、档位与工作范围，不自行默认成 T2 或另建任务；这些上下文不自动授予子会话写权限。
-3. 编译/测试用 Task Run 记录真实执行。满足本档条件后直接 Complete；它内含完成校验，成功才标记 DONE 并释放归属。Verify 仅用于提前诊断，不固定串行 Verify → Status → Complete；失败后修复具体缺项，条件未变不反复重试。
+1. 准备执行修改时，新任务、切换工作区或跨 Agent 接管先运行 `Task -Operation Discover`；同会话任务已明确时沿用 `taskId`。
+2. 独立修改用 `Start`（T1/T3 须带 `-UserRequest` 原话；新功能名用 PascalCase），继续原修改用 `Resume`；**成功后才能写入**。首次修改前向用户简短说明实际档位与流程，同一任务不重复播报。
+3. 编译/测试用 `Task Run` 留证；满足本档条件后直接 `Task Complete`（内含完成校验，不固定串行 Verify → Status → Complete）。
 
 ```powershell
 pwsh -NoProfile -File ./ai-sop.ps1 Task -Operation Start -Feature <Feature> -TaskId <TaskId> -Objective "本次目标" -Agent <工具>
-# 上例默认 T2；人工选择 T1/T3 时加 -Tier T1 或 -Tier T3，以及 -UserRequest "实际选择原话"。
+# 默认 T2；人工选择 T1/T3 时加 -Tier T1 或 -Tier T3，以及 -UserRequest "实际选择原话"。
 pwsh -NoProfile -File ./ai-sop.ps1 Task -Operation Resume -Feature <Feature> -TaskId <TaskId> -Agent <工具>
 pwsh -NoProfile -File ./ai-sop.ps1 Task -Operation Run -Feature <Feature> -TaskId <TaskId> -Agent <工具> -Profile <名称>
 pwsh -NoProfile -File ./ai-sop.ps1 Task -Operation Complete -Feature <Feature> -TaskId <TaskId> -Agent <工具>
 ```
 
-上述命令由 Agent 根据已明确的任务直接执行并读取结果。`-Agent` 使用实际工具身份；通用 CLI 用稳定的 AI_SESSION_ID 标识同一会话，不借用旧 owner 的会话身份。
+## 按需加载参考
 
-**验证证据**：Profile 定义在 `.ai-workspace/context/verification-commands.json`；也可 Run 指定 Kind、Batch、Executable、Arguments。必须是真实构建/测试，不能用空命令或固定 exit 0 造成功。同批次更换命令、Profile 或用例范围须写 Reason；失败/超时/中断不能被无关批次或旧成功覆盖。Run 保存失败时保留 pending.json，按提示 RetryEvidence，不盲目重跑或改写证据哈希。
+- **Guard 拦截后的任务识别**：先 `Discover`，普通续做 `Resume`，异常中断先 `InspectRecovery` 再 `Recover → Resume`；恢复与并行细节按需读 `.ai-sop/docs/TASK_RECOVERY_GUIDE.md`、`.ai-sop/docs/EXECUTION_DELEGATION.md`。
+- **验证证据、FollowUp、改档、哈希与诊断**：批次命名/`RetryEvidence`、`startInputs`、`AddFollowUp`/`CloseFollowUp`、`ChangeTier`/`SetApplicability`、`ResetApproval`/`UpdateHash`、`Inputs`/`Preflight`、工程规范与 `context/` 核对，按需读 `.ai-sop/docs/OPERATIONS_REFERENCE.md`、`.ai-sop/docs/VERIFICATION_CONTINUATION.md`。
+- **旧功能级命令兼容**（无 taskId 旧归属/旧证据）：`.ai-sop/workflows/agent-legacy.md`。
+- **其他按需参考**：审查材料与 `findings/` 读 `.ai-sop/docs/REVIEW_AND_FINDINGS.md`；门禁设计读 `.ai-sop/docs/QUALITY_GATES.md`；客户端 Hook 接入读 `.ai-sop/docs/HARNESS_ADAPTERS.md`；全功能审计（仅手动）读 `.ai-sop/skills/workflow-orchestrator/SKILL.md`；完整字段手册见 `.ai-sop/SUPERPOWERS_MANUAL.md`。
 
-批次按验证目标命名，RED/GREEN、修复后复测复用原 Kind/Batch，Run 自动保留尝试历史；T3 的 SetCaseScope 不替代 Run 的实际 CaseIds/JUnit 映射。参数数组在 PowerShell 内用 `& ./ai-sop.ps1` 传递，不能把逗号表达式直接传给 `pwsh -File`。出现多轮失败/过期批次时读 `.ai-sop/docs/VERIFICATION_CONTINUATION.md` 后继续收尾。
+## 汇报与版本控制
 
-**启动起点**：Start 自动记录 startInputs；T1/T2 的轻量采集超限记 UNAVAILABLE，不阻塞普通编译/相关测试。预期申请执行豁免或后续升 T3 时，可在修改前 Start -CaptureBaseline。Resume/Run 不重拍起点；不能用修改后的快照补造原始基线。TaskId 表示一次独立修改，T3 计划中的 Task/Step 是内部执行单元。
-
-**待同步提醒**：AddFollowUp 在来源任务中记录 documentation / test-cases / verification，含具体 Summary 和 Scope。Start/Resume 自动提醒一次，继续当前任务；不要求确认、不扩大范围、**不因待办升档或阻止完成**。解决后 CloseFollowUp 记录 Resolution；人工明确无需处理才记 NOT_NEEDED 与 UserRequest。DONE 不隐藏待办，新任务完成也不自动清除旧事项。
-
-## 按需恢复
-
-暂停用 Suspend 保存 NextAction/Notes；异常中断先 InspectRecovery，按诊断 Recover → Resume。**Guard 拦截后的任务识别**先 Discover，不直接 Claim、改权限或绕过保护。确认旧执行已停止才恢复；跨会话接管按提示 ConfirmTakeover，不重复索取已有授权。恢复、委派与并行细节按需读取 `.ai-sop/docs/TASK_RECOVERY_GUIDE.md`、`.ai-sop/docs/EXECUTION_DELEGATION.md`。
-
-**旧功能级命令兼容**仅在旧 owner/feature-state/证据场景读取 `.ai-sop/workflows/agent-legacy.md`；历史档位不明先确认，不默认T2收编。普通新任务不加载旧流程。
-
-## 相关发现与审查导航
-
-修改前按范围检查 specs 中 `features/*/findings/` 的相关未关闭发现；旧问题不阻塞无关任务，新任务 PASS 不自动关闭它们。需要交付审查材料、组合故障方法、验证副作用说明或干净检出时读取 `.ai-sop/docs/REVIEW_AND_FINDINGS.md`。只读导出不是新的必经步骤或审批。
-
-## 项目知识与文档一致性
-
-按 `.ai-workspace/context/README.md` 加载项目知识；`project-summary.md`、`coding-style.md`、`business-logic-pattern.md`、`project-tooling.md` 存在时须阅读，领域规则按需加载。读取前检查存在性；缺失时简短提示并检查现有代码，不编造上下文、不因缺文件停工。过期 context 须提示；与现行代码不符时核实漂移，不按旧 context 改动已正确的代码。详细降级与更新规则见操作手册「项目上下文与能力诊断」。
-
-设计、实现、审查角色须读取实际存在的 coding-style.md 等默认工程规范，协议修改还须读 proto-rules.md；功能 06 不得违反强制规范。冲突记为设计缺陷，用 `ResetApproval -Gate design` 作废批准，不能因“与已批 06 一致”放行；人工确认的 AUDIT-EXEMPT 例外须有记录。派发专家时附规范路径，不能以摘要替代原文。领域规则由宿主 context 注入。
-
-**已批准文档**：修改语义前用 `workflow-state.ps1 -Operation ResetApproval -Gate <requirement|design>`；T2 记录本次需求依据并同步，不补完整 T3 批准。T3 修改后须重新确认 + Approve；requirement 重置会同时重置 design。仅错字、格式等不改语义的润色可用 `workflow-state.ps1 -Operation UpdateHash -Gate <requirement|design>`，提交说明注明“不改语义”；判断不准时 ResetApproval。T1 延期同步记录 FollowUp。
-
-版本控制遵循宿主 context 和用户约定；先确认每个文件实际所属仓库，提交只含本任务相关改动。新增/删除后立即用相应 VCS 登记，不拖到交付；重命名/移动优先用 VCS move 保留历史。SVN 宿主的最终 svn commit 由人工执行，本地 Git 检查点不代表 SVN 交付；不推送到未批准的 remote，不用文件覆盖代替合并。
-
-## 按需加载与诊断
-
-| 触发场景 | 读取/执行 |
-|---|---|
-| 已选 T3 或续做 T3 | **必须先读** `.ai-sop/workflows/agent-t3.md`、`.ai-sop/workflows/superpowers-adapter.md`；保持先编译通过再内审，独立审查与批准门禁 |
-| 旧归属、旧证据恢复 | `.ai-sop/workflows/agent-legacy.md` |
-| 专家实现/审查已被任务要求 | `.ai-sop/skills/<role>/SKILL.md`；T1/T2 不因工具能力自动增加独立审查 |
-| 字段、命令或恢复细节 | `.ai-sop/SUPERPOWERS_MANUAL.md`、`.ai-sop/workflows/shared-artifacts.md` |
-| 门禁设计与自报边界 | `.ai-sop/docs/QUALITY_GATES.md` |
-| 手动全功能审计 | `.ai-sop/skills/workflow-orchestrator/SKILL.md`；不作为日常 T1/T2 步骤 |
-
-日常进度用 Task Discover，可加 -Feature 与 -LogTailLines 20；它不扫描全部验证输入。需要核对当前证据才用 Status。终态默认 HISTORICAL_NOT_RECHECKED，后续改动不要求旧任务重跑；显式 -RecheckHistory 只检查所选历史证据，不重开任务。
-
-按需使用 Inputs -ExplainOnly -InputPath 解释输入选择；-CandidatePolicy 预览配置。Preflight 用于交接/升级只读排查，-Feature/-TaskId 限定范围，-TargetEnginePath 比较版本兼容。二者不增加日常必经步骤，输出不代表验收通过。输入策略不能为消除过期证据而排除真实源码；修改策略前检查存量任务兼容性。缺失清单先同步或重跑，不改写成功摘要。
-
-全档不得用 dispatching-parallel-agents、using-git-worktrees、executing-plans、finishing-a-development-branch 替代本 SOP 编排；具体工作区隔离遵循宿主约定。T3 Superpowers 缺失时按 `.ai-sop/SUPERPOWERS_VERIFICATION.md` 处理，由人工决定更换工具或改档。
-
-## 汇报
-
-开始、长耗时操作、重要结论、阻塞和交接时简短说明进展。收尾报告实际档位、改动、文档/用例同步或无需更新的依据、验证范围，以及 Complete 是否成功；不能只改代码就宣称 T2 完成。编译通过不等于行为测试通过，单元测试不等于完整业务验证。允许暂停或报告未完成，不以阻止结束回复代替完成检查。除首次修改前的档位说明外，无需固定状态行，也不为汇报专门重复 Status。澄清每轮最多 3 个聚焦问题；需求明确且已授权时连续执行。
-
-遇到拦截明确说明：`[SOP 拦截] <工具/任务> 因 <具体原因> 无法执行 <动作>；下一步：<具体恢复建议>`。交接写清 Feature、taskId、档位、已完成与未解决项。报告已覆盖场景的结果，不宣称绝对无缺陷。
-
-客户端 Hook 注入了当前会话标识时，所有 Task 命令携带其指定的 -Agent 与 -NativeSessionId；不要把子进程 PID 当作新会话。各客户端启用、信任与验证见 .ai-sop/docs/HARNESS_ADAPTERS.md。
+- 版本控制遵循宿主约定；确认文件所属仓库，SVN 宿主不执行最终 `svn commit`。
+- 收尾说明实际档位、改动、文档/用例同步依据、验证范围与 `Complete` 结果；拦截格式：`[SOP 拦截] <工具/任务> 因 <具体原因> 无法执行 <动作>；下一步：<具体恢复建议>`。

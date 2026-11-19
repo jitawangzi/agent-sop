@@ -1309,6 +1309,41 @@ try {
         "wrapper missing dispatcher SESSION_START must ALLOW"
     )
 
+    # PRE_INVOCATION 三路动态分流与 PreToolUse 拒绝按需模板验证
+    $taskScript = Join-Path $ClaudeRoot "scripts\workflow-task.ps1"
+    $agMainId = "ag-ctx-main-" + [guid]::NewGuid().ToString("N").Substring(0, 8)
+    $agMainPreRaw = New-AntigravityPayload -Event PRE_INVOCATION -SessionId $agMainId
+    $agMainPreRes = Invoke-Dispatch -RawPayload $agMainPreRaw -EventHint PRE_INVOCATION -AcceptedAt $now.AddMinutes(5)
+    $agMainUnboundCtx = (Add-AiSopHarnessSessionContext -Result $agMainPreRes -RawPayload $agMainPreRaw -EventHint PRE_INVOCATION -WorkspacePath $Workspace | ConvertFrom-Json).injectSteps[0].systemMessage.systemMessage
+    Assert-True ($agMainUnboundCtx -match [regex]::Escape($agMainId) -and $agMainUnboundCtx -match '纯讨论/只读无需启动 SOP') "未绑定主会话应返回极简引导：$agMainUnboundCtx"
+    Assert-True ($agMainUnboundCtx -notmatch '命令模板|实现子会话先 Task Join') "未绑定主会话不应注入静态长说教：$agMainUnboundCtx"
+
+    [System.IO.Directory]::CreateDirectory((Join-Path $Workspace ".ai-workspace\specs\features\CtxProbe")) | Out-Null
+    & $taskScript -Operation Start -WorkspacePath $Workspace -Feature "CtxProbe" -TaskId "ctx-t1" -Tier T1 -UserRequest "按 T1 测试上下文回显" -Objective "ctx probe" -Agent ANTIGRAVITY -NativeSessionId $agMainId | Out-Null
+    if ($LASTEXITCODE -ne 0) { throw "Task Start for context test failed: $LASTEXITCODE" }
+    $agBoundRes = Invoke-Dispatch -RawPayload $agMainPreRaw -EventHint PRE_INVOCATION -AcceptedAt $now.AddMinutes(5).AddSeconds(2)
+    $agBoundCtx = (Add-AiSopHarnessSessionContext -Result $agBoundRes -RawPayload $agMainPreRaw -EventHint PRE_INVOCATION -WorkspacePath $Workspace | ConvertFrom-Json).injectSteps[0].systemMessage.systemMessage
+    Assert-True ($agBoundCtx -match 'CtxProbe/ctx-t1（T1）' -and $agBoundCtx -notmatch '纯讨论/只读无需启动 SOP') "已绑定主会话应回显 Feature/TaskId/Tier：$agBoundCtx"
+    & $taskScript -Operation Cancel -WorkspacePath $Workspace -Feature "CtxProbe" -TaskId "ctx-t1" -Agent ANTIGRAVITY -NativeSessionId $agMainId -Reason "cleanup" | Out-Null
+
+    $agChildId = "ag-ctx-child-" + [guid]::NewGuid().ToString("N").Substring(0, 8)
+    $agChildPreRaw = ([ordered]@{
+        conversationId = $agChildId
+        parentConversationId = $agMainId
+        workspacePaths = @($Workspace)
+    } | ConvertTo-Json -Compress)
+    $agChildPreRes = Invoke-Dispatch -RawPayload $agChildPreRaw -EventHint PRE_INVOCATION -AcceptedAt $now.AddMinutes(5).AddSeconds(4)
+    $agChildCtx = (Add-AiSopHarnessSessionContext -Result $agChildPreRes -RawPayload $agChildPreRaw -EventHint PRE_INVOCATION -WorkspacePath $Workspace | ConvertFrom-Json).injectSteps[0].systemMessage.systemMessage
+    Assert-True ($agChildCtx -match 'AI SOP 子会话' -and $agChildCtx -match 'Task Join' -and $agChildCtx -match '禁止 Resume/ConfirmTakeover' -and $agChildCtx -notmatch '修改前再 Task Start') "子会话应仅保留子会话边界：$agChildCtx"
+
+    $agDenyRaw = New-AntigravityPayload -Event PRE_TOOL_USE -SessionId "ag-deny-ctx" -ToolName "edit_file" -ToolInput @{ Path = (Join-Path $Workspace ".claude\scratch\deny.txt"); Target = "a"; Replacement = "b" }
+    $agDenyRes = Invoke-Dispatch -RawPayload $agDenyRaw -EventHint PRE_TOOL_USE -AcceptedAt $now.AddMinutes(5).AddSeconds(6)
+    $agDenyCtx = (Add-AiSopHarnessSessionContext -Result $agDenyRes -RawPayload $agDenyRaw -EventHint PRE_TOOL_USE -WorkspacePath $Workspace | ConvertFrom-Json).reason
+    Assert-True ($agDenyCtx -match '命令模板：' -and $agDenyCtx -match 'Task -Operation Start' -and $agDenyCtx -match 'InspectRecovery') "PreToolUse 拒绝应按需下沉完整命令模板与恢复指引：$agDenyCtx"
+
+    $outsideDenyMsg = Get-AiSopDispatcherDenyReason -ReasonCode "EDIT_PATH_OUTSIDE_WORKSPACE"
+    Assert-True ($outsideDenyMsg -match '^AI_SOP_GUARD_EDIT_PATH_OUTSIDE_WORKSPACE:' -and $outsideDenyMsg -match '多工作区') "EDIT_PATH_OUTSIDE_WORKSPACE 应给出多工作区边界说明：$outsideDenyMsg"
+
     Write-Output (
         "All hook dispatcher tests passed. " +
         "normalPathMaxMs=$normalMax matrixRows=$matrixRows"

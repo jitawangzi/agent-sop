@@ -1995,6 +1995,73 @@ try {
         @($multiRootEvent.workspaceRoots).Count 2 `
         "Valid disjoint multi-root context was not preserved."
 
+    # Antigravity 双工作区窗口：允许并列兄弟工作区出现在 workspacePaths，但不得放行父目录越权或跨工作区目标读取。
+    $siblingWorkspace = Join-Path $TestRoot "sibling-repo"
+    [System.IO.Directory]::CreateDirectory($siblingWorkspace) | Out-Null
+    $siblingFile = Join-Path $siblingWorkspace "README.md"
+    [System.IO.File]::WriteAllText($siblingFile, "sibling")
+    $dualWsRead = [ordered]@{
+        conversationId = "ag-dual-workspace"
+        workspacePaths = @($siblingWorkspace, $Workspace)
+        toolCall = [ordered]@{
+            name = "read_file"
+            args = [ordered]@{ Path = (Join-Path $Workspace "README.md") }
+        }
+    }
+    $dualWsEvent = ConvertTo-AiSopHookEvent `
+        -RawPayload (ConvertTo-RawPayload $dualWsRead) `
+        -EventHint "PRE_TOOL_USE" `
+        -TrustedWorkspaceRoot $Workspace `
+        -AcceptedAt $AcceptedAt
+    Assert-Equal @($dualWsEvent.workspaceRoots).Count 1 "Dual-workspace should scope roots to trusted workspace."
+    Assert-Equal $dualWsEvent.toolClass "SAFE_NON_EDIT" "Dual-workspace local read must be SAFE_NON_EDIT."
+
+    $dualWsParent = [ordered]@{
+        conversationId = "ag-dual-parent"
+        workspacePaths = @($TestRoot, $Workspace)
+    }
+    Assert-ThrowsCode -Code "EDIT_PATH_OUTSIDE_WORKSPACE" `
+        -Message "Parent ancestor in workspacePaths must be denied." `
+        -Action {
+            ConvertTo-AiSopHookEvent `
+                -RawPayload (ConvertTo-RawPayload $dualWsParent) `
+                -EventHint "PRE_INVOCATION" `
+                -TrustedWorkspaceRoot $Workspace `
+                -AcceptedAt $AcceptedAt
+        }
+
+    $onlySibling = [ordered]@{
+        conversationId = "ag-only-sibling"
+        workspacePaths = @($siblingWorkspace)
+    }
+    Assert-ThrowsCode -Code "EDIT_PATH_OUTSIDE_WORKSPACE" `
+        -Message "Payload without trusted workspace root must be denied." `
+        -Action {
+            ConvertTo-AiSopHookEvent `
+                -RawPayload (ConvertTo-RawPayload $onlySibling) `
+                -EventHint "PRE_INVOCATION" `
+                -TrustedWorkspaceRoot $Workspace `
+                -AcceptedAt $AcceptedAt
+        }
+
+    $dualWsCrossRead = [ordered]@{
+        conversationId = "ag-dual-cross-read"
+        workspacePaths = @($siblingWorkspace, $Workspace)
+        toolCall = [ordered]@{
+            name = "read_file"
+            args = [ordered]@{ Path = $siblingFile }
+        }
+    }
+    Assert-ThrowsCode -Code "EDIT_PATH_OUTSIDE_WORKSPACE" `
+        -Message "Dual-workspace must not expand read access into sibling workspace." `
+        -Action {
+            ConvertTo-AiSopHookEvent `
+                -RawPayload (ConvertTo-RawPayload $dualWsCrossRead) `
+                -EventHint "PRE_TOOL_USE" `
+                -TrustedWorkspaceRoot $Workspace `
+                -AcceptedAt $AcceptedAt
+        }
+
     # Canonical semantics must neither merge behavioral changes nor split
     # equivalent aliases/set orderings.
     $searchBasePayload = New-ClaudeToolPayload `

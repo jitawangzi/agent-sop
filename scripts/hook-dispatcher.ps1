@@ -133,6 +133,9 @@ function Get-AiSopDispatcherDenyReason {
         { $_ -in @('TASK_ID_INVALID', 'TASK_PATH_ESCAPE', 'TASK_IDENTITY_MISMATCH', 'TASK_REGISTRY_CORRUPT', 'TASK_TIER_INVALID') } {
             return "$prefix 任务身份、路径或档位无效，已拒绝修改。运行 ./ai-sop.ps1 Task -Operation Discover，再用 Task -Operation InspectRecovery 核对本工作区及任务；不要手改 task.json 或停用防护来绕过。"
         }
+        'EDIT_PATH_OUTSIDE_WORKSPACE' {
+            return "$prefix 目标路径或工作目录位于当前 SOP 工作区之外，已被安全边界拦截。仅对当前工作区内的路径放行读写；若处于多工作区窗口需要访问其他仓库，请在对应独立工作区窗口中执行，或仅在当前工作区根目录内读写与检索。"
+        }
         "WORKFLOW_TRANSACTION_INDETERMINATE" {
             $journalPath = ""
             if (Get-Command Get-AiSopLastIndeterminateJournalPath -ErrorAction SilentlyContinue) {
@@ -1289,35 +1292,128 @@ function Invoke-AiSopHookDispatcher {
     }
 }
 
+function Get-AiSopDispatcherActiveTaskInfo {
+    param(
+        [string]$SessionKey,
+        [string]$WorkspacePath
+    )
+
+    if ($SessionKey -notmatch '^[0-9a-f]{64}$' -or [string]::IsNullOrWhiteSpace($WorkspacePath)) {
+        return $null
+    }
+    try {
+        $resolvedWorkspace = Resolve-PhysicalPathIdentity -Path $WorkspacePath
+        $sessionPath = Get-AiSopWorkflowSessionPath -SessionKey $SessionKey -WorkspacePath $resolvedWorkspace
+        if (-not [System.IO.File]::Exists($sessionPath)) {
+            return $null
+        }
+        $record = Read-AiSopWorkflowSessionRecord -SessionPath $sessionPath -ExpectedSessionKey $SessionKey
+        $effective = Get-AiSopWorkflowSessionEffectiveStatus -Record $record -AcceptedAt ([DateTimeOffset]::UtcNow)
+        if (
+            $effective -cne 'ACTIVE' -or
+            [string]::IsNullOrWhiteSpace([string]$record.boundFeature) -or
+            [string]$record.boundSessionEpochId -cne [string]$record.sessionEpochId
+        ) {
+            return $null
+        }
+        $ownerPath = Join-Path (Get-AiSopWorkflowOwnerRegistryRoot -WorkspacePath $resolvedWorkspace) (([string]$record.boundFeature).ToLowerInvariant() + '.json')
+        if (-not [System.IO.File]::Exists($ownerPath)) {
+            return $null
+        }
+        $owner = Read-AiSopWorkflowText $ownerPath | ConvertFrom-Json
+        if (
+            [string]$owner.status -cne 'ACTIVE' -or
+            [string]::IsNullOrWhiteSpace([string]$owner.taskId) -or
+            [string]::IsNullOrWhiteSpace([string]$owner.specDirectory)
+        ) {
+            return $null
+        }
+        $taskPath = Join-Path ([string]$owner.specDirectory) "tasks/$($owner.taskId)/task.json"
+        if (-not [System.IO.File]::Exists($taskPath)) {
+            return $null
+        }
+        $task = Read-AiSopWorkflowText $taskPath | ConvertFrom-Json
+        if ([string]$task.status -cne 'ACTIVE' -or [string]$task.tier -cnotin @('T1', 'T2', 'T3')) {
+            return $null
+        }
+        return [pscustomobject]@{
+            Feature = [string]$owner.feature
+            TaskId = [string]$owner.taskId
+            Tier = [string]$task.tier
+        }
+    } catch {
+        return $null
+    }
+}
+
 function Add-AiSopHarnessSessionContext {
-    param($Result, [string]$RawPayload, [string]$EventHint)
+    param(
+        $Result,
+        [string]$RawPayload,
+        [string]$EventHint,
+        [string]$WorkspacePath = $script:DispatcherWorkspaceRoot
+    )
     $payload=ConvertFrom-AiSopJson $RawPayload
     $sessionId=if ($payload.Contains('conversationId')) { $payload.conversationId } elseif ($payload.Contains('conversation_id')) { $payload.conversation_id } else { $payload.session_id }
     if ($Result.Agent -ceq 'CLAUDE_CODE') { $sessionId=Get-AiSopClaudeExecutionSessionId -Payload $payload }
     if ($Result.Agent -ceq 'CODEX' -and $payload.Contains('agent_id')) { $sessionId=$payload.agent_id }
     if ($sessionId -isnot [string] -or $sessionId -notmatch '^[A-Za-z0-9._:-]+$') { return $Result.Envelope }
-    $message="AI SOP 当前会话：$sessionId。主会话执行修改前先 Task Start/Resume；实现子会话先 Task Join 回报自己的 nativeSessionId，等待父会话 Delegate，禁止用 Resume/ConfirmTakeover 抢占父任务；所有 Task 命令携带 -Agent $($Result.Agent) -NativeSessionId '$sessionId'，避免子进程另建会话。未指定档位默认 T2；成功后先回显登记档位和流程，再修改。纯讨论和只读审查不启动任务。只读子 Agent 不得调用 Start/Resume/Recover/ConfirmTakeover；读取被拒绝时报告路径或载荷原因，不接管父任务。"
+
+    $isChildSession = (
+        ($payload.Contains('parentConversationId') -and -not [string]::IsNullOrWhiteSpace([string]$payload.parentConversationId)) -or
+        ($payload.Contains('parent_conversation_id') -and -not [string]::IsNullOrWhiteSpace([string]$payload.parent_conversation_id)) -or
+        ($Result.Agent -ceq 'CLAUDE_CODE' -and ($sessionId -like 'claude-child:*' -or ($payload.Contains('agent_id') -and -not [string]::IsNullOrWhiteSpace([string]$payload.agent_id)))) -or
+        ($Result.Agent -ceq 'CODEX' -and $payload.Contains('agent_id') -and -not [string]::IsNullOrWhiteSpace([string]$payload.agent_id))
+    )
+
     $envelope=ConvertFrom-AiSopJson $Result.Envelope
-    if ($Result.Agent -ceq 'CLAUDE_CODE' -and $Result.Decision -eq 'ALLOW' -and
-        $EventHint -eq 'PRE_TOOL_USE' -and $sessionId -like 'claude-child:*') {
-        # 子会话可能没有 SessionStart；首次只读工具也回显自己的身份，无需故意触发一次拒绝。
-        $envelope.hookSpecificOutput.additionalContext=$message
-    }
-    if ($Result.Decision -eq 'ALLOW' -and $EventHint -in @('SESSION_START','PRE_INVOCATION')) {
-        switch ($Result.Agent) {
-            { $_ -in @('CLAUDE_CODE','CODEX') } { $envelope.hookSpecificOutput=@{hookEventName='SessionStart';additionalContext=$message} }
-            'CURSOR' { $envelope.additional_context=$message }
-            'ANTIGRAVITY' { $envelope.injectSteps=@(@{systemMessage=@{systemMessage=$message}}) }
+    if (($Result.Decision -eq 'ALLOW' -and $EventHint -in @('SESSION_START','PRE_INVOCATION')) -or
+        ($Result.Agent -ceq 'CLAUDE_CODE' -and $Result.Decision -eq 'ALLOW' -and $EventHint -eq 'PRE_TOOL_USE' -and $sessionId -like 'claude-child:*')) {
+        $activeTask = if (-not $isChildSession) {
+            Get-AiSopDispatcherActiveTaskInfo -SessionKey ([string]$Result.SessionKey) -WorkspacePath $WorkspacePath
+        } else {
+            $null
+        }
+        $message = if ($isChildSession) {
+            "AI SOP 子会话：$sessionId（-Agent $($Result.Agent) -NativeSessionId '$sessionId'）。只读审查勿启任务；受委派实现须先 Task Join 回报本 ID，禁止 Resume/ConfirmTakeover 抢占父任务。"
+        } elseif ($null -ne $activeTask) {
+            "AI SOP 当前会话：$sessionId（-Agent $($Result.Agent) -NativeSessionId '$sessionId'），已绑定 ACTIVE 任务：$($activeTask.Feature)/$($activeTask.TaskId)（$($activeTask.Tier)）。"
+        } else {
+            "AI SOP 当前会话：$sessionId（-Agent $($Result.Agent) -NativeSessionId '$sessionId'）。纯讨论/只读无需启动 SOP，修改前再 Task Start/Resume。"
+        }
+        if ($Result.Agent -ceq 'CLAUDE_CODE' -and $Result.Decision -eq 'ALLOW' -and
+            $EventHint -eq 'PRE_TOOL_USE' -and $sessionId -like 'claude-child:*') {
+            # 子会话可能没有 SessionStart；首次只读工具也回显自己的身份，无需故意触发一次拒绝。
+            $envelope.hookSpecificOutput.additionalContext=$message
+        }
+        if ($Result.Decision -eq 'ALLOW' -and $EventHint -in @('SESSION_START','PRE_INVOCATION')) {
+            switch ($Result.Agent) {
+                { $_ -in @('CLAUDE_CODE','CODEX') } { $envelope.hookSpecificOutput=@{hookEventName='SessionStart';additionalContext=$message} }
+                'CURSOR' { $envelope.additional_context=$message }
+                'ANTIGRAVITY' { $envelope.injectSteps=@(@{systemMessage=@{systemMessage=$message}}) }
+            }
         }
     } elseif ($Result.Decision -eq 'DENY' -and $EventHint -eq 'PRE_TOOL_USE') {
+        $nonTaskReasons = @(
+            'EDIT_PATH_OUTSIDE_WORKSPACE','EDIT_PATH_AMBIGUOUS','EDIT_PATH_MISSING','EDIT_PATH_INVALID',
+            'PAYLOAD_JSON_INVALID','PAYLOAD_SHAPE_INVALID','PAYLOAD_SHAPE_UNKNOWN','PAYLOAD_SHAPE_AMBIGUOUS',
+            'TOOL_ARGS_INVALID','TOOL_UNKNOWN','GOVERNANCE_SWITCH_PROTECTED'
+        )
+        $denyMessage = if ([string]$Result.ReasonCode -in $nonTaskReasons) {
+            "当前会话：$sessionId（-Agent $($Result.Agent) -NativeSessionId '$sessionId'）。"
+        } elseif ($isChildSession) {
+            "当前子会话：$sessionId（所有 Task 命令须带 -Agent $($Result.Agent) -NativeSessionId '$sessionId'）。只读子 Agent 禁止 Start/Resume/Recover/ConfirmTakeover，读取被拒请直接报告路径或载荷原因；受委派实现先执行：pwsh -NoProfile -File ./ai-sop.ps1 Task -Operation Join -Feature <Feature> -TaskId <TaskId> -Agent $($Result.Agent) -NativeSessionId '$sessionId'，再由父会话 Delegate。"
+        } else {
+            "当前会话：$sessionId（所有 Task 命令须带 -Agent $($Result.Agent) -NativeSessionId '$sessionId'；未指定档位默认 T2，Start/Resume 成功后向用户说明实际档位再修改）。命令模板：Discover：pwsh -NoProfile -File ./ai-sop.ps1 Task -Operation Discover；独立任务 Start：pwsh -NoProfile -File ./ai-sop.ps1 Task -Operation Start -Feature <Feature> -TaskId <TaskId> -Objective `"本次目标`" -Agent $($Result.Agent) -NativeSessionId '$sessionId'；续做/收编 Resume：pwsh -NoProfile -File ./ai-sop.ps1 Task -Operation Resume -Feature <Feature> -TaskId <TaskId> -Agent $($Result.Agent) -NativeSessionId '$sessionId'；中断恢复先 InspectRecovery 再 Recover → Resume，详见 .ai-sop/docs/TASK_RECOVERY_GUIDE.md。"
+        }
         switch ($Result.Agent) {
-            { $_ -in @('CLAUDE_CODE','CODEX') } { $envelope.hookSpecificOutput.permissionDecisionReason+=" $message" }
+            { $_ -in @('CLAUDE_CODE','CODEX') } { $envelope.hookSpecificOutput.permissionDecisionReason+=" $denyMessage" }
             'CURSOR' {
-                $envelope.agent_message+=" $message"
+                $envelope.agent_message+=" $denyMessage"
                 # 部分客户端只向模型展示 user_message，两个通道都提供正常启动入口。
                 $envelope.user_message=$envelope.agent_message
             }
-            default { $envelope.reason+=" $message" }
+            default { $envelope.reason+=" $denyMessage" }
         }
     }
     return ($envelope | ConvertTo-Json -Compress -Depth 20)

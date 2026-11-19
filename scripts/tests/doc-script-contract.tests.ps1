@@ -1,4 +1,4 @@
-#requires -Version 7.0
+﻿#requires -Version 7.0
 
 # Document-Script Contract Tests
 #
@@ -162,7 +162,7 @@ try {
         throw "AGENTS.md template not found: $AgentsMd"
     }
 
-    $referencePaths=@('workflows/agent-t3.md','workflows/agent-legacy.md')
+    $referencePaths=@('workflows/agent-t3.md','workflows/agent-legacy.md','docs/OPERATIONS_REFERENCE.md')
     foreach ($relative in $referencePaths) {
         Assert-Contract "On-demand reference exists: $relative" (Test-Path -LiteralPath (Join-Path $SopRoot $relative))
     }
@@ -228,7 +228,7 @@ try {
     $taskContract=Get-TaskScriptContract (Join-Path $SopRoot 'scripts/workflow-task.ps1')
     $rootContract=Get-TaskScriptContract (Join-Path $SopRoot 'distribution/templates/root/ai-sop.ps1')
     $taskExampleCount=0
-    foreach ($relative in @('distribution/templates/root/AGENTS.md','workflows/agent-t3.md','workflows/agent-legacy.md','SUPERPOWERS_MANUAL.md','docs/PARALLEL_TASKS.md','docs/EXECUTION_DELEGATION.md','workflows/superpowers-adapter.md','skills/quality-assurance/SKILL.md','skills/workflow-orchestrator/SKILL.md')) {
+    foreach ($relative in @('distribution/templates/root/AGENTS.md','workflows/agent-t3.md','workflows/agent-legacy.md','docs/OPERATIONS_REFERENCE.md','SUPERPOWERS_MANUAL.md','docs/PARALLEL_TASKS.md','docs/EXECUTION_DELEGATION.md','workflows/superpowers-adapter.md','skills/quality-assurance/SKILL.md','skills/workflow-orchestrator/SKILL.md')) {
         $examples=@(Get-TaskDocCommands ([IO.File]::ReadAllText((Join-Path $SopRoot $relative))))
         if ($relative -in @('skills/quality-assurance/SKILL.md','skills/workflow-orchestrator/SKILL.md')) { Assert-Contract "$relative must provide a Task command example" ($examples.Count -gt 0) }
         foreach ($example in $examples) {
@@ -376,6 +376,8 @@ exit 0
         ($agentsText -match 'AddFollowUp' -and $agentsText -match 'CloseFollowUp' -and $agentsText -match '不因待办升档或阻止完成')
     Assert-Contract "Guard ownership guidance must route through task discovery and inspected recovery" `
         ($agentsText -match 'Guard 拦截后的任务识别' -and $agentsText -match 'InspectRecovery' -and $agentsText -match '旧功能级命令兼容')
+    Assert-Contract "AGENTS.md must route read-only Q&A away from loading SOP docs or running Discover/Start" `
+        ($agentsText -match '纯问答' -and $agentsText -match '不读\s*`?\.ai-sop/' -and $agentsText -match 'OPERATIONS_REFERENCE\.md')
     Assert-Contract "Implementation delivery loop must be scoped to T3" `
         ($engineText -match '### D\. T3 Delivery Loop \(仅 T3 完整交付闭环\)' -and $engineText -match 'T1 不强制增加测试阶段')
     Assert-Contract "Adapter diagram must use task completion and explicitly select T3" `

@@ -232,6 +232,21 @@ try {
     assert.equal(allowed.value.decision, 'allow', JSON.stringify(allowed));
   }
   await task('Suspend', 'ANTIGRAVITY', agReadSession);
+  const siblingWorkspace = join(root, 'sibling-repo');
+  await mkdir(siblingWorkspace);
+  const siblingFile = join(siblingWorkspace, 'other.txt');
+  await writeFile(siblingFile, 'SIBLING');
+  const agDualSession = 'ag-dual-workspace-native';
+  const agDualPre = await hook('.agents', 'PRE_INVOCATION', { conversationId: agDualSession, workspacePaths: [siblingWorkspace, workspace], invocationNum: 1 });
+  assert.equal(agDualPre.code, 0);
+  assert.match(agDualPre.value.injectSteps?.[0]?.systemMessage?.systemMessage ?? '', /纯讨论\/只读无需启动 SOP/);
+  const agDualRead = await hook('.agents', 'PRE_TOOL_USE', { conversationId: agDualSession, workspacePaths: [siblingWorkspace, workspace], stepIdx: ++counter, toolCall: { name: 'read_file', args: { Path: file } } });
+  assert.equal(agDualRead.value.decision, 'allow', JSON.stringify(agDualRead));
+  const agDualShell = await hook('.agents', 'PRE_TOOL_USE', { conversationId: agDualSession, workspacePaths: [siblingWorkspace, workspace], stepIdx: ++counter, toolCall: { name: 'run_command', args: { CommandLine: listCommand, Cwd: workspace, WaitMsBeforeAsync: 1000 } } });
+  assert.equal(agDualShell.value.decision, 'allow', JSON.stringify(agDualShell));
+  const agDualOutside = await hook('.agents', 'PRE_TOOL_USE', { conversationId: agDualSession, workspacePaths: [siblingWorkspace, workspace], stepIdx: ++counter, toolCall: { name: 'read_file', args: { Path: siblingFile } } });
+  assert.equal(agDualOutside.value.decision, 'deny');
+  assert.match(agDualOutside.value.reason, /AI_SOP_GUARD_EDIT_PATH_OUTSIDE_WORKSPACE/);
   }
   if (group === 'all' || group === 'cursor') {
   const bootstrapCommand = "pwsh -NoProfile -File './.ai-sop/scripts/workflow-task.ps1' -Operation Start -Feature Probe -TaskId process-test -Agent CURSOR -NativeSessionId '" + visibleSession + "' -Objective '真实进程验收'";

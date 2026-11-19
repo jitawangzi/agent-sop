@@ -1228,11 +1228,39 @@ function Get-AiSopWorkspaceContext {
     $roots = @()
     foreach ($rootCandidate in $rootCandidates) {
         # Cursor 在 Windows 上可发送 URI 风格盘符，仍须经过物理路径边界检查。
-        if ($NativeShape -like 'CURSOR_*' -and [OperatingSystem]::IsWindows() -and $rootCandidate -cmatch '^/[A-Za-z]:/') { $rootCandidate=$rootCandidate.Substring(1) }
-        $roots += Resolve-AiSopWorkspacePath `
-            -Path ([string]$rootCandidate) `
-            -WorkspaceRoot $workspace `
-            -BasePath $workspace
+        $candidateText = [string]$rootCandidate
+        if ($NativeShape -like 'CURSOR_*' -and [OperatingSystem]::IsWindows() -and $candidateText -cmatch '^/[A-Za-z]:/') { $candidateText = $candidateText.Substring(1) }
+        if (-not [System.IO.Path]::IsPathRooted($candidateText)) {
+            $roots += Resolve-AiSopWorkspacePath `
+                -Path $candidateText `
+                -WorkspaceRoot $workspace `
+                -BasePath $workspace
+            continue
+        }
+        try {
+            $lexical = [System.IO.Path]::GetFullPath($candidateText)
+            $physical = Resolve-PhysicalPathIdentity -Path $lexical
+        } catch {
+            Throw-AiSopHookError "EDIT_PATH_AMBIGUOUS"
+        }
+        if (Test-AiSopPathWithinRoot $lexical $workspace) {
+            if (-not (Test-AiSopPathWithinRoot $physical $workspace)) {
+                Throw-AiSopHookError "EDIT_PATH_OUTSIDE_WORKSPACE"
+            }
+            $roots += $physical
+            continue
+        }
+        # 拒绝把当前工作区包进更宽父目录或经外部链接指向工作区的根；并列的其他工作区根在多工作区窗口中忽略，不扩大本工作区权限。
+        if (
+            (Test-AiSopPathWithinRoot $workspace $lexical) -or
+            (Test-AiSopPathWithinRoot $workspace $physical) -or
+            (Test-AiSopPathWithinRoot $physical $workspace)
+        ) {
+            Throw-AiSopHookError "EDIT_PATH_OUTSIDE_WORKSPACE"
+        }
+    }
+    if ($roots.Count -eq 0) {
+        Throw-AiSopHookError "EDIT_PATH_OUTSIDE_WORKSPACE"
     }
     $roots = ConvertTo-AiSopUniquePathList $roots
     $containingRootCount = @(
@@ -2374,10 +2402,22 @@ function Resolve-AiSopEditTargets {
 }
 
 function Get-AiSopAntigravityAppDataRoots {
-    # 目录来自本机用户配置目录，不能信任载荷里任意指定的 appDataDir 或 artifactDirectoryPath。
-    $profilePath=Resolve-PhysicalPathIdentity ([Environment]::GetFolderPath([Environment+SpecialFolder]::UserProfile))
-    foreach ($variant in @('antigravity','antigravity-cli','antigravity-ide')) {
-        Join-Path $profilePath ".gemini/$variant"
+    # 目录来自本机用户配置目录（含客户端 profile 覆盖的 USERPROFILE/HOME），不能信任载荷里任意指定的 appDataDir 或 artifactDirectoryPath。
+    $profileCandidates = @([Environment]::GetFolderPath([Environment+SpecialFolder]::UserProfile))
+    if ([OperatingSystem]::IsWindows() -and -not [string]::IsNullOrWhiteSpace($env:USERPROFILE)) {
+        $profileCandidates += $env:USERPROFILE
+    } elseif (-not [string]::IsNullOrWhiteSpace($env:HOME)) {
+        $profileCandidates += $env:HOME
+    }
+    $resolvedProfiles = @()
+    foreach ($candidate in $profileCandidates) {
+        if ([string]::IsNullOrWhiteSpace($candidate) -or -not [System.IO.Directory]::Exists($candidate)) { continue }
+        $resolvedProfiles += Resolve-PhysicalPathIdentity $candidate
+    }
+    foreach ($profilePath in (ConvertTo-AiSopUniquePathList $resolvedProfiles)) {
+        foreach ($variant in @('antigravity','antigravity-cli','antigravity-ide')) {
+            Join-Path $profilePath ".gemini/$variant"
+        }
     }
 }
 

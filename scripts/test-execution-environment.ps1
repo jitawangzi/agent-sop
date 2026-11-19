@@ -1,4 +1,4 @@
-# 测试进程专用环境；只记录已知工具，不导出调用者的其他环境变量。
+﻿# 测试进程专用环境；只记录已知工具，不导出调用者的其他环境变量。
 function Get-AiSopTestEnvironment {
     param([string[]]$ToolDirectory=@(),[string]$ReportDirectory,[switch]$ReadVersions)
     $directories=@(foreach($entry in $ToolDirectory){
@@ -82,6 +82,6 @@ function Get-AiSopTestEnvironment {
 
 function Get-AiSopSuiteWorkers([string]$File,[string]$NativeSuite,[int]$Capacity) {
     $comparison=if([OperatingSystem]::IsWindows()){[StringComparison]::OrdinalIgnoreCase}else{[StringComparison]::Ordinal}
-    if([IO.Path]::GetFullPath($File).Equals([IO.Path]::GetFullPath($NativeSuite),$comparison)){return [Math]::Min(2,$Capacity)}
+    if([IO.Path]::GetFullPath($File).Equals([IO.Path]::GetFullPath($NativeSuite),$comparison)){return [Math]::Min(4,$Capacity)}
     return 1
 }

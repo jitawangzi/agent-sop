@@ -4,8 +4,8 @@ import { boundedMap } from './fixtures/bounded-map.mjs';
 import { runHookCommand } from './fixtures/hook-command.mjs';
 
 const workers = Number(process.env.AI_SOP_TEST_WORKERS || '1');
-assert([1, 2].includes(workers), 'Invalid reserved worker count');
-const groups = workers === 2 ? ['cursor', 'other'] : ['all'];
+assert([1, 2, 3, 4].includes(workers), 'Invalid reserved worker count');
+const groups = workers > 1 ? ['antigravity', 'cursor', 'codex', 'claude-pi'] : ['all'];
 const script = fileURLToPath(new URL('./hook-process.test.mjs', import.meta.url));
 await boundedMap(groups, workers, async group => {
   try {

@@ -5,7 +5,7 @@ import { boundedMap } from './fixtures/bounded-map.mjs';
 import { runHookCommand } from './fixtures/hook-command.mjs';
 
 const capacity = Number(process.env.AI_SOP_TEST_WORKERS || '1');
-assert([1, 2].includes(capacity), 'Invalid reserved cleanup-test workers');
+assert([1, 2, 3, 4].includes(capacity), 'Invalid reserved cleanup-test workers');
 const children = new Set();
 const launch = (...args) => {
   const child = spawn(...args); children.add(child);

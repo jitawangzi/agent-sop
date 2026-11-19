@@ -1,4 +1,4 @@
-#requires -Version 7.0
+﻿#requires -Version 7.0
 $ErrorActionPreference='Stop'
 $scripts=Split-Path $PSScriptRoot
 . (Join-Path $scripts hidden-process.ps1)
@@ -38,7 +38,7 @@ Write-Output ("END_AT="+[DateTimeOffset]::UtcNow.ToUnixTimeMilliseconds())
 '@
     [IO.File]::WriteAllText($native,$body+';exit 19')
     [IO.File]::WriteAllText($peer,$body)
-    foreach($capacity in @(1,2)){
+    foreach($capacity in @(1,2,4)){
         $out=Join-Path $root "runner-$capacity.out";$err=Join-Path $root "runner-$capacity.err"
         $child=Start-AiSopHiddenProcess -FilePath (Get-Process -Id $PID).Path -ArgumentList @('-NoProfile','-File',(Join-Path $fakeScripts run-all-tests.ps1),'-TestsRoot',$tests,'-Parallel','-MaxParallel',[string]$capacity,'-ToolDirectory',$toolDir,'-SuiteTimeoutSeconds','10') -RedirectStandardOutput $out -RedirectStandardError $err -TimeoutSeconds 30 -PassThru
         try{$child.WaitForExit();Assert ($child.ExitCode -eq 1) 'Native failure became runner success'}finally{$child.Dispose()}

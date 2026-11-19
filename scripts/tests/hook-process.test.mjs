@@ -8,7 +8,7 @@ import { performance } from 'node:perf_hooks';
 import { copyRuntime } from './fixtures/runtime-copy.mjs';
 
 const group = process.argv[2] || 'all';
-assert(['all', 'cursor', 'other'].includes(group), 'Unknown Hook group');
+assert(['all', 'cursor', 'antigravity', 'claude-pi', 'codex', 'other'].includes(group), 'Unknown Hook group');
 const source = fileURLToPath(new URL('../../', import.meta.url));
 const root = await mkdtemp(join(tmpdir(), 'sop-hook-process-'));
 const workspace = join(root, '中文 workspace');
@@ -140,7 +140,7 @@ try {
     assert(bad.code === 2 || bad.value.permission === 'deny', JSON.stringify(bad));
   }
   }
-  if (group === 'all' || group === 'other') {
+  if (group === 'all' || group === 'other' || group === 'antigravity') {
   for (const [name, args] of [
     ['replace_file_content', { TargetFile: file, TargetContent: 'BEFORE', ReplacementContent: '修改' }],
     ['write_file', { Path: file, Content: '修改', Overwrite: true, Append: false, ArtifactMetadata: { Summary: 'W', UserFacing: false, RequestFeedback: false } }],
@@ -348,7 +348,7 @@ try {
   await task('Cancel');
   assert.equal((await hook('.cursor', 'PRE_TOOL_USE', cursor('Write', { file_path: file, content: '修改' }))).value.permission, 'deny');
   }
-  if (group === 'all' || group === 'other') {
+  if (group === 'all' || group === 'other' || group === 'claude-pi') {
   const piSession = 'pi-process-fixture';
   // Claude 实际子 Agent 载荷共用 session_id，用 agent_id 区分执行者。
   const claudeParent = 'claude-native-parent';
@@ -405,6 +405,8 @@ try {
   assert.equal((await piEdit(batch)).value.block, false);
   await task('Cancel', 'PI', piSession);
   assert.equal((await piEdit(batch)).value.block, true);
+  }
+  if (group === 'all' || group === 'other' || group === 'codex') {
   // Codex 原生协议经真实 wrapper 进程验证，去重重放也必须带安全化命令。
   const codexSession = 'codex-read-process';
   await hook('.codex', 'SESSION_START', { session_id: codexSession, cwd: workspace,

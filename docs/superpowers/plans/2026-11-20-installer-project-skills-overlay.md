@@ -103,6 +103,6 @@ Run: `git status` and `git diff --stat` to verify changes are clean.
 - [ ] **Step 3: Git commit and push to remote**
 Run: `git status` and `git diff --stat` to verify changes are clean.
 
-- [ ] **Step 3: Git commit and push to remote**
+- [x] **Step 3: Git commit and push to remote**
 Run: `git add .`, `git commit -m "feat(installer): support project-specific skills overlay from .ai-workspace"`, `git push origin main`.
 Verify remote is updated.

@@ -1569,19 +1569,22 @@ try {
     # 1) Checkpoint paused while concurrent Touch advances lastSeenAt/expiresAt
     $hbCheckpointSession = Get-AiSopWorkflowSession -SessionKey $hbSession.Record.sessionKey
     New-Grant -Feature $hbFeature -Session $hbCheckpointSession -Operation Checkpoint -Agent CURSOR -OwnerId $hbOwnerId -Suffix "hb-checkpoint" | Out-Null
-    $cpTouchAt = [DateTimeOffset]::UtcNow.AddSeconds(1)
+    $script:cpTouchAt = $null
     $cpResult = Invoke-PausedOwnerAction -TargetFeature $hbFeature -Operation Checkpoint -OwnerId $hbOwnerId -Tag "cp-touch" -WhilePaused {
+        # Compute Touch timestamp after Checkpoint has already captured its own AcceptedAt and paused,
+        # avoiding flake when cold-starting the child pwsh process takes >1s.
+        $script:cpTouchAt = [DateTimeOffset]::UtcNow.AddSeconds(15)
         Invoke-AiSopWorkflowSession `
             -Operation Touch `
             -Agent CURSOR `
             -NativeSessionId "native-hb-race" `
             -WorkspacePath $hbFeature.Workspace `
-            -AcceptedAt $cpTouchAt | Out-Null
+            -AcceptedAt $script:cpTouchAt | Out-Null
     }
     Assert-Equal $cpResult.ExitCode 0 "Checkpoint failed during concurrent Touch: $($cpResult.Stderr)"
     $afterCpSession = Get-AiSopWorkflowSession -SessionKey $hbSession.Record.sessionKey
-    Assert-Equal $afterCpSession.Record.lastSeenAt ($cpTouchAt.ToUniversalTime().ToString("o")) "Checkpoint regressed concurrent Touch lastSeenAt."
-    Assert-Equal $afterCpSession.Record.expiresAt ($cpTouchAt.AddMinutes(30).ToUniversalTime().ToString("o")) "Checkpoint regressed concurrent Touch expiresAt."
+    Assert-Equal $afterCpSession.Record.lastSeenAt ($script:cpTouchAt.ToUniversalTime().ToString("o")) "Checkpoint regressed concurrent Touch lastSeenAt."
+    Assert-Equal $afterCpSession.Record.expiresAt ($script:cpTouchAt.AddMinutes(30).ToUniversalTime().ToString("o")) "Checkpoint regressed concurrent Touch expiresAt."
 
     # 2) Complete paused while concurrent Touch + unrelated Grant Issue update session metadata
     $taskScript = Join-Path $ScriptsRoot "workflow-task.ps1"
@@ -1590,15 +1593,17 @@ try {
     & $taskScript -Operation RecordSync -WorkspacePath $hbFeature.Workspace -Feature $hbFeature.Feature -TaskId "task-hb-1" -Documentation UNCHANGED -Tests NOT_APPLICABLE -Summary "test fixture" -Agent CURSOR -NativeSessionId "native-hb-race" | Out-Null
     $afterSyncSession = Get-AiSopWorkflowSession -SessionKey $hbSession.Record.sessionKey
     New-Grant -Feature $hbFeature -Session $afterSyncSession -Operation Complete -Agent CURSOR -OwnerId $hbOwnerId -Suffix "hb-complete" | Out-Null
-    $completeTouchAt = $cpTouchAt.AddSeconds(5)
+    $script:completeTouchAt = $null
     $script:concurrentGrant = $null
     $completeResult = Invoke-PausedOwnerAction -TargetFeature $hbFeature -Operation Complete -OwnerId $hbOwnerId -Tag "complete-touch" -WhilePaused {
+        $nowPlus = [DateTimeOffset]::UtcNow.AddSeconds(20)
+        $script:completeTouchAt = if ($nowPlus -gt $script:cpTouchAt.AddSeconds(5)) { $nowPlus } else { $script:cpTouchAt.AddSeconds(5) }
         Invoke-AiSopWorkflowSession `
             -Operation Touch `
             -Agent CURSOR `
             -NativeSessionId "native-hb-race" `
             -WorkspacePath $hbFeature.Workspace `
-            -AcceptedAt $completeTouchAt | Out-Null
+            -AcceptedAt $script:completeTouchAt | Out-Null
         $freshSess = Get-AiSopWorkflowSession -SessionKey $hbSession.Record.sessionKey
         $script:concurrentGrant = New-Grant -Feature $hbFeature -Session $freshSess -Operation Validate -Agent CURSOR -OwnerId $hbOwnerId -Suffix "hb-side-grant"
     }
@@ -1606,8 +1611,8 @@ try {
     Assert-Equal (Read-OwnerRecord $hbFeature.Feature).status "COMPLETE" "Complete did not transition owner to COMPLETE."
     $afterCompleteSession = Get-AiSopWorkflowSession -SessionKey $hbSession.Record.sessionKey
     Assert-Equal $afterCompleteSession.Record.boundFeature "" "Complete did not clear boundFeature."
-    Assert-Equal $afterCompleteSession.Record.lastSeenAt ($completeTouchAt.ToUniversalTime().ToString("o")) "Complete regressed concurrent Touch lastSeenAt."
-    Assert-Equal $afterCompleteSession.Record.expiresAt ($completeTouchAt.AddMinutes(30).ToUniversalTime().ToString("o")) "Complete regressed concurrent Touch expiresAt."
+    Assert-Equal $afterCompleteSession.Record.lastSeenAt ($script:completeTouchAt.ToUniversalTime().ToString("o")) "Complete regressed concurrent Touch lastSeenAt."
+    Assert-Equal $afterCompleteSession.Record.expiresAt ($script:completeTouchAt.AddMinutes(30).ToUniversalTime().ToString("o")) "Complete regressed concurrent Touch expiresAt."
     Assert-Equal $afterCompleteSession.Record.lastGrantId $script:concurrentGrant.Record.grantId "Complete regressed concurrent lastGrantId."
 
     # 3) Negative control: Complete paused while concurrent Session End occurs MUST still fail

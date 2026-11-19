@@ -5,6 +5,7 @@
 ## 首屏路由与红线
 
 - **纯问答 / 解释 / 只读审查**：直接回答并按需读取工作区代码或 `.ai-workspace/context/README.md`；**不读 `.ai-sop/` 下的流程/参考文档，不跑 `Task Discover` / `Start` / `Resume`**。
+- **独立 Bug 排查 / 疑似误报核查**：先按 `.ai-sop/skills/bug-debugger/SKILL.md` 做只读分诊与根因溯源（存在 `.ai-workspace/context/debugging-playbook.md` 时优先加载），**不提前 `Task Start`**；确认为需改代码/埋点后再进入下方修改入口。
 - **转为修改源码、测试、配置或文档前**：先确定任务与档位；**主会话**必须 `Task Start` 或 `Resume` 成功后才写入，所有 `Task` 命令携带 Hook 注入的 `-Agent` 与 `-NativeSessionId`（通用 CLI 用稳定 `AI_SESSION_ID`，不借用旧 owner 身份）。
 - **子会话边界**：**只读子 Agent** 只读取并返回报告，不调用 Start/Resume/Recover/ConfirmTakeover；读取失败报告具体路径或载荷错误。**实现子会话**先用自身会话参数 `Task Join` 回报 `nativeSessionId`，由父会话 `Task Delegate` 后执行，禁止 `Resume`/`ConfirmTakeover` 抢占父任务（详见 `.ai-sop/docs/EXECUTION_DELEGATION.md`）。
 

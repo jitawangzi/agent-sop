@@ -228,9 +228,9 @@ try {
     $taskContract=Get-TaskScriptContract (Join-Path $SopRoot 'scripts/workflow-task.ps1')
     $rootContract=Get-TaskScriptContract (Join-Path $SopRoot 'distribution/templates/root/ai-sop.ps1')
     $taskExampleCount=0
-    foreach ($relative in @('distribution/templates/root/AGENTS.md','workflows/agent-t3.md','workflows/agent-legacy.md','docs/OPERATIONS_REFERENCE.md','SUPERPOWERS_MANUAL.md','docs/PARALLEL_TASKS.md','docs/EXECUTION_DELEGATION.md','workflows/superpowers-adapter.md','skills/quality-assurance/SKILL.md','skills/workflow-orchestrator/SKILL.md')) {
+    foreach ($relative in @('distribution/templates/root/AGENTS.md','workflows/agent-t3.md','workflows/agent-legacy.md','docs/OPERATIONS_REFERENCE.md','SUPERPOWERS_MANUAL.md','docs/PARALLEL_TASKS.md','docs/EXECUTION_DELEGATION.md','workflows/superpowers-adapter.md','skills/bug-debugger/SKILL.md','skills/quality-assurance/SKILL.md','skills/workflow-orchestrator/SKILL.md')) {
         $examples=@(Get-TaskDocCommands ([IO.File]::ReadAllText((Join-Path $SopRoot $relative))))
-        if ($relative -in @('skills/quality-assurance/SKILL.md','skills/workflow-orchestrator/SKILL.md')) { Assert-Contract "$relative must provide a Task command example" ($examples.Count -gt 0) }
+        if ($relative -in @('skills/bug-debugger/SKILL.md','skills/quality-assurance/SKILL.md','skills/workflow-orchestrator/SKILL.md')) { Assert-Contract "$relative must provide a Task command example" ($examples.Count -gt 0) }
         foreach ($example in $examples) {
             $taskExampleCount++
             $problems=@(Get-TaskDocProblems $example $taskContract $rootContract)
@@ -382,6 +382,17 @@ exit 0
         ($engineText -match '### D\. T3 Delivery Loop \(仅 T3 完整交付闭环\)' -and $engineText -match 'T1 不强制增加测试阶段')
     Assert-Contract "Adapter diagram must use task completion and explicitly select T3" `
         ($adapterText -match 'Task Start -Tier T3' -and $adapterText -match 'Task Complete（内含完成校验；Task Verify 仅作可选的提前诊断）')
+    $bugDebuggerSkill = Join-Path $SopRoot "skills/bug-debugger/SKILL.md"
+    $bugDebuggerAgent = Join-Path $SopRoot "agents/bug-debugger.md"
+    Assert-Contract "bug-debugger skill and agent files must exist" `
+        ((Test-Path -LiteralPath $bugDebuggerSkill) -and (Test-Path -LiteralPath $bugDebuggerAgent))
+    $bugDebuggerText = Get-Content -LiteralPath $bugDebuggerSkill -Raw
+    Assert-Contract "bug-debugger must define Phase 0 triage, evidence table, anti-band-aid rules, and certainty levels" `
+        ($bugDebuggerText -match 'Phase 0' -and $bugDebuggerText -match '\[已证实\]' -and $bugDebuggerText -match '\[已排除\]' -and $bugDebuggerText -match '\[待证\]' -and $bugDebuggerText -match '根因修复' -and $bugDebuggerText -match '存量兼容兜底' -and $bugDebuggerText -match 'BLOCKED_NEED_INFO')
+    Assert-Contract "AGENTS.md must route bug triage to bug-debugger without premature Task Start" `
+        ($agentsText -match '\.ai-sop/skills/bug-debugger/SKILL\.md' -and $agentsText -match 'debugging-playbook\.md')
+    Assert-Contract "adapter must align T3 debugging on native bug-debugger instead of superpowers:systematic-debugging" `
+        ($adapterText -match 'superpowers:systematic-debugging' -and $adapterText -match 'bug-debugger')
 
     # --- Semantic drift guards: prevent known contradiction phrases from recurring ---
     # These were real drift bugs (single-point fix not propagated). Lock them out so the

@@ -173,7 +173,7 @@ Superpowers 控制器派发 subagent 时，应按角色复杂度选档，平衡�
 
 | 档位 | 适用角色 | 理由 |
 |---|---|---|
-| **最强可用** | `design-architect`（架构设计）、`design-reviewer`（设计审查）、`requesting-code-review`（整体收尾）、`logic-auditor`（高风险逻辑） | 需判断力/全局观/跨任务推理，错判代价高 |
+| **最强可用** | `design-architect`（架构设计）、`design-reviewer`（设计审查）、`requesting-code-review`（整体收尾）、`logic-auditor`（高风险逻辑）、`bug-debugger`（复杂根因溯源） | 需判断力/全局观/跨任务推理，错判代价高 |
 | **标准** | `implementation-engine`（一般实现）、`implementation-auditor`（实现合规）、`quality-assurance`、`requirement-analyst` | 多文件协调与规范判断，需要稳定性 |
 | **便宜** | `implementation-engine`（机械任务：纯转录、单文件小修、配置值改动）、`test-plan-auditor`、`feature-maintainer`（分类） | 规则明确、判断少，cheap 档足够 |
 
@@ -204,6 +204,7 @@ Superpowers 控制器派发 subagent 时，应按角色复杂度选档，平衡�
 - `superpowers:using-git-worktrees` — 不自动创建 worktree；代码隔离方式由宿主版本控制约定决定，不能把所有宿主都当成 SVN 工程。
 - `superpowers:executing-plans` — 与本 SOP 的 T3 编排重叠；T3 统一用 `subagent-driven-development`。
 - `superpowers:finishing-a-development-branch` — 收尾由验证、Task Complete 和宿主提交约定管理，不额外引入另一套分支交付流程。
+- `superpowers:systematic-debugging` — 缺陷排查与 T3 调试统一以本仓库原生 `bug-debugger` Skill（`.ai-sop/skills/bug-debugger/SKILL.md`）为准；其已吸收根因优先、反向溯源与失败止损纪律，并补齐 Phase 0 只读分诊、A/B/C 三分类与 SOP `Task Run` 衔接，避免两套调试提示词冲突。
 
 ## 执行强度分层
 

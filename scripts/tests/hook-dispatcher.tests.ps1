@@ -1309,21 +1309,34 @@ try {
         "wrapper missing dispatcher SESSION_START must ALLOW"
     )
 
-    # PRE_INVOCATION 三路动态分流与 PreToolUse 拒绝按需模板验证
+    # Antigravity PRE_INVOCATION 静默与按需注入验证：
+    # - 未绑定主会话静默（{}）；
+    # - 已绑定 ACTIVE 主会话仅在 invocationNum <= 1 回显 Feature/TaskId/Tier，invocationNum > 1 静默；
+    # - 子会话仅在 invocationNum <= 1 注入子会话边界，invocationNum > 1 静默；
+    # - PreToolUse 拒绝按需下发命令模板；Task Start 省略 NativeSessionId 时自动补全 overwrite.CommandLine。
     $taskScript = Join-Path $ClaudeRoot "scripts\workflow-task.ps1"
     $agMainId = "ag-ctx-main-" + [guid]::NewGuid().ToString("N").Substring(0, 8)
     $agMainPreRaw = New-AntigravityPayload -Event PRE_INVOCATION -SessionId $agMainId
     $agMainPreRes = Invoke-Dispatch -RawPayload $agMainPreRaw -EventHint PRE_INVOCATION -AcceptedAt $now.AddMinutes(5)
-    $agMainUnboundCtx = (Add-AiSopHarnessSessionContext -Result $agMainPreRes -RawPayload $agMainPreRaw -EventHint PRE_INVOCATION -WorkspacePath $Workspace | ConvertFrom-Json).injectSteps[0].systemMessage.systemMessage
-    Assert-True ($agMainUnboundCtx -match [regex]::Escape($agMainId) -and $agMainUnboundCtx -match '纯讨论/只读无需启动 SOP') "未绑定主会话应返回极简引导：$agMainUnboundCtx"
-    Assert-True ($agMainUnboundCtx -notmatch '命令模板|实现子会话先 Task Join') "未绑定主会话不应注入静态长说教：$agMainUnboundCtx"
+    $agMainUnboundEnvelope = Add-AiSopHarnessSessionContext -Result $agMainPreRes -RawPayload $agMainPreRaw -EventHint PRE_INVOCATION -WorkspacePath $Workspace
+    Assert-Equal $agMainUnboundEnvelope '{}' "未绑定 Antigravity 主会话 PRE_INVOCATION 必须静默返回空 JSON：$agMainUnboundEnvelope"
 
     [System.IO.Directory]::CreateDirectory((Join-Path $Workspace ".ai-workspace\specs\features\CtxProbe")) | Out-Null
+    $agBootstrapCmd = "pwsh -NoProfile -File ./ai-sop.ps1 Task -Operation Start -Feature CtxProbe -TaskId ctx-omit -Objective 'auto session' -Agent ANTIGRAVITY"
+    $agBootstrapRaw = New-AntigravityPayload -Event PRE_TOOL_USE -SessionId $agMainId -ToolName "run_command" -ToolInput @{ CommandLine = $agBootstrapCmd; Cwd = $Workspace; WaitMsBeforeAsync = 1000 }
+    $agBootstrapRes = Invoke-Dispatch -RawPayload $agBootstrapRaw -EventHint PRE_TOOL_USE -AcceptedAt $now.AddMinutes(5).AddSeconds(1)
+    $agBootstrapEnv = ConvertFrom-Json $agBootstrapRes.Envelope
+    Assert-Equal $agBootstrapRes.Decision 'ALLOW' 'Antigravity Task Start 应放行'
+    Assert-True ($agBootstrapEnv.overwrite.CommandLine -ceq ($agBootstrapCmd + " -NativeSessionId '$agMainId'")) "省略 NativeSessionId 的 Antigravity Task Start 应自动补全：$($agBootstrapRes.Envelope)"
+
     & $taskScript -Operation Start -WorkspacePath $Workspace -Feature "CtxProbe" -TaskId "ctx-t1" -Tier T1 -UserRequest "按 T1 测试上下文回显" -Objective "ctx probe" -Agent ANTIGRAVITY -NativeSessionId $agMainId | Out-Null
     if ($LASTEXITCODE -ne 0) { throw "Task Start for context test failed: $LASTEXITCODE" }
     $agBoundRes = Invoke-Dispatch -RawPayload $agMainPreRaw -EventHint PRE_INVOCATION -AcceptedAt $now.AddMinutes(5).AddSeconds(2)
     $agBoundCtx = (Add-AiSopHarnessSessionContext -Result $agBoundRes -RawPayload $agMainPreRaw -EventHint PRE_INVOCATION -WorkspacePath $Workspace | ConvertFrom-Json).injectSteps[0].systemMessage.systemMessage
-    Assert-True ($agBoundCtx -match 'CtxProbe/ctx-t1（T1）' -and $agBoundCtx -notmatch '纯讨论/只读无需启动 SOP') "已绑定主会话应回显 Feature/TaskId/Tier：$agBoundCtx"
+    Assert-True ($agBoundCtx -match 'CtxProbe/ctx-t1（T1）' -and $agBoundCtx -notmatch '纯讨论/只读无需启动 SOP') "已绑定主会话首调应回显 Feature/TaskId/Tier：$agBoundCtx"
+    $agBoundTurn2Raw = ([ordered]@{ conversationId = $agMainId; workspacePaths = @($Workspace); invocationNum = 2 } | ConvertTo-Json -Compress)
+    $agBoundTurn2Env = Add-AiSopHarnessSessionContext -Result $agBoundRes -RawPayload $agBoundTurn2Raw -EventHint PRE_INVOCATION -WorkspacePath $Workspace
+    Assert-Equal $agBoundTurn2Env '{}' "已绑定主会话同轮后续调用（invocationNum > 1）必须静默：$agBoundTurn2Env"
     & $taskScript -Operation Cancel -WorkspacePath $Workspace -Feature "CtxProbe" -TaskId "ctx-t1" -Agent ANTIGRAVITY -NativeSessionId $agMainId -Reason "cleanup" | Out-Null
 
     $agChildId = "ag-ctx-child-" + [guid]::NewGuid().ToString("N").Substring(0, 8)
@@ -1331,10 +1344,19 @@ try {
         conversationId = $agChildId
         parentConversationId = $agMainId
         workspacePaths = @($Workspace)
+        invocationNum = 1
     } | ConvertTo-Json -Compress)
     $agChildPreRes = Invoke-Dispatch -RawPayload $agChildPreRaw -EventHint PRE_INVOCATION -AcceptedAt $now.AddMinutes(5).AddSeconds(4)
     $agChildCtx = (Add-AiSopHarnessSessionContext -Result $agChildPreRes -RawPayload $agChildPreRaw -EventHint PRE_INVOCATION -WorkspacePath $Workspace | ConvertFrom-Json).injectSteps[0].systemMessage.systemMessage
-    Assert-True ($agChildCtx -match 'AI SOP 子会话' -and $agChildCtx -match 'Task Join' -and $agChildCtx -match '禁止 Resume/ConfirmTakeover' -and $agChildCtx -notmatch '修改前再 Task Start') "子会话应仅保留子会话边界：$agChildCtx"
+    Assert-True ($agChildCtx -match 'AI SOP 子会话' -and $agChildCtx -match 'Task Join' -and $agChildCtx -match '禁止 Resume/ConfirmTakeover' -and $agChildCtx -notmatch '修改前再 Task Start') "子会话首调应保留子会话边界：$agChildCtx"
+    $agChildTurn2Raw = ([ordered]@{
+        conversationId = $agChildId
+        parentConversationId = $agMainId
+        workspacePaths = @($Workspace)
+        invocationNum = 2
+    } | ConvertTo-Json -Compress)
+    $agChildTurn2Env = Add-AiSopHarnessSessionContext -Result $agChildPreRes -RawPayload $agChildTurn2Raw -EventHint PRE_INVOCATION -WorkspacePath $Workspace
+    Assert-Equal $agChildTurn2Env '{}' "子会话同轮后续调用（invocationNum > 1）必须静默：$agChildTurn2Env"
 
     $agDenyRaw = New-AntigravityPayload -Event PRE_TOOL_USE -SessionId "ag-deny-ctx" -ToolName "edit_file" -ToolInput @{ Path = (Join-Path $Workspace ".claude\scratch\deny.txt"); Target = "a"; Replacement = "b" }
     $agDenyRes = Invoke-Dispatch -RawPayload $agDenyRaw -EventHint PRE_TOOL_USE -AcceptedAt $now.AddMinutes(5).AddSeconds(6)

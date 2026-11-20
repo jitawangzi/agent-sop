@@ -1,4 +1,4 @@
-#requires -Version 7.0
+﻿#requires -Version 7.0
 $ErrorActionPreference='Stop'
 $scripts=Split-Path -Parent $PSScriptRoot
 . (Join-Path $scripts 'path-identity.ps1')
@@ -18,7 +18,9 @@ try {
     $start="pwsh -NoProfile -File ./ai-sop.ps1 Task -Operation Start -Feature Example -TaskId fix -Objective '修改入口' -Agent ANTIGRAVITY"
     $parsed=Parse $start
     Assert ($parsed.operation -eq 'Start' -and $parsed.reasonCode -eq 'TASK_BOOTSTRAP_COMMAND') '默认 T2 建立入口被拒绝'
-    Assert ((Parse ($start+' -NativeSessionId native-current')).operation -eq 'Start') '匹配当前 Hook 的会话参数应通过'
+    Assert ($null -ne $parsed.updatedInput -and $parsed.updatedInput.CommandLine -ceq ($start + " -NativeSessionId 'native-current'")) 'Antigravity 引导命令省略 NativeSessionId 时应自动补全'
+    $withNative=Parse ($start+' -NativeSessionId native-current')
+    Assert ($withNative.operation -eq 'Start' -and $null -eq $withNative.updatedInput) '匹配当前 Hook 的会话参数应通过且不改写 CommandLine'
     Assert ($null -eq (Parse ($start+' -NativeSessionId another-session'))) '不得用引导入口冒用其他会话'
     Assert ((Parse ($start+" -Tier T1 -UserRequest '按 T1 执行' -CaptureBaseline")).operation -eq 'Start') '显式档位命令无法引导'
     Assert ((Parse 'pwsh -NoProfile -File ./ai-sop.ps1 Task').operation -eq 'Discover') '默认只读发现入口被拒绝'

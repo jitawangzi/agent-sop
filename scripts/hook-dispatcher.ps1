@@ -1027,6 +1027,16 @@ function ConvertFrom-AiSopDispatcherDedupResult {
             -NativeSessionId $HookEvent.nativeSessionId -ToolArguments $tool.Arguments
         if ($null -eq $diagnostic -or $diagnostic.reasonCode -cne 'SOP_DIAGNOSTIC_COMMAND') { throw 'READ_ONLY_COMMAND_CHANGED' }
     }
+    $bootstrap=$null
+    if ($reason -ceq 'TASK_BOOTSTRAP_COMMAND' -and $agent -ceq 'ANTIGRAVITY') {
+        $tool=Get-AiSopDispatcherToolContext -RawPayload $RawPayload -HookEvent $HookEvent
+        if (Test-AiSopDispatcherShellTool -ToolName $tool.Name) {
+            $bootstrap=Get-AiSopTaskEntryCommand -CommandText (Get-AiSopDispatcherShellCommandText $tool.Arguments) `
+                -WorkspacePath $HookEvent.workspacePath -Cwd $HookEvent.cwd -Agent $agent `
+                -NativeSessionId $HookEvent.nativeSessionId -ToolArguments $tool.Arguments
+            if ($null -eq $bootstrap -or $bootstrap.reasonCode -cne 'TASK_BOOTSTRAP_COMMAND') { throw 'TASK_BOOTSTRAP_COMMAND_CHANGED' }
+        }
+    }
     $envelope = ConvertTo-AiSopDispatcherEnvelope `
         -Agent $agent `
         -EventHint ([string]$HookEvent.event) `
@@ -1035,6 +1045,11 @@ function ConvertFrom-AiSopDispatcherDedupResult {
     if ($reason -ceq 'SOP_DIAGNOSTIC_COMMAND' -and $agent -ceq 'ANTIGRAVITY') {
         $native=ConvertFrom-AiSopJson $envelope
         $native.overwrite=$diagnostic.updatedInput
+        $envelope=$native | ConvertTo-Json -Compress -Depth 30
+    }
+    if ($reason -ceq 'TASK_BOOTSTRAP_COMMAND' -and $agent -ceq 'ANTIGRAVITY' -and $null -ne $bootstrap -and $null -ne $bootstrap.updatedInput) {
+        $native=ConvertFrom-AiSopJson $envelope
+        $native.overwrite=$bootstrap.updatedInput
         $envelope=$native | ConvertTo-Json -Compress -Depth 30
     }
     if ($reason -ceq 'READ_ONLY_SHELL_COMMAND') {
@@ -1458,7 +1473,18 @@ function Add-AiSopHarnessSessionContext {
             switch ($Result.Agent) {
                 { $_ -in @('CLAUDE_CODE','CODEX') } { $envelope.hookSpecificOutput=@{hookEventName='SessionStart';additionalContext=$message} }
                 'CURSOR' { $envelope.additional_context=$message }
-                'ANTIGRAVITY' { $envelope.injectSteps=@(@{systemMessage=@{systemMessage=$message}}) }
+                'ANTIGRAVITY' {
+                    $invocationNum = if ($payload.Contains('invocationNum') -and ($payload.invocationNum -is [int] -or $payload.invocationNum -is [long])) {
+                        [int]$payload.invocationNum
+                    } else {
+                        1
+                    }
+                    # 未绑定主会话保持静默，由 PreToolUse 拦截（及 Task 入口自动补全 -NativeSessionId）兜底；
+                    # 已绑定 ACTIVE 任务或子会话仅在首调（invocationNum <= 1）注入一次，避免同轮重复刷屏。
+                    if ($invocationNum -le 1 -and ($isChildSession -or $null -ne $activeTask)) {
+                        $envelope.injectSteps=@(@{systemMessage=@{systemMessage=$message}})
+                    }
+                }
             }
         }
     } elseif ($Result.Decision -eq 'DENY' -and $EventHint -eq 'PRE_TOOL_USE') {

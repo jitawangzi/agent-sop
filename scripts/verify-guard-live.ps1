@@ -1,4 +1,4 @@
-#requires -Version 7.0
+﻿#requires -Version 7.0
 
 [CmdletBinding()]
 param([ValidateSet('ANTIGRAVITY','CURSOR','PI','CLAUDE_CODE','CODEX')][string]$Agent='CURSOR')
@@ -149,10 +149,15 @@ try {
     Assert-LiveProbe ($start.Decision -eq 'ALLOW') "Cursor 会话注册失败：$($start.ReasonCode)"
     $contextHint=if ($Agent -eq 'ANTIGRAVITY') { 'PRE_INVOCATION' } else { 'SESSION_START' }
     $context=Add-AiSopHarnessSessionContext $start (New-LiveCursorPayload -Kind START) $contextHint
-    if ($Agent -ne 'PI') { Assert-LiveProbe ($context.Contains('-NativeSessionId') -and $context.Contains($SessionId)) '原生会话上下文未传入客户端。' }
+    if ($Agent -notin @('PI','ANTIGRAVITY')) { Assert-LiveProbe ($context.Contains('-NativeSessionId') -and $context.Contains($SessionId)) '原生会话上下文未传入客户端。' }
+    if ($Agent -eq 'ANTIGRAVITY') { Assert-LiveProbe ($context -ceq '{}') 'Antigravity 未绑定主会话 PRE_INVOCATION 应保持静默。' }
     foreach ($relativePath in @('src/probe.txt','docs/probe.md')) {
         $withoutTask = Invoke-LiveEdit $relativePath
         Assert-LiveProbe ($withoutTask.Decision -eq 'DENY') "缺少任务时仍允许编辑：$relativePath"
+        if ($Agent -eq 'ANTIGRAVITY') {
+            $denyContext = Add-AiSopHarnessSessionContext $withoutTask (New-LiveCursorPayload -ToolName Edit -ToolInput @{file_path=(Join-Path $WorkspaceRoot $relativePath);old_string='before';new_string='after'}) 'PRE_TOOL_USE'
+            Assert-LiveProbe ($denyContext.Contains('-NativeSessionId') -and $denyContext.Contains($SessionId)) 'Antigravity 写前拒绝未按需提供原生会话身份。'
+        }
     }
     $read = Invoke-LiveDispatch (New-LiveCursorPayload -ToolName Read -ToolInput @{file_path=(Join-Path $WorkspaceRoot 'docs/probe.md')})
     Assert-LiveProbe ($read.Decision -eq 'ALLOW') '只读查询不应要求修改任务。'

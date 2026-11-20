@@ -239,7 +239,7 @@ try {
   const agDualSession = 'ag-dual-workspace-native';
   const agDualPre = await hook('.agents', 'PRE_INVOCATION', { conversationId: agDualSession, workspacePaths: [siblingWorkspace, workspace], invocationNum: 1 });
   assert.equal(agDualPre.code, 0);
-  assert.match(agDualPre.value.injectSteps?.[0]?.systemMessage?.systemMessage ?? '', /纯讨论\/只读无需启动 SOP/);
+  assert.deepEqual(agDualPre.value, {});
   const agDualRead = await hook('.agents', 'PRE_TOOL_USE', { conversationId: agDualSession, workspacePaths: [siblingWorkspace, workspace], stepIdx: ++counter, toolCall: { name: 'read_file', args: { Path: file } } });
   assert.equal(agDualRead.value.decision, 'allow', JSON.stringify(agDualRead));
   const agDualShell = await hook('.agents', 'PRE_TOOL_USE', { conversationId: agDualSession, workspacePaths: [siblingWorkspace, workspace], stepIdx: ++counter, toolCall: { name: 'run_command', args: { CommandLine: listCommand, Cwd: workspace, WaitMsBeforeAsync: 1000 } } });

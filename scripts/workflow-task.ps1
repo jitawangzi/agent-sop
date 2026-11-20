@@ -1,4 +1,4 @@
-#requires -Version 7.0
+﻿#requires -Version 7.0
 [CmdletBinding()]
 param(
     [Parameter(Mandatory)][ValidateSet('Discover','Status','FollowUps','Recover','Start','Resume','Checkpoint','Suspend','Cancel','Run','RetryEvidence','ReviewImpact','Verify','Complete','ChangeTier','RecordSync','SetApplicability','AddFollowUp','CloseFollowUp','ReopenFollowUp','Changes','SetBaseline','SetCaseScope','InspectRecovery','Join','Delegate','RevokeDelegation')][string]$Operation,
@@ -116,6 +116,7 @@ if ($Operation -eq 'Start') {
     try {
         $registeredTask=Read-AiSopTask $SpecDirectory $TaskId
         Write-Output "TASK_STARTED:$Feature/$TaskId tier=$($registeredTask.tier)"
+        if ($NativeSessionId) { Write-Output "TASK_SESSION: -Agent $Agent -NativeSessionId '$NativeSessionId'" }
         Write-AiSopTaskTierSummary $registeredTask
         Write-AiSopTaskStartSummary $registeredTask
     }
@@ -141,6 +142,7 @@ if ($Operation -eq 'Resume' -and -not $TaskId -and $owner -and $owner.status -eq
     try {
         $registeredTask=Read-AiSopTask $SpecDirectory $TaskId
         Write-AiSopTaskOperationResult Resume $Feature $TaskId $registeredTask.tier
+        if ($NativeSessionId) { Write-Output "TASK_SESSION: -Agent $Agent -NativeSessionId '$NativeSessionId'" }
         Write-AiSopTaskTierSummary $registeredTask
     } catch { Write-Warning "TASK_RESUME_FEEDBACK_UNAVAILABLE: Resume succeeded; use Status to inspect the registered tier. $($_.Exception.Message)" -WarningAction Continue }
     Write-AiSopFollowUpReminder $WorkspacePath $Feature
@@ -188,6 +190,7 @@ if ($Operation -eq 'Resume') {
     try {
         $registeredTask=Read-AiSopTask $SpecDirectory $TaskId
         Write-AiSopTaskOperationResult Resume $Feature $TaskId $registeredTask.tier
+        if ($NativeSessionId) { Write-Output "TASK_SESSION: -Agent $Agent -NativeSessionId '$NativeSessionId'" }
         Write-AiSopTaskTierSummary $registeredTask
     } catch { Write-Warning "TASK_RESUME_FEEDBACK_UNAVAILABLE: Resume succeeded; use Status to inspect the registered tier. $($_.Exception.Message)" -WarningAction Continue }
     Write-AiSopFollowUpReminder $WorkspacePath $Feature

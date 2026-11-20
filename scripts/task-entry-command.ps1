@@ -1,4 +1,31 @@
-#requires -Version 7.0
+﻿#requires -Version 7.0
+
+function Get-AiSopAntigravityRunCommandOverwrite {
+    param(
+        [string]$CommandText,
+        [string]$WorkspacePath,
+        [System.Collections.IDictionary]$ToolArguments,
+        [string]$UpdatedCommandLine = ""
+    )
+
+    if (-not $ToolArguments -or $ToolArguments.CommandLine -cne $CommandText) { return $null }
+    foreach ($key in $ToolArguments.Keys) {
+        if ($key -cnotin @('CommandLine','Cwd','WaitMsBeforeAsync','toolSummary','toolAction','IsDaemon','RunPersistent')) { return $null }
+    }
+    foreach ($key in @('IsDaemon','RunPersistent')) {
+        if ($ToolArguments.Contains($key) -and ($ToolArguments[$key] -isnot [bool] -or $ToolArguments[$key])) { return $null }
+    }
+    if ($ToolArguments.Contains('WaitMsBeforeAsync') -and
+        (($ToolArguments.WaitMsBeforeAsync -isnot [int] -and $ToolArguments.WaitMsBeforeAsync -isnot [long]) -or $ToolArguments.WaitMsBeforeAsync -lt 0)) { return $null }
+    foreach ($key in @('toolSummary','toolAction')) {
+        if ($ToolArguments.Contains($key) -and $ToolArguments[$key] -isnot [string]) { return $null }
+    }
+    $updated=[ordered]@{}
+    foreach ($key in $ToolArguments.Keys) { $updated[$key]=$ToolArguments[$key] }
+    if ($UpdatedCommandLine) { $updated.CommandLine=$UpdatedCommandLine }
+    $updated.Cwd=$WorkspacePath
+    return $updated
+}
 
 # 只识别独立的任务管理和只读诊断命令，避免引导入口依赖活动任务。
 function Get-AiSopTaskEntryCommand {
@@ -110,21 +137,8 @@ function Get-AiSopTaskEntryCommand {
         }
         $result=@{operation=$action;reasonCode='SOP_DIAGNOSTIC_COMMAND'}
         if ($Agent -ceq 'ANTIGRAVITY') {
-            if (-not $ToolArguments -or $ToolArguments.CommandLine -cne $CommandText) { return $null }
-            foreach ($key in $ToolArguments.Keys) {
-                if ($key -cnotin @('CommandLine','Cwd','WaitMsBeforeAsync','toolSummary','toolAction','IsDaemon','RunPersistent')) { return $null }
-            }
-            foreach ($key in @('IsDaemon','RunPersistent')) {
-                if ($ToolArguments.Contains($key) -and ($ToolArguments[$key] -isnot [bool] -or $ToolArguments[$key])) { return $null }
-            }
-            if ($ToolArguments.Contains('WaitMsBeforeAsync') -and
-                (($ToolArguments.WaitMsBeforeAsync -isnot [int] -and $ToolArguments.WaitMsBeforeAsync -isnot [long]) -or $ToolArguments.WaitMsBeforeAsync -lt 0)) { return $null }
-            foreach ($key in @('toolSummary','toolAction')) {
-                if ($ToolArguments.Contains($key) -and $ToolArguments[$key] -isnot [string]) { return $null }
-            }
-            $updated=[ordered]@{}
-            foreach ($key in $ToolArguments.Keys) { $updated[$key]=$ToolArguments[$key] }
-            $updated.Cwd=$workspace
+            $updated=Get-AiSopAntigravityRunCommandOverwrite -CommandText $CommandText -WorkspacePath $workspace -ToolArguments $ToolArguments
+            if ($null -eq $updated) { return $null }
             $result.updatedInput=$updated
         }
         return $result
@@ -150,5 +164,12 @@ function Get-AiSopTaskEntryCommand {
         $expected=Resolve-PhysicalPathIdentity (Join-Path $workspace ".ai-workspace/specs/features/$($parameters.Feature)")
         if (-not $expected.StartsWith($prefix,$comparison) -or -not (Resolve-PhysicalPathIdentity $candidate).Equals($expected,$comparison)) { return $null }
     }
-    return @{ operation=$operation; reasonCode='TASK_BOOTSTRAP_COMMAND' }
+    $result=@{ operation=$operation; reasonCode='TASK_BOOTSTRAP_COMMAND' }
+    if ($Agent -ceq 'ANTIGRAVITY' -and $operation -in $writeOperations -and
+        -not $parameters.ContainsKey('NativeSessionId') -and $NativeSessionId -and
+        $NativeSessionId -cmatch '^[A-Za-z0-9._:-]+$') {
+        $updated=Get-AiSopAntigravityRunCommandOverwrite -CommandText $CommandText -WorkspacePath $workspace -ToolArguments $ToolArguments -UpdatedCommandLine "$CommandText -NativeSessionId '$NativeSessionId'"
+        if ($null -ne $updated) { $result.updatedInput=$updated }
+    }
+    return $result
 }

@@ -941,6 +941,15 @@ if ($Operation -in @('ForceRelease','Recover')) {
     if (-not $TaskId -and $existingOwner.taskId) { $TaskId = $existingOwner.taskId }
     if ($Operation -eq 'Recover' -and -not $TaskId) { throw 'TASK_REQUIRED' }
     $targets = @(); $sessionKeys = @(); $releasedOwner = $null
+    $recoveryTaskPath = $null; $recoveryTask = $null; $isTerminalTask = $false
+    if ($TaskId) {
+        $recoveryTaskPath = Get-AiSopTaskPath $ResolvedSpecDirectory $TaskId
+        $recoveryTask = Read-AiSopTask $ResolvedSpecDirectory $TaskId
+        $isTerminalTask = $recoveryTask.status -in @('DONE','CANCELLED')
+        if ($recoveryTask.ownerId -cne $OwnerId -or (-not $isTerminalTask -and $recoveryTask.status -notin @('ACTIVE','PAUSED'))) {
+            throw 'TASK_NOT_RECOVERABLE'
+        }
+    }
     $recoveryOwner = $existingOwner
     if ($existingOwner -and $existingOwner.status -ne 'ACTIVE' -and ($existingOwner.taskId -cne $TaskId -or $existingOwner.ownerId -cne $OwnerId)) {
         # Preserve unrelated historical ownership, but include a no-op CAS so a
@@ -952,17 +961,19 @@ if ($Operation -in @('ForceRelease','Recover')) {
         if ($existingOwner.feature -cne $Feature -or $existingOwner.workflow -cne $Workflow -or
             $existingOwner.ownerId -cne $OwnerId -or $existingOwner.specDirectory -cne $ResolvedSpecDirectory -or
             ($TaskId -and $existingOwner.taskId -cne $TaskId)) { throw 'WORKFLOW_OWNER_IDENTITY_MISMATCH' }
-        $releasedOwner = Copy-WorkflowRecord $existingOwner
-        $releasedOwner.status = 'RELEASED'
-        if ($releasedOwner.executionDelegation) { $releasedOwner.executionDelegation.status='REVOKED'; $releasedOwner.executionDelegation.revokedAt=$AcceptedAt.ToString('o') }
-        $releasedOwner.completedAt = $AcceptedAt.ToString('o')
-        if ($releasedOwner.schemaVersion -eq '1.1') { $releasedOwner.lastTransactionId = $transactionId }
-        $targets += New-OwnerTarget -Path $OwnerPath -Kind OWNER -SchemaId OWNER -After $releasedOwner -BeforeExists $true -Before $existingOwner
+        if ($isTerminalTask -and $recoveryOwner.status -ne 'ACTIVE') {
+            # 终态任务若本机 Owner 已非 ACTIVE（如 COMPLETE/RELEASED），保留原状仅作 CAS 保护，不覆盖历史终态。
+            $targets += New-OwnerTarget -Path $OwnerPath -Kind OWNER -SchemaId OWNER -After $existingOwner -BeforeExists $true -Before $existingOwner
+        } else {
+            $releasedOwner = Copy-WorkflowRecord $existingOwner
+            $releasedOwner.status = 'RELEASED'
+            if ($releasedOwner.executionDelegation) { $releasedOwner.executionDelegation.status='REVOKED'; $releasedOwner.executionDelegation.revokedAt=$AcceptedAt.ToString('o') }
+            $releasedOwner.completedAt = $AcceptedAt.ToString('o')
+            if ($releasedOwner.schemaVersion -eq '1.1') { $releasedOwner.lastTransactionId = $transactionId }
+            $targets += New-OwnerTarget -Path $OwnerPath -Kind OWNER -SchemaId OWNER -After $releasedOwner -BeforeExists $true -Before $existingOwner
+        }
     }
-    if ($TaskId) {
-        $recoveryTaskPath = Get-AiSopTaskPath $ResolvedSpecDirectory $TaskId
-        $recoveryTask = Read-AiSopTask $ResolvedSpecDirectory $TaskId
-        if ($recoveryTask.ownerId -cne $OwnerId -or $recoveryTask.status -notin @('ACTIVE','PAUSED')) { throw 'TASK_NOT_RECOVERABLE' }
+    if ($TaskId -and -not $isTerminalTask) {
         if ($recoveryTask.status -eq 'ACTIVE' -and (Get-AiSopTaskExecutionLocality $recoveryTask $ownerWs) -eq 'EXTERNAL' -and -not $forced) {
             throw 'EXTERNAL_TASK_CONFIRM_STOPPED: recover at the original workspace; if unavailable, confirm its execution stopped before ForceRecovery. A synced ACTIVE record is not local permission.'
         }
@@ -1009,11 +1020,14 @@ if ($Operation -in @('ForceRelease','Recover')) {
         $bound = Read-AiSopWorkflowSessionRecord -SessionPath $file.FullName
         if ($bound.workspacePath -cne $ownerWs -or $bound.boundFeature -cne $Feature -or $bound.boundOwnerId -cne $OwnerId) { continue }
         $effective = Get-AiSopWorkflowSessionEffectiveStatus -Record $bound -AcceptedAt $AcceptedAt
-        if ($effective -in @('ACTIVE','IDLE') -and -not $forced) { throw 'SESSION_MAY_BE_ACTIVE: confirm handoff or use ForceRecovery after stopping the old agent' }
+        if (-not $isTerminalTask -and $effective -in @('ACTIVE','IDLE') -and -not $forced) { throw 'SESSION_MAY_BE_ACTIVE: confirm handoff or use ForceRecovery after stopping the old agent' }
         $after = Copy-WorkflowRecord $bound
         Clear-SessionBoundTuple -Session $after -TransactionId $transactionId
         $targets += New-OwnerTarget -Path $file.FullName -Kind SESSION -SchemaId SESSION -After $after -BeforeExists $true -Before $bound
         $sessionKeys += $bound.sessionKey
+    }
+    if ($isTerminalTask -and $null -eq $releasedOwner -and $sessionKeys.Count -eq 0) {
+        throw 'TASK_NOT_RECOVERABLE'
     }
     $WorkflowDeadlineUtc = [DateTimeOffset]::UtcNow.AddMilliseconds($ownerDeadlineMs)
     if ($null -ne $DeadlineUtc -and $DeadlineUtc -lt $WorkflowDeadlineUtc) { $WorkflowDeadlineUtc = [DateTimeOffset]$DeadlineUtc }
@@ -1043,7 +1057,7 @@ if ($Operation -in @('ForceRelease','Recover')) {
                     throw 'WORKFLOW_TRANSACTION_PRECONDITION_FAILED'
                 }
                 $lockedEffective = Get-AiSopWorkflowSessionEffectiveStatus -Record $lockedBound -AcceptedAt $lockedNow
-                if ($lockedEffective -in @('ACTIVE','IDLE') -and -not $forced) {
+                if (-not $isTerminalTask -and $lockedEffective -in @('ACTIVE','IDLE') -and -not $forced) {
                     throw 'SESSION_MAY_BE_ACTIVE: confirm handoff or use ForceRecovery after stopping the old agent'
                 }
                 $lockedSessionAfter = Copy-WorkflowRecord $lockedBound
@@ -1062,8 +1076,12 @@ if ($Operation -in @('ForceRelease','Recover')) {
             (Get-FileHash -LiteralPath $original).Hash.ToLowerInvariant() -ceq $entry.sha256 -and
             (Get-FileHash -LiteralPath $backup).Hash.ToLowerInvariant() -ceq $entry.sha256) { Remove-Item -LiteralPath $original }
     }
-    if ($releasedOwner) { Write-OwnerMirror $releasedOwner }
-    Write-Output 'TASK_RECOVERED: paused; Resume establishes local execution ownership'
+    if ($isTerminalTask) {
+        Write-Output 'TASK_RECOVERED: terminal task unchanged; local ownership and session bindings released'
+    } else {
+        if ($releasedOwner) { Write-OwnerMirror $releasedOwner }
+        Write-Output 'TASK_RECOVERED: paused; Resume establishes local execution ownership'
+    }
     exit 0
 }
 

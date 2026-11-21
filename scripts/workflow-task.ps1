@@ -72,13 +72,45 @@ if ($Operation -in @('Discover','Status')) {
     if ($SpecDirectory -and (Resolve-PhysicalPathIdentity $SpecDirectory) -cne (Resolve-AiSopWorkspaceChild $WorkspacePath ".ai-workspace/specs/features/$Feature")) { throw 'TASK_WORKSPACE_MISMATCH' }
     $items = [Collections.Generic.List[object]]::new()
     $validationContext = New-AiSopValidationContext
+    $staleBoundTasks = [System.Collections.Generic.HashSet[string]]::new([System.StringComparer]::Ordinal)
+    $discoverComparison = if ([OperatingSystem]::IsWindows()) { [StringComparison]::OrdinalIgnoreCase } else { [StringComparison]::Ordinal }
+    if ($Operation -eq 'Discover' -and -not $IncludeHistory -and -not $TaskId) {
+        $sessionRoot = Get-AiSopWorkflowSessionRegistryRoot -WorkspacePath $WorkspacePath
+        foreach ($sFile in @(Get-ChildItem -LiteralPath $sessionRoot -Filter '*.json' -File -ErrorAction SilentlyContinue)) {
+            try {
+                $sRec = ConvertFrom-AiSopWorkflowJson (Read-AiSopWorkflowText $sFile.FullName) -AsHashtable
+                if (
+                    $sRec.boundFeature -and $sRec.boundOwnerId -and
+                    ([string]$sRec.workspacePath).Equals($WorkspacePath, $discoverComparison)
+                ) {
+                    [void]$staleBoundTasks.Add("$($sRec.boundFeature)`0$($sRec.boundOwnerId)")
+                }
+            } catch {}
+        }
+    }
     foreach ($dir in $dirs) {
         $canonicalDir = Resolve-AiSopWorkspaceChild $WorkspacePath ".ai-workspace/specs/features/$($dir.Name)"
+        $featureOwner = $null
+        if ($Operation -eq 'Discover' -and -not $IncludeHistory -and -not $TaskId) {
+            $fOwnerPath = Join-Path (Get-AiSopWorkflowOwnerRegistryRoot -WorkspacePath $WorkspacePath) ($dir.Name.ToLowerInvariant() + '.json')
+            if ([IO.File]::Exists($fOwnerPath)) {
+                try {
+                    $candidateOwner = ConvertFrom-AiSopWorkflowJson (Read-AiSopWorkflowText $fOwnerPath) -AsHashtable
+                    if (([string]$candidateOwner.workspacePath).Equals($WorkspacePath, $discoverComparison)) {
+                        $featureOwner = $candidateOwner
+                    }
+                } catch {}
+            }
+        }
         $records = @(Get-ChildItem -LiteralPath (Join-Path $canonicalDir 'tasks') -Directory -ErrorAction SilentlyContinue | Where-Object { -not $TaskId -or $_.Name -ceq $TaskId })
         foreach ($entry in $records) {
             try {
                 $task = Read-AiSopTask $canonicalDir $entry.Name
-                if (-not $IncludeHistory -and -not $TaskId -and $task.status -in @('DONE','CANCELLED') -and -not @($task.followUps | Where-Object { $_.status -eq 'PENDING' }).Count) { continue }
+                $hasStaleLocalAuthority = (
+                    ($null -ne $featureOwner -and $featureOwner.status -eq 'ACTIVE' -and $featureOwner.taskId -ceq $entry.Name) -or
+                    $staleBoundTasks.Contains("$($task.feature)`0$($task.ownerId)")
+                )
+                if (-not $IncludeHistory -and -not $TaskId -and $task.status -in @('DONE','CANCELLED') -and -not @($task.followUps | Where-Object { $_.status -eq 'PENDING' }).Count -and -not $hasStaleLocalAuthority) { continue }
                 $items.Add((Get-AiSopTaskSummary $task $WorkspacePath $canonicalDir -CheckInputs:($Operation -eq 'Status') -ValidationContext $validationContext -RecheckHistory:$RecheckHistory -LogTailLines $LogTailLines))
             } catch { $items.Add(@{ feature=$dir.Name; taskId=$entry.Name; status='CORRUPT'; diagnostic=$_.Exception.Message; suggestedAction='Inspect the task record; do not recreate it or infer ownership from damaged state.' }) }
         }

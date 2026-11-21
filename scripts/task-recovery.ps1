@@ -24,7 +24,14 @@ function Get-AiSopRecoveryGuidance {
     param($Task, $Records, [string]$OwnerStatus, [string]$SessionStatus)
     $steps=[Collections.Generic.List[object]]::new()
     if (-not $Task) { $steps.Add(@{code='INSPECT_AUTHORITY';message='Restore a trusted task record or inspect transaction recovery; do not infer ownership from damaged authority.'}) }
-    elseif ($Task.status -in @('DONE','CANCELLED')) { $steps.Add(@{code='START_NEW_TASK';message='Start a new task for new work; historical completion is unchanged.'}) }
+    elseif ($Task.status -in @('DONE','CANCELLED')) {
+        $hasStaleSession = @($Records | Where-Object { $_.kind -eq 'SESSION' -and $_.status -ne 'UNAVAILABLE' }).Count -gt 0
+        if ($OwnerStatus -eq 'ACTIVE' -or $hasStaleSession) {
+            $steps.Add(@{code='RECOVER_LOCAL_AUTHORITY';message='Task is already terminal, but stale local ownership or session bindings remain in this profile/workspace; run Recover to release local authority without altering the completed task, then Start a new task.'})
+        } else {
+            $steps.Add(@{code='START_NEW_TASK';message='Start a new task for new work; historical completion is unchanged.'})
+        }
+    }
     else {
         $runs=@($Records | Where-Object kind -eq 'PENDING')
         if (@($runs | Where-Object activity -eq 'RUNNING').Count) { $steps.Add(@{code='WAIT_FOR_RUN';message='Wait for the running command and inspect its log; do not RetryEvidence or Recover while execution is active.'}) }
@@ -67,7 +74,9 @@ function Get-AiSopTaskRecoveryDiagnostics {
             -not (Resolve-PhysicalPathIdentity $owner.specDirectory).Equals($spec,$comparison)) {
             $record.status='IDENTITY_MISMATCH'; $record.diagnostic='OWNER_WORKSPACE_MISMATCH'
         } elseif ($locality -eq 'EXTERNAL') {
-            if ($owner.taskId -ceq $TaskId) { $record.status='IDENTITY_MISMATCH'; $record.diagnostic='TASK_EXECUTION_LOCATION_MISMATCH' }
+            if ($owner.taskId -ceq $TaskId -and $task.status -in @('DONE','CANCELLED') -and $owner.status -eq 'ACTIVE' -and $owner.ownerId -ceq $task.ownerId) {
+                $ownerMatches=$true
+            } elseif ($owner.taskId -ceq $TaskId) { $record.status='IDENTITY_MISMATCH'; $record.diagnostic='TASK_EXECUTION_LOCATION_MISMATCH' }
             else { $record.status='EXTERNAL_OBSERVATION'; $record.note='Local ownership does not describe a synchronized task running elsewhere' }
         } elseif ($owner.taskId -cne $TaskId) {
             if ($owner.status -in @('COMPLETE','RELEASED')) {
@@ -95,6 +104,23 @@ function Get-AiSopTaskRecoveryDiagnostics {
             $items+=$record
         }
         catch { $items+=@{kind='SESSION';path=$sessionPath;status='UNAVAILABLE';diagnostic=$_.Exception.Message} }
+    } elseif ($task -and $task.status -in @('DONE','CANCELLED')) {
+        foreach ($file in @(Get-ChildItem -LiteralPath (Get-AiSopWorkflowSessionRegistryRoot -WorkspacePath $WorkspacePath) -Filter '*.json' -File -ErrorAction SilentlyContinue)) {
+            try {
+                $candidate = ConvertFrom-AiSopWorkflowJson (Read-AiSopWorkflowText $file.FullName) -AsHashtable
+                if (
+                    (Resolve-PhysicalPathIdentity $candidate.workspacePath).Equals($workspace, $comparison) -and
+                    $candidate.boundFeature -ceq $task.feature -and
+                    $candidate.boundOwnerId -ceq $task.ownerId
+                ) {
+                    $items += @{
+                        kind='SESSION'; path=$file.FullName; status='VALID'
+                        effectiveStatus=(Get-AiSopWorkflowSessionEffectiveStatus $candidate ([DateTimeOffset]::UtcNow))
+                        danglingTerminalBinding=$true
+                    }
+                }
+            } catch {}
+        }
     }
     if ($task -and $locality -ne 'EXTERNAL') {
         if ($task.tier -eq 'T3' -and $task.status -notin @('DONE','CANCELLED')) {

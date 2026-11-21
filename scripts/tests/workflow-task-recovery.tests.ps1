@@ -1,4 +1,4 @@
-#requires -Version 7.0
+﻿#requires -Version 7.0
 $ErrorActionPreference='Stop'
 $scripts=Split-Path -Parent $PSScriptRoot
 $entry=Join-Path $scripts 'workflow-task.ps1'
@@ -368,6 +368,61 @@ exit 0
     Fails { Task Verify } 'Task Verify failed'
     Task Run @{Profile='check'; Reason='Restore normal regression after interruption'} | Out-Null
     Task Complete | Out-Null
+
+    # Cross-profile handoff: Profile A starts task, Profile B completes it in shared workspace,
+    # leaving stale local Owner (ACTIVE) and expired bound Session in Profile A.
+    # Profile A Discover/InspectRecovery must surface RECOVER_LOCAL_AUTHORITY and Recover must
+    # release local authority without altering the DONE task, unblocking a fresh Start in the same session.
+    $profileAId = 'profile-a-session'
+    $profileBRoot = Join-Path $root 'profile-b-registry'
+    & $entry -Operation Start -WorkspacePath $workspace -Feature Example -TaskId cross-profile -Tier T1 -UserRequest '本测试明确选择 T1' -Objective 'Cross-profile handoff test' -Agent ANTIGRAVITY -NativeSessionId $profileAId | Out-Null
+    $savedRegistryVars = @{}
+    foreach ($kind in @('OWNER','SESSION','COMMAND_GRANT','TRANSACTION')) {
+        $varName = "AI_SOP_${kind}_REGISTRY"
+        $savedRegistryVars[$varName] = [Environment]::GetEnvironmentVariable($varName)
+        [Environment]::SetEnvironmentVariable($varName, (Join-Path $profileBRoot $kind))
+    }
+    try {
+        $profileBId = 'profile-b-session'
+        & $entry -Operation Recover -WorkspacePath $workspace -Feature Example -TaskId cross-profile -Agent ANTIGRAVITY -NativeSessionId $profileBId -ForceRecovery -Notes 'Cross-profile takeover' | Out-Null
+        & $entry -Operation Resume -WorkspacePath $workspace -Feature Example -TaskId cross-profile -Agent ANTIGRAVITY -NativeSessionId $profileBId | Out-Null
+        & $entry -Operation Run -WorkspacePath $workspace -Feature Example -TaskId cross-profile -Agent ANTIGRAVITY -NativeSessionId $profileBId -Profile build | Out-Null
+        & $entry -Operation Complete -WorkspacePath $workspace -Feature Example -TaskId cross-profile -Agent ANTIGRAVITY -NativeSessionId $profileBId | Out-Null
+    } finally {
+        foreach ($varName in $savedRegistryVars.Keys) {
+            [Environment]::SetEnvironmentVariable($varName, $savedRegistryVars[$varName])
+        }
+    }
+    $doneTaskPath = Get-AiSopTaskPath $spec 'cross-profile'
+    $doneTaskRaw = [IO.File]::ReadAllText($doneTaskPath)
+    $doneTaskObj = ConvertFrom-AiSopWorkflowJson $doneTaskRaw -AsHashtable
+    Assert ($doneTaskObj.status -eq 'DONE') 'Profile B did not complete cross-profile task'
+    # Force Profile A session into EXPIRED while boundFeature is still set, matching the real cross-profile bug.
+    $profileASessionKey = Get-AiSopWorkflowSessionKey -Agent ANTIGRAVITY -NativeSessionId $profileAId -WorkspacePath $workspace
+    $profileASessionPath = Get-AiSopWorkflowSessionPath -SessionKey $profileASessionKey -WorkspacePath $workspace
+    $profileASessionObj = ConvertFrom-AiSopWorkflowJson ([IO.File]::ReadAllText($profileASessionPath)) -AsHashtable
+    $pastIso = ([DateTimeOffset]::UtcNow.AddHours(-2)).ToString('o')
+    $profileASessionObj.lastSeenAt = $pastIso
+    $profileASessionObj.expiresAt = $pastIso
+    [IO.File]::WriteAllText($profileASessionPath, (ConvertTo-AiSopWorkflowCanonicalJson $profileASessionObj))
+
+    $crossDiscover = @(& $entry -Operation Discover -WorkspacePath $workspace -Feature Example -OutputFormat JsonLines | ForEach-Object { $_ | ConvertFrom-Json } | Where-Object { $_.taskId -eq 'cross-profile' })
+    Assert ($crossDiscover.Count -eq 1 -and $crossDiscover[0].suggestedActionCode -eq 'RECOVER_LOCAL_AUTHORITY') "Discover missed stale local authority on terminal task: $($crossDiscover | ConvertTo-Json -Compress)"
+    $crossInspect = & $entry -Operation InspectRecovery -WorkspacePath $workspace -Feature Example -TaskId cross-profile | ConvertFrom-Json
+    Assert ($crossInspect.suggestedActionCode -eq 'RECOVER_LOCAL_AUTHORITY' -and $crossInspect.ownerStatus -eq 'ACTIVE') "InspectRecovery missed RECOVER_LOCAL_AUTHORITY: $($crossInspect | ConvertTo-Json -Compress)"
+
+    & $entry -Operation Recover -WorkspacePath $workspace -Feature Example -TaskId cross-profile -Agent ANTIGRAVITY -NativeSessionId $profileAId | Out-Null
+    Assert ($LASTEXITCODE -eq 0) "Recover failed on terminal task with stale local authority: $LASTEXITCODE"
+    Assert ($doneTaskRaw -ceq [IO.File]::ReadAllText($doneTaskPath)) 'Terminal task.json was mutated by local authority recovery'
+    $releasedLocalOwner = ConvertFrom-AiSopWorkflowJson ([IO.File]::ReadAllText($ownerPath)) -AsHashtable
+    Assert ($releasedLocalOwner.status -eq 'RELEASED') 'Stale local owner was not released'
+    $clearedSession = ConvertFrom-AiSopWorkflowJson ([IO.File]::ReadAllText($profileASessionPath)) -AsHashtable
+    Assert ([string]::IsNullOrEmpty([string]$clearedSession.boundFeature) -and [string]::IsNullOrEmpty([string]$clearedSession.boundOwnerId)) 'Stale session binding was not cleared'
+    Fails { & $entry -Operation Recover -WorkspacePath $workspace -Feature Example -TaskId cross-profile -Agent ANTIGRAVITY -NativeSessionId $profileAId } 'TASK_NOT_RECOVERABLE'
+    & $entry -Operation Start -WorkspacePath $workspace -Feature Example -TaskId cross-profile-next -Tier T1 -UserRequest '本测试明确选择 T1' -Objective 'Continue after cross-profile recovery' -Agent ANTIGRAVITY -NativeSessionId $profileAId | Out-Null
+    Assert ($LASTEXITCODE -eq 0) 'Start failed in recovered Profile A session'
+    & $entry -Operation Cancel -WorkspacePath $workspace -Feature Example -TaskId cross-profile-next -Agent ANTIGRAVITY -NativeSessionId $profileAId -Reason 'cleanup' | Out-Null
+
     $suitePassed=$true
     Write-Output 'PASS: recovery, status consistency, project profiles, timeout, streaming, abrupt termination'
 } catch {

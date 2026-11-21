@@ -1169,7 +1169,7 @@ function Get-AiSopTrustedSiblingWorkspaces {
         return @()
     }
     $workspace = Resolve-PhysicalPathIdentity -Path $WorkspaceRoot
-    $configPath = Join-Path $workspace ".ai-workspace/.runtime/trusted-siblings.json"
+    $configPath = Join-Path $workspace ".ai-workspace/trusted-siblings.local.json"
     if (-not [System.IO.File]::Exists($configPath)) {
         return @()
     }

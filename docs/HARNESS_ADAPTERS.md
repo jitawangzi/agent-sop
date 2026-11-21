@@ -62,7 +62,7 @@ Antigravity `read_file` 除当前工作区外，还可读取本机用户目录�
 
 当多工作区窗口同时挂有已安装 SOP Hook 的宿主与并列兄弟仓库（例如游戏服宿主 + `agent-sop` 引擎仓）时，默认策略仍按 fail-closed 仅放行当前 SOP 工作区内的路径，不信任载荷里的任意 `workspacePaths` 扩权。
 
-确需在同一窗口跨仓协同访问时，可由**人工**在本机宿主目录创建不入库的 `.ai-workspace/.runtime/trusted-siblings.json`（位于 `.ai-workspace/.runtime/` 下，升级/重装 `.ai-sop` 时不会被清空、不污染 `.ai-sop` 子模块，且已纳入 `GOVERNANCE_SWITCH_PROTECTED` 保护禁止 AI 修改，也不纳入验证输入哈希）：
+确需在同一窗口跨仓协同访问时，可由**人工**在本机宿主目录创建不入库的 `.ai-workspace/trusted-siblings.local.json`（持久本机配置，不随 `.ai-sop` 升级清空也不随 `.runtime/` 清理误删，可在 `.ai-workspace/.gitignore` 忽略 `*.local.json`；已纳入 `GOVERNANCE_SWITCH_PROTECTED` 保护禁止 AI 修改，也不纳入验证输入哈希）：
 
 ```json
 {

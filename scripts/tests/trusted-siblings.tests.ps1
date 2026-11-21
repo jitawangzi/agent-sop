@@ -63,7 +63,7 @@ foreach ($name in @(
 try {
     foreach ($dir in @(
         (Join-Path $Workspace ".ai-sop"),
-        (Join-Path $Workspace ".ai-workspace/.runtime"),
+        (Join-Path $Workspace ".ai-workspace"),
         (Join-Path $Workspace "src"),
         $ReadOnlySibling,
         $ReadWriteSibling,
@@ -96,7 +96,7 @@ try {
     $env:AI_SOP_SKIP_OWNER_GUARD = "0"
     $env:SERVER_NEW_SKIP_OWNER_GUARD = "0"
 
-    $configPath = Join-Path $Workspace ".ai-workspace/.runtime/trusted-siblings.json"
+    $configPath = Join-Path $Workspace ".ai-workspace/trusted-siblings.local.json"
     $now = [DateTimeOffset]::UtcNow
     $step = 0
 
@@ -316,7 +316,7 @@ try {
         -AcceptedAt $now.AddSeconds(15)
     Assert-Equal $cursorGrepRes.Decision "ALLOW" "Cursor Grep in trusted sibling must be allowed"
 
-    # 12) GOVERNANCE_SWITCH_PROTECTED: AI cannot edit .ai-workspace/.runtime/trusted-siblings.json!
+    # 12) GOVERNANCE_SWITCH_PROTECTED: AI cannot edit .ai-workspace/trusted-siblings.local.json!
     Assert-True (Test-AiSopGuardGovernanceSwitchPath -Path $configPath -WorkspaceRoot $Workspace) ".trusted-siblings.json must be protected as governance switch"
     $tamperEvent = ConvertTo-AiSopHookEvent `
         -RawPayload (New-AgToolRaw -ToolName "write_file" -ToolArgs @{ Path = $configPath; Content = "{}"; Overwrite = $true }) `

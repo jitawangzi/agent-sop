@@ -134,10 +134,10 @@ function Get-AiSopDispatcherDenyReason {
             return "$prefix 任务身份、路径或档位无效，已拒绝修改。运行 ./ai-sop.ps1 Task -Operation Discover，再用 Task -Operation InspectRecovery 核对本工作区及任务；不要手改 task.json 或停用防护来绕过。"
         }
         'EDIT_PATH_OUTSIDE_WORKSPACE' {
-            return "$prefix 目标路径或工作目录位于当前 SOP 工作区之外，已被安全边界拦截。仅对当前工作区内的路径放行读写；若处于多工作区窗口需要访问其他仓库，请在对应独立工作区窗口中执行，或由人工在本机 .ai-workspace/.runtime/trusted-siblings.json 显式登记可信兄弟仓库。"
+            return "$prefix 目标路径或工作目录位于当前 SOP 工作区之外，已被安全边界拦截。仅对当前工作区内的路径放行读写；若处于多工作区窗口需要访问其他仓库，请在对应独立工作区窗口中执行，或由人工在本机 .ai-workspace/trusted-siblings.local.json 显式登记可信兄弟仓库。"
         }
         'TRUSTED_SIBLINGS_CONFIG_INVALID' {
-            return "$prefix 本机 .ai-workspace/.runtime/trusted-siblings.json 格式无效、包含文件系统根或与当前 SOP 工作区/注册表重叠，已按 fail-closed 拦截。请由人工修正或移除该配置后重试，禁止 AI 自动修改治理配置。"
+            return "$prefix 本机 .ai-workspace/trusted-siblings.local.json 格式无效、包含文件系统根或与当前 SOP 工作区/注册表重叠，已按 fail-closed 拦截。请由人工修正或移除该配置后重试，禁止 AI 自动修改治理配置。"
         }
         "WORKFLOW_TRANSACTION_INDETERMINATE" {
             $journalPath = ""

@@ -27,7 +27,7 @@ function Get-AiSopReadOnlyShellInput {
     }
     $lexicalCheck=[regex]::Replace($CommandText,'(?<=^|\s)2>&1(?=\s|\||;|$)','')
     if ([string]::IsNullOrWhiteSpace($CommandText) -or $CommandText.Length -gt 32768 -or
-        $lexicalCheck -match '[`$&<>%!]' -or $CommandText -match '\\["''\r\n]') { return $null }
+        $lexicalCheck -match '[`$&<>%]' -or $CommandText -match '\\["''\r\n]') { return $null }
     if (-not $ToolArguments -or @($ToolArguments.Keys | Where-Object { $_ -in @('command','cmd') }).Count -ne 1) { return $null }
     foreach ($key in $ToolArguments.Keys) {
         if ($key -notin @('command','cmd','description','workdir','cwd','shell','login','timeout','timeout_ms','yield_time_ms','max_output_tokens','tty')) { return $null }
@@ -93,7 +93,7 @@ function Get-AiSopReadOnlyShellInput {
                     $redir.ToStream -ne [Management.Automation.Language.RedirectionStream]::Output) { return $null }
                 $hasStderrToStdout=$true
             }
-            $parts=@($command.CommandElements); $values=[Collections.Generic.List[string]]::new()
+            $parts=@($command.CommandElements); $values=[Collections.Generic.List[object]]::new()
             foreach ($part in $parts) {
                 if ($part -is [Management.Automation.Language.StringConstantExpressionAst]) {
                     # 内嵌单引号在不同 Shell 中转义规则不同，本轮不猜测其语义。
@@ -105,13 +105,23 @@ function Get-AiSopReadOnlyShellInput {
                     $values.Add($part.Extent.Text)
                 }
                 elseif ($part -is [Management.Automation.Language.ConstantExpressionAst] -and $part.Value -is [int]) { $values.Add([string]$part.Value) }
+                elseif ($part -is [Management.Automation.Language.ArrayLiteralAst] -and $part.Elements.Count -gt 0) {
+                    $arrayItems=[Collections.Generic.List[string]]::new()
+                    foreach ($elem in $part.Elements) {
+                        if ($elem -isnot [Management.Automation.Language.StringConstantExpressionAst] -or
+                            $elem.Value.Contains("'") -or $elem.Value -match '[&>]') { return $null }
+                        $arrayItems.Add($elem.Value)
+                    }
+                    $values.Add([pscustomobject]@{ IsArray = $true; Items = $arrayItems.ToArray() })
+                }
                 else { return $null }
             }
-            if ($values.Count -eq 0) { return $null }
+            if ($values.Count -eq 0 -or $values[0] -isnot [string]) { return $null }
             $name=$values[0]; $argv=@($values | Select-Object -Skip 1); $isFilter=$pipeline.Count -gt 0
+            $hasArrayArg=@($argv | Where-Object { $_ -isnot [string] }).Count -gt 0
             $render=[Collections.Generic.List[string]]::new()
             if ($name -in @('git','git.exe')) {
-                if ($isFilter -or $argv.Count -eq 0) { return $null }
+                if ($isFilter -or $hasArrayArg -or $argv.Count -eq 0) { return $null }
                 $index=0; $render.Add('git --no-pager --no-optional-locks -c core.fsmonitor=false -c log.showSignature=false')
                 if ($argv[0] -ceq '-C') {
                     if ($argv.Count -lt 3 -or -not (Test-ReadPath $argv[1])) { return $null }
@@ -140,10 +150,10 @@ function Get-AiSopReadOnlyShellInput {
                 }
                 if ($verb -cin @('diff','log','show')) { $render.Add('--no-ext-diff --no-textconv') }
                 $flags=switch -CaseSensitive ($verb) {
-                    status { @('--short','-s','--branch','-b','--porcelain','--porcelain=v1','--porcelain=v2','--untracked-files=no','--untracked-files=normal','--untracked-files=all') }
-                    diff { @('--stat','--numstat','--shortstat','--name-only','--name-status','--check','--cached','--staged','--summary','--patch','-p','--no-color','--no-ext-diff','--no-textconv','--no-renames') }
-                    log { @('--oneline','--stat','--name-only','--name-status','--all','--decorate','--no-decorate','--no-color','-p','--patch','--no-ext-diff','--no-textconv') }
-                    show { @('--stat','--name-only','--name-status','--oneline','--summary','--no-color','--no-ext-diff','--no-textconv') }
+                    status { @('--short','-s','--branch','-b','--porcelain','--porcelain=v1','--porcelain=v2','--untracked-files=no','--untracked-files=normal','--untracked-files=all','-u','-uno','-unormal','-uall','--ignored') }
+                    diff { @('--stat','--numstat','--shortstat','--name-only','--name-status','--check','--cached','--staged','--summary','--patch','-p','--no-color','--color=never','--no-ext-diff','--no-textconv','--no-renames','--word-diff','--no-prefix') }
+                    log { @('--oneline','--stat','--name-only','--name-status','--all','--decorate','--no-decorate','--no-color','--color=never','-p','--patch','--no-ext-diff','--no-textconv') }
+                    show { @('--stat','--name-only','--name-status','--oneline','--summary','--no-color','--color=never','--no-ext-diff','--no-textconv') }
                     rev-parse { @('--show-toplevel','--show-prefix','--git-dir','--is-inside-work-tree','--verify','--short','--abbrev-ref') }
                     ls-files { @('--cached','--modified','--others','--exclude-standard','--stage','--deleted') }
                     branch { @('--show-current','--list','-a','--all','-r','--remotes','-v','-vv','--verbose','--no-color') }
@@ -154,6 +164,7 @@ function Get-AiSopReadOnlyShellInput {
                     if ($paths) { if (-not (Test-ReadPath $value)) { return $null } }
                     elseif ($value -ceq '--' -and $verb -cne 'branch') { $paths=$true }
                     elseif ($value -cin $flags) {}
+                    elseif ($verb -cin @('log','show') -and $value -cmatch '^-\d{1,6}$') {}
                     elseif ($verb -ceq 'branch') { return $null }
                     elseif ($verb -cin @('log','show') -and $value -cin @('-n','--max-count')) {
                         if ($index -ge $argv.Count -or $argv[$index] -notmatch '^\d{1,6}$') { return $null }
@@ -165,7 +176,7 @@ function Get-AiSopReadOnlyShellInput {
                     $render.Add((Quote-ReadValue $value))
                 }
             } elseif ($name -in @('svn','svn.exe')) {
-                if ($isFilter -or $argv.Count -eq 0) { return $null }
+                if ($isFilter -or $hasArrayArg -or $argv.Count -eq 0) { return $null }
                 $render.Add('svn --non-interactive')
                 $rawVerb=$argv[0]
                 $verb=switch -CaseSensitive ($rawVerb) {
@@ -267,27 +278,32 @@ function Get-AiSopReadOnlyShellInput {
                 }
                 if (($verb -in @('cat','propget','blame')) -and $positionals -eq 0) { return $null }
             } elseif ($name -in @('rg','rg.exe')) {
+                if ($hasArrayArg) { return $null }
                 # 禁用配置文件中的 --pre 等执行选项；只接受列出的只读选项。
-                $render.Add('rg --no-config'); $positionals=0; $files=$argv -ccontains '--files'; $endOptions=$false
+                $render.Add('rg --no-config'); $positionals=0; $files=$argv -ccontains '--files'; $typeList=$argv -ccontains '--type-list'; $endOptions=$false
                 for ($i=0;$i -lt $argv.Count;$i++) {
                     $value=$argv[$i]
                     if (-not $endOptions -and $value -ceq '--') { $endOptions=$true }
-                    elseif (-not $endOptions -and $value -cin @('-n','-i','-l','-S','-F','-U','-c','--files','--hidden','--no-ignore','--line-number','--files-with-matches','--count','--fixed-strings','--ignore-case')) {}
-                    elseif (-not $endOptions -and $value -cin @('-g','--glob','-t','--type','-A','-B','-C','--context','-m','--max-count','-e','--regexp')) {
+                    elseif (-not $endOptions -and $value -cin @('-n','-i','-l','-S','-F','-U','-c','-H','-h','-w','-s','-v','-o','-q','--files','--hidden','--no-ignore','--no-config','--line-number','--files-with-matches','--count','--fixed-strings','--ignore-case','--no-heading','--heading','--with-filename','--no-filename','--word-regexp','--case-sensitive','--smart-case','--invert-match','--only-matching','--quiet','--multiline','--multiline-dotall','--stats','--json','--vimgrep','--type-list')) {
+                        if ($value -ceq '--no-config') { continue }
+                    }
+                    elseif (-not $endOptions -and $value -cin @('-g','--glob','-t','--type','-T','--type-not','-A','--after-context','-B','--before-context','-C','--context','-m','--max-count','-e','--regexp','--max-depth')) {
                         $flag=$value; if (++$i -ge $argv.Count) { return $null }; $value=$argv[$i]
-                        if ($flag -cin @('-A','-B','-C','--context','-m','--max-count') -and $value -notmatch '^\d{1,6}$') { return $null }
+                        if ($flag -cin @('-A','--after-context','-B','--before-context','-C','--context','-m','--max-count','--max-depth') -and $value -notmatch '^\d{1,6}$') { return $null }
+                        if ($flag -cin @('-t','--type','-T','--type-not') -and $value -cnotmatch '^[A-Za-z0-9_+-]+$') { return $null }
                         if ($flag -cin @('-e','--regexp')) { $positionals=1 }
                         $render.Add((Quote-ReadValue $flag))
                     }
                     elseif (-not $endOptions -and $value.StartsWith('-')) { return $null }
                     else {
-                        if (($files -or $positionals -gt 0) -and ($isFilter -or -not (Test-ReadPath $value))) { return $null }
+                        if (($files -or $typeList -or $positionals -gt 0) -and ($isFilter -or -not (Test-ReadPath $value))) { return $null }
                         $positionals++
                     }
                     $render.Add((Quote-ReadValue $value))
                 }
-                if (-not $files -and $positionals -eq 0) { return $null }
-            } elseif ($name -in @('cat','head','tail','sed','pwd') -and -not $powerShell) {
+                if (-not $files -and -not $typeList -and $positionals -eq 0) { return $null }
+            } elseif ($name -in @('cat','head','tail','sed','pwd','ls','wc') -and -not $powerShell) {
+                if ($hasArrayArg) { return $null }
                 $render.Add($name); $paths=0
                 if ($name -eq 'pwd') { if ($argv.Count -or $isFilter) { return $null } }
                 elseif ($name -eq 'sed') {
@@ -299,48 +315,118 @@ function Get-AiSopReadOnlyShellInput {
                     if ($name -in @('head','tail') -and $value -ceq '-n') {
                         if (++$i -ge $argv.Count -or $argv[$i] -notmatch '^\d{1,6}$') { return $null }
                         $render.Add('-n'); $value=$argv[$i]
+                    } elseif ($name -eq 'ls' -and $value -cmatch '^-[la1hdR]+$') {
+                        if ($isFilter) { return $null }
+                    } elseif ($name -eq 'wc' -and $value -cmatch '^-[lwcm]+$') {
                     } else { if ($isFilter -or -not (Test-ReadPath $value)) { return $null }; $paths++ }
                     $render.Add((Quote-ReadValue $value))
                 }
-                if ($name -ne 'pwd' -and -not $isFilter -and $paths -eq 0) { return $null }
+                if ($name -notin @('pwd','ls') -and -not $isFilter -and $paths -eq 0) { return $null }
             } else {
                 if (-not $powerShell) { return $null }
                 # PowerShell 的投影只接受固定参数，不接收脚本块、表达式或输出变量。
-                $flags=@(); $takes=@(); $pathFlags=@(); $numeric=@(); $positionalPath=$false; $module='Microsoft.PowerShell.Utility'
-                switch ($name.ToLowerInvariant()) {
-                    'get-content' { $module='Microsoft.PowerShell.Management'; $flags=@('-Raw'); $takes=@('-Path','-LiteralPath','-TotalCount','-Tail','-Encoding'); $pathFlags=@('-Path','-LiteralPath'); $numeric=@('-TotalCount','-Tail'); $positionalPath=$true }
-                    'get-childitem' { $module='Microsoft.PowerShell.Management'; $flags=@('-Recurse','-File','-Directory','-Force','-Name'); $takes=@('-Path','-LiteralPath','-Filter','-Depth'); $pathFlags=@('-Path','-LiteralPath'); $numeric=@('-Depth'); $positionalPath=$true }
-                    'get-location' { $module='Microsoft.PowerShell.Management' }
-                    'test-path' { $module='Microsoft.PowerShell.Management'; $takes=@('-Path','-LiteralPath','-PathType'); $pathFlags=@('-Path','-LiteralPath'); $positionalPath=$true }
-                    'get-filehash' { $takes=@('-Path','-LiteralPath','-Algorithm'); $pathFlags=@('-Path','-LiteralPath'); $positionalPath=$true }
-                    'select-string' { $flags=@('-SimpleMatch','-CaseSensitive','-List','-Quiet'); $takes=@('-Path','-LiteralPath','-Pattern','-Context'); $pathFlags=@('-Path','-LiteralPath'); $numeric=@('-Context') }
-                    'select-object' { if (-not $isFilter) { return $null }; $takes=@('-First','-Last','-Skip'); $numeric=$takes }
-                    'convertfrom-json' { if (-not $isFilter) { return $null }; $flags=@('-AsHashtable'); $takes=@('-Depth'); $numeric=$takes }
-                    'convertto-json' { if (-not $isFilter) { return $null }; $flags=@('-Compress'); $takes=@('-Depth'); $numeric=$takes }
-                    'measure-object' { if (-not $isFilter) { return $null }; $flags=@('-Line','-Word','-Character') }
-                    'out-string' { if (-not $isFilter) { return $null }; $takes=@('-Width'); $numeric=$takes }
-                    default { return $null }
+                $canonicalCmd = switch ($name.ToLowerInvariant()) {
+                    { $_ -in @('get-content','gc') -or ($_ -in @('cat','type') -and [OperatingSystem]::IsWindows()) } { 'Get-Content' }
+                    { $_ -in @('get-childitem','gci') -or ($_ -in @('ls','dir') -and [OperatingSystem]::IsWindows()) } { 'Get-ChildItem' }
+                    { $_ -in @('get-location','gl') -or ($_ -eq 'pwd' -and [OperatingSystem]::IsWindows()) } { 'Get-Location' }
+                    'get-item' { 'Get-Item' }
+                    'test-path' { 'Test-Path' }
+                    'get-filehash' { 'Get-FileHash' }
+                    { $_ -in @('select-string','sls') } { 'Select-String' }
+                    { $_ -in @('select-object','select') } { 'Select-Object' }
+                    { $_ -in @('format-table','ft') } { 'Format-Table' }
+                    { $_ -in @('format-list','fl') } { 'Format-List' }
+                    { $_ -in @('sort-object','sort') } { 'Sort-Object' }
+                    { $_ -in @('group-object','group') } { 'Group-Object' }
+                    'convertfrom-json' { 'ConvertFrom-Json' }
+                    'convertto-json' { 'ConvertTo-Json' }
+                    'measure-object' { 'Measure-Object' }
+                    'out-string' { 'Out-String' }
+                    default { '' }
                 }
-                if ($isFilter -and $name -notin @('Select-String','Select-Object','ConvertFrom-Json','ConvertTo-Json','Measure-Object','Out-String')) { return $null }
-                $render.Add("$module\$name"); $pathCount=0; $hasPattern=$false; $seen=@{}
+                if (-not $canonicalCmd) { return $null }
+                $flags=@(); $takes=@(); $pathFlags=@(); $numeric=@(); $stringArrayTakes=@(); $propertyTakes=@(); $scalarPropertyTakes=@()
+                $positionalPath=$false; $positionalPattern=$false; $positionalProperty=$false
+                $module='Microsoft.PowerShell.Utility'
+                switch ($canonicalCmd) {
+                    'Get-Content' { $module='Microsoft.PowerShell.Management'; $flags=@('-Raw','-Force'); $takes=@('-Path','-LiteralPath','-TotalCount','-Head','-First','-Tail','-ReadCount','-Encoding'); $pathFlags=@('-Path','-LiteralPath'); $numeric=@('-TotalCount','-Head','-First','-Tail','-ReadCount'); $positionalPath=$true }
+                    'Get-ChildItem' { $module='Microsoft.PowerShell.Management'; $flags=@('-Recurse','-File','-Directory','-Force','-Name','-Hidden'); $takes=@('-Path','-LiteralPath','-Filter','-Depth','-Exclude','-Include','-Attributes'); $pathFlags=@('-Path','-LiteralPath'); $numeric=@('-Depth'); $stringArrayTakes=@('-Exclude','-Include'); $positionalPath=$true }
+                    'Get-Location' { $module='Microsoft.PowerShell.Management' }
+                    'Get-Item' { $module='Microsoft.PowerShell.Management'; $flags=@('-Force'); $takes=@('-Path','-LiteralPath'); $pathFlags=@('-Path','-LiteralPath'); $positionalPath=$true }
+                    'Test-Path' { $module='Microsoft.PowerShell.Management'; $takes=@('-Path','-LiteralPath','-PathType'); $pathFlags=@('-Path','-LiteralPath'); $positionalPath=$true }
+                    'Get-FileHash' { $takes=@('-Path','-LiteralPath','-Algorithm'); $pathFlags=@('-Path','-LiteralPath'); $positionalPath=$true }
+                    'Select-String' { $flags=@('-SimpleMatch','-CaseSensitive','-List','-Quiet','-AllMatches','-NotMatch','-Raw'); $takes=@('-Path','-LiteralPath','-Pattern','-Context','-Exclude','-Include','-Encoding'); $pathFlags=@('-Path','-LiteralPath'); $numeric=@('-Context'); $stringArrayTakes=@('-Pattern','-Exclude','-Include'); $positionalPattern=$true; $positionalPath=$true }
+                    'Select-Object' { if (-not $isFilter) { return $null }; $flags=@('-Unique'); $takes=@('-First','-Last','-Skip','-Index','-Property','-ExcludeProperty','-ExpandProperty'); $numeric=@('-First','-Last','-Skip','-Index'); $propertyTakes=@('-Property','-ExcludeProperty'); $scalarPropertyTakes=@('-ExpandProperty'); $positionalProperty=$true }
+                    'Format-Table' { if (-not $isFilter) { return $null }; $flags=@('-AutoSize','-Wrap','-HideTableHeaders','-Force','-RepeatHeader'); $takes=@('-Property'); $propertyTakes=@('-Property'); $positionalProperty=$true }
+                    'Format-List' { if (-not $isFilter) { return $null }; $flags=@('-Force'); $takes=@('-Property'); $propertyTakes=@('-Property'); $positionalProperty=$true }
+                    'Sort-Object' { if (-not $isFilter) { return $null }; $flags=@('-Descending','-Unique','-CaseSensitive','-Stable'); $takes=@('-Property','-Top','-Bottom'); $numeric=@('-Top','-Bottom'); $propertyTakes=@('-Property'); $positionalProperty=$true }
+                    'Group-Object' { if (-not $isFilter) { return $null }; $flags=@('-NoElement','-CaseSensitive'); $takes=@('-Property'); $propertyTakes=@('-Property'); $positionalProperty=$true }
+                    'ConvertFrom-Json' { if (-not $isFilter) { return $null }; $flags=@('-AsHashtable'); $takes=@('-Depth'); $numeric=$takes }
+                    'ConvertTo-Json' { if (-not $isFilter) { return $null }; $flags=@('-Compress'); $takes=@('-Depth'); $numeric=$takes }
+                    'Measure-Object' { if (-not $isFilter) { return $null }; $flags=@('-Line','-Word','-Character','-IgnoreWhiteSpace','-Sum','-Average','-Maximum','-Minimum'); $takes=@('-Property'); $propertyTakes=@('-Property'); $positionalProperty=$true }
+                    'Out-String' { if (-not $isFilter) { return $null }; $flags=@('-Stream'); $takes=@('-Width'); $numeric=$takes }
+                }
+                $filterCmds = @('Select-String','Select-Object','Format-Table','Format-List','Sort-Object','Group-Object','ConvertFrom-Json','ConvertTo-Json','Measure-Object','Out-String')
+                if ($isFilter -and $canonicalCmd -notin $filterCmds) { return $null }
+                function Test-SafePropertyToken([string]$Prop) {
+                    return ($Prop -cmatch '^[A-Za-z_*][A-Za-z0-9_*?-]*$')
+                }
+                function Format-SafePowerShellValue($Item, [bool]$RequireSafeProp = $false) {
+                    if ($Item -is [string]) {
+                        if ($RequireSafeProp -and -not (Test-SafePropertyToken $Item)) { return $null }
+                        return (Quote-ReadValue $Item)
+                    }
+                    if ($null -ne $Item -and $Item.PSObject.Properties['IsArray'] -and $Item.IsArray) {
+                        $quoted = [Collections.Generic.List[string]]::new()
+                        foreach ($sub in $Item.Items) {
+                            if ($RequireSafeProp -and -not (Test-SafePropertyToken $sub)) { return $null }
+                            $quoted.Add((Quote-ReadValue $sub))
+                        }
+                        return ($quoted -join ',')
+                    }
+                    return $null
+                }
+                $render.Add("$module\$canonicalCmd"); $pathCount=0; $hasPattern=$false; $seen=@{}
+                $explicitPattern=($canonicalCmd -eq 'Select-String') -and ($argv -contains '-Pattern')
                 for($i=0;$i -lt $argv.Count;$i++) {
                     $value=$argv[$i]
-                    if ($value -in ($flags+$takes)) {
+                    if ($value -is [string] -and $value -in ($flags+$takes)) {
                         if ($seen.ContainsKey($value)) { return $null }; $seen[$value]=$true; $render.Add($value)
                         if ($value -in $flags) { continue }
                         $flag=$value; if (++$i -ge $argv.Count) { return $null }; $value=$argv[$i]
-                        if ($flag -in $numeric -and $value -notmatch '^\d{1,6}$') { return $null }
-                        if ($flag -in $pathFlags) { if ($isFilter -or -not (Test-ReadPath $value)) { return $null }; $pathCount++ }
-                        if ($flag -eq '-Pattern') { $hasPattern=$true }
-                        if ($flag -eq '-Encoding' -and $value -notin @('utf8','utf8BOM','utf8NoBOM','unicode','ascii','default','oem','bigendianunicode','utf32')) { return $null }
-                        if ($flag -eq '-PathType' -and $value -notin @('Leaf','Container','Any')) { return $null }
-                        if ($flag -eq '-Algorithm' -and $value -notin @('SHA256','SHA384','SHA512','SHA1','MD5')) { return $null }
-                    } elseif ($positionalPath -and -not $isFilter -and (Test-ReadPath $value)) { $pathCount++ }
-                    else { return $null }
-                    $render.Add((Quote-ReadValue $value))
+                        if ($value -is [string]) {
+                            if ($flag -in $numeric -and $value -notmatch '^\d{1,6}$') { return $null }
+                            if ($flag -in $pathFlags) { if ($isFilter -or -not (Test-ReadPath $value)) { return $null }; $pathCount++ }
+                            if ($flag -eq '-Pattern') { $hasPattern=$true }
+                            if ($flag -eq '-Attributes' -and $value -cnotmatch '^[A-Za-z0-9,+! -]+$') { return $null }
+                            if ($flag -eq '-Encoding' -and $value -notin @('utf8','utf8BOM','utf8NoBOM','unicode','ascii','default','oem','bigendianunicode','utf32')) { return $null }
+                            if ($flag -eq '-PathType' -and $value -notin @('Leaf','Container','Any')) { return $null }
+                            if ($flag -eq '-Algorithm' -and $value -notin @('SHA256','SHA384','SHA512','SHA1','MD5')) { return $null }
+                            if ($flag -in $scalarPropertyTakes -and -not (Test-SafePropertyToken $value)) { return $null }
+                            $formatted = Format-SafePowerShellValue $value ($flag -in $propertyTakes)
+                            if ($null -eq $formatted) { return $null }
+                            $render.Add($formatted)
+                        } else {
+                            if ($flag -notin ($stringArrayTakes + $propertyTakes)) { return $null }
+                            if ($flag -eq '-Pattern') { $hasPattern=$true }
+                            $formatted = Format-SafePowerShellValue $value ($flag -in $propertyTakes)
+                            if ($null -eq $formatted) { return $null }
+                            $render.Add($formatted)
+                        }
+                    } elseif ($positionalPattern -and -not $hasPattern -and -not $explicitPattern -and ($value -is [string] -and -not $value.StartsWith('-'))) {
+                        $hasPattern=$true
+                        $render.Add((Quote-ReadValue $value))
+                    } elseif ($positionalPath -and -not $isFilter -and ($value -is [string]) -and (Test-ReadPath $value)) {
+                        $pathCount++
+                        $render.Add((Quote-ReadValue $value))
+                    } elseif ($positionalProperty) {
+                        $formatted = Format-SafePowerShellValue $value $true
+                        if ($null -eq $formatted) { return $null }
+                        $render.Add($formatted)
+                    } else { return $null }
                 }
-                if ($pathCount -gt 1 -or ($positionalPath -and $name -ne 'Get-ChildItem' -and $pathCount -ne 1) -or
-                    ($name -eq 'Select-String' -and (-not $hasPattern -or (-not $isFilter -and $pathCount -ne 1)))) { return $null }
+                if ($pathCount -gt 1 -or ($positionalPath -and $canonicalCmd -notin @('Get-ChildItem','Select-String') -and $pathCount -ne 1) -or
+                    ($canonicalCmd -eq 'Select-String' -and (-not $hasPattern -or (-not $isFilter -and $pathCount -ne 1)))) { return $null }
             }
             $rendered=$render -join ' '
             if ($hasStderrToStdout) { $rendered += ' 2>&1' }

@@ -38,8 +38,20 @@ try {
         'git remote get-url --all --push origin',
         'git branch',
         'git branch --show-current',
-        'git branch -a -vv'
+        'git branch -a -vv',
+        'git log -5 --oneline',
+        'git status -uno',
+        'Get-ChildItem -Force -Depth 2 -Exclude target,logs,.git,.svn,.idea,node_modules | Select-Object FullName, PSIsContainer | Format-Table -AutoSize',
+        'Get-ChildItem src -Include ''*.txt'' -Attributes !Directory | Sort-Object Name -Descending | Format-List',
+        'Get-Content -LiteralPath src/probe.txt -Head 1',
+        'Select-String BEFORE src/probe.txt | Select-Object LineNumber, Line',
+        'Select-String src/probe.txt -Pattern BEFORE',
+        'Get-Item src/probe.txt | Select-Object Name, Length',
+        'rg --no-config -n -w -g ''!*.bin'' BEFORE src'
     )
+    if ([OperatingSystem]::IsWindows()) {
+        $allowed += @('ls src', 'cat src/probe.txt', 'pwd')
+    }
     foreach($text in $allowed) { Assert ($null -ne (Parse $text)) "合法读取被拒绝：$text" }
     $denied=@(
         'Get-Content src/probe.txt; Set-Content src/probe.txt CHANGED',
@@ -54,6 +66,12 @@ try {
         'Get-Content src/probe.txt -OutVariable saved',
         'Get-Content src/probe.txt | ForEach-Object { Set-Content src/probe.txt $_ }',
         'Get-Content src/probe.txt | Select-Object @{n="x";e={Set-Content src/probe.txt x}}',
+        'Get-ChildItem | Select-Object Name, @{n="x";e={Set-Content src/probe.txt x}}',
+        'Get-ChildItem -Exclude $(Set-Content src/probe.txt x)',
+        'Get-ChildItem -OutVariable saved',
+        'Get-Item Env:PATH',
+        'Format-Table -AutoSize',
+        'Get-ChildItem | Sort-Object -Property @{e={Set-Content src/probe.txt x}}',
         '[IO.File]::WriteAllText("src/probe.txt","x")',
         '& Get-Content src/probe.txt',
         '. ./reader.ps1',
@@ -114,9 +132,10 @@ try {
     Assert ($null -eq (Parse 'git status' @{workdir=$fixture})) '工作目录越界'
     Assert ($null -eq (Parse 'git status' @{cmd='Set-Content src/probe.txt x'})) '歧义命令字段'
     Assert ($null -eq (Parse 'git status' @{shell='cmd.exe'})) '未支持的解释器'
-    foreach($text in @('cat src/probe.txt','head -n 1 src/probe.txt','sed -n ''1,3p'' src/probe.txt','pwd')) {
+    foreach($text in @('cat src/probe.txt','head -n 1 src/probe.txt','sed -n ''1,3p'' src/probe.txt','pwd','ls -la src','wc -l src/probe.txt')) {
         Assert ($null -ne (Parse $text @{shell='bash'})) "POSIX 字面读取被拒绝：$text"
     }
+    Assert ($null -eq (Parse 'ls -L src' @{shell='bash'})) 'POSIX ls 不得放行符号链接跟随'
     Assert ($null -eq (Parse 'sed -i s/A/B/ src/probe.txt' @{shell='bash'})) 'sed 写入不得放行'
     $outside=Join-Path $fixture 'outside.txt'; [IO.File]::WriteAllText($outside,'outside')
     # 目录链接进入外部目录时，也必须按物理目标拒绝。

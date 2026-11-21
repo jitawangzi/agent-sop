@@ -1366,6 +1366,17 @@ try {
     $outsideDenyMsg = Get-AiSopDispatcherDenyReason -ReasonCode "EDIT_PATH_OUTSIDE_WORKSPACE"
     Assert-True ($outsideDenyMsg -match '^AI_SOP_GUARD_EDIT_PATH_OUTSIDE_WORKSPACE:' -and $outsideDenyMsg -match '多工作区') "EDIT_PATH_OUTSIDE_WORKSPACE 应给出多工作区边界说明：$outsideDenyMsg"
 
+    $agListPipeCmd = "Get-ChildItem -Force -Depth 2 -Exclude target,logs,.git,.svn,.idea,node_modules | Select-Object FullName, PSIsContainer | Format-Table -AutoSize"
+    $agListPipeRaw = New-AntigravityPayload -Event PRE_TOOL_USE -SessionId $agMainId -ToolName "run_command" -ToolInput @{ CommandLine = $agListPipeCmd; Cwd = $Workspace; WaitMsBeforeAsync = 1000 }
+    $agListPipeRes = Invoke-Dispatch -RawPayload $agListPipeRaw -EventHint PRE_TOOL_USE -AcceptedAt $now.AddMinutes(5).AddSeconds(7)
+    Assert-Equal $agListPipeRes.Decision 'ALLOW' "未绑定任务时只读 Get-ChildItem+Exclude+Select-Object+Format-Table 管道应放行：$($agListPipeRes.ReasonCode)"
+    Assert-Equal $agListPipeRes.ReasonCode 'READ_ONLY_SHELL_COMMAND' "只读管道应命中 READ_ONLY_SHELL_COMMAND：$($agListPipeRes.ReasonCode)"
+
+    $agArbitraryShellRaw = New-AntigravityPayload -Event PRE_TOOL_USE -SessionId "ag-deny-shell" -ToolName "run_command" -ToolInput @{ CommandLine = "python -c `"print(1)`""; Cwd = $Workspace; WaitMsBeforeAsync = 1000 }
+    $agArbitraryShellRes = Invoke-Dispatch -RawPayload $agArbitraryShellRaw -EventHint PRE_TOOL_USE -AcceptedAt $now.AddMinutes(5).AddSeconds(8)
+    $agArbitraryShellCtx = (Add-AiSopHarnessSessionContext -Result $agArbitraryShellRes -RawPayload $agArbitraryShellRaw -EventHint PRE_TOOL_USE -WorkspacePath $Workspace | ConvertFrom-Json).reason
+    Assert-True ($agArbitraryShellCtx -match '若仅为只读探索，无需启动任务') "Shell 拦截应附带只读探索替代提示：$agArbitraryShellCtx"
+
     Write-Output (
         "All hook dispatcher tests passed. " +
         "normalPathMaxMs=$normalMax matrixRows=$matrixRows"

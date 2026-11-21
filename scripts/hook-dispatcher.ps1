@@ -1493,12 +1493,30 @@ function Add-AiSopHarnessSessionContext {
             'PAYLOAD_JSON_INVALID','PAYLOAD_SHAPE_INVALID','PAYLOAD_SHAPE_UNKNOWN','PAYLOAD_SHAPE_AMBIGUOUS',
             'TOOL_ARGS_INVALID','TOOL_UNKNOWN','GOVERNANCE_SWITCH_PROTECTED','TRUSTED_SIBLINGS_CONFIG_INVALID'
         )
+        $deniedToolName = if ($payload.Contains('toolCall') -and $payload.toolCall -is [System.Collections.IDictionary] -and $payload.toolCall.Contains('name')) {
+            [string]$payload.toolCall.name
+        } elseif ($payload.Contains('tool_name')) {
+            [string]$payload.tool_name
+        } elseif ($payload.Contains('toolName')) {
+            [string]$payload.toolName
+        } else {
+            ''
+        }
+        $isShellDeny = (Test-AiSopDispatcherShellTool -ToolName $deniedToolName) -or ($deniedToolName -in @('shell','exec_command'))
+        $isReadOnlyShellCapable = ($Result.Agent -ceq 'CODEX') -or ($Result.Agent -ceq 'ANTIGRAVITY' -and $deniedToolName -ceq 'run_command')
+        $readOnlyShellHint = if (-not $isShellDeny) {
+            ""
+        } elseif ($isReadOnlyShellCapable) {
+            " 若仅为只读探索，无需启动任务：请改用原生只读工具，或简化为受支持的无脚本块只读命令（如 rg / git status|diff|log / svn status|log|diff / Get-ChildItem / Get-Content / Select-String / Select-Object / Format-Table，避免脚本块 {}、变量 $ 与输出重定向 >）。"
+        } else {
+            " 若仅为只读探索，无需启动任务：请改用客户端原生只读工具（Read / Glob / Grep / 只读子 Agent）代替任意 Shell。"
+        }
         $denyMessage = if ([string]$Result.ReasonCode -in $nonTaskReasons) {
             "当前会话：$sessionId（-Agent $($Result.Agent) -NativeSessionId '$sessionId'）。"
         } elseif ($isChildSession) {
             "当前子会话：$sessionId（所有 Task 命令须带 -Agent $($Result.Agent) -NativeSessionId '$sessionId'）。只读子 Agent 禁止 Start/Resume/Recover/ConfirmTakeover，读取被拒请直接报告路径或载荷原因；受委派实现先执行：pwsh -NoProfile -File ./ai-sop.ps1 Task -Operation Join -Feature <Feature> -TaskId <TaskId> -Agent $($Result.Agent) -NativeSessionId '$sessionId'，再由父会话 Delegate。"
         } else {
-            "当前会话：$sessionId（所有 Task 命令须带 -Agent $($Result.Agent) -NativeSessionId '$sessionId'；未指定档位默认 T2，Start/Resume 成功后向用户说明实际档位再修改）。命令模板：Discover：pwsh -NoProfile -File ./ai-sop.ps1 Task -Operation Discover；独立任务 Start：pwsh -NoProfile -File ./ai-sop.ps1 Task -Operation Start -Feature <Feature> -TaskId <TaskId> -Objective `"本次目标`" -Agent $($Result.Agent) -NativeSessionId '$sessionId'；续做/收编 Resume：pwsh -NoProfile -File ./ai-sop.ps1 Task -Operation Resume -Feature <Feature> -TaskId <TaskId> -Agent $($Result.Agent) -NativeSessionId '$sessionId'；中断恢复先 InspectRecovery 再 Recover → Resume，详见 .ai-sop/docs/TASK_RECOVERY_GUIDE.md。"
+            "当前会话：$sessionId（所有 Task 命令须带 -Agent $($Result.Agent) -NativeSessionId '$sessionId'；未指定档位默认 T2，Start/Resume 成功后向用户说明实际档位再修改）。命令模板：Discover：pwsh -NoProfile -File ./ai-sop.ps1 Task -Operation Discover；独立任务 Start：pwsh -NoProfile -File ./ai-sop.ps1 Task -Operation Start -Feature <Feature> -TaskId <TaskId> -Objective `"本次目标`" -Agent $($Result.Agent) -NativeSessionId '$sessionId'；续做/收编 Resume：pwsh -NoProfile -File ./ai-sop.ps1 Task -Operation Resume -Feature <Feature> -TaskId <TaskId> -Agent $($Result.Agent) -NativeSessionId '$sessionId'；中断恢复先 InspectRecovery 再 Recover → Resume，详见 .ai-sop/docs/TASK_RECOVERY_GUIDE.md。$readOnlyShellHint"
         }
         switch ($Result.Agent) {
             { $_ -in @('CLAUDE_CODE','CODEX') } { $envelope.hookSpecificOutput.permissionDecisionReason+=" $denyMessage" }

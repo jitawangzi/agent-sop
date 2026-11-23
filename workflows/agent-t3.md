@@ -26,7 +26,7 @@ T3 完整开发任务从 Superpowers `brainstorming` 开始，按 `.ai-sop/workf
 | 6 | `superpowers:requesting-code-review` | 全部 Task 与 QA 验证完成后**必须显式调用**，派最终 code reviewer 审查整体实现。禁止用普通 Agent 替代 |
 | 7 | `superpowers:verification-before-completion` | 声称完成前必须核对真实编译/测试证据与 `Task Complete` 结果，禁止"应该可以了"就标记完成 |
 
-**design-reviewer 审查硬证据约束**：设计产出 `06_design_contract.md` 后、进入 `writing-plans` 前，**必须**先经 `design-reviewer` 机器审查并附审查报告。报告须含审查状态（PASS/NEEDS_FIX/PASS_WITH_WARNINGS）、发现分级（BLOCKER/MAJOR/MINOR/INFO）、专项检查覆盖说明、循环轮次。`PASS_WITH_WARNINGS`（仅剩 MINOR/INFO 豁免）是合法通过状态，不等同篡改。**无审查报告不得进入 writing-plans**——靠"设计已自审"或"方案没问题"等无证据说法跳过审查不成立。T1/T2 不受本 T3 约束。
+**design-reviewer 审查硬证据约束**：设计产出 `06_design_contract.md` 后、进入 `QA(PLAN)` / `writing-plans` 前，**必须**先经 `design-reviewer` 机器审查并附审查报告。报告须含审查状态（PASS/NEEDS_FIX/PASS_WITH_WARNINGS）、发现分级（BLOCKER/MAJOR/MINOR/INFO）、专项检查覆盖说明、循环轮次。`PASS_WITH_WARNINGS`（仅剩 MINOR/INFO 豁免）是合法通过状态，不等同篡改。**无审查报告不得进入 QA(PLAN) / writing-plans**——靠"设计已自审"或"方案没问题"等无证据说法跳过审查不成立。T1/T2 不受本 T3 约束。
 
 **design-reviewer 闭环熔断（防 Token 风暴）**：机器闭环**最多 2 轮**（审查→修正→重审）。第 2 轮后：若仅剩 `MINOR`/`INFO` 未决问题，自动豁免通过（状态 `PASS_WITH_WARNINGS`，记入报告）；若仍存在 `BLOCKER`/`MAJOR`，强制退出机器循环，呈递人工在批准阶段裁决。**阻断级（`BLOCKER`/`MAJOR`）可判 `NEEDS_FIX`**，触发闭环修复，计入 2 轮熔断；**建议级（`MINOR`/`INFO`）不得判 `NEEDS_FIX`**，记为 `PASS_WITH_WARNINGS` 不阻断，避免挑刺震荡。详见 `superpowers-adapter.md`。
 
@@ -169,7 +169,7 @@ AI 可在一次响应内同时呈递 `01_server_rules.md` 与 `06_design_contrac
 | 设计方案审查（人工确认前，机器闭环） | `design-reviewer` |
 | 需求预处理（可选手动前置，复杂 docx） | `requirement-analyst` |
 | 架构/契约设计（brainstorming 咨询） | `design-architect` |
-| 测试覆盖校验（实现后） | `quality-assurance` / `test-plan-auditor` |
+| 测试规划、覆盖审计与业务验证（PLAN / 计划审计 / VERIFY） | `quality-assurance` / `test-plan-auditor` |
 
 **领域专家 Skills 分级（三列，消除“必须/禁用”矛盾）**：
 

@@ -3205,6 +3205,11 @@ try {
     if ($extValCustomMissing -notmatch "COLD_RELOAD_INCOMPLETE") {
         throw "ValidateTestCoverage VERIFY must fail custom host reload API before coldReloadPatterns is configured. Output: $extValCustomMissing"
     }
+    $extVerifyCustomMissing = & $ScriptPath -Operation VerifyCompletion -Path $extApproval 2>&1
+    $extVerifyCustomMissingStr = $extVerifyCustomMissing | Out-String
+    if ($LASTEXITCODE -eq 0 -or $extVerifyCustomMissingStr -notmatch "TYPE_EXTENSION_COVERAGE_INCOMPLETE" -or $extVerifyCustomMissingStr -notmatch "re-reads storage") {
+        throw "VerifyCompletion must fail custom host reload API before coldReloadPatterns is configured. Output: $extVerifyCustomMissingStr"
+    }
 
     $extContextDir = Join-Path $extDir ".ai-workspace/context"
     [System.IO.Directory]::CreateDirectory($extContextDir) | Out-Null
@@ -3220,9 +3225,27 @@ try {
             }
         }
     })
+    $extDigestWithCfg = [string]((& $ScriptPath -Operation AssessRisk -Path $extSpecDir -Baseline $extBaseSha 2>&1 | Out-String | ConvertFrom-Json).changeSetDigest)
+    $extImpactWithCfg = ConvertFrom-Json -InputObject $extImpactBackup -AsHashtable
+    $extImpactWithCfg["changeSetDigest"] = $extDigestWithCfg
+    Write-TestJson -Path $extImpactPath -Value $extImpactWithCfg
+    $extCovCustomConfigured = [ordered]@{}
+    foreach ($k in $extCovCustomReload.Keys) { $extCovCustomConfigured[$k] = $extCovCustomReload[$k] }
+    $extEvWithCfg = [ordered]@{}
+    foreach ($k in $extCov.executionEvidence.Keys) { $extEvWithCfg[$k] = $extCov.executionEvidence[$k] }
+    $extEvWithCfg["workingTreeDigest"] = $extDigestWithCfg
+    $extCovCustomConfigured["executionEvidence"] = $extEvWithCfg
+    Write-TestJson -Path $extCovPath -Value $extCovCustomConfigured
+    Write-TestT3Evidence -SpecDir $extSpecDir
+
     $extValCustomConfigured = try { & $ScriptPath -Operation ValidateTestCoverage -Path $extCovPath -Phase VERIFY 2>&1 | Out-String } catch { $_.Exception.ToString() }
     if ($extValCustomConfigured -notmatch "VALID" -or $extValCustomConfigured -match "COLD_RELOAD_INCOMPLETE") {
         throw "ValidateTestCoverage VERIFY must accept host coldReloadPatterns match. Output: $extValCustomConfigured"
+    }
+    $extVerifyCustomConfigured = & $ScriptPath -Operation VerifyCompletion -Path $extApproval 2>&1
+    $extVerifyCustomConfiguredStr = $extVerifyCustomConfigured | Out-String
+    if ($LASTEXITCODE -ne 0 -or $extVerifyCustomConfiguredStr -notmatch "VERIFY_COMPLETION_PASS") {
+        throw "VerifyCompletion must accept host coldReloadPatterns match. Output: $extVerifyCustomConfiguredStr"
     }
 
     Write-TestJson -Path $extVerCmdPath -Value ([ordered]@{
@@ -3240,7 +3263,36 @@ try {
     if ($extValCustomTooBroad -notmatch "COLD_RELOAD_PATTERN_TOO_BROAD") {
         throw "ValidateTestCoverage VERIFY must reject degenerate too-broad coldReloadPatterns. Output: $extValCustomTooBroad"
     }
+
+    Write-TestJson -Path $extVerCmdPath -Value ([ordered]@{
+        schemaVersion = "1.0"
+        coldReloadPatterns = @("[unclosed")
+        commands = [ordered]@{
+            compile = [ordered]@{
+                kind = "compile"
+                executable = "pwsh"
+                arguments = @("-NoProfile", "-Command", "exit 0")
+            }
+        }
+    })
+    $extValCustomInvalidRegex = try { & $ScriptPath -Operation ValidateTestCoverage -Path $extCovPath -Phase VERIFY 2>&1 | Out-String } catch { $_.Exception.ToString() }
+    if ($extValCustomInvalidRegex -notmatch "COLD_RELOAD_PATTERN_INVALID") {
+        throw "ValidateTestCoverage VERIFY must reject invalid regex in coldReloadPatterns. Output: $extValCustomInvalidRegex"
+    }
+
+    Write-TestJson -Path $extVerCmdPath -Value ([ordered]@{
+        schemaVersion = "1.0"
+        coldReloadPatterns = @()
+        commands = [ordered]@{}
+    })
+    $extValCustomInvalidSchema = try { & $ScriptPath -Operation ValidateTestCoverage -Path $extCovPath -Phase VERIFY 2>&1 | Out-String } catch { $_.Exception.ToString() }
+    if ($extValCustomInvalidSchema -notmatch "COLD_RELOAD_CONFIG_INVALID") {
+        throw "ValidateTestCoverage VERIFY must fail with COLD_RELOAD_CONFIG_INVALID on schema-invalid verification-commands.json. Output: $extValCustomInvalidSchema"
+    }
     Remove-Item -LiteralPath $extVerCmdPath -Force -ErrorAction SilentlyContinue
+    [System.IO.File]::WriteAllText($extImpactPath, $extImpactBackup, $Utf8NoBom)
+    Write-TestJson -Path $extCovPath -Value $extCov
+    Write-TestT3Evidence -SpecDir $extSpecDir
 
     $extCovNaCold = [ordered]@{}
     foreach ($k in $extCov.Keys) { $extCovNaCold[$k] = $extCov[$k] }

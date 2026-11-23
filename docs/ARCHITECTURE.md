@@ -220,17 +220,17 @@ AI 编码工具百花齐放（Claude Code、Copilot、Cursor、Antigravity、Pi�
 
 ### 决策13：设计与实现共用同一份 coding-style；SDD 必须报进度
 
-**问题**：实现/审计已强制加载 `coding-style.md`（含 Redis/Mongo 对象字段简写），`design-architect` 的 Context Strategy 却漏载该文件，`design-reviewer` 虽列入必读但专项全在协议（A6），存储键全称能进 06 并锁进 SHA。实现者按契约字面落地，审计对契约打勾。另：Superpowers SDD 要求「不要向人汇报进度」，Antigravity 等宿主在子代理 idle 后若父会话只调工具、不吐文本，主窗口会像卡死。
+**问题**：若实现/审计加载 `.ai-workspace/context/coding-style.md`（含宿主持久化保存模型、存储字段命名/映射规则等硬约束），而 `design-architect` 漏载该文件、或 `design-reviewer` 只把专项放在协议（A5），违反宿主存储命名或持久化硬约束的设计就能进 06 并锁进 SHA。实现者按契约字面落地，审计仅对契约打勾。另：Superpowers SDD 要求「不要向人汇报进度」，Antigravity 等宿主在子代理 idle 后若父会话只调工具、不吐文本，主窗口会像卡死。
 
 **为什么这么设计**：
-- 设计与实现/审计引用**同一路径** `.ai-workspace/context/coding-style.md`，不在 SOP Skill 里再抄简写例子（领域中立）。
+- 设计与实现/审计引用**同一路径** `.ai-workspace/context/coding-style.md`，不在 SOP Skill 里硬编码特定项目的存储引擎、框架类名或简写例子（保持项目无关）。
 - Controller 派发 `design-architect` / `design-reviewer` / `implementation-engine` / `implementation-auditor` / `logic-auditor` 时必须带【默认工程规范】：用 Read 打开该文件；`06` 不得违反其中硬规则（拆开「代码 vs 过期 context」与「强制规范 vs 本功能 06」两套位阶）。
-- `design-reviewer` **A2 存储选型**含对象字段简写（MAJOR）。**A6** 仍是协议核对表（BLOCKER）。
-- 实现审计 Phase 2「至少显式检查」点名 B1 字段简写，避免只把 B1 理解成类名。
-- 已批 06 仍写全称存储键时，`implementation-engine` 不得按图索骥，`implementation-auditor` 标 `[DESIGN_FLAW: plan-mandated]`。
+- `design-reviewer` **A2 存储选型、保存模型与命名规范**按宿主 `coding-style.md` 核对持久化字段命名/映射（宿主有硬规则且违背记 `MAJOR`，无规则记 `N/A`）；**A5 协议规范**负责协议核对表（`BLOCKER`）。
+- `implementation-auditor` Phase 2 清单按宿主 `coding-style.md` 原文逐项核对存储契约与命名规则，不跨项目套用条款编号。
+- 已批 06 违反宿主 `coding-style.md` 硬规则时，`implementation-engine` 不得按图索骥，`implementation-auditor` 标 `[DESIGN_FLAW: plan-mandated]`。
 - adapter **覆盖** SDD 的静默连跑：每个 subagent 返回后先给用户可见进度。
 
-**价值**：简写在锁 SHA 前拦住；主会话不再用「Thinking」代替进度。
+**价值**：宿主工程硬约束在锁 SHA 前拦住；主会话不再用「Thinking」代替进度。
 
 ---
 

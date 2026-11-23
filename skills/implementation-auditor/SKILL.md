@@ -127,8 +127,6 @@ T3 完整交付中的标准流程为：
 - **类型/策略扩展不得用 `focus_methods` 收缩视野**：只要本次改动新增业务类型、枚举常量、策略/Handler 子类，或修改公共分发（switch / Map 路由 / 拦截器），即使调用方给了 `focus_methods`，也必须额外按 **Mode C (Protocol Trace)** 检查 `04_change_impact.json` 中兄弟类型已出现的分发位点。只审新改的几行而漏掉未改的旧切面，记为 `FAIL`。
 - 无论哪种模式，结论都必须区分：本次改动引入/放大的问题、直接耦合风险、`PRE_EXISTING_LEGACY`。
 
-## Core Responsibilities
-
 ## Boundary with Logic Auditor
 - 本角色负责**全局合规审计**：宿主规范、分层、协议与生成产物边界、错误码、性能、兼容、多节点/持久化职责、契约门禁
 - 本角色仍需检查**明显可见**的链路错误与语义偏差，但**不以逐方法、逐分支、逐返回字段展开细致逻辑推演为主要职责**
@@ -138,6 +136,8 @@ T3 完整交付中的标准流程为：
   - 临界值/冷门分支/跨异步重入/重试补偿幂等性
   - “类型正确但业务语义错误”的实现
 - 若本轮已经发现此类风险，应在审计报告中明确标注：**建议追加 `logic-auditor`**
+
+## Core Responsibilities
 
 ### 1. Constraint Compliance Audit（约束合规审计）
 必须按 `.ai-workspace/context/README.md` 索引加载当前宿主实际存在的规范源并逐项展开核对：

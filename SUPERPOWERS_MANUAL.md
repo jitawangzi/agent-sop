@@ -291,12 +291,12 @@ context 的 `<!-- context-meta owner:X reviewedAt:YYYY-MM expiresAt:YYYY-MM -->`
 
 各 harness 统一以 Superpowers 为过程引擎（仅 T3）。用户明确选择 T3 后，Superpowers 才按阶段选择对应的过程 Skill；默认 T2 不调用这些完整流程节点：
 
-| 任务形态 | Superpowers 自动选择的 Skill |
+| 任务形态 | 默认路由与过程 Skill |
 |---|---|
 | 新功能或行为变更 | `brainstorming` |
-| bug 与异常行为 | `systematic-debugging` |
-| 需求/设计批准后实现 | `writing-plans` -> `subagent-driven-development` + `test-driven-development` |
-| 交付前验证 | `verification-before-completion` |
+| bug 与异常行为 | 原生 `bug-debugger`（分诊定因） -> `implementation-engine(REPAIR)`（受控修复）；全档禁用 `superpowers:systematic-debugging` |
+| 需求/设计批准后实现 | `quality-assurance(PLAN)` -> `test-plan-auditor` -> `writing-plans` -> `subagent-driven-development` + `test-driven-development` -> `quality-assurance(VERIFY)` & `ValidateTestCoverage` |
+| 交付前验证 | `requesting-code-review` -> `verification-before-completion` |
 
 **不要手动激活 `workflow-orchestrator` 作为顶层调度器**。它是 T3 主流程之外的**人工手动片段编排器**（当前用于全功能审计，可扩展），不是完整功能从需求到交付的调度器。完整 T3 功能统一走 Superpowers。
 
@@ -325,10 +325,12 @@ flowchart TD
     I --> J[design-reviewer 机器闭环审查 最多2轮]
     J -->|PASS / PASS_WITH_WARNINGS| K{人工确认设计门禁}
     J -->|NEEDS_FIX| I
-    K -->|Approve| L[Superpowers writing-plans 写计划 小改动可1个Task]
+    K -->|Approve| L0[quality-assurance PLAN 覆盖矩阵与表征定义]
+    L0 --> L1[test-plan-auditor 独立测试计划审计]
+    L1 --> L[Superpowers writing-plans 写计划 小改动可1个Task]
     L --> M[subagent-driven-development + TDD]
     M --> N[每 Task 双重内审 auditor 守门]
-    N --> O[ValidateTestCoverage 覆盖校验]
+    N --> O[quality-assurance VERIFY 与 ValidateTestCoverage]
     O --> P[Superpowers requesting-code-review 最终自审]
     P --> Q[Superpowers verification-before-completion 全量验证]
     Q --> S
@@ -337,7 +339,7 @@ flowchart TD
     T --> U[VCS 提交交付]
 ```
 
-需求与设计是两道独立门禁（默认两道独立确认，仅当符合 T3 小改动合并呈递豁免时允许一次呈递写入两道 SHA）；头脑风暴可连续产出 01→06 后呈递确认。设计产出后由 `design-reviewer` 机器闭环自审自修（不占人工时间），通过后才交人工确认。**GREENFIELD 不前置完整测试计划**（新功能 TC 在 TDD 中产出，覆盖校验在实现后）。**LEGACY_EXTENSION（旧系统加类型/改分发）例外**：抽 1–2 个共享同一分发的 `IDENTICAL_TO_LEGACY` 表征 Case，必须在改生产代码前写好，并能在当前基线上跑绿（锁的是已有限购/重置/补偿，不是尚未实现的新类型；不是每个旧类型一条 Case）。`implementation-auditor`/`logic-auditor` 是 subagent 内审执行单元，非实现后独立节点。旧系统扩展的人工总体审核按协议脚本走，见后文模板 11b。复杂大功能交付后可**手动**触发全功能审计（见后文）。
+需求与设计是两道独立门禁（默认两道独立确认，仅当符合 T3 小改动合并呈递豁免时允许一次呈递写入两道 SHA）；头脑风暴可连续产出 01→06 后呈递确认。设计产出后由 `design-reviewer` 机器闭环自审自修（不占人工时间），通过后才交人工确认。`06` 确认后先由 `quality-assurance(PLAN)` 产出测试范围与覆盖矩阵、经 `test-plan-auditor` 自动审计后进入 `writing-plans`：**GREENFIELD 不前置最终实现细节**（具体新功能 TC 在 TDD 中产出，实现后经 `quality-assurance(VERIFY)` 与 `ValidateTestCoverage` 校验）；**LEGACY_EXTENSION（旧系统加类型/改分发）例外**：在 `PLAN` 阶段定型 1–2 个共享同一分发的 `IDENTICAL_TO_LEGACY` 表征 Case 并编入首个 Task，必须在改生产代码前写好并能在当前基线上跑绿（锁的是已有限购/重置/补偿，不是尚未实现的新类型；不是每个旧类型一条 Case）。`implementation-auditor`/`logic-auditor` 是 subagent 内审执行单元；全部 Task 通过后由 `quality-assurance(VERIFY)` 执行选定验证路径并配合 `ValidateTestCoverage` 校验证据与覆盖闭环。旧系统扩展的人工总体审核按协议脚本走，见后文模板 11b。复杂大功能交付后可**手动**触发全功能审计（见后文）。
 
 ### 执行强度档位（T 档）与提示词指定
 
@@ -583,7 +585,7 @@ Agent 会复核“无需修改需求和设计”是否成立；发现契约差�
 请先定位根因并说明判责依据；只有实现缺陷才修改代码，补充或复用相关回归用例，完成编译与相关测试，并记录同步结果。
 ```
 
-T2 直接按复现、定位、修复、验证推进，不强制调用 Superpowers。只有实现缺陷才修改代码；需求/设计有歧义时先澄清，超出本次授权的问题只输出证据。T3 使用完整流程中的 `systematic-debugging` 等适用阶段。
+全档位（T1/T2/T3）的 Bug 排查均统一收口到原生 `bug-debugger`（先只读执行 Phase 0 分诊与根因溯源，不提前 `Task Start`；**禁用 `superpowers:systematic-debugging`**）。只有确认属于可修复的 A 类代码缺陷后才进入修改入口并由 `implementation-engine(REPAIR)` 受控修复与同批次回归；T2 不强制调用 Superpowers，需求/设计有歧义时先澄清，非代码/误报（C 类）或难复现（B 类）只输出证据与取证清单。
 
 ### 9. Bug 列表批量处理
 
@@ -652,7 +654,7 @@ Bug 文件位于 <BUGS.md 路径>。
 
 通过标准：代表旧类型的限购/重置/「不先查直接写」与基线一致。看起来成功但次数没重置、或满额被击穿 = 失败。
 不要把时间花在阅读新 Handler。新类型缺陷用 FUNCTIONAL Case / 新类型验收抓，不是本脚本的替代。
-机器门禁：`CHARACTERIZATION` Case 的 `05_test_coverage.json` 必须含非 `N_A` 的 `assertions.persistenceColdReload`（带 `coldReloadEntity`），载体方法体须再读存储（`selectById` / `getById` / `findById` 一类）；否则 `VerifyCompletion` 报 `TYPE_EXTENSION_COVERAGE_INCOMPLETE`，已声明该层但方法体未再读存储则 `ValidateTestCoverage` 报 `COLD_RELOAD_INCOMPLETE`。
+机器门禁：`CHARACTERIZATION` Case 的 `05_test_coverage.json` 必须含非 `N_A` 的 `assertions.persistenceColdReload`（带 `coldReloadEntity`），载体方法体须匹配引擎通用存储重载调用（`selectById` / `getById` / `findById` / `reloadFresh` / `flushAndColdReload` 等）或宿主在 `.ai-workspace/context/verification-commands.json` 中声明的 `coldReloadPatterns`；否则 `VerifyCompletion` 报 `TYPE_EXTENSION_COVERAGE_INCOMPLETE`，已声明该层但方法体未再读存储则 `ValidateTestCoverage` 报 `COLD_RELOAD_INCOMPLETE`。
 AI 收尾：requesting-code-review 与 logic-auditor 必须走 Mode E / Protocol Trace，附协议追踪表。
 ```
 
@@ -944,8 +946,8 @@ T3 最后由 Superpowers `verification-before-completion` 复查测试覆盖与�
 **用户**：`确认`  
 **AI**：后台调用 `workflow-state.ps1 -Operation Approve -Gate design` 写入批准状态与哈希。
 
-### 第 4 步：计划、TDD 实现与内审（自动连续完成）
-**AI**：自动执行 `writing-plans` $\rightarrow$ 生成 `05_test_plan.md` 并同步 `05_test_coverage.json` $\rightarrow$ **按 Task** 派发 `implementation-engine` 编写测试与实现并等待【编译证据】（`exitCode=0`）$\rightarrow$ 再派发 `implementation-auditor` 和（按风险）`logic-auditor` 双重内审 $\rightarrow$ 有修复则回派实现者再编译再审 $\rightarrow$ 运行 `ValidateTestCoverage` 校验 100% 覆盖。禁止实现未结束就并发派审，禁止编排会话自己改生产代码。
+### 第 4 步：测试规划、实现计划、TDD 实现与内审验证（自动连续完成）
+**AI**：自动执行 `quality-assurance(PLAN)` 生成 `05_test_plan.md` 并同步 `05_test_coverage.json` $\rightarrow$ `test-plan-auditor` 独立审计测试计划 $\rightarrow$ `writing-plans` 编排实现计划 $\rightarrow$ **按 Task** 派发 `implementation-engine` 编写测试与实现并等待【编译证据】（`exitCode=0`）$\rightarrow$ 再派发 `implementation-auditor` 和（按风险）`logic-auditor` 双重内审 $\rightarrow$ 有修复则回派实现者再编译再审 $\rightarrow$ 全部 Task 通过后执行 `quality-assurance(VERIFY)` 与 `ValidateTestCoverage` 校验 100% 覆盖。禁止实现未结束就并发派审，禁止编排会话自己改生产代码。
 
 ### 第 5 步：收尾、验证与 SVN 交付准备
 **AI**：调用 `requesting-code-review` 整体收尾 $\rightarrow$ 用 Task Run 留存编译和本次必测用例结果，完成 ReviewImpact 等适用绑定 $\rightarrow$ Task Complete 校验通过后释放归属 $\rightarrow$ 执行 `svn status`/`svn add`，输出变更总结并提示：

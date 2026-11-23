@@ -395,9 +395,16 @@ exit 0
         ($adapterText -match 'superpowers:systematic-debugging' -and $adapterText -match 'bug-debugger')
     Assert-Contract "agent-t3 must route debugging to native bug-debugger and place systematic-debugging in blacklist" `
         ($t3Text -match 'bug-debugger' -and $t3Text -match '禁止调用 `superpowers:systematic-debugging`' -and $t3Text -match '全档禁用.*systematic-debugging')
+    $manualText = Get-Content -LiteralPath (Join-Path $SopRoot 'SUPERPOWERS_MANUAL.md') -Raw
     Assert-Contract "adapter and agent-t3 must align explicit T3 closure order (QA PLAN -> test-plan-auditor -> writing-plans -> SDD -> QA VERIFY)" `
         ($adapterText -match 'quality-assurance\(PLAN\)[\s\S]*test-plan-auditor[\s\S]*writing-plans[\s\S]*subagent-driven-development[\s\S]*quality-assurance\(VERIFY\)' -and
          $t3Text -match 'quality-assurance\(PLAN\).*test-plan-auditor[\s\S]*writing-plans[\s\S]*subagent-driven-development[\s\S]*quality-assurance\(VERIFY\)')
+    Assert-Contract "SUPERPOWERS_MANUAL must stay aligned on bug-debugger, explicit T3 closure order, and coldReloadPatterns" `
+        ($manualText -match '原生 `bug-debugger`' -and
+         $manualText -match '禁用 `superpowers:systematic-debugging`' -and
+         $manualText -notmatch '\|\s*bug 与异常行为\s*\|\s*`systematic-debugging`\s*\|' -and
+         $manualText -match 'quality-assurance\(PLAN\)[\s\S]*test-plan-auditor[\s\S]*writing-plans[\s\S]*quality-assurance\(VERIFY\)' -and
+         $manualText -match 'coldReloadPatterns')
 
     # --- Skill & Agent portability guards: lock out leaked project-specific symbols ---
     $skillLeakScanDirs = @(
@@ -417,7 +424,7 @@ exit 0
             if ($null -eq $st) { continue }
             foreach ($leak in $bannedSkillLeaks) {
                 if ($st -match [regex]::Escape($leak)) {
-                    $rel = $sf.FullName.Replace("$SopRoot\", "")
+                    $rel = [IO.Path]::GetRelativePath($SopRoot, $sf.FullName)
                     Assert-Contract "Portability guard: leaked project symbol '$leak' must not appear in $rel" $false "keep skills/ and agents/ project-agnostic; inject specifics via host .ai-workspace/context/"
                 }
             }

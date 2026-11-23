@@ -2322,7 +2322,13 @@ function Get-WorkspaceColdReloadPatterns {
     if (-not [IO.File]::Exists($configPath)) { return [string[]]@() }
     $raw = [IO.File]::ReadAllText($configPath)
     $schemaPath = Join-Path (Split-Path -Parent $PSScriptRoot) 'schemas/verification-commands.schema.json'
-    if (-not ($raw | Test-Json -SchemaFile $schemaPath)) {
+    $schemaValid = $false
+    try {
+        $schemaValid = [bool]($raw | Test-Json -SchemaFile $schemaPath -ErrorAction Stop)
+    } catch {
+        $schemaValid = $false
+    }
+    if (-not $schemaValid) {
         throw "COLD_RELOAD_CONFIG_INVALID: .ai-workspace/context/verification-commands.json failed schema validation"
     }
     $config = ConvertFrom-Json -InputObject $raw -ErrorAction Stop

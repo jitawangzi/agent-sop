@@ -18,11 +18,13 @@ T3 完整开发任务从 Superpowers `brainstorming` 开始，按 `.ai-sop/workf
 
 | 顺序 | 必须调用的 Skill | 说明 |
 |:---:|---|---|
-| 1 | `superpowers:brainstorming` | 新功能/新设计/行为变更：探索上下文 → 逐一提问 → 方案对比 → 逐节呈现 → 写 spec → 自审 → 用户审阅。设计产出后由 `design-reviewer` 机器审查（闭环自审自修），再交人工确认 |
-| 2 | `superpowers:writing-plans` | spec 确认后写实现计划。**Task** = 一次实现+编译+内审的审查单位（紧耦合小改动默认 1 个 Task）；**Step** 才是 2–5 分钟动作。计划须含精确路径、完整代码、验证命令。**严禁 TBD/TODO 占位符**。粒度见 adapter「writing-plans Task 粒度」 |
-| 3 | `superpowers:subagent-driven-development` | 读计划全文 → 建 Todo → 对每个 Task：派实现者（`implementation-engine`）→ 内审（`implementation-auditor`/`logic-auditor`）→ 修复 → 标记完成。**每个 Task 必须过双重审查** |
-| 4 | `superpowers:requesting-code-review` | 全部 Task 完成后**必须显式调用**，派最终 code reviewer 审查整体实现。禁止用普通 Agent 替代 |
-| 5 | `superpowers:verification-before-completion` | 声称完成前必须编译/测试验证，禁止"应该可以了"就标记完成 |
+| 1 | `superpowers:brainstorming` | 新功能/新设计/行为变更：探索上下文 → 逐一提问 → 方案对比 → 逐节呈现 → 写 `01` → 人工确认 → `design-architect` 产出 `06` → `design-reviewer` 机器审查（闭环自审自修）→ 人工确认 `06` |
+| 2 | `quality-assurance(PLAN)` → `test-plan-auditor` | `06` 确认后产出测试范围/覆盖矩阵/风险清单（旧系统扩展定型路径 A 表征 Case），经 `test-plan-auditor` 独立审计通过后进入计划编排 |
+| 3 | `superpowers:writing-plans` | 结合 `06` 与测试计划写实现计划。**Task** = 一次实现+编译+内审的审查单位（紧耦合小改动默认 1 个 Task；旧系统扩展将表征 Case 编入首 Task）；**Step** 才是 2–5 分钟动作。计划须含精确路径、完整代码、验证命令。**严禁 TBD/TODO 占位符**。粒度见 adapter「writing-plans Task 粒度」 |
+| 4 | `superpowers:subagent-driven-development` | 读计划全文 → 建 Todo → 对每个 Task：派实现者（`implementation-engine`）→ 编译交【编译证据】→ 内审（`implementation-auditor`/`logic-auditor`）→ 修复 → 标记完成。**每个 Task 必须过双重审查** |
+| 5 | `quality-assurance(VERIFY)` & `ValidateTestCoverage` | 按路径决策表执行选定验证路径并通过 `Task Run` 留证，校验 `05_test_coverage.json` 覆盖闭环 |
+| 6 | `superpowers:requesting-code-review` | 全部 Task 与 QA 验证完成后**必须显式调用**，派最终 code reviewer 审查整体实现。禁止用普通 Agent 替代 |
+| 7 | `superpowers:verification-before-completion` | 声称完成前必须核对真实编译/测试证据与 `Task Complete` 结果，禁止"应该可以了"就标记完成 |
 
 **design-reviewer 审查硬证据约束**：设计产出 `06_design_contract.md` 后、进入 `writing-plans` 前，**必须**先经 `design-reviewer` 机器审查并附审查报告。报告须含审查状态（PASS/NEEDS_FIX/PASS_WITH_WARNINGS）、发现分级（BLOCKER/MAJOR/MINOR/INFO）、专项检查覆盖说明、循环轮次。`PASS_WITH_WARNINGS`（仅剩 MINOR/INFO 豁免）是合法通过状态，不等同篡改。**无审查报告不得进入 writing-plans**——靠"设计已自审"或"方案没问题"等无证据说法跳过审查不成立。T1/T2 不受本 T3 约束。
 
@@ -33,10 +35,11 @@ T3 完整开发任务从 Superpowers `brainstorming` 开始，按 `.ai-sop/workf
 **人工确认必须写入门禁状态**：每次人工确认（需求/设计）后，**必须**调用 `workflow-state.ps1 -Operation Approve -Gate <requirement|design>` 写入 `APPROVED` 状态与 SHA-256。口头确认不等于门禁通过——后续 `ValidateTestCoverage` 会校验 APPROVED 状态，未写入会阻塞或被绕过。
 
 **T3 按需调用（下列复现和审查流程不强加给 T1/T2）**：
-- `superpowers:systematic-debugging` — bug 与异常行为，**不要自己猜根因**。**排查前先复现 bug**：优先路径 A（JUnit/JVM 内）快速复现；若必须走路径 B（JSP 业务验证）则接受其成本。**确认问题真实存在后再排查根因**。判责走 `implementation-engine` 的 TRIAGE Judge，须判到 4 类之一：`[IMPL_FAILURE]` 实现缺陷→修代码；`[DESIGN_FLAW]` 设计缺陷→改需求/设计不修代码；`[TEST_ERROR]`/`[INVALID]` 测试错/误报→不改服务端只输出证据；`[CLIENT_ISSUE]` 客户端问题→不改服务端。**判责结论必须附复现证据（硬约束）**：下结论前先跑复现测试，结论附测试输出。修复 3 次仍未通过复现，**停止改代码**——回头重新复现、重新判责、查是否 `[DESIGN_FLAW]`，不堆砌投机修复掩盖症状。
+- `bug-debugger`（`.ai-sop/skills/bug-debugger/SKILL.md`）— 缺陷排查与异常行为统一收口到本仓库原生 `bug-debugger`（**禁止调用 `superpowers:systematic-debugging`**）。先执行 Phase 0 只读分诊（排除配置/环境/误报），产出《假设排查表》并反向溯源至系统边界，将问题定性为 **A 类（可复现代码缺陷）/ B 类（难复现输出精准取证清单）/ C 类（非代码/误报结案）**；遵守 2-Strike 止损红线与反“修表面”红线。确认 A 类代码缺陷后，优先路径 A 进程内最小复现（仅在 A 无法复现时升级路径 B 完整业务入口），交由 `implementation-engine(REPAIR)` 执行受控修复与同批次回归；若溯源确认属于设计契约缺陷，回设计门禁修正，不盲改代码掩盖症状。
 - `superpowers:receiving-code-review` — 接收审查结果
 
 **不适用本项目**（黑名单，禁用原因见注释）：
+- `superpowers:systematic-debugging` — 全档位（含 T3）统一使用原生 `bug-debugger`，避免两套调试提示词冲突。
 - `superpowers:dispatching-parallel-agents` — 隔离与并行遵循宿主 context 和 SOP 任务规则，不另起并行编排。同功能 T3 可以与其他工作区的 T1/T2 并行，同工作区同功能仍串行，T3 + T3 暂不支持；详见 [有限并行](../docs/PARALLEL_TASKS.md)。
 - `superpowers:using-git-worktrees` — 工作区隔离与版本控制遵循宿主 context 和用户约定；不自动创建 worktree，不用文件复制覆盖代替合并。Owner 绑定实际开发目录的物理路径。
 - `superpowers:executing-plans` — 触发 `using-git-worktrees`（冲突）；有 subagent 时统一用 `subagent-driven-development`
@@ -72,7 +75,7 @@ T3 完整开发任务从 Superpowers `brainstorming` 开始，按 `.ai-sop/workf
   - `lifecycleFacets` / `N_A` 变体的证据是套话（`n/a`、`不适用`、`main path covers`）或短于 24 字、没有 `Class#method` / 源文件 / `typeKey`
   - 变更文件里的 enum / `TYPE_*` 兄弟常量未全部写入 `behaviorVariants` 或 `excludedWithReason`（只登记新键、漏旧键）。这是 04 声明表，机器在单文件 ≤32 个候选键时检查；不等于要求每个旧键都有测试或人工点一遍。
   - 8 个必填切面里超过 4 个 `N_A`
-  `VerifyCompletion` 还会读 `CHARACTERIZATION` Case 的 `automationCarrier#method` 方法体：空 `@Test`、没有调用、或方法里不出现 `variantKeys`/`entryPointIds` 字面量，一律 `TYPE_EXTENSION_COVERAGE_INCOMPLETE`。同一条表征 Case 还必须有非 `N_A` 的 `assertions.persistenceColdReload`（含 `coldReloadEntity`），且方法体出现 `selectById` / `getById` / `findById` / `reloadFresh` 一类再读存储的调用——只断言协议回包算假绿。这仍不能证明运行时打到了旧分发，但能挡住“JSON 填了、测试是空方法”和“测了入口、没冷读库”的假覆盖。
+  `VerifyCompletion` 还会读 `CHARACTERIZATION` Case 的 `automationCarrier#method` 方法体：空测试方法、没有调用、或方法里不出现 `variantKeys`/`entryPointIds` 字面量，一律 `TYPE_EXTENSION_COVERAGE_INCOMPLETE`。同一条表征 Case 还必须有非 `N_A` 的 `assertions.persistenceColdReload`（含 `coldReloadEntity`），且方法体出现通用存储重载调用或宿主在 `.ai-workspace/context/verification-commands.json` 中声明的 `coldReloadPatterns`——只断言协议回包算假绿。这仍不能证明运行时打到了旧分发，但能挡住“JSON 填了、测试是空方法”和“测了入口、没冷读库”的假覆盖。
 
 
 ## 两类工作：全新功能 vs 旧系统扩展（隐蔽缺陷投入点）
@@ -172,9 +175,9 @@ AI 可在一次响应内同时呈递 `01_server_rules.md` 与 `06_design_contrac
 
 | 分类 | Skills | 说明 |
 |---|---|---|
-| **T3 必调** | `brainstorming`、`design-reviewer`、`writing-plans`、`subagent-driven-development`、`requesting-code-review`、`verification-before-completion` | T3 流程核心，不可跳 |
-| **T3 按需允许** | `systematic-debugging`、`receiving-code-review`、`requirement-analyst`、`design-architect` | 按场景调 |
-| **全档禁用** | `dispatching-parallel-agents`、`using-git-worktrees`、`executing-plans`、`finishing-a-development-branch` | 由宿主版本控制约定与 SOP 编排统一管理 |
+| **T3 必调** | `brainstorming`、`design-reviewer`、`quality-assurance`、`test-plan-auditor`、`writing-plans`、`subagent-driven-development`、`requesting-code-review`、`verification-before-completion` | T3 流程核心，不可跳 |
+| **T3 按需允许** | `bug-debugger`、`receiving-code-review`、`requirement-analyst`、`design-architect` | 按场景调 |
+| **全档禁用** | `systematic-debugging`、`dispatching-parallel-agents`、`using-git-worktrees`、`executing-plans`、`finishing-a-development-branch` | 由原生 `bug-debugger`、宿主版本控制约定与 SOP 编排统一管理 |
 
 **审查必须独立上下文**：审查者（`design-reviewer`/`implementation-auditor`/`logic-auditor`/`requesting-code-review`）必须用独立 subagent 上下文，不能用同一会话自审（共享盲区）。**允许用宿主 subagent 机制加载本项目专家 Skill 提示词**（如 Copilot 的 `Task` 工具加载 `implementation-engine` 提示词）——禁的是“同上下文自审”，不是“用宿主 subagent 载入”。
 

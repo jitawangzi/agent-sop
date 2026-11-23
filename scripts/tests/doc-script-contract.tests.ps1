@@ -393,6 +393,36 @@ exit 0
         ($agentsText -match '\.ai-sop/skills/bug-debugger/SKILL\.md' -and $agentsText -match 'debugging-playbook\.md')
     Assert-Contract "adapter must align T3 debugging on native bug-debugger instead of superpowers:systematic-debugging" `
         ($adapterText -match 'superpowers:systematic-debugging' -and $adapterText -match 'bug-debugger')
+    Assert-Contract "agent-t3 must route debugging to native bug-debugger and place systematic-debugging in blacklist" `
+        ($t3Text -match 'bug-debugger' -and $t3Text -match '禁止调用 `superpowers:systematic-debugging`' -and $t3Text -match '全档禁用.*systematic-debugging')
+    Assert-Contract "adapter and agent-t3 must align explicit T3 closure order (QA PLAN -> test-plan-auditor -> writing-plans -> SDD -> QA VERIFY)" `
+        ($adapterText -match 'quality-assurance\(PLAN\)[\s\S]*test-plan-auditor[\s\S]*writing-plans[\s\S]*subagent-driven-development[\s\S]*quality-assurance\(VERIFY\)' -and
+         $t3Text -match 'quality-assurance\(PLAN\).*test-plan-auditor[\s\S]*writing-plans[\s\S]*subagent-driven-development[\s\S]*quality-assurance\(VERIFY\)')
+
+    # --- Skill & Agent portability guards: lock out leaked project-specific symbols ---
+    $skillLeakScanDirs = @(
+        (Join-Path $SopRoot "skills"),
+        (Join-Path $SopRoot "agents")
+    )
+    $bannedSkillLeaks = @(
+        'XLSDataManager', 'AirItemRecord', 'BattleLegion', 'GameParam',
+        'MessageCommonCheck', 'isOverBought', 'beforeRecharge', 'updateAirData',
+        's_buyTotal', 'consume_items', 'collected_items', 'setCollected_',
+        'result.put(', '.\gradlew compileJava'
+    )
+    foreach ($sd in $skillLeakScanDirs) {
+        if (-not (Test-Path -LiteralPath $sd)) { continue }
+        foreach ($sf in (Get-ChildItem -LiteralPath $sd -Recurse -Filter "*.md" -File)) {
+            $st = Get-Content -LiteralPath $sf.FullName -Raw -ErrorAction SilentlyContinue
+            if ($null -eq $st) { continue }
+            foreach ($leak in $bannedSkillLeaks) {
+                if ($st -match [regex]::Escape($leak)) {
+                    $rel = $sf.FullName.Replace("$SopRoot\", "")
+                    Assert-Contract "Portability guard: leaked project symbol '$leak' must not appear in $rel" $false "keep skills/ and agents/ project-agnostic; inject specifics via host .ai-workspace/context/"
+                }
+            }
+        }
+    }
 
     # --- Semantic drift guards: prevent known contradiction phrases from recurring ---
     # These were real drift bugs (single-point fix not propagated). Lock them out so the

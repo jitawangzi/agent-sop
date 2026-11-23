@@ -37,12 +37,13 @@ Task Discover -> Task Start -Tier T3 -UserRequest "人工选择原话"（或 Res
        -> 续做设计 -> design-architect 产出 06_design_contract.md
        -> design-reviewer 机器审查（闭环自审自修，不进人工门禁）
        -> 人工确认 06_design_contract.md）
--> superpowers:writing-plans（Task 粒度见下：小改动默认 1 个 Task，禁止按层拆）
--> quality-assurance(PLAN)（产测试范围/覆盖矩阵/风险清单供 TDD 参考，非完整前置测试计划）
+-> quality-assurance(PLAN)（产测试范围/覆盖矩阵/风险清单及旧系统扩展表征定义）
+-> test-plan-auditor（独立审计测试计划范围与覆盖矩阵，不构成人工门禁）
+-> superpowers:writing-plans（Task 粒度见下：小改动默认 1 个 Task，禁止按层拆；旧系统扩展将表征 Case 编入首 Task）
 -> superpowers:subagent-driven-development + TDD
      实现者 = implementation-engine（执行单元；每 Task 交【编译证据】）
      每 Task 内审 = implementation-auditor / logic-auditor（执行单元，按风险；无编译证据不派）
--> ValidateTestCoverage（覆盖校验，实现后）
+-> quality-assurance(VERIFY) & ValidateTestCoverage（按路径决策表执行验证并校验覆盖闭环）
 -> superpowers:requesting-code-review（整体收尾审查）
 -> superpowers:verification-before-completion
 -> Task Complete（内含完成校验；Task Verify 仅作可选的提前诊断）
@@ -50,10 +51,10 @@ Task Discover -> Task Start -Tier T3 -UserRequest "人工选择原话"（或 Res
 
 **流程关键点**：
 - 需求与设计默认在同一轮 `brainstorming` skill 调用中连续产出，分两次独立呈递人工确认。合并呈递须满足 [T3 执行参考「人工 review 阶段」](agent-t3.md#人工-review-阶段) 的用户显式要求、DC≤3 且无存储迁移条件，仍分别写入两道 Approve；DESIGN_ONLY 技术契约调整按同节规则处理，不把例外变成默认。
-- 设计产出后由 `design-reviewer` 做**机器闭环自审自修**（宏观规范守门 + 设计完整性自检 + 已知缺陷模式对照），不进人工门禁、不占人工时间；存在 `BLOCKER`/`MAJOR` 未修复时不交人工确认。机器闭环**最多 2 轮**（审查→修正→重审）；第 2 轮后仅剩 `MINOR`/`INFO` → 自动豁免通过（`PASS_WITH_WARNINGS`）；仍有 `BLOCKER`/`MAJOR` → 交人工确认。`design-reviewer` 阻断级（`BLOCKER`/`MAJOR`）可判 `NEEDS_FIX`，建议级（`MINOR`/`INFO`）不得判 `NEEDS_FIX`（防挑刺震荡）。**硬证据约束**：进入 `writing-plans` 前必须附 `design-reviewer` 审查报告（含 PASS/NEEDS_FIX/PASS_WITH_WARNINGS、发现分级、专项覆盖、循环轮次）；本条仅适用于 T3，无报告不得进 writing-plans。**独立派发约束**：`design-reviewer` 必须用 Agent 工具作为独立 subagent 派发（`subagent_type=design-reviewer`），禁止用 `Skill()` 内联自审；NEEDS_FIX 时由 controller 回派独立的 `design-architect`（Agent 派发）修正，禁止 design-reviewer 自改方案。
-- **不前置**完整新功能测试计划（GREENFIELD）：具体新 TC 在 TDD 中产出；`ValidateTestCoverage` 在实现后做覆盖完整性校验。
-- **LEGACY_EXTENSION 例外**：旧系统加类型/改分发时，抽 1–2 个共享同一分发的 `IDENTICAL_TO_LEGACY` 表征 Case，必须在改生产代码前写好，并能在当前基线上跑绿。锁的是已有行为，不是尚未实现的新类型，也不是每个旧类型一条 Case。表征 Case 必须声明 `assertions.persistenceColdReload` 并在载体方法体再读存储。
-- `implementation-auditor`/`logic-auditor` 是 subagent **内审执行单元**，不作实现后的独立流程节点（其全盘视角由可选的全功能审计覆盖，见下）。**Complete 不读这两份报告**（自报）；机器硬门禁分层见 `docs/QUALITY_GATES.md`。
+- 设计产出后由 `design-reviewer` 做**机器闭环自审自修**（宿主宏观规范守门 + 设计完整性自检 + 游戏服缺陷模式对照），不进人工门禁、不占人工时间；存在 `BLOCKER`/`MAJOR` 未修复时不交人工确认。机器闭环**最多 2 轮**（审查→修正→重审）；第 2 轮后仅剩 `MINOR`/`INFO` → 自动豁免通过（`PASS_WITH_WARNINGS`）；仍有 `BLOCKER`/`MAJOR` → 交人工确认。`design-reviewer` 阻断级（`BLOCKER`/`MAJOR`）可判 `NEEDS_FIX`，建议级（`MINOR`/`INFO`）不得判 `NEEDS_FIX`（防挑刺震荡）。**硬证据约束**：进入 `QA(PLAN)` / `writing-plans` 前必须附 `design-reviewer` 审查报告（含 PASS/NEEDS_FIX/PASS_WITH_WARNINGS、发现分级、专项覆盖、循环轮次）；本条仅适用于 T3，无报告不得推进。**独立派发约束**：`design-reviewer` 必须用 Agent 工具作为独立 subagent 派发（`subagent_type=design-reviewer`），禁止用 `Skill()` 内联自审；NEEDS_FIX 时由 controller 回派独立的 `design-architect`（Agent 派发）修正，禁止 design-reviewer 自改方案。
+- **先规划覆盖再切分计划**：`06` 人工确认后先由 `quality-assurance(PLAN)` 产出测试范围与覆盖矩阵（经 `test-plan-auditor` 自动审计），再进入 `writing-plans`。GREENFIELD 不前置最终实现细节（具体新 TC 在 TDD 中产出）；LEGACY_EXTENSION 的旧行为表征 Case 在此阶段定型并编入首个 Task。
+- **LEGACY_EXTENSION 例外**：旧系统加类型/改分发时，抽 1–2 个共享同一分发的 `IDENTICAL_TO_LEGACY` 表征 Case，必须在改生产代码前写好，并能在当前基线上跑绿。锁的是已有行为，不是尚未实现的新类型，也不是每个旧类型一条 Case。表征 Case 必须声明 `assertions.persistenceColdReload` 并在载体方法体包含符合宿主契约的存储冷重载调用。
+- `implementation-auditor`/`logic-auditor` 是 subagent **内审执行单元**，全部 Task 内审通过后由 `quality-assurance(VERIFY)` 执行选定验证路径（含适用时的 Path B 完整业务链路）并配合 `ValidateTestCoverage` 校验证据与覆盖闭环。**Complete 不读实现/逻辑审计报告**（自报）；机器硬门禁分层见 `docs/QUALITY_GATES.md`。
 
 ## writing-plans Task 粒度（仅 T3，项目叠加）
 
@@ -90,13 +91,13 @@ implementation-engine（一次只做一个 Task）
 
 审计官不是编译器：缺 import、改坏方法签名、调用方对不上，只有宿主编译命令能报。未编译就派审，得到的 PASS 没有审查对象。
 
-**编译命令**：生产代码改动后必须跑宿主生产编译（典型 `.\gradlew compileJava`）。本 Task 还改了测试源时，必须再编测试（`compileTestJava` 或会编译测试源的定向 test）。`build/` 目录存在不算编过。只有构建工具客观不可用才允许标环境阻塞，不得用「先审后编」代替。
+**编译命令**：生产代码改动后必须跑宿主生产编译（使用宿主 `verification-commands.json` 编译 Profile 或宿主构建命令）。本 Task 还改了测试源时，必须再编译测试源。构建输出目录存在不算编过。只有构建工具客观不可用才允许标环境阻塞，不得用「先审后编」代替。
 
 **【编译证据】最低字段**（写在实现者交工报告里，并由 controller **原样粘贴**进内审 prompt；任务模式的机器证据由 Task Run 记录，摘录不能替代它。只有无 taskId 的旧流程读取功能级 `compile-evidence.json`）：
 
-- `command`：实际执行的编译命令
+- `command`：实际执行的宿主编译命令或 Profile
 - `exitCode`：必须为 `0`
-- `excerpt`：含 `BUILD SUCCESSFUL` 或宿主等价成功标记
+- `excerpt`：含宿主构建工具的真实成功标记
 
 无此块、`exitCode≠0`、或 engine subagent 尚未返回：**禁止**派 `implementation-auditor` / `logic-auditor`。
 

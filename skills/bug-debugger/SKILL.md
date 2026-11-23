@@ -159,6 +159,7 @@ pwsh -NoProfile -File ./ai-sop.ps1 Task -Operation Run -Feature <Feature> -TaskI
 ## SOP & Superpowers 衔接约定
 - 本 Skill 为 `agent-sop` 原生独立技能，**不依赖 Superpowers**，适用于 T1 / T2 / T3 全档位。
 - 在 **T3** 场景涉及缺陷排查时，直接以本 Skill 为准（已吸收 `systematic-debugging` 的根因优先、反向溯源与止损纪律，并补齐 Phase 0 只读分诊、三分类与 SOP `Task Run` 衔接），避免与外部调试提示词冲突。
+- **与 `implementation-engine(REPAIR)` 的闭环分工**：本角色负责全档位（T1/T2/T3）的 Phase 0 分诊、根因溯源、A/B/C 定性与复现方案；确认属于可修复的 A 类代码缺陷后，在单会话内按本节出口 A 受控修复，或在 T3 多 Agent 编排中将根因证据与复现方案交由 `implementation-engine(REPAIR)` 实施修复与同批次回归（C 类结案，B 类输出《精准取证清单》不盲改）。
 - **不 emit/apply 自定义流程的 Handoff JSON**，**不创建或修改 `.ai-sop/runtime/`**。
 - 当作为只读 subagent 被派发时，只执行 Phase 0 分诊、根因溯源与复现/修复方案设计，返回报告给 controller，不调用 `Task Start`/`Resume`/`Recover`/`ConfirmTakeover`，也不擅自修改文件。
 

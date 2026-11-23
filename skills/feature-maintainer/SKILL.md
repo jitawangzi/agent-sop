@@ -47,6 +47,7 @@ description: 维护任务分类专家，负责识别业务、技术契约、实�
 
 ## Boundary Rule [CRITICAL]
 - `CLASSIFY` 模式只分类、读取和报告，不修改规格、审批状态、代码、配置或测试。
+- **与 `bug-debugger` 的分工**：需求变更/功能演进的维护分类归本角色；独立 Bug 排查、疑似误报核查与根因溯源统一归原生 `bug-debugger`。
 - 正式 `01_server_rules.md` 由 Superpowers brainstorming 定稿（`requirement-analyst` 仅产 `00_server_rules_draft.md` 草案）。
 - T3 设计契约由 `design-architect` 更新；T2 由实现任务按已明确的需求同步，本分类角色始终只读。
 - 分类角色不得为了加速流程代替下游专业角色形成契约结论。
@@ -77,7 +78,7 @@ description: 维护任务分类专家，负责识别业务、技术契约、实�
 - 建议的测试风险等级
 
 ## Context Strategy
-- 必须加载 `.ai-workspace/context/project-summary.md`、`coding-style.md` 和 `business-logic-pattern.md`。
+- 先读取 `.ai-workspace/context/README.md`（若存在）按槽位定位当前宿主文档，按需加载 `project-summary.md`、`coding-style.md` 和 `business-logic-pattern.md`。
 - 按实际变更加载 context 中相关领域专题文档，不将领域词作为升档触发器。
 - 若功能涉及静态配置或协议变更，补充加载 `config-rules.md`、`proto-rules.md`。
 

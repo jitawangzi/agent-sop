@@ -1,4 +1,4 @@
-#requires -Version 7.0
+﻿#requires -Version 7.0
 
 [CmdletBinding()]
 param(
@@ -2308,13 +2308,63 @@ function Get-SourceMethodBody {
     return $null
 }
 
+function Get-WorkspaceColdReloadPatterns {
+    param([string]$WorkspaceRoot)
+    if ([string]::IsNullOrWhiteSpace($WorkspaceRoot)) { return [string[]]@() }
+    $resolvedRoot = Resolve-PhysicalPathIdentity $WorkspaceRoot
+    if ([string]::IsNullOrWhiteSpace($resolvedRoot)) { return [string[]]@() }
+    $configPath = Resolve-PhysicalPathIdentity (Join-Path $resolvedRoot '.ai-workspace/context/verification-commands.json')
+    $rootPrefix = $resolvedRoot.TrimEnd('\', '/') + [IO.Path]::DirectorySeparatorChar
+    $comparison = if ([OperatingSystem]::IsWindows()) { [StringComparison]::OrdinalIgnoreCase } else { [StringComparison]::Ordinal }
+    if ([string]::IsNullOrWhiteSpace($configPath) -or -not $configPath.StartsWith($rootPrefix, $comparison)) {
+        return [string[]]@()
+    }
+    if (-not [IO.File]::Exists($configPath)) { return [string[]]@() }
+    $raw = [IO.File]::ReadAllText($configPath)
+    $schemaPath = Join-Path (Split-Path -Parent $PSScriptRoot) 'schemas/verification-commands.schema.json'
+    if (-not ($raw | Test-Json -SchemaFile $schemaPath)) {
+        throw "COLD_RELOAD_CONFIG_INVALID: .ai-workspace/context/verification-commands.json failed schema validation"
+    }
+    $config = ConvertFrom-Json -InputObject $raw -ErrorAction Stop
+    if ($null -eq $config -or -not ($config.PSObject.Properties.Name -contains 'coldReloadPatterns')) {
+        return [string[]]@()
+    }
+    $patterns = New-Object System.Collections.Generic.List[string]
+    foreach ($entry in @($config.coldReloadPatterns)) {
+        $p = [string]$entry
+        if ([string]::IsNullOrWhiteSpace($p)) { continue }
+        try {
+            $rx = [regex]::new($p, [System.Text.RegularExpressions.RegexOptions]::IgnoreCase, [TimeSpan]::FromMilliseconds(200))
+        } catch {
+            throw "COLD_RELOAD_PATTERN_INVALID: invalid regex '$p' in verification-commands.json coldReloadPatterns: $($_.Exception.Message)"
+        }
+        if ($rx.IsMatch('') -or $rx.IsMatch('{}') -or $rx.IsMatch('return;')) {
+            throw "COLD_RELOAD_PATTERN_TOO_BROAD: coldReloadPatterns entry '$p' matches trivial/empty method body"
+        }
+        $patterns.Add($p)
+    }
+    return [string[]]$patterns.ToArray()
+}
+
 function Test-SourceHasStorageReload {
-    param([string]$Text)
-    if ([string]::IsNullOrWhiteSpace($Text)) { return $false }
-    return [regex]::IsMatch(
-        $Text,
-        '(?i)\b(?:selectById|getById|findById|find_by_id|get_by_id|select_by_id|findOneById|queryById|loadById|reloadFresh\w*|reloadEntity)\s*\('
+    param(
+        [string]$Text,
+        [string]$WorkspaceRoot = $null
     )
+    if ([string]::IsNullOrWhiteSpace($Text)) { return $false }
+    if ([regex]::IsMatch(
+        $Text,
+        '(?i)\b(?:selectById|getById|findById|find_by_id|get_by_id|select_by_id|findOneById|queryById|loadById|reloadFresh\w*|reloadEntity|reloadFrom\w*|coldReload\w*|flushAndColdReload)\s*\('
+    )) {
+        return $true
+    }
+    foreach ($pattern in @(Get-WorkspaceColdReloadPatterns -WorkspaceRoot $WorkspaceRoot)) {
+        $rx = [regex]::new($pattern, [System.Text.RegularExpressions.RegexOptions]::IgnoreCase, [TimeSpan]::FromMilliseconds(200))
+        if ($rx.IsMatch($Text)) {
+            return $true
+        }
+    }
+    return $false
 }
 
 function Get-NonNaColdReloadAssertions {
@@ -2573,8 +2623,8 @@ function Assert-ExtensionCoverageCompleteness {
                 throw "${prefix}: CHARACTERIZATION case '$($case.id)' persistenceColdReload assertion on '$($entry.target)' is missing coldReloadEntity. Name the storage record the test reloads."
             }
         }
-        if (-not (Test-SourceHasStorageReload -Text $methodBody)) {
-            throw "${prefix}: CHARACTERIZATION case '$($case.id)' carrier $($carrierInfo.Relative)#$($carrierInfo.Method) never re-reads storage (no selectById/getById/findById/reloadFresh call). In-memory protocol assertions are a false green."
+        if (-not (Test-SourceHasStorageReload -Text $methodBody -WorkspaceRoot $WorkspaceRoot)) {
+            throw "${prefix}: CHARACTERIZATION case '$($case.id)' carrier $($carrierInfo.Relative)#$($carrierInfo.Method) never re-reads storage (no default reload call or host verification-commands.json coldReloadPatterns match). In-memory protocol assertions are a false green."
         }
     }
 }
@@ -3551,8 +3601,8 @@ function Get-CoveragePlaceholderWarnings {
                 continue
             }
             $methodBody = Get-SourceMethodBody -FilePath $carrierInfo.Path -MethodName $carrierInfo.Method
-            if (-not (Test-SourceHasStorageReload -Text $methodBody)) {
-                $errors.Add("ERROR: COLD_RELOAD_INCOMPLETE: $caseId carrier $($carrierInfo.Relative)#$($carrierInfo.Method) never re-reads storage (no selectById/getById/findById/reloadFresh call). In-memory protocol assertions are a false green.")
+            if (-not (Test-SourceHasStorageReload -Text $methodBody -WorkspaceRoot $coldReloadWsRoot)) {
+                $errors.Add("ERROR: COLD_RELOAD_INCOMPLETE: $caseId carrier $($carrierInfo.Relative)#$($carrierInfo.Method) never re-reads storage (no default reload call or host verification-commands.json coldReloadPatterns match). In-memory protocol assertions are a false green.")
             }
         }
     }

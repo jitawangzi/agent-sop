@@ -31,7 +31,7 @@ description: 编排人工请求的独立审计片段，默认只出报告；明�
 ### 输入
 - `feature_name` + `spec_directory`（规格目录，提供业务规则与技术契约依据）
 - 审计范围类型：`audit_scope_type` = `FEATURE` / `CLASS` / `METHOD`
-- 范围参数：`target_classes` / `focus_methods`（CLASS/METHOD 时）；`change_baseline` / `change_set`（FEATURE 时，SVN revision 范围或文件集）；旧系统扩展时用 `entry_points`（取 `04.entryPoints`），不要用 `focus_methods` 收缩
+- 范围参数：`target_classes` / `focus_methods`（CLASS/METHOD 时）；`change_baseline` / `change_set`（FEATURE 时，宿主 VCS 基线/提交范围或文件集）；旧系统扩展时用 `entry_points`（取 `04.entryPoints`），不要用 `focus_methods` 收缩
 - `audit_fix_policy`：`REPORT_ONLY`（只出报告，**默认**）/ `AUTO_REPAIR`（自动修复并回归）
 
 ### 执行流程（人工驱动）

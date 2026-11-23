@@ -1,4 +1,4 @@
-[CmdletBinding()]
+﻿[CmdletBinding()]
 param()
 
 $ErrorActionPreference = "Stop"
@@ -2893,7 +2893,7 @@ try {
     [System.IO.File]::WriteAllText($extSrc, "package com.game; public enum ShopEnum { TYPE_OLD, TYPE_MID, TYPE_NEW_GIFT }", $Utf8NoBom)
     $extTestJava = Join-Path $extDir "test/TypeExtTest.java"
     [System.IO.Directory]::CreateDirectory((Split-Path -Parent $extTestJava)) | Out-Null
-    [System.IO.File]::WriteAllText($extTestJava, "package test; import org.junit.Test; public class TypeExtTest { @Test public void testLegacyReset() { buy(`"BUY_GIFT`", TYPE_OLD, TYPE_NEW_GIFT); selectById(playerId); } @Test public void testEmptyChar() {} @Test public void testNoReload() { buy(`"BUY_GIFT`", TYPE_OLD, TYPE_NEW_GIFT); } }", $Utf8NoBom)
+    [System.IO.File]::WriteAllText($extTestJava, "package test; import org.junit.Test; public class TypeExtTest { @Test public void testLegacyReset() { buy(`"BUY_GIFT`", TYPE_OLD, TYPE_NEW_GIFT); selectById(playerId); } @Test public void testEmptyChar() {} @Test public void testNoReload() { buy(`"BUY_GIFT`", TYPE_OLD, TYPE_NEW_GIFT); } @Test public void testCustomReload() { buy(`"BUY_GIFT`", TYPE_OLD, TYPE_NEW_GIFT); CborSnappyUtil.decompress(snapshotBytes); } }", $Utf8NoBom)
     & git -C $extDir add src test
 
     $extSpecDir = Join-Path $extDir ".ai-workspace/specs/features/TypeExtFeature"
@@ -3192,6 +3192,55 @@ try {
     if ($extValColdReloadPlan -notmatch "VALID" -or $extValColdReloadPlan -match "COLD_RELOAD_INCOMPLETE") {
         throw "ValidateTestCoverage PLAN must not enforce COLD_RELOAD_INCOMPLETE. Output: $extValColdReloadPlan"
     }
+
+    # Host-configurable coldReloadPatterns via .ai-workspace/context/verification-commands.json
+    $extCovCustomReload = [ordered]@{}
+    foreach ($k in $extCov.Keys) { $extCovCustomReload[$k] = $extCov[$k] }
+    $extCustomReloadCase = [ordered]@{}
+    foreach ($k in (@($extCov.cases)[0].Keys)) { $extCustomReloadCase[$k] = (@($extCov.cases)[0])[$k] }
+    $extCustomReloadCase["automationCarrier"] = "test/TypeExtTest.java#testCustomReload"
+    $extCovCustomReload["cases"] = @($extCustomReloadCase)
+    Write-TestJson -Path $extCovPath -Value $extCovCustomReload
+    $extValCustomMissing = try { & $ScriptPath -Operation ValidateTestCoverage -Path $extCovPath -Phase VERIFY 2>&1 | Out-String } catch { $_.Exception.ToString() }
+    if ($extValCustomMissing -notmatch "COLD_RELOAD_INCOMPLETE") {
+        throw "ValidateTestCoverage VERIFY must fail custom host reload API before coldReloadPatterns is configured. Output: $extValCustomMissing"
+    }
+
+    $extContextDir = Join-Path $extDir ".ai-workspace/context"
+    [System.IO.Directory]::CreateDirectory($extContextDir) | Out-Null
+    $extVerCmdPath = Join-Path $extContextDir "verification-commands.json"
+    Write-TestJson -Path $extVerCmdPath -Value ([ordered]@{
+        schemaVersion = "1.0"
+        coldReloadPatterns = @("CborSnappyUtil\.decompress\s*\(")
+        commands = [ordered]@{
+            compile = [ordered]@{
+                kind = "compile"
+                executable = "pwsh"
+                arguments = @("-NoProfile", "-Command", "exit 0")
+            }
+        }
+    })
+    $extValCustomConfigured = try { & $ScriptPath -Operation ValidateTestCoverage -Path $extCovPath -Phase VERIFY 2>&1 | Out-String } catch { $_.Exception.ToString() }
+    if ($extValCustomConfigured -notmatch "VALID" -or $extValCustomConfigured -match "COLD_RELOAD_INCOMPLETE") {
+        throw "ValidateTestCoverage VERIFY must accept host coldReloadPatterns match. Output: $extValCustomConfigured"
+    }
+
+    Write-TestJson -Path $extVerCmdPath -Value ([ordered]@{
+        schemaVersion = "1.0"
+        coldReloadPatterns = @(".*")
+        commands = [ordered]@{
+            compile = [ordered]@{
+                kind = "compile"
+                executable = "pwsh"
+                arguments = @("-NoProfile", "-Command", "exit 0")
+            }
+        }
+    })
+    $extValCustomTooBroad = try { & $ScriptPath -Operation ValidateTestCoverage -Path $extCovPath -Phase VERIFY 2>&1 | Out-String } catch { $_.Exception.ToString() }
+    if ($extValCustomTooBroad -notmatch "COLD_RELOAD_PATTERN_TOO_BROAD") {
+        throw "ValidateTestCoverage VERIFY must reject degenerate too-broad coldReloadPatterns. Output: $extValCustomTooBroad"
+    }
+    Remove-Item -LiteralPath $extVerCmdPath -Force -ErrorAction SilentlyContinue
 
     $extCovNaCold = [ordered]@{}
     foreach ($k in $extCov.Keys) { $extCovNaCold[$k] = $extCov[$k] }

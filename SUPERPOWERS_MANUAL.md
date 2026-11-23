@@ -786,7 +786,7 @@ audit_fix_policy=REPORT_ONLY。
 | 设计方案审查（人工确认前，机器闭环） | `design-reviewer` |
 | 需求预处理（可选手动前置，复杂 docx） | `requirement-analyst` |
 | 架构/契约设计（brainstorming 咨询） | `design-architect` |
-| 测试覆盖校验（实现后） | `quality-assurance` / `test-plan-auditor` |
+| 测试规划、覆盖审计与业务验证（PLAN / 计划审计 / VERIFY） | `quality-assurance` / `test-plan-auditor` |
 
 任何编辑规范产物的专家调用都属于修改型工作，沿用 controller 的任务范围与档位，但子会话不自动获得写入授权；优先由 controller 落盘，需要实现子会话时按 [显式执行委派](docs/EXECUTION_DELEGATION.md) 执行 Join → Delegate → Run → RevokeDelegation；父会话保持归属，同一任务只允许一个执行者。只读 review 直接返回审查结果，由 controller 写入报告与门禁，不认领或接管父任务；读取仍须通过载荷和物理路径检查。
 

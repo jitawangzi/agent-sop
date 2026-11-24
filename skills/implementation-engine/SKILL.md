@@ -112,7 +112,7 @@ description: 游戏服务端高级开发工程师，负责基于当前宿主架�
 ## Context Strategy
 - 先读取 `.ai-workspace/context/README.md`（若存在）按槽位加载当前宿主实际存在的文档：
 - **默认工程规范**：开始实现前必须用 Read 打开 `.ai-workspace/context/coding-style.md`（若存在），不得只凭本 Skill 或 `06` 摘要。`06` 与其中硬规则冲突时不得按图索骥。
-- 加载 `project-summary.md`、`coding-style.md` 和 `business-logic-pattern.md`（若存在 `ai-coding.md` / `api-whitelist.md` / `project-tooling.md` 一并按需读取）。
+- 加载 `project-summary.md`、`coding-style.md` 和 `business-logic-pattern.md`（若存在 `ai-coding.md` / `project-tooling.md` 一并按需读取）。
 - 若功能涉及活动、任务、条件、事件、奖励、红点等高频模式，补充加载 `business-patterns/` 下对应专题文档。
 - 实现、排查或编写测试需要读取静态配置或外部数据文件时，先读 `.ai-workspace/context/config-rules.md`（若存在）；若涉及协议变更，补充加载 `proto-rules.md`。
 - **配置与测试数据定位**：按宿主规则追踪生效配置项、环境和版本，核实实际文件路径；仓库里的同名资源、默认目录和个人机器路径不能被猜作权威数据源。缺失数据时报告解析结果，不静默切换来源或用空数据/跳过断言充当验证成功；实际使用的来源与版本记录在现有测试日志或结果说明中。

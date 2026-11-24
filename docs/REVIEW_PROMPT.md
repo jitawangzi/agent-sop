@@ -20,13 +20,13 @@
   - **跨 IDE / Harness**：Claude Code、Antigravity、Cursor、GitHub Copilot、Pi CLI 等。
 
 ### 2. 核心架构分工：Superpowers（大脑）+ Agent-SOP（操作系统）
-- **顶层认知编排器（Superpowers，仅 T3）**：负责方案探索（`brainstorming`）、任务拆解（`writing-plans`）、子智能体驱动（`subagent-driven-development`）、收尾代码审查（`requesting-code-review`）。T1/T2 直接使用任务入口与按需专家技能，不强制完整编排或独立审计。
+- **顶层认知编排器（Superpowers，仅 T3）**：负责方案探索（`brainstorming`）→ `quality-assurance(PLAN)` → `test-plan-auditor` → 任务拆解（`writing-plans`）→ 子智能体驱动（`subagent-driven-development` + TDD）→ `quality-assurance(VERIFY)` & `ValidateTestCoverage` → 收尾代码审查（`requesting-code-review`）。缺陷排查全档位统一收口到原生 `bug-debugger` → `implementation-engine(REPAIR)`。T1/T2 直接使用任务入口与按需专家技能，不强制完整编排或独立审计。
 - **运行时治理底座（Agent-SOP）**：
   1. **Hook 写入守卫**：对已接入 Harness、已识别工具与命令的受控写入检查路径和归属，拒绝缺少合法 ACTIVE 会话绑定的操作。它不是操作系统沙箱，不保证覆盖任意脚本或外部工具的写入。
   2. **SHA-256 完整性与证据绑定**：T3 核对需求、设计批准与当前内容，检查覆盖定义和本任务必测范围；各档按任务条件检查真实执行记录及输入绑定。覆盖矩阵不能代替测试断言与业务语义审查。
   3. **跨 IDE 两阶段事务文件锁（Schema 1.1）**：按 `Session -> Owner -> Grant` 严格顺序加锁，2PC 崩溃安全日志与 TTL 租约自愈。
   4. **任务强度**：默认 T2（代码、相关规格/用例同步与验证），人工可选择 T1（极速实现与编译）或 T3（完整流程）。新修改走 Task Discover / Start / Resume；不自动按风险改档，不新增配置/文档第四档。历史 FAST_TRACK 只保留兼容读取。
-  5. **领域专家 Skill**：`design-reviewer`（设计审查）、`logic-auditor`（高风险语义审查）、`implementation-auditor`、`implementation-engine` 等。它们定义通用方法，项目规则由宿主 context 注入。
+  5. **通用游戏服务器专家 Skill 套件**：`design-architect`、`design-reviewer`、`implementation-engine`、`implementation-auditor`、`logic-auditor`、`quality-assurance`、`test-plan-auditor`、`bug-debugger` 等。底层引擎（`scripts/`+`schemas/`）100% 领域中立；`skills/` 聚焦通用游戏服务端研发方法论，不绑定具体项目的语言、存储、协议或框架，项目规则由宿主 `.ai-workspace/context/` 槽位注入。
 
 ---
 

@@ -117,7 +117,7 @@ description: 游戏服务端高级开发工程师，负责基于当前宿主架�
 - 实现、排查或编写测试需要读取静态配置或外部数据文件时，先读 `.ai-workspace/context/config-rules.md`（若存在）；若涉及协议变更，补充加载 `proto-rules.md`。
 - **配置与测试数据定位**：按宿主规则追踪生效配置项、环境和版本，核实实际文件路径；仓库里的同名资源、默认目录和个人机器路径不能被猜作权威数据源。缺失数据时报告解析结果，不静默切换来源或用空数据/跳过断言充当验证成功；实际使用的来源与版本记录在现有测试日志或结果说明中。
 - **协议实现对齐**：新增/修改对外协议字段前，检索宿主既有同类协议/响应组装代码并逐项对照 `06_design_contract.md` 的协议字段核对表与宿主 `proto-rules.md`，复用既有命名、结构与资源同步模式。
-- 构建与验证入口读取宿主 `verification-commands.json`、`project-tooling.md`、`client-test.md`（或 `ai-automation-workflow.md`，按实际存在加载）。
+- 构建与验证入口读取宿主 `verification-commands.json`、`project-tooling.md`、`client-test.md`（按实际存在加载）。
 
 ## 技术约束
 - 静态配置接入、协议定义、代码生成、分层边界、时间/随机 API、缓存 Key 与持久化契约，全部以当前宿主 `context/` 文档原文及源码为准。

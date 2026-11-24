@@ -47,7 +47,7 @@ T3 完整开发任务从 Superpowers `brainstorming` 开始，按 `.ai-sop/workf
 
 **Skill 分级见下文三列表**（T3 必调 / T3 按需 / 全档禁用）。上表仅 T3 编排顺序。
 
-**关于 Superpowers**：Superpowers 是一个流程技能包，提供 brainstorming/writing-plans/subagent-driven-development 等流程技能。**T2/T1 完全不依赖 Superpowers**——这些档位直接用原生提示词 + 本项目专家 Skills 或单轮上下文推进，严禁报错停机。只有 T3 完整流程才需要 Superpowers。若 T3 所需的 Superpowers 技能不可用，**停止并明确告知用户**：“T3 完整流程需要 Superpowers 技能包。请按 `.ai-sop/SUPERPOWERS_VERIFICATION.md` 安装/激活，或降级为 T2 快速修改。”——不要静默切换、不要假装在跑。
+**关于 Superpowers**：Superpowers 是一个流程技能包，提供 brainstorming/writing-plans/subagent-driven-development 等流程技能。**T2/T1 完全不依赖 Superpowers**——这些档位直接用原生提示词 + 本项目专家 Skills 或单轮上下文推进，严禁报错停机。只有 T3 完整流程才需要 Superpowers。若 T3 所需的 Superpowers 技能不可用，**停止并明确告知用户**：“T3 完整流程需要 Superpowers 技能包。请先安装/激活 Superpowers 插件（能力矩阵见 `.ai-sop/scripts/harness-capability.ps1`），或降级为 T2 快速修改。”——不要静默切换、不要假装在跑。
 
 ## 影响分析与覆盖
 

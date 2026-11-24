@@ -259,7 +259,7 @@ Preflight 将清单文件损坏与任务引用不匹配分开：文件有效但�
 | 完成定义、验证范围与机检/自报边界 | 入口模板的档位表；T3 执行参考「完成验收」；[质量门禁](docs/QUALITY_GATES.md) |
 | Claim / Transfer / ForceRelease、feature-state、旧诊断与 FAST_TRACK | [旧流程兼容与诊断](workflows/agent-legacy.md)；不用于创建新任务 |
 | SVN 与本地 Git、VCS 增删移动、运行时隔离 | 入口模板「项目知识与文档一致性」；适配器「宿主版本控制与并行」保留 SVN 宿主条件示例；具体工具由宿主 context 指定 |
-| 工具能力、Superpowers 缺失、术语释义 | 本手册下一节、[能力验证](SUPERPOWERS_VERIFICATION.md)、[架构说明](docs/ARCHITECTURE.md)；Superpowers 是 T3 流程技能包，harness 指 AI 编码工具 |
+| 工具能力、Superpowers 缺失、术语释义 | 本手册下一节、[能力矩阵](scripts/harness-capability.ps1)、[架构说明](docs/ARCHITECTURE.md)；Superpowers 是 T3 流程技能包，harness 指 AI 编码工具 |
 | 进度、SOP 拦截与交接汇报 | 入口模板「汇报」；T3 人工澄清与批准的详细规则见 T3 执行参考「人工 review 阶段」 |
 
 ## 项目上下文与能力诊断

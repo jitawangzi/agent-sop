@@ -1273,6 +1273,13 @@ try {
         @("ListDir", [ordered]@{ DirectoryPath = $Workspace }, "SAFE_NON_EDIT"),
         @("ask_question", [ordered]@{ questions = @(@{ question = "Confirm?"; options = @("Yes", "No") }) }, "SAFE_NON_EDIT"),
         @("AskQuestion", [ordered]@{ questions = @() }, "SAFE_NON_EDIT"),
+        @("exit_plan_mode", [ordered]@{ planSummary = "Ready" }, "SAFE_NON_EDIT"),
+        @("ExitPlanMode", [ordered]@{}, "SAFE_NON_EDIT"),
+        @("enter_plan_mode", [ordered]@{}, "SAFE_NON_EDIT"),
+        @("update_focus", [ordered]@{ focus = "Inspecting tests" }, "SAFE_NON_EDIT"),
+        @("update_steps", [ordered]@{ steps = @(@{ title = "Check policy"; status = "in_progress" }) }, "SAFE_NON_EDIT"),
+        @("search_marketplace", [ordered]@{ queries = @("calendar") }, "SAFE_NON_EDIT"),
+        @("list_plugin_accounts", [ordered]@{}, "SAFE_NON_EDIT"),
         @("invoke_subagent", [ordered]@{ Subagents = @(@{ Role = "Tester"; Prompt = "Run" }) }, "OWNER_REQUIRED"),
         @("InvokeSubagent", [ordered]@{ Subagents = @() }, "OWNER_REQUIRED")
     )) {

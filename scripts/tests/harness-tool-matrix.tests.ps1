@@ -202,6 +202,13 @@ try {
         questions = @(@{ question = "Confirm?"; options = @("Yes", "No") })
     } "SAFE_NON_EDIT" "AskQuestion PascalCase"
 
+    Assert-ToolAuthorized "ANTIGRAVITY" "exit_plan_mode" @{} "SAFE_NON_EDIT" "exit_plan_mode"
+    Assert-ToolAuthorized "ANTIGRAVITY" "enter_plan_mode" @{} "SAFE_NON_EDIT" "enter_plan_mode"
+    Assert-ToolAuthorized "ANTIGRAVITY" "update_focus" @{ focus = "Running tests" } "SAFE_NON_EDIT" "update_focus"
+    Assert-ToolAuthorized "ANTIGRAVITY" "update_steps" @{ steps = @(@{ title = "Verify"; status = "in_progress" }) } "SAFE_NON_EDIT" "update_steps"
+    Assert-ToolAuthorized "ANTIGRAVITY" "search_marketplace" @{ queries = @("figma") } "SAFE_NON_EDIT" "search_marketplace"
+    Assert-ToolAuthorized "ANTIGRAVITY" "list_plugin_accounts" @{} "SAFE_NON_EDIT" "list_plugin_accounts"
+
     Assert-ToolAuthorized "ANTIGRAVITY" "invoke_subagent" @{
         Subagents = @(@{ TypeName = "research"; Role = "Reviewer"; Prompt = "Check" })
     } "OWNER_REQUIRED" "invoke_subagent"

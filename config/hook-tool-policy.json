@@ -696,6 +696,168 @@
     {
       "match": {
         "kind": "EXACT",
+        "value": "exit_plan_mode"
+      },
+      "nativeShapes": [
+        "ANTIGRAVITY"
+      ],
+      "canonicalName": "PLAN_MODE",
+      "toolClass": "SAFE_NON_EDIT",
+      "argumentProfile": "ANY_OBJECT",
+      "targetExtractor": "NONE"
+    },
+    {
+      "match": {
+        "kind": "EXACT",
+        "value": "ExitPlanMode"
+      },
+      "nativeShapes": [
+        "CLAUDE_PRE_TOOL_USE",
+        "COPILOT_CLAUDE_COMPAT",
+        "CURSOR_PRE_TOOL_USE",
+        "ANTIGRAVITY"
+      ],
+      "canonicalName": "PLAN_MODE",
+      "toolClass": "SAFE_NON_EDIT",
+      "argumentProfile": "ANY_OBJECT",
+      "targetExtractor": "NONE"
+    },
+    {
+      "match": {
+        "kind": "EXACT",
+        "value": "enter_plan_mode"
+      },
+      "nativeShapes": [
+        "ANTIGRAVITY"
+      ],
+      "canonicalName": "PLAN_MODE",
+      "toolClass": "SAFE_NON_EDIT",
+      "argumentProfile": "ANY_OBJECT",
+      "targetExtractor": "NONE"
+    },
+    {
+      "match": {
+        "kind": "EXACT",
+        "value": "EnterPlanMode"
+      },
+      "nativeShapes": [
+        "CLAUDE_PRE_TOOL_USE",
+        "COPILOT_CLAUDE_COMPAT",
+        "CURSOR_PRE_TOOL_USE",
+        "ANTIGRAVITY"
+      ],
+      "canonicalName": "PLAN_MODE",
+      "toolClass": "SAFE_NON_EDIT",
+      "argumentProfile": "ANY_OBJECT",
+      "targetExtractor": "NONE"
+    },
+    {
+      "match": {
+        "kind": "EXACT",
+        "value": "update_focus"
+      },
+      "nativeShapes": [
+        "ANTIGRAVITY"
+      ],
+      "canonicalName": "INTERACTION",
+      "toolClass": "SAFE_NON_EDIT",
+      "argumentProfile": "ANY_OBJECT",
+      "targetExtractor": "NONE"
+    },
+    {
+      "match": {
+        "kind": "EXACT",
+        "value": "UpdateFocus"
+      },
+      "nativeShapes": [
+        "ANTIGRAVITY"
+      ],
+      "canonicalName": "INTERACTION",
+      "toolClass": "SAFE_NON_EDIT",
+      "argumentProfile": "ANY_OBJECT",
+      "targetExtractor": "NONE"
+    },
+    {
+      "match": {
+        "kind": "EXACT",
+        "value": "update_steps"
+      },
+      "nativeShapes": [
+        "ANTIGRAVITY"
+      ],
+      "canonicalName": "INTERACTION",
+      "toolClass": "SAFE_NON_EDIT",
+      "argumentProfile": "ANY_OBJECT",
+      "targetExtractor": "NONE"
+    },
+    {
+      "match": {
+        "kind": "EXACT",
+        "value": "UpdateSteps"
+      },
+      "nativeShapes": [
+        "ANTIGRAVITY"
+      ],
+      "canonicalName": "INTERACTION",
+      "toolClass": "SAFE_NON_EDIT",
+      "argumentProfile": "ANY_OBJECT",
+      "targetExtractor": "NONE"
+    },
+    {
+      "match": {
+        "kind": "EXACT",
+        "value": "search_marketplace"
+      },
+      "nativeShapes": [
+        "ANTIGRAVITY"
+      ],
+      "canonicalName": "SEARCH",
+      "toolClass": "SAFE_NON_EDIT",
+      "argumentProfile": "ANY_OBJECT",
+      "targetExtractor": "NONE"
+    },
+    {
+      "match": {
+        "kind": "EXACT",
+        "value": "SearchMarketplace"
+      },
+      "nativeShapes": [
+        "ANTIGRAVITY"
+      ],
+      "canonicalName": "SEARCH",
+      "toolClass": "SAFE_NON_EDIT",
+      "argumentProfile": "ANY_OBJECT",
+      "targetExtractor": "NONE"
+    },
+    {
+      "match": {
+        "kind": "EXACT",
+        "value": "list_plugin_accounts"
+      },
+      "nativeShapes": [
+        "ANTIGRAVITY"
+      ],
+      "canonicalName": "READ",
+      "toolClass": "SAFE_NON_EDIT",
+      "argumentProfile": "ANY_OBJECT",
+      "targetExtractor": "NONE"
+    },
+    {
+      "match": {
+        "kind": "EXACT",
+        "value": "ListPluginAccounts"
+      },
+      "nativeShapes": [
+        "ANTIGRAVITY"
+      ],
+      "canonicalName": "READ",
+      "toolClass": "SAFE_NON_EDIT",
+      "argumentProfile": "ANY_OBJECT",
+      "targetExtractor": "NONE"
+    },
+    {
+      "match": {
+        "kind": "EXACT",
         "value": "find_by_name"
       },
       "nativeShapes": [

@@ -1377,6 +1377,12 @@ try {
     $agArbitraryShellCtx = (Add-AiSopHarnessSessionContext -Result $agArbitraryShellRes -RawPayload $agArbitraryShellRaw -EventHint PRE_TOOL_USE -WorkspacePath $Workspace | ConvertFrom-Json).reason
     Assert-True ($agArbitraryShellCtx -match '若仅为只读探索，无需启动任务') "Shell 拦截应附带只读探索替代提示：$agArbitraryShellCtx"
 
+    foreach ($metaTool in @('exit_plan_mode', 'enter_plan_mode', 'update_focus', 'update_steps', 'search_marketplace', 'list_plugin_accounts')) {
+        $metaRaw = New-AntigravityPayload -Event PRE_TOOL_USE -SessionId "ag-meta-unbound" -ToolName $metaTool -ToolInput @{}
+        $metaRes = Invoke-Dispatch -RawPayload $metaRaw -EventHint PRE_TOOL_USE -AcceptedAt $now.AddMinutes(5).AddSeconds(9)
+        Assert-Equal $metaRes.Decision 'ALLOW' "Antigravity 安全元工具 $metaTool 在未绑定任务下应放行：$($metaRes.ReasonCode)"
+    }
+
     Write-Output (
         "All hook dispatcher tests passed. " +
         "normalPathMaxMs=$normalMax matrixRows=$matrixRows"
